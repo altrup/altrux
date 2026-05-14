@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "continual-learning"
+version = "0.1.0"
+description = "Continual learning via a critic branch on a hybrid LLM"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.3",
+    "transformers>=4.51",
+    "accelerate>=0.30",
+    "gradio>=4.0",
+    "bitsandbytes>=0.43",
+]
+
+[project.optional-dependencies]
+dev = ["ipython", "rich", "pytest>=8", "pytest-cov"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[project.scripts]
+continual-learning = "continual_learning.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
