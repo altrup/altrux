@@ -92,12 +92,13 @@ continual-learning
 | `--model` | `ibm-granite/granite-4.0-h-micro` | HuggingFace model ID |
 | `--4bit` | off | Load base model in 4-bit quantization |
 | `--8bit` | off | Load base model in 8-bit quantization |
+| `--no-resume` | off | Ignore any existing checkpoint and start fresh |
 | `--phase` | `1` | Starting phase: `1` = train critic, `2` = train base model |
 | `--critic-lr` | `1e-4` | Critic branch learning rate |
 | `--base-lr` | `1e-6` | Base model learning rate |
 | `--checkpoint-dir` | `checkpoints` | Directory to save checkpoints |
 | `--save-every` | `10` | Auto-save every N training steps; `0` to disable |
-| `--keep-checkpoints` | `2` | Numbered snapshots to keep on disk; `0` to keep all |
+| `--keep-checkpoints` | `1` | Numbered auto-save snapshots to keep on disk; `0` to keep all |
 | `--port` | `7860` | Local port for the Gradio UI |
 | `--share` | off | Create a public Gradio link |
 

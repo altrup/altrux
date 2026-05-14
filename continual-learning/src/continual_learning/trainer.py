@@ -13,7 +13,7 @@ class TrainingConfig:
     max_seq_len: int = 512
     checkpoint_dir: str = "checkpoints"
     save_every: int = 10  # save every N steps; 0 to disable auto-save
-    keep_checkpoints: int = 2  # number of numbered snapshots to keep; 0 to keep all
+    keep_checkpoints: int = 1  # number of numbered auto-save snapshots to keep; 0 to keep all
 
 
 class Trainer:
@@ -119,12 +119,12 @@ class Trainer:
         n = len(self.history)
         if self.config.save_every and n % self.config.save_every == 0:
             self.model.save(self.config.checkpoint_dir, step=n,
-                            keep_checkpoints=self.config.keep_checkpoints)
-            print(f"[checkpoint] saved at step {n} → {self.config.checkpoint_dir}/")
+                            keep_checkpoints=self.config.keep_checkpoints,
+                            is_manual=False)
+            print(f"[checkpoint] auto-saved at step {n} → {self.config.checkpoint_dir}/")
 
     def save_now(self) -> None:
         """Manually trigger a checkpoint outside the auto-save schedule."""
         n = len(self.history)
-        self.model.save(self.config.checkpoint_dir, step=n,
-                        keep_checkpoints=self.config.keep_checkpoints)
-        print(f"[checkpoint] saved at step {n} → {self.config.checkpoint_dir}/")
+        self.model.save(self.config.checkpoint_dir, step=n, is_manual=True)
+        print(f"[checkpoint] manual save at step {n} → {self.config.checkpoint_dir}/")

@@ -136,13 +136,20 @@ class ContinualLearningModel(nn.Module):
 
         return response, estimated_reward.item()
 
-    def save(self, checkpoint_dir: str | Path, step: Optional[int] = None,
-             keep_checkpoints: int = 2) -> Path:
+    def save(
+        self,
+        checkpoint_dir: str | Path,
+        step: Optional[int] = None,
+        keep_checkpoints: int = 1,
+        is_manual: bool = False,
+    ) -> Path:
         """Save critic weights and base model to a checkpoint directory.
 
-        Saves to <checkpoint_dir>/latest/ and, if step is provided, also to
-        <checkpoint_dir>/step_<N>/ as a numbered snapshot.
+        Manual saves write only to latest_manual/ (single slot, always overwritten).
+        Auto saves write to latest_auto/ and a numbered step_N/ snapshot; old
+        snapshots beyond keep_checkpoints are deleted.
         """
+        import shutil
         root = Path(checkpoint_dir)
 
         def _write(dest: Path) -> None:
@@ -151,17 +158,23 @@ class ContinualLearningModel(nn.Module):
             torch.save(self.critic_head.state_dict(), dest / "critic_head.pt")
             self.base_model.save_pretrained(dest / "base_model")
             self.tokenizer.save_pretrained(dest / "base_model")
-            meta = {"step": step, "split_idx": self.split_idx}
-            (dest / "meta.json").write_text(json.dumps(meta, indent=2))
+            (dest / "meta.json").write_text(
+                json.dumps({"step": step, "split_idx": self.split_idx}, indent=2)
+            )
 
-        latest = root / "latest"
-        _write(latest)
+        if is_manual:
+            dest = root / "latest_manual"
+            _write(dest)
+            return dest
+
+        # Auto save
+        dest = root / "latest_auto"
+        _write(dest)
 
         if step is not None:
             _write(root / f"step_{step}")
 
             if keep_checkpoints:
-                import shutil
                 snapshots = sorted(
                     (d for d in root.iterdir() if d.is_dir() and d.name.startswith("step_")),
                     key=lambda d: int(d.name.split("_")[1]),
@@ -169,7 +182,22 @@ class ContinualLearningModel(nn.Module):
                 for old in snapshots[:-keep_checkpoints]:
                     shutil.rmtree(old)
 
-        return latest
+        return dest
+
+    @classmethod
+    def _most_recent_snapshot(cls, checkpoint_dir: str | Path) -> str:
+        """Return the name of the most recent snapshot folder by step number."""
+        root = Path(checkpoint_dir)
+        best_step, best_name = -1, None
+        for name in ("latest_manual", "latest_auto"):
+            meta_file = root / name / "meta.json"
+            if meta_file.exists():
+                step = json.loads(meta_file.read_text()).get("step") or 0
+                if step > best_step:
+                    best_step, best_name = step, name
+        if best_name is None:
+            raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+        return best_name
 
     @classmethod
     def load_checkpoint(
@@ -182,19 +210,20 @@ class ContinualLearningModel(nn.Module):
 
         Args:
             checkpoint_dir: root checkpoints folder.
-            snapshot: sub-folder name to load (e.g. "step_50"). Defaults to "latest".
+            snapshot: sub-folder name to load (e.g. "latest_manual", "step_50").
+                      Defaults to whichever of latest_manual/latest_auto is newer.
             **model_kwargs: forwarded to ContinualLearningModel.__init__
                             (e.g. load_in_4bit=True).
         """
-        root = Path(checkpoint_dir) / (snapshot or "latest")
-        meta = json.loads((root / "meta.json").read_text())
+        root = Path(checkpoint_dir)
+        name = snapshot or cls._most_recent_snapshot(root)
+        dest = root / name
 
-        model = cls(model_name=str(root / "base_model"), **model_kwargs)
-
+        model = cls(model_name=str(dest / "base_model"), **model_kwargs)
         model.critic_layers.load_state_dict(
-            torch.load(root / "critic_layers.pt", map_location=model.device)
+            torch.load(dest / "critic_layers.pt", map_location=model.device)
         )
         model.critic_head.load_state_dict(
-            torch.load(root / "critic_head.pt", map_location=model.device)
+            torch.load(dest / "critic_head.pt", map_location=model.device)
         )
         return model
