@@ -26,6 +26,10 @@ def create_ui(model: ContinualLearningModel, trainer: Trainer, initial_phase: in
             f"Done. Critic's estimated reward: {estimated_reward:.3f}",
         )
 
+    def on_save():
+        trainer.save_now()
+        return f"Saved to {trainer.config.checkpoint_dir}/ (step {len(trainer.history)})"
+
     def on_train(phase: str, user_reward: float):
         if "prompt" not in session:
             return "Generate a response first.", []
@@ -81,6 +85,7 @@ def create_ui(model: ContinualLearningModel, trainer: Trainer, initial_phase: in
                     -1.0, 1.0, value=0.0, step=0.05, label="Your Reward Signal (Phase 1 only)"
                 )
                 train_btn = gr.Button("Train", variant="secondary")
+                save_btn = gr.Button("Save Checkpoint", variant="secondary")
                 train_status = gr.Textbox(label="Training Status", interactive=False, lines=1)
 
                 gr.Markdown("### History (last 10)")
@@ -100,6 +105,12 @@ def create_ui(model: ContinualLearningModel, trainer: Trainer, initial_phase: in
             fn=on_train,
             inputs=[phase_radio, reward_slider],
             outputs=[train_status, history_table],
+        )
+
+        save_btn.click(
+            fn=on_save,
+            inputs=[],
+            outputs=[train_status],
         )
 
     return ui

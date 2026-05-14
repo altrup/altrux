@@ -1,4 +1,6 @@
 import copy
+import json
+from pathlib import Path
 from typing import Optional
 import torch
 import torch.nn as nn
@@ -66,6 +68,11 @@ class ContinualLearningModel(nn.Module):
             nn.Tanh(),
         )
 
+        # Match the base model's device and dtype (bfloat16 by default).
+        base_param = next(self.base_model.parameters())
+        self.critic_layers.to(device=base_param.device, dtype=base_param.dtype)
+        self.critic_head.to(device=base_param.device, dtype=base_param.dtype)
+
     @property
     def device(self) -> torch.device:
         return next(self.critic_head.parameters()).device
@@ -128,3 +135,66 @@ class ContinualLearningModel(nn.Module):
         _, estimated_reward = self.forward(output_ids)
 
         return response, estimated_reward.item()
+
+    def save(self, checkpoint_dir: str | Path, step: Optional[int] = None,
+             keep_checkpoints: int = 2) -> Path:
+        """Save critic weights and base model to a checkpoint directory.
+
+        Saves to <checkpoint_dir>/latest/ and, if step is provided, also to
+        <checkpoint_dir>/step_<N>/ as a numbered snapshot.
+        """
+        root = Path(checkpoint_dir)
+
+        def _write(dest: Path) -> None:
+            dest.mkdir(parents=True, exist_ok=True)
+            torch.save(self.critic_layers.state_dict(), dest / "critic_layers.pt")
+            torch.save(self.critic_head.state_dict(), dest / "critic_head.pt")
+            self.base_model.save_pretrained(dest / "base_model")
+            self.tokenizer.save_pretrained(dest / "base_model")
+            meta = {"step": step, "split_idx": self.split_idx}
+            (dest / "meta.json").write_text(json.dumps(meta, indent=2))
+
+        latest = root / "latest"
+        _write(latest)
+
+        if step is not None:
+            _write(root / f"step_{step}")
+
+            if keep_checkpoints:
+                import shutil
+                snapshots = sorted(
+                    (d for d in root.iterdir() if d.is_dir() and d.name.startswith("step_")),
+                    key=lambda d: int(d.name.split("_")[1]),
+                )
+                for old in snapshots[:-keep_checkpoints]:
+                    shutil.rmtree(old)
+
+        return latest
+
+    @classmethod
+    def load_checkpoint(
+        cls,
+        checkpoint_dir: str | Path,
+        snapshot: Optional[str] = None,
+        **model_kwargs,
+    ) -> "ContinualLearningModel":
+        """Load a checkpoint saved by save().
+
+        Args:
+            checkpoint_dir: root checkpoints folder.
+            snapshot: sub-folder name to load (e.g. "step_50"). Defaults to "latest".
+            **model_kwargs: forwarded to ContinualLearningModel.__init__
+                            (e.g. load_in_4bit=True).
+        """
+        root = Path(checkpoint_dir) / (snapshot or "latest")
+        meta = json.loads((root / "meta.json").read_text())
+
+        model = cls(model_name=str(root / "base_model"), **model_kwargs)
+
+        model.critic_layers.load_state_dict(
+            torch.load(root / "critic_layers.pt", map_location=model.device)
+        )
+        model.critic_head.load_state_dict(
+            torch.load(root / "critic_head.pt", map_location=model.device)
+        )
+        return model

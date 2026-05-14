@@ -17,6 +17,12 @@ def main() -> None:
                              "2 = train base model via critic reward signal")
     parser.add_argument("--critic-lr", type=float, default=1e-4)
     parser.add_argument("--base-lr", type=float, default=1e-6)
+    parser.add_argument("--checkpoint-dir", default="checkpoints",
+                        help="Directory to save checkpoints (relative to cwd)")
+    parser.add_argument("--save-every", type=int, default=10,
+                        help="Auto-save every N training steps; 0 to disable")
+    parser.add_argument("--keep-checkpoints", type=int, default=2,
+                        help="Number of numbered snapshots to keep on disk; 0 to keep all")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true", help="Create a public Gradio link")
     args = parser.parse_args()
@@ -32,6 +38,9 @@ def main() -> None:
     config = TrainingConfig(
         critic_lr=args.critic_lr,
         base_model_lr=args.base_lr,
+        checkpoint_dir=args.checkpoint_dir,
+        save_every=args.save_every,
+        keep_checkpoints=args.keep_checkpoints,
     )
     trainer = Trainer(model, config)
 

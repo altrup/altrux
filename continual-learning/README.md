@@ -95,6 +95,9 @@ continual-learning
 | `--phase` | `1` | Starting phase: `1` = train critic, `2` = train base model |
 | `--critic-lr` | `1e-4` | Critic branch learning rate |
 | `--base-lr` | `1e-6` | Base model learning rate |
+| `--checkpoint-dir` | `checkpoints` | Directory to save checkpoints |
+| `--save-every` | `10` | Auto-save every N training steps; `0` to disable |
+| `--keep-checkpoints` | `2` | Numbered snapshots to keep on disk; `0` to keep all |
 | `--port` | `7860` | Local port for the Gradio UI |
 | `--share` | off | Create a public Gradio link |
 
@@ -153,4 +156,12 @@ reward, loss = trainer.policy_step(
     response=response,
 )
 print(f"Policy loss: {loss:.4f}  Critic reward: {reward:.3f}")
+
+# Manual checkpoint
+trainer.save_now()
+
+# Load a checkpoint later
+from continual_learning import ContinualLearningModel
+model = ContinualLearningModel.load_checkpoint("checkpoints")           # latest
+model = ContinualLearningModel.load_checkpoint("checkpoints", "step_50")  # specific step
 ```
