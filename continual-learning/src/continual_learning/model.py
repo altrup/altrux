@@ -69,31 +69,18 @@ class ContinualLearningModel(nn.Module):
 
         _max_memory = _build_max_memory(device_ids)
 
-        from transformers.modeling_utils import PreTrainedModel
-        _orig_init_missing = PreTrainedModel._initialize_missing_keys
-
-        def _patched_init_missing(model_self_, *a, **kw):
-            try:
-                return _orig_init_missing(model_self_, *a, **kw)
-            except Exception as e:
-                msg = str(e).lower()
-                if "hip" in msg or "device function" in msg or "hiperrorinvaliddevicefunction" in msg:
-                    pass  # lm_head.weight ROCm GPU reinit failure; tie_weights() fixes it
-                else:
-                    raise
-
-        PreTrainedModel._initialize_missing_keys = _patched_init_missing
-        try:
-            self.base_model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                dtype=torch.bfloat16,
-                device_map="auto",
-                max_memory=_max_memory,
-                **quantization_kwargs,
-            )
-        finally:
-            PreTrainedModel._initialize_missing_keys = _orig_init_missing
+        # _fast_init=False skips on-device reinitialization of missing keys (e.g.
+        # lm_head.weight, which is weight-tied and absent from the checkpoint).
+        # tie_weights() below handles the binding correctly on all backends.
+        self.base_model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            dtype=torch.bfloat16,
+            device_map="auto",
+            max_memory=_max_memory,
+            _fast_init=False,
+            **quantization_kwargs,
+        )
 
         if hasattr(self.base_model, "tie_weights"):
             self.base_model.tie_weights()
