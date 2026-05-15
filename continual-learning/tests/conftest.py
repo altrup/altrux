@@ -13,9 +13,10 @@ NUM_LAYERS = 6  # split at 4, critic depth 4
 
 class _TinyLayer(nn.Module):
     """Minimal hybrid-style layer: accepts hidden_states, returns a tuple."""
-    def __init__(self):
+    def __init__(self, config=None, layer_idx=None):
         super().__init__()
-        self.proj = nn.Linear(HIDDEN, HIDDEN)
+        hidden = getattr(config, "hidden_size", HIDDEN) if config is not None else HIDDEN
+        self.proj = nn.Linear(hidden, hidden)
 
     def forward(self, hidden_states, **_kwargs):
         return (self.proj(hidden_states),)

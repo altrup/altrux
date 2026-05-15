@@ -27,11 +27,21 @@ def main() -> None:
                         help="Auto-save every N training steps; 0 to disable")
     parser.add_argument("--keep-checkpoints", type=int, default=1,
                         help="Number of numbered auto-save snapshots to keep; 0 to keep all")
+    parser.add_argument(
+        "--devices",
+        default="0",
+        help="Comma-separated CUDA GPU indices to use, e.g. '0' or '0,1'. "
+             "Default: primary GPU only. Add '1' to include the iGPU, but only "
+             "if your ROCm build was compiled for that architecture — mixed-arch "
+             "systems often fail with 'invalid device function' otherwise.",
+    )
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true", help="Create a public Gradio link")
     args = parser.parse_args()
 
-    load_kwargs = dict(load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit)
+    device_ids = [int(x) for x in args.devices.split(",")]
+    load_kwargs = dict(load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit,
+                       device_ids=device_ids)
 
     checkpoint_available = False
     if args.resume:
