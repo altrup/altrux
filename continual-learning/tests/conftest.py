@@ -54,9 +54,13 @@ class _TinyBaseModel(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-    def generate(self, input_ids, max_new_tokens=4, **_kwargs):
+    def generate(self, input_ids, max_new_tokens=4, streamer=None, **_kwargs):
         pad = torch.zeros(input_ids.shape[0], max_new_tokens, dtype=torch.long)
-        return torch.cat([input_ids, pad], dim=1)
+        output = torch.cat([input_ids, pad], dim=1)
+        if streamer is not None:
+            streamer.put(pad[0])
+            streamer.end()
+        return output
 
 
 class _TinyTokenizer:

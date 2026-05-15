@@ -14,17 +14,16 @@ def create_ui(model: ContinualLearningModel, trainer: Trainer, initial_phase: in
 
     def on_generate(prompt: str, max_tokens: int):
         if not prompt.strip():
-            return "", 0.0, "Enter a prompt first."
+            yield "", 0.0, "Enter a prompt first."
+            return
 
-        response, estimated_reward = model.generate(prompt, max_new_tokens=int(max_tokens))
-        session["prompt"] = prompt
-        session["response"] = response
-
-        return (
-            response,
-            round(estimated_reward, 3),
-            f"Done. Critic's estimated reward: {estimated_reward:.3f}",
-        )
+        for text, reward in model.generate_stream(prompt, max_new_tokens=int(max_tokens)):
+            if reward is None:
+                yield text, 0.0, "Generating…"
+            else:
+                session["prompt"] = prompt
+                session["response"] = text
+                yield text, round(reward, 3), f"Done. Critic's estimated reward: {reward:.3f}"
 
     def on_save():
         trainer.save_now()

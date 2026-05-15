@@ -253,6 +253,48 @@ class ContinualLearningModel(nn.Module):
 
         return response, estimated_reward.item()
 
+    def generate_stream(self, prompt: str, max_new_tokens: int = 256):
+        """Yield (partial_text, None) as tokens arrive, then (full_text, reward) when done."""
+        import threading
+        from transformers import TextIteratorStreamer
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.base_model.device)
+        streamer = TextIteratorStreamer(
+            self.tokenizer, skip_prompt=True, skip_special_tokens=True
+        )
+
+        gen_kwargs = dict(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            pad_token_id=self.tokenizer.eos_token_id,
+            streamer=streamer,
+        )
+
+        def _worker():
+            with torch.no_grad():
+                self.base_model.generate(**gen_kwargs)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        generated = ""
+        for chunk in streamer:
+            generated += chunk
+            yield generated, None
+
+        thread.join()
+
+        with torch.no_grad():
+            full_ids = self.tokenizer(
+                prompt + generated, return_tensors="pt"
+            ).to(self.base_model.device)["input_ids"]
+            _, estimated_reward = self.forward(full_ids)
+
+        yield generated, estimated_reward.item()
+
     def save(
         self,
         checkpoint_dir: str | Path,
