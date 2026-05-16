@@ -1,10 +1,14 @@
 """Shared fixtures — tiny mock model that mirrors the Granite interface exactly."""
+import asyncio
 import torch
 import torch.nn as nn
 import pytest
+from fastapi.testclient import TestClient
 from transformers import BatchEncoding
-from continual_learning.model import ContinualLearningModel
-from continual_learning.trainer import Trainer, TrainingConfig
+
+from cl_backend.model import ContinualLearningModel
+from cl_backend.trainer import Trainer, TrainingConfig
+from cl_backend.main import app
 
 HIDDEN = 32
 VOCAB = 64
@@ -70,6 +74,10 @@ class _TinyTokenizer:
         ids = torch.randint(2, VOCAB, (1, 8))
         return BatchEncoding({"input_ids": ids})
 
+    def encode(self, text, add_special_tokens=True):
+        # One token per word, good enough for tests
+        return list(range(2, 2 + max(1, len(text.split()))))
+
     def decode(self, token_ids, skip_special_tokens=True):
         return "mock response"
 
@@ -81,11 +89,11 @@ def tiny_model(monkeypatch):
     tok = _TinyTokenizer()
 
     monkeypatch.setattr(
-        "continual_learning.model.AutoModelForCausalLM.from_pretrained",
+        "cl_backend.model.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: base,
     )
     monkeypatch.setattr(
-        "continual_learning.model.AutoTokenizer.from_pretrained",
+        "cl_backend.model.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tok,
     )
 
@@ -97,3 +105,14 @@ def tiny_model(monkeypatch):
 @pytest.fixture()
 def trainer(tiny_model):
     return Trainer(tiny_model, TrainingConfig())
+
+
+@pytest.fixture()
+def client(tiny_model):
+    """FastAPI TestClient with the mock model injected into app.state."""
+    trainer_instance = Trainer(tiny_model, TrainingConfig())
+    app.state.model = tiny_model
+    app.state.trainer = trainer_instance
+    app.state.train_lock = asyncio.Lock()
+    with TestClient(app) as c:
+        yield c

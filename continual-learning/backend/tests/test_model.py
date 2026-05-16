@@ -13,7 +13,6 @@ def test_critic_depth_is_two_thirds(tiny_model):
 
 
 def test_critic_layers_are_independent_from_base(tiny_model):
-    # Deep-copied params must not share storage with base model params.
     base_ids = {id(p) for p in tiny_model.base_model.parameters()}
     for p in tiny_model.critic_layers.parameters():
         assert id(p) not in base_ids

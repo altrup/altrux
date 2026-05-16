@@ -85,6 +85,9 @@ class ContinualLearningModel(nn.Module):
         if hasattr(self.base_model, "tie_weights"):
             self.base_model.tie_weights()
 
+        device_map = getattr(self.base_model, "hf_device_map", {})
+        print(f"Base model device map: {device_map}", flush=True)
+
         # When device_map offloads decoder layers to CPU, accelerate attaches an
         # AlignDevicesHook per module with place_submodules=False. pre_forward then
         # only loads the module's own parameters (recurse=False), skipping child
@@ -240,8 +243,17 @@ class ContinualLearningModel(nn.Module):
 
         return response, estimated_reward.item()
 
-    def generate_stream(self, prompt: str, max_new_tokens: int = 256):
-        """Yield (partial_text, None) as tokens arrive, then (full_text, reward) when done."""
+    def generate_stream(
+        self,
+        prompt: str,
+        max_new_tokens: int = 256,
+        prefill_callback=None,
+    ):
+        """Yield (partial_text, None) as tokens arrive, then (full_text, reward) when done.
+
+        prefill_callback(layer_idx, total_layers) is called from the generation thread
+        once per base-model layer during the prefill pass only.
+        """
         import threading
         from transformers import TextIteratorStreamer
 
@@ -249,6 +261,30 @@ class ContinualLearningModel(nn.Module):
         streamer = TextIteratorStreamer(
             self.tokenizer, skip_prompt=True, skip_special_tokens=True
         )
+
+        # Register per-layer hooks to report prefill progress.
+        # Each hook fires once per forward call. We stop emitting after the
+        # last layer fires for the first time (end of prefill).
+        hooks: list = []
+        if prefill_callback is not None:
+            try:
+                layers = list(self.base_model.model.layers)
+                n_layers = len(layers)
+                prefill_done = threading.Event()
+
+                def _make_hook(idx: int) -> object:
+                    def _hook(module, inp, out) -> None:
+                        if prefill_done.is_set():
+                            return
+                        if idx == n_layers - 1:
+                            prefill_done.set()
+                        prefill_callback(idx + 1, n_layers)
+                    return _hook
+
+                for i, layer in enumerate(layers):
+                    hooks.append(layer.register_forward_hook(_make_hook(i)))
+            except Exception:
+                pass  # model structure doesn't expose layers — skip progress
 
         gen_kwargs = dict(
             **inputs,
@@ -263,6 +299,8 @@ class ContinualLearningModel(nn.Module):
         def _worker():
             with torch.no_grad():
                 self.base_model.generate(**gen_kwargs)
+            for h in hooks:
+                h.remove()
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()

@@ -3,15 +3,11 @@ import torch
 import pytest
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
 def _snapshot(module):
-    """Return a {name: cloned_tensor} dict of all parameters in a module."""
     return {n: p.detach().clone() for n, p in module.named_parameters()}
 
 
 def _params_unchanged(before: dict, module) -> list[str]:
-    """Return names of parameters that changed relative to `before`."""
     changed = []
     for name, p in module.named_parameters():
         if not torch.equal(before[name], p.detach()):
@@ -20,15 +16,12 @@ def _params_unchanged(before: dict, module) -> list[str]:
 
 
 def _params_changed(before: dict, module) -> list[str]:
-    """Return names of parameters that are different from `before`."""
     changed = []
     for name, p in module.named_parameters():
         if not torch.equal(before[name], p.detach()):
             changed.append(name)
     return changed
 
-
-# ── critic_step ───────────────────────────────────────────────────────────────
 
 def test_critic_step_does_not_touch_base_model(trainer):
     before = _snapshot(trainer.model.base_model)
@@ -54,8 +47,6 @@ def test_critic_step_records_phase_1(trainer):
     assert trainer.history[-1]["phase"] == 1
     assert trainer.history[-1]["user_reward"] == pytest.approx(0.3)
 
-
-# ── policy_step ───────────────────────────────────────────────────────────────
 
 def test_policy_step_does_not_touch_critic(trainer):
     before_layers = _snapshot(trainer.model.critic_layers)
@@ -87,8 +78,6 @@ def test_policy_step_records_phase_2(trainer):
     trainer.policy_step("hello", " world")
     assert trainer.history[-1]["phase"] == 2
 
-
-# ── history ───────────────────────────────────────────────────────────────────
 
 def test_history_grows_with_each_step(trainer):
     assert len(trainer.history) == 0
