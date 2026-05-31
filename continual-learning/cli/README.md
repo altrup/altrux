@@ -33,16 +33,12 @@ Reward [-1..1, Enter=skip, q=quit]: 0.8
   ✓ saved (total: 1)
 ```
 
-Pass `--reset` to discard the current session and start fresh:
-
-```bash
-cl chat --reset
-```
-
 - **Enter** — skip, no reward saved
 - **float** — save reward in [-1, 1]
 - **`history`** — print full token list with IDs
 - **`q`** — quit
+
+Run `cl chat --help` for all options.
 
 ### Other commands
 

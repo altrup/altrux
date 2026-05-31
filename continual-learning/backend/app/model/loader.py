@@ -170,12 +170,15 @@ class ModelRegistry:
     # Inference
     # ------------------------------------------------------------------
 
-    def generate_one_token(self, run_critic: bool = False) -> dict:
+    def generate_one_token(self, run_critic: bool = False, temperature: float = 0.8, top_p: float = 0.95) -> dict:
         assert self.model is not None and self.tokenizer is not None
         device = next(self.model.parameters()).device
 
+        bos_id = self.tokenizer.bos_token_id
+        if bos_id is None:
+            raise RuntimeError(f"Tokenizer has no bos_token_id — cannot seed an empty session")
         input_ids = torch.tensor(
-            [self.session_input_ids or [self.tokenizer.bos_token_id]],
+            [self.session_input_ids or [bos_id]],
             dtype=torch.long,
             device=device,
         )
@@ -186,11 +189,21 @@ class ModelRegistry:
             )
 
         next_token_logits = logits[0, -1, :]
-        next_token_id = int(torch.argmax(next_token_logits).item())
+        if temperature == 0.0:
+            next_token_id = int(torch.argmax(next_token_logits).item())
+        else:
+            probs = torch.softmax(next_token_logits / temperature, dim=-1)
+            if top_p < 1.0:
+                sorted_probs, sorted_idx = torch.sort(probs, descending=True)
+                cumulative = torch.cumsum(sorted_probs, dim=0)
+                sorted_probs[cumulative - sorted_probs > top_p] = 0.0
+                probs = torch.zeros_like(probs).scatter_(0, sorted_idx, sorted_probs)
+                probs /= probs.sum()
+            next_token_id = int(torch.multinomial(probs, num_samples=1).item())
         self.session_input_ids.append(next_token_id)
 
         # Save trunk hidden at the last GENERATED position (before appending, index == -1)
-        self.pending_trunk_hidden = trunk_hidden[0, -1, :].cpu().numpy().astype(np.float32)
+        self.pending_trunk_hidden = trunk_hidden[0, -1, :].float().cpu().numpy()
         self.pending_token_id = next_token_id
 
         critic_reward = None
@@ -201,6 +214,7 @@ class ModelRegistry:
             "generated_token": self.tokenizer.decode([next_token_id]),
             "token_id": next_token_id,
             "critic_reward": critic_reward,
+            "is_eos": next_token_id == self.tokenizer.eos_token_id,
         }
 
     # ------------------------------------------------------------------

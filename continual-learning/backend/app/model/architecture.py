@@ -45,16 +45,15 @@ class ContinualLearningModel(nn.Module):
         Returns (logits, per_token_rewards, trunk_hidden).
           logits:             (B, T, vocab_size)
           per_token_rewards:  (B, T) in [-1, 1]  — None when run_critic=False
-          trunk_hidden:       (B, T, d_model) float32, pre-norm trunk output
+          trunk_hidden:       (B, T, d_model) model-dtype, pre-norm trunk output
         """
         h = self.embedding(input_ids)
 
         for layer in self.trunk_layers:
             h = layer(h)
 
-        # Trunk output in float32; used for data collection and critic entry.
-        # Each Mamba2Block already adds its own residual internally.
-        trunk_hidden = h.float()
+        # Keep trunk output in model dtype here; caller casts the single position it needs.
+        trunk_hidden = h
 
         # Main path: continue through remaining layers then lm_head
         h2 = h
@@ -65,7 +64,7 @@ class ContinualLearningModel(nn.Module):
         # Critic path (optional)
         per_token_rewards = None
         if run_critic:
-            h_c = trunk_hidden.detach().to(h.dtype)
+            h_c = trunk_hidden.detach()
             for layer in self.critic_layers:
                 h_c = layer(h_c)
             per_token_rewards = self.critic_head(self.critic_norm_f(h_c)).squeeze(-1)

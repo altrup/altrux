@@ -94,6 +94,9 @@ def session_reset(
 def chat(
     url: Annotated[str, typer.Option()] = _DEFAULT_URL,
     reset: Annotated[bool, typer.Option("--reset", help="Start a fresh session instead of continuing")] = False,
+    temperature: Annotated[float, typer.Option("--temperature", "-t", help="Sampling temperature (0.0 = greedy)")] = 0.8,
+    top_p: Annotated[float, typer.Option("--top-p", "-p", help="Nucleus sampling threshold")] = 0.95,
+    critic: Annotated[bool, typer.Option("--critic/--no-critic", help="Run the critic branch")] = True,
 ) -> None:
     with _client(url) as c:
         existing = c.get("/session").raise_for_status().json()
@@ -107,7 +110,7 @@ def chat(
 
         while True:
             # Generate next token
-            gen_resp = c.post("/generate", json={"run_critic": True})
+            gen_resp = c.post("/generate", json={"run_critic": critic, "temperature": temperature, "top_p": top_p})
             gen_resp.raise_for_status()
             gen = gen_resp.json()
             last_token = gen["tokens"][-1]
@@ -129,6 +132,10 @@ def chat(
             console.print(Rule())
             console.print(display)
             console.print(Rule())
+
+            if last_token.get("is_eos"):
+                console.print("[dim]<end of text>[/dim]")
+                break
 
             if last_token["critic_reward"] is not None:
                 console.print(
