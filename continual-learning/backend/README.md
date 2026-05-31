@@ -44,7 +44,8 @@ make run
 | GET | `/mode` | Current mode (`frozen` / `unfrozen`) |
 | POST | `/mode` | Switch mode — `{"mode": "frozen"}` |
 | GET | `/session` | Full token history (source of truth) |
-| POST | `/session/reset` | Reset session — `{"text": "Hello"}` |
+| DELETE | `/session` | Clear the session |
+| PUT | `/session` | Append user text — `{"text": "tell me more"}` |
 | POST | `/generate` | Generate one token — `{"temperature": 0.8, "top_p": 0.95}` |
 | POST | `/reward` | Submit reward — `{"reward": 0.8}` |
 

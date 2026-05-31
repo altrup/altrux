@@ -5,6 +5,7 @@ import httpx
 import typer
 from rich.console import Console
 from rich.rule import Rule
+from rich.text import Text
 
 app = typer.Typer(no_args_is_help=True)
 mode_app = typer.Typer()
@@ -80,8 +81,13 @@ def session_reset(
     url: Annotated[str, typer.Option()] = _DEFAULT_URL,
 ) -> None:
     with _client(url) as c:
-        r = c.post("/session/reset", json={"text": text})
-        r.raise_for_status()
+        c.delete("/session").raise_for_status()
+        if text:
+            r = c.put("/session", json={"text": text})
+            r.raise_for_status()
+        else:
+            r = c.get("/session")
+            r.raise_for_status()
     console.print_json(r.text)
 
 
@@ -102,8 +108,10 @@ def chat(
         has_session = bool(existing["tokens"])
 
         if reset or not has_session:
+            c.delete("/session").raise_for_status()
             initial = typer.prompt("Enter initial text", default="")
-            c.post("/session/reset", json={"text": initial or None}).raise_for_status()
+            if initial:
+                c.put("/session", json={"text": initial}).raise_for_status()
         else:
             console.print(f"[dim]Continuing session ({len(existing['tokens'])} tokens)[/dim]")
 
@@ -121,12 +129,10 @@ def chat(
 
             # Build display: all text up to generated token, then highlight it
             tokens = sess["tokens"]
+            display = Text()
             if tokens:
-                pre_text = "".join(t["text"] for t in tokens[:-1])
-                last_text = tokens[-1]["text"]
-                display = pre_text + f"[bold green][{last_text}][/bold green]"
-            else:
-                display = ""
+                display.append("".join(t["text"] for t in tokens[:-1]))
+                display.append(f"[{tokens[-1]['text']}]", style="bold green")
 
             console.print(Rule())
             console.print(display)
@@ -134,7 +140,11 @@ def chat(
 
             if last_token.get("is_eos"):
                 console.print("[dim]<end of text>[/dim]")
-                break
+                user_msg = typer.prompt("You", default="")
+                if not user_msg.strip():
+                    break
+                c.put("/session", json={"text": user_msg}).raise_for_status()
+                continue
 
             if last_token["critic_reward"] is not None:
                 console.print(

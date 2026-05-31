@@ -163,6 +163,13 @@ class ModelRegistry:
             assert self.tokenizer is not None
             self.session_input_ids = self.tokenizer.encode(text)
 
+    def append_input(self, text: str) -> None:
+        """Append user text to the session and invalidate caches."""
+        assert self.tokenizer is not None
+        self.session_input_ids.extend(self.tokenizer.encode(text))
+        self._cache = None
+        self._critic_cache = None
+
     def get_session_tokens(self) -> list[dict]:
         assert self.tokenizer is not None
         return [

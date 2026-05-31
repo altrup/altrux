@@ -27,8 +27,8 @@ class SessionResponse(BaseModel):
     pending_token_id: int | None
 
 
-class SessionResetRequest(BaseModel):
-    text: str | None = None
+class SessionInputRequest(BaseModel):
+    text: str
 
 
 class GenerateRequest(BaseModel):

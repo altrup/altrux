@@ -11,7 +11,7 @@ from ..schemas import (
     ModeResponse,
     RewardRequest,
     RewardResponse,
-    SessionResetRequest,
+    SessionInputRequest,
     SessionResponse,
     TokenInfo,
 )
@@ -40,10 +40,21 @@ async def get_session() -> SessionResponse:
     )
 
 
-@router.post("/session/reset", response_model=SessionResponse)
-async def reset_session(req: SessionResetRequest) -> SessionResponse:
+@router.delete("/session", response_model=SessionResponse)
+async def reset_session() -> SessionResponse:
     async with registry.lock:
-        registry.reset_session(req.text)
+        registry.reset_session()
+    return SessionResponse(
+        text=registry.get_session_text(),
+        tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
+        pending_token_id=None,
+    )
+
+
+@router.put("/session", response_model=SessionResponse)
+async def session_input(req: SessionInputRequest) -> SessionResponse:
+    async with registry.lock:
+        registry.append_input(req.text)
     return SessionResponse(
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
