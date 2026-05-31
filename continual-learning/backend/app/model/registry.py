@@ -236,6 +236,8 @@ class ModelRegistry:
         self.pending_token_id = next_token_id
 
         critic_reward = float(per_token_rewards[0, -1].item())
+        if not (critic_reward == critic_reward):  # NaN check
+            critic_reward = 0.0
 
         return {
             "generated_token": self.tokenizer.decode([next_token_id]),

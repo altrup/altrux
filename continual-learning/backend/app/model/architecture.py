@@ -35,6 +35,11 @@ class ContinualLearningModel(nn.Module):
             Mamba2Block(config, layer_idx=i).to(device=device, dtype=dtype)
             for i in range(critic_depth)
         ])
+        # Apply the same weight init used by the pre-trained model so A_log is
+        # log(1..num_heads) — this ensures contractive SSM dynamics.
+        for block in self.critic_layers:
+            for submodule in block.modules():
+                mamba_model._init_weights(submodule)
         self.critic_norm_f = Mamba2RMSNorm(
             config.hidden_size, eps=config.layer_norm_epsilon
         ).to(device=device, dtype=dtype)
