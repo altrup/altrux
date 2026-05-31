@@ -20,17 +20,23 @@ The `cl` command is then available in your PATH. Because it's an editable instal
 cl chat
 ```
 
-Prompts for an initial text, then generates one token at a time. After each token, the full conversation is shown with the newest token highlighted — you can rate it, skip it, or quit.
+Continues the existing session if one is in progress, or prompts for initial text if the session is empty. Generates one token at a time — after each token the full conversation is shown with the newest token highlighted.
 
 ```
-Enter initial text: Once upon a time
+Continuing session (12 tokens)
 
 ─────────────────────────────────────────
-Once upon a time [the]
+Once upon a time there was a [king]
 ─────────────────────────────────────────
 critic: 0.0023  (random — critic not yet trained)
 Reward [-1..1, Enter=skip, q=quit]: 0.8
   ✓ saved (total: 1)
+```
+
+Pass `--reset` to discard the current session and start fresh:
+
+```bash
+cl chat --reset
 ```
 
 - **Enter** — skip, no reward saved
@@ -44,7 +50,8 @@ Reward [-1..1, Enter=skip, q=quit]: 0.8
 cl health                        # server status
 cl mode get                      # current mode (frozen/unfrozen)
 cl mode set frozen               # switch mode
-cl session reset --text "Hello"  # reset conversation
+cl session get                   # print current session token history
+cl session reset --text "Hello"  # reset conversation to given text
 ```
 
 All commands accept `--url` to point at a non-default server:

@@ -63,6 +63,17 @@ def mode_set(
 # ------------------------------------------------------------------
 
 
+@session_app.command("get")
+def session_get(url: Annotated[str, typer.Option()] = _DEFAULT_URL) -> None:
+    with _client(url) as c:
+        r = c.get("/session")
+        r.raise_for_status()
+    sess = r.json()
+    for t in sess["tokens"]:
+        console.print(f"  {t['id']:6d}  {repr(t['text'])}")
+    console.print(f"\n[dim]{len(sess['tokens'])} tokens — {repr(sess['text'])}[/dim]")
+
+
 @session_app.command("reset")
 def session_reset(
     text: Annotated[str | None, typer.Option()] = None,
@@ -80,13 +91,19 @@ def session_reset(
 
 
 @app.command()
-def chat(url: Annotated[str, typer.Option()] = _DEFAULT_URL) -> None:
+def chat(
+    url: Annotated[str, typer.Option()] = _DEFAULT_URL,
+    reset: Annotated[bool, typer.Option("--reset", help="Start a fresh session instead of continuing")] = False,
+) -> None:
     with _client(url) as c:
-        initial = typer.prompt("Enter initial text", default="")
-        if initial:
-            c.post("/session/reset", json={"text": initial}).raise_for_status()
+        existing = c.get("/session").raise_for_status().json()
+        has_session = bool(existing["tokens"])
+
+        if reset or not has_session:
+            initial = typer.prompt("Enter initial text", default="")
+            c.post("/session/reset", json={"text": initial or None}).raise_for_status()
         else:
-            c.post("/session/reset", json={}).raise_for_status()
+            console.print(f"[dim]Continuing session ({len(existing['tokens'])} tokens)[/dim]")
 
         while True:
             # Generate next token
