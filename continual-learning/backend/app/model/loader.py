@@ -81,7 +81,10 @@ class ModelRegistry:
         self.model = ContinualLearningModel(mamba_model)
         self.model.eval()
         self.set_mode("frozen")
-        self.tokenizer = AutoTokenizer.from_pretrained(_TOKENIZER_ID)
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(_TOKENIZER_ID, local_files_only=True)
+        except OSError:
+            self.tokenizer = AutoTokenizer.from_pretrained(_TOKENIZER_ID)
         _DAT_PATH.parent.mkdir(parents=True, exist_ok=True)
         _DAT_PATH.touch(exist_ok=True)
         _JSONL_PATH.touch(exist_ok=True)
