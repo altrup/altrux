@@ -5,9 +5,8 @@ FastAPI server that loads the continual learning model and exposes API endpoints
 ## Requirements
 
 - Python 3.14+
-- ROCm 6.4 / HIP 7.2 (AMD GPU) — see note below for CUDA
+- ROCm 6.4 / HIP 7.2 (AMD GPU), or CUDA 12+
 - `uv`
-- ROCm development headers: `rocm-devel`, `rocm-hip-devel`, `rocthrust-devel`
 
 ## Setup
 
@@ -16,12 +15,11 @@ cd continual-learning/backend
 make sync
 ```
 
-`make sync` does three things in order:
-1. `uv sync` — installs pure-Python dependencies from `uv.lock`
+`make sync` does two things in order:
+1. `uv sync` — installs Python dependencies (including `transformers`, `huggingface-hub`) from `uv.lock`
 2. `UV_TORCH_BACKEND=auto uv pip install torch` — installs the correct torch build for your hardware (ROCm or CUDA)
-3. `MAX_JOBS=12 uv pip install causal-conv1d mamba-ssm --no-build-isolation` — compiles the Mamba2 CUDA/ROCm kernels against the torch you just installed
 
-> **First run**: kernel compilation takes several minutes. Compiled kernels are cached in `~/.triton/cache/` — subsequent runs are fast.
+Model weights (`state-spaces/mamba2-370m`) are downloaded from HuggingFace on first run and cached in `~/.cache/huggingface/hub/`.
 
 ## Running
 
@@ -29,7 +27,7 @@ make sync
 make dev
 ```
 
-Starts the server on `http://localhost:8000` with hot reload. The model loads at startup and runs a warmup forward pass before accepting requests — startup takes ~30s after kernels are cached.
+Starts the server on `http://localhost:8000` with hot reload. The model loads at startup and runs a warmup forward pass before accepting requests — startup takes ~15–30s on first run (weight download) and a few seconds on subsequent runs.
 
 For production (no reload, all interfaces):
 
