@@ -12,43 +12,55 @@ from huggingface_hub import snapshot_download
 
 from .architecture import ContinualLearningModel
 
-_MODEL_ID = "state-spaces/mamba2-370m"
+_MODEL_ID = "state-spaces/mamba2-780m"
 _TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 
 _DAT_PATH = Path("data/collected/trunk_hiddens.dat")
 _JSONL_PATH = Path("data/collected/records.jsonl")
 
-# Config matching the state-spaces/mamba2-370m checkpoint (trained with mamba-ssm).
-# The weight key "backbone.embedding" is renamed to "backbone.embeddings" on load
-# because transformers uses a different naming convention.
-_MAMBA2_370M_CONFIG = Mamba2Config(
-    hidden_size=1024,
-    num_hidden_layers=48,
-    state_size=128,
-    num_heads=32,
-    expand=2,
-    head_dim=64,
-    vocab_size=50288,
-    n_groups=1,
-    conv_kernel=4,
-    residual_in_fp32=True,
-    rms_norm=True,
-    tie_word_embeddings=True,
-)
+def _config_from_state_dict(state_dict: dict) -> Mamba2Config:
+    """Derive Mamba2Config from the weight shapes in a mamba-ssm checkpoint."""
+    vocab_size, hidden_size = state_dict["backbone.embedding.weight"].shape
+    num_hidden_layers = sum(
+        1 for k in state_dict if k.endswith(".mixer.A_log")
+    )
+    num_heads = int(state_dict["backbone.layers.0.mixer.A_log"].shape[0])
+    conv1d_w = state_dict["backbone.layers.0.mixer.conv1d.weight"]
+    conv_kernel = conv1d_w.shape[2]
+    expand = 2  # universal for state-spaces mamba2 checkpoints
+    d_inner = expand * hidden_size
+    state_size = (conv1d_w.shape[0] - d_inner) // 2
+    return Mamba2Config(
+        hidden_size=hidden_size,
+        num_hidden_layers=num_hidden_layers,
+        state_size=state_size,
+        num_heads=num_heads,
+        expand=expand,
+        head_dim=d_inner // num_heads,
+        vocab_size=vocab_size,
+        n_groups=1,
+        conv_kernel=conv_kernel,
+        residual_in_fp32=True,
+        rms_norm=True,
+        tie_word_embeddings=True,
+    )
 
 
 def _load_mamba2_from_pretrained(model_id: str, device: str) -> Mamba2ForCausalLM:
     """Load a mamba-ssm-format checkpoint into a transformers Mamba2ForCausalLM."""
-    cache_path = snapshot_download(model_id, local_files_only=True)
+    try:
+        cache_path = snapshot_download(model_id, local_files_only=True)
+    except Exception:
+        cache_path = snapshot_download(model_id)
     state_dict = torch.load(
         os.path.join(cache_path, "pytorch_model.bin"),
         map_location="cpu",
         weights_only=True,
     )
+    config = _config_from_state_dict(state_dict)
     # Rename the single mismatched key between mamba-ssm and transformers conventions.
     state_dict["backbone.embeddings.weight"] = state_dict.pop("backbone.embedding.weight")
-
-    model = Mamba2ForCausalLM(_MAMBA2_370M_CONFIG)
+    model = Mamba2ForCausalLM(config)
     model.load_state_dict(state_dict)
     return model.to(device)
 

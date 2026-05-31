@@ -19,7 +19,7 @@ make sync
 1. `uv sync` — installs Python dependencies (including `transformers`, `huggingface-hub`) from `uv.lock`
 2. `UV_TORCH_BACKEND=auto uv pip install torch` — installs the correct torch build for your hardware (ROCm or CUDA)
 
-Model weights (`state-spaces/mamba2-370m`) are downloaded from HuggingFace on first run and cached in `~/.cache/huggingface/hub/`.
+Model weights (`state-spaces/mamba2-780m`) are downloaded from HuggingFace on first run and cached in `~/.cache/huggingface/hub/`.
 
 ## Running
 

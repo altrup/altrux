@@ -4,7 +4,7 @@ Goal is to train a Neural Network that has access to the internal state of an LL
 
 ## Base Model
 
-[state-spaces/mamba2-370m](https://huggingface.co/state-spaces/mamba2-370m)
+[state-spaces/mamba2-780m](https://huggingface.co/state-spaces/mamba2-780m)
 
 ## Architecture
 
