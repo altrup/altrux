@@ -18,8 +18,9 @@ console = Console()
 
 _DEFAULT_URL = "http://localhost:8000"
 
-def _prompt(message: str) -> str:
-    return pt_prompt(message, multiline=True)
+def _prompt(label: str) -> str:
+    console.print(f"[dim]{label}[/dim]")
+    return pt_prompt("", multiline=True)
 
 
 def _client(url: str) -> httpx.Client:
@@ -111,15 +112,15 @@ def chat(
         existing = c.get("/session").raise_for_status().json()
         has_session = bool(existing["tokens"])
 
+        console.print("[dim]Tip: Enter = new line, Meta+Enter (or Esc then Enter) = submit[/dim]")
+
         if reset or not has_session:
             c.delete("/session").raise_for_status()
-            initial = _prompt("Enter initial text: ")
+            initial = _prompt("Enter initial text:")
             if initial:
                 c.put("/session", json={"text": initial}).raise_for_status()
         else:
             console.print(f"[dim]Continuing session ({len(existing['tokens'])} tokens)[/dim]")
-
-        console.print("[dim]Tip: Enter = new line, Meta+Enter (or Esc then Enter) = submit[/dim]")
 
         while True:
             # Generate next token
@@ -146,7 +147,7 @@ def chat(
 
             if last_token.get("is_eos"):
                 console.print("[dim]<end of text>[/dim]")
-                user_msg = _prompt("You: ")
+                user_msg = _prompt("You:")
                 if not user_msg.strip():
                     break
                 c.put("/session", json={"text": user_msg}).raise_for_status()
