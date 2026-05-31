@@ -4,6 +4,7 @@ from typing import Annotated
 import httpx
 import typer
 from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
@@ -19,8 +20,11 @@ console = Console()
 _DEFAULT_URL = "http://localhost:8000"
 
 def _prompt(label: str) -> str:
-    console.print(f"[dim]{label}[/dim]")
-    return pt_prompt("", multiline=True)
+    message = HTML(
+        f"<ansibrightblack>Enter = new line  |  Meta+Enter (or Esc then Enter) = submit\n"
+        f"{label}\n</ansibrightblack>"
+    )
+    return pt_prompt(message, multiline=True)
 
 
 def _client(url: str) -> httpx.Client:
@@ -112,11 +116,9 @@ def chat(
         existing = c.get("/session").raise_for_status().json()
         has_session = bool(existing["tokens"])
 
-        console.print("[dim]Tip: Enter = new line, Meta+Enter (or Esc then Enter) = submit[/dim]")
-
         if reset or not has_session:
             c.delete("/session").raise_for_status()
-            initial = _prompt("Enter initial text:")
+            initial = _prompt("Inject initial text into session:")
             if initial:
                 c.put("/session", json={"text": initial}).raise_for_status()
         else:
@@ -147,7 +149,7 @@ def chat(
 
             if last_token.get("is_eos"):
                 console.print("[dim]<end of text>[/dim]")
-                user_msg = _prompt("You:")
+                user_msg = _prompt("Inject text into session:")
                 if not user_msg.strip():
                     break
                 c.put("/session", json={"text": user_msg}).raise_for_status()
@@ -158,10 +160,16 @@ def chat(
                     f"critic: [dim]{last_token['critic_reward']:.4f}  {last_token.get('critic_reward_note', '')}[/dim]"
                 )
 
-            raw = pt_prompt("Reward [-1..1, Enter=skip, q=quit]: ")
+            raw = pt_prompt("Reward [-1..1, Enter=skip, i=interrupt, q=quit]: ")
 
             if raw.strip().lower() == "q":
                 break
+
+            if raw.strip().lower() == "i":
+                user_msg = _prompt("Inject text into session:")
+                if user_msg.strip():
+                    c.put("/session", json={"text": user_msg}).raise_for_status()
+                continue
 
             if raw.strip() == "":
                 continue
