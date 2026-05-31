@@ -1,10 +1,16 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Runs LLM and exposes API"
+description = "Runs LLM and embeds the continual learning model"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.136.1",
     "uvicorn>=0.47.0",
+    "numpy>=2.0",
+    "python-dotenv>=1.2.2",
 ]
+
+# torch, causal-conv1d, and mamba-ssm are installed by `make sync` via uv pip
+# because they require hardware-specific builds (ROCm torch, CUDA/ROCm kernels)
+# that cannot be locked portably in uv.lock.

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make sync *)",
+      "Bash(UV_TORCH_BACKEND=auto uv pip install --dry-run torch)"
+    ]
+  }
+}

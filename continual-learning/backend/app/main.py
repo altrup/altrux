@@ -1,13 +1,19 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-app = FastAPI()
+from .model.loader import registry
+from .routers import health, inference, training
 
 
-@app.get("/")
-async def read_root():
-    return {"Hello": "World"}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await registry.startup()
+    yield
 
 
-@app.get("/items/{item_id}")
-async def read_item(item_id: int, q: str | None = None):
-    return {"item_id": item_id, "q": q}
+app = FastAPI(lifespan=lifespan)
+
+app.include_router(health.router)
+app.include_router(inference.router)
+app.include_router(training.router)
