@@ -1,7 +1,9 @@
+import copy
 import torch
 import torch.nn as nn
 
 from transformers import Mamba2ForCausalLM
+from transformers.cache_utils import Cache
 from transformers.models.mamba2.modeling_mamba2 import Mamba2Block, Mamba2RMSNorm
 
 
@@ -16,6 +18,9 @@ class ContinualLearningModel(nn.Module):
 
         self.d_model: int = config.hidden_size
         self._config = config
+        critic_cfg = copy.deepcopy(config)
+        critic_cfg.num_hidden_layers = critic_depth
+        self._critic_config = critic_cfg
 
         self.embedding = backbone.embeddings
         self.trunk_layers = nn.ModuleList(list(backbone.layers[:trunk_end]))
@@ -39,34 +44,43 @@ class ContinualLearningModel(nn.Module):
         )
 
     def forward(
-        self, input_ids: torch.Tensor, run_critic: bool = False
+        self,
+        input_ids: torch.Tensor,
+        run_critic: bool = False,
+        cache_params: Cache | None = None,
+        critic_cache_params: Cache | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
         """
         Returns (logits, per_token_rewards, trunk_hidden).
           logits:             (B, T, vocab_size)
           per_token_rewards:  (B, T) in [-1, 1]  — None when run_critic=False
           trunk_hidden:       (B, T, d_model) model-dtype, pre-norm trunk output
+
+        When cache_params / critic_cache_params are provided, caches are updated
+        in-place and incremental (single-token) inputs are supported.
         """
         h = self.embedding(input_ids)
 
         for layer in self.trunk_layers:
-            h = layer(h)
+            h = layer(h, cache_params=cache_params)
 
-        # Keep trunk output in model dtype here; caller casts the single position it needs.
+        # Keep trunk output in model dtype; caller casts the single position it needs.
         trunk_hidden = h
 
-        # Main path: continue through remaining layers then lm_head
+        # Main path
         h2 = h
         for layer in self.main_layers:
-            h2 = layer(h2)
+            h2 = layer(h2, cache_params=cache_params)
         logits = self.lm_head(self.norm_f(h2))
 
-        # Critic path (optional)
+        # Critic path: always run when a critic cache is active so the state stays
+        # in sync with the main model, even if rewards aren't being returned.
         per_token_rewards = None
-        if run_critic:
+        if run_critic or critic_cache_params is not None:
             h_c = trunk_hidden.detach()
             for layer in self.critic_layers:
-                h_c = layer(h_c)
-            per_token_rewards = self.critic_head(self.critic_norm_f(h_c)).squeeze(-1)
+                h_c = layer(h_c, cache_params=critic_cache_params)
+            if run_critic:
+                per_token_rewards = self.critic_head(self.critic_norm_f(h_c)).squeeze(-1)
 
         return logits, per_token_rewards, trunk_hidden

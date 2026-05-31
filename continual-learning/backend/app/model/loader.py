@@ -7,6 +7,7 @@ from typing import Literal
 import numpy as np
 import torch
 from transformers import AutoTokenizer, Mamba2ForCausalLM, Mamba2Config
+from transformers.cache_utils import DynamicCache
 from huggingface_hub import snapshot_download
 
 from .architecture import ContinualLearningModel
@@ -62,6 +63,9 @@ class ModelRegistry:
         self.session_input_ids: list[int] = []
         self.pending_trunk_hidden: np.ndarray | None = None  # (d_model,) float32
         self.pending_token_id: int | None = None
+
+        self._cache: DynamicCache | None = None
+        self._critic_cache: DynamicCache | None = None
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -121,6 +125,8 @@ class ModelRegistry:
         self._mode = mode
         self.pending_trunk_hidden = None
         self.pending_token_id = None
+        self._cache = None
+        self._critic_cache = None
 
         if mode == "frozen":
             for p in self.model.parameters():
@@ -151,6 +157,8 @@ class ModelRegistry:
         self.session_input_ids = []
         self.pending_trunk_hidden = None
         self.pending_token_id = None
+        self._cache = None
+        self._critic_cache = None
         if text:
             assert self.tokenizer is not None
             self.session_input_ids = self.tokenizer.encode(text)
@@ -176,16 +184,30 @@ class ModelRegistry:
 
         bos_id = self.tokenizer.bos_token_id
         if bos_id is None:
-            raise RuntimeError(f"Tokenizer has no bos_token_id — cannot seed an empty session")
-        input_ids = torch.tensor(
-            [self.session_input_ids or [bos_id]],
-            dtype=torch.long,
-            device=device,
-        )
+            raise RuntimeError("Tokenizer has no bos_token_id — cannot seed an empty session")
+
+        if self._cache is None:
+            # Cold start: process the full session to hydrate both caches.
+            self._cache = DynamicCache(config=self.model._config)
+            self._critic_cache = DynamicCache(config=self.model._critic_config)
+            input_ids = torch.tensor(
+                [self.session_input_ids or [bos_id]],
+                dtype=torch.long,
+                device=device,
+            )
+        else:
+            # Incremental: only process the token appended by the previous call.
+            input_ids = torch.tensor(
+                [[self.session_input_ids[-1]]],
+                dtype=torch.long,
+                device=device,
+            )
 
         with torch.no_grad():
             logits, per_token_rewards, trunk_hidden = self.model(
-                input_ids, run_critic=run_critic
+                input_ids, run_critic=run_critic,
+                cache_params=self._cache,
+                critic_cache_params=self._critic_cache,
             )
 
         next_token_logits = logits[0, -1, :]
