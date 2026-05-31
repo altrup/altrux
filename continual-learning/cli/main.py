@@ -3,6 +3,7 @@ from typing import Annotated
 
 import httpx
 import typer
+from prompt_toolkit import prompt as pt_prompt
 from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
@@ -16,6 +17,9 @@ app.add_typer(session_app, name="session")
 console = Console()
 
 _DEFAULT_URL = "http://localhost:8000"
+
+def _prompt(message: str) -> str:
+    return pt_prompt(message, multiline=True)
 
 
 def _client(url: str) -> httpx.Client:
@@ -109,11 +113,13 @@ def chat(
 
         if reset or not has_session:
             c.delete("/session").raise_for_status()
-            initial = typer.prompt("Enter initial text", default="")
+            initial = _prompt("Enter initial text: ")
             if initial:
                 c.put("/session", json={"text": initial}).raise_for_status()
         else:
             console.print(f"[dim]Continuing session ({len(existing['tokens'])} tokens)[/dim]")
+
+        console.print("[dim]Tip: Enter = new line, Meta+Enter (or Esc then Enter) = submit[/dim]")
 
         while True:
             # Generate next token
@@ -140,7 +146,7 @@ def chat(
 
             if last_token.get("is_eos"):
                 console.print("[dim]<end of text>[/dim]")
-                user_msg = typer.prompt("You", default="")
+                user_msg = _prompt("You: ")
                 if not user_msg.strip():
                     break
                 c.put("/session", json={"text": user_msg}).raise_for_status()
@@ -151,7 +157,7 @@ def chat(
                     f"critic: [dim]{last_token['critic_reward']:.4f}  {last_token.get('critic_reward_note', '')}[/dim]"
                 )
 
-            raw = typer.prompt("Reward [-1..1, Enter=skip, q=quit]", default="")
+            raw = pt_prompt("Reward [-1..1, Enter=skip, q=quit]: ")
 
             if raw.strip().lower() == "q":
                 break
