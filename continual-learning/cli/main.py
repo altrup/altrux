@@ -96,7 +96,6 @@ def chat(
     reset: Annotated[bool, typer.Option("--reset", help="Start a fresh session instead of continuing")] = False,
     temperature: Annotated[float, typer.Option("--temperature", "-t", help="Sampling temperature (0.0 = greedy)")] = 0.8,
     top_p: Annotated[float, typer.Option("--top-p", "-p", help="Nucleus sampling threshold")] = 0.95,
-    critic: Annotated[bool, typer.Option("--critic/--no-critic", help="Run the critic branch")] = True,
 ) -> None:
     with _client(url) as c:
         existing = c.get("/session").raise_for_status().json()
@@ -110,7 +109,7 @@ def chat(
 
         while True:
             # Generate next token
-            gen_resp = c.post("/generate", json={"run_critic": critic, "temperature": temperature, "top_p": top_p})
+            gen_resp = c.post("/generate", json={"temperature": temperature, "top_p": top_p})
             gen_resp.raise_for_status()
             gen = gen_resp.json()
             last_token = gen["tokens"][-1]

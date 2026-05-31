@@ -46,14 +46,13 @@ class ContinualLearningModel(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        run_critic: bool = False,
         cache_params: Cache | None = None,
         critic_cache_params: Cache | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Returns (logits, per_token_rewards, trunk_hidden).
           logits:             (B, T, vocab_size)
-          per_token_rewards:  (B, T) in [-1, 1]  — None when run_critic=False
+          per_token_rewards:  (B, T) in [-1, 1]
           trunk_hidden:       (B, T, d_model) model-dtype, pre-norm trunk output
 
         When cache_params / critic_cache_params are provided, caches are updated
@@ -73,14 +72,10 @@ class ContinualLearningModel(nn.Module):
             h2 = layer(h2, cache_params=cache_params)
         logits = self.lm_head(self.norm_f(h2))
 
-        # Critic path: always run when a critic cache is active so the state stays
-        # in sync with the main model, even if rewards aren't being returned.
-        per_token_rewards = None
-        if run_critic or critic_cache_params is not None:
-            h_c = trunk_hidden.detach()
-            for layer in self.critic_layers:
-                h_c = layer(h_c, cache_params=critic_cache_params)
-            if run_critic:
-                per_token_rewards = self.critic_head(self.critic_norm_f(h_c)).squeeze(-1)
+        # Critic always runs to keep its SSM state in sync with the main model.
+        h_c = trunk_hidden.detach()
+        for layer in self.critic_layers:
+            h_c = layer(h_c, cache_params=critic_cache_params)
+        per_token_rewards = self.critic_head(self.critic_norm_f(h_c)).squeeze(-1)
 
         return logits, per_token_rewards, trunk_hidden

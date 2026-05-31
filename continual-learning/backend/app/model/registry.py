@@ -178,7 +178,7 @@ class ModelRegistry:
     # Inference
     # ------------------------------------------------------------------
 
-    def generate_one_token(self, run_critic: bool = False, temperature: float = 0.8, top_p: float = 0.95) -> dict:
+    def generate_one_token(self, temperature: float = 0.8, top_p: float = 0.95) -> dict:
         assert self.model is not None and self.tokenizer is not None
         device = next(self.model.parameters()).device
 
@@ -205,7 +205,7 @@ class ModelRegistry:
 
         with torch.no_grad():
             logits, per_token_rewards, trunk_hidden = self.model(
-                input_ids, run_critic=run_critic,
+                input_ids,
                 cache_params=self._cache,
                 critic_cache_params=self._critic_cache,
             )
@@ -228,9 +228,7 @@ class ModelRegistry:
         self.pending_trunk_hidden = trunk_hidden[0, -1, :].float().cpu().numpy()
         self.pending_token_id = next_token_id
 
-        critic_reward = None
-        if run_critic and per_token_rewards is not None:
-            critic_reward = float(per_token_rewards[0, -1].item())
+        critic_reward = float(per_token_rewards[0, -1].item())
 
         return {
             "generated_token": self.tokenizer.decode([next_token_id]),

@@ -18,8 +18,6 @@ from ..schemas import (
 
 router = APIRouter()
 
-_CRITIC_NOTE = "(random — critic not yet trained)"
-
 
 @router.get("/mode", response_model=ModeResponse)
 async def get_mode() -> ModeResponse:
@@ -63,14 +61,13 @@ async def generate(req: GenerateRequest) -> GenerateResponse:
     async with registry.lock:
         for _ in range(req.max_tokens):
             result = await asyncio.to_thread(
-                registry.generate_one_token, run_critic=req.run_critic, temperature=req.temperature, top_p=req.top_p
+                registry.generate_one_token, temperature=req.temperature, top_p=req.top_p
             )
-            note = _CRITIC_NOTE if req.run_critic and result["critic_reward"] is not None else None
             generated.append(GeneratedToken(
                 token=result["generated_token"],
                 token_id=result["token_id"],
                 critic_reward=result["critic_reward"],
-                critic_reward_note=note,
+                critic_reward_note="(random — critic not yet trained)",
                 is_eos=result["is_eos"],
             ))
             if result["is_eos"]:
