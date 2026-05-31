@@ -2,7 +2,7 @@ import torch
 from fastapi import APIRouter
 
 from ..config import get_device
-from ..model.loader import registry
+from ..model.registry import registry
 from ..schemas import HealthResponse
 
 router = APIRouter()

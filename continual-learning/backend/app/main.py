@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .model.loader import registry
+from .model.registry import registry
 from .routers import health, inference, training
 
 

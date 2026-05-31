@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException
 
-from ..model.loader import registry
+from ..model.registry import registry
 from ..schemas import (
     GenerateRequest,
     GenerateResponse,
