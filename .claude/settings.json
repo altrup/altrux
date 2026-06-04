@@ -1,8 +1,27 @@
 {
   "permissions": {
     "allow": [
-      "Bash(make sync *)",
-      "Bash(UV_TORCH_BACKEND=auto uv pip install --dry-run torch)"
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(git stash:*)",
+      "Bash(uv run:*)",
+      "Bash(uv sync:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(pytest:*)",
+      "Read",
+      "Edit"
+    ],
+    "deny": [
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git commit:*)",
+      "Bash(rm:*)"
     ]
   }
 }
