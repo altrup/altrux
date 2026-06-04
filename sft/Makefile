@@ -1,7 +1,7 @@
 .PHONY: sync data prepare train resume
 
 sync:
-	uv sync
+	uv sync --inexact
 	UV_TORCH_BACKEND=auto UV_CACHE_DIR=.cache/uv uv pip install torch
 	MAX_JOBS=12 UV_CACHE_DIR=.cache/uv uv pip install causal-conv1d mamba-ssm --no-build-isolation
 

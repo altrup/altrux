@@ -6,6 +6,7 @@ import torch
 from transformers import AutoTokenizer
 
 MODEL_ID = "state-spaces/mamba2-780m"
+TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 
 USER_OPEN = "[USER] "
 USER_CLOSE = " [/USER]\n"
@@ -65,7 +66,10 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=2048, help="Max tokens per example")
     args = parser.parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID, local_files_only=True)
+    except OSError:
+        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID)
     if tokenizer.eos_token_id is None:
         tokenizer.add_special_tokens({"eos_token": "<|endoftext|>"})
 
