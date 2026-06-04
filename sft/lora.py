@@ -18,6 +18,16 @@ class LoRALinear(nn.Module):
         if linear.bias is not None:
             linear.bias.requires_grad_(False)
 
+    @property
+    def weight(self) -> torch.Tensor:
+        # mamba2's fused kernel accesses .weight directly; return the merged weight
+        # so LoRA is applied even through the fused path and gradients flow correctly
+        return self.linear.weight + (self.lora_B @ self.lora_A) * self.scale
+
+    @property
+    def bias(self):
+        return self.linear.bias
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.linear(x) + self.dropout(x) @ self.lora_A.T @ self.lora_B.T * self.scale
 
@@ -30,6 +40,7 @@ def apply_lora(
     dropout: float = 0.05,
 ) -> nn.Module:
     named = dict(model.named_modules())
+    attached = 0
     for name, module in list(named.items()):
         if not isinstance(module, nn.Linear):
             continue
@@ -38,6 +49,13 @@ def apply_lora(
         parent_name, child_name = name.rsplit(".", 1) if "." in name else ("", name)
         parent = model if not parent_name else named[parent_name]
         setattr(parent, child_name, LoRALinear(module, rank, alpha, dropout))
+        attached += 1
+    if attached == 0:
+        raise RuntimeError(
+            f"apply_lora matched 0 modules for targets {target_modules}. "
+            "Mamba's projections may not be nn.Linear — inspect model.named_modules()."
+        )
+    print(f"attached {attached} LoRA adapters")
     return model
 
 
@@ -50,5 +68,9 @@ def save_lora(model: nn.Module, path: str | Path) -> None:
 
 def load_lora(model: nn.Module, path: str | Path) -> nn.Module:
     state = torch.load(Path(path) / "adapter.pt", map_location="cpu", weights_only=True)
-    model.load_state_dict(state, strict=False)
+    result = model.load_state_dict(state, strict=False)
+    loaded = len(state) - len(result.unexpected_keys)
+    print(f"loaded {loaded}/{len(state)} adapter tensors")
+    if loaded == 0:
+        raise RuntimeError("load_lora loaded 0 tensors — checkpoint keys don't match model structure")
     return model

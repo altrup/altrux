@@ -9,13 +9,11 @@ MODEL_ID = "state-spaces/mamba2-780m"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 
 USER_OPEN = "[USER] "
-USER_CLOSE = " [/USER]\n"
 ASST_OPEN = "[ASSISTANT] "
-ASST_CLOSE = " [/ASSISTANT]"
 
 
 def format_conversation(
-    messages: list[dict], tokenizer
+    messages: list[dict], tokenizer, max_len: int
 ) -> tuple[list[int], list[bool]]:
     ids: list[int] = []
     mask: list[bool] = []
@@ -25,15 +23,22 @@ def format_conversation(
         content = msg["content"]
 
         if role == "user":
-            text = USER_OPEN + content + USER_CLOSE
-            toks = tokenizer.encode(text, add_special_tokens=False)
-            ids.extend(toks)
-            mask.extend([False] * len(toks))
+            text = USER_OPEN + content + "\n"
+            turn_ids = tokenizer.encode(text, add_special_tokens=False)
+            turn_mask = [False] * len(turn_ids)
         elif role == "assistant":
-            text = ASST_OPEN + content + ASST_CLOSE
+            text = ASST_OPEN + content
             toks = tokenizer.encode(text, add_special_tokens=False)
-            ids.extend(toks + [tokenizer.eos_token_id])
-            mask.extend([True] * (len(toks) + 1))
+            turn_ids = toks + [tokenizer.eos_token_id]
+            turn_mask = [True] * len(turn_ids)
+        else:
+            continue
+
+        if len(ids) + len(turn_ids) > max_len:
+            break  # drop this and all remaining turns; keeps only complete turns
+
+        ids.extend(turn_ids)
+        mask.extend(turn_mask)
 
     return ids, mask
 
@@ -63,7 +68,7 @@ def main() -> None:
     parser.add_argument("--hf-split", default="train_sft", help="Dataset split (default: train_sft)")
     parser.add_argument("--max-examples", type=int, default=None, help="Cap number of examples loaded")
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
-    parser.add_argument("--max-len", type=int, default=2048, help="Max tokens per example")
+    parser.add_argument("--max-len", type=int, default=1024, help="Max tokens per example")
     args = parser.parse_args()
 
     try:
@@ -78,13 +83,10 @@ def main() -> None:
     skipped = 0
 
     for record in iter_records(args):
-        ids, mask = format_conversation(record.get("messages", []), tokenizer)
+        ids, mask = format_conversation(record.get("messages", []), tokenizer, args.max_len)
         if not any(mask):
             skipped += 1
             continue
-        if len(ids) > args.max_len:
-            ids = ids[: args.max_len]
-            mask = mask[: args.max_len]
         all_ids.append(torch.tensor(ids, dtype=torch.long))
         all_masks.append(torch.tensor(mask, dtype=torch.bool))
 

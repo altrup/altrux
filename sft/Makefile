@@ -16,9 +16,9 @@ prepare:
 	uv run --no-sync python prepare_data.py $(ARGS)
 
 train:
-	HF_HOME=.cache/huggingface HSA_ENABLE_INTERRUPT=1 \
+	HF_HOME=.cache/huggingface HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 	uv run --no-sync python train.py
 
 resume:
-	HF_HOME=.cache/huggingface HSA_ENABLE_INTERRUPT=1 \
+	HF_HOME=.cache/huggingface HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 	uv run --no-sync python train.py --resume
