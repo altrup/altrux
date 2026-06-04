@@ -2,15 +2,16 @@
 
 ## Cache policy
 
-All caches must live **inside the project subfolder**, not in system or home directories. Never let HuggingFace, uv, or pip write to `~/.cache`.
+All HuggingFace model/tokenizer caches live in **`.cache/huggingface/` at the repo root** (gitignored), shared across all subprojects. Never write to `~/.cache`.
 
-Each project's `Makefile` must set these env vars on every command that touches the network or model weights:
+Each subproject's `Makefile` must point `HF_HOME` at the shared root cache using `$(CURDIR)` so the path is always correct regardless of where make is invoked:
 
 ```makefile
-HF_HOME=.cache/huggingface
-UV_CACHE_DIR=.cache/uv
+# one level deep (e.g. sft/)
+HF_CACHE := $(CURDIR)/../.cache/huggingface
+
+# two levels deep (e.g. continual-learning/backend/)
+HF_CACHE := $(CURDIR)/../../.cache/huggingface
 ```
 
-Each project's `.gitignore` must ignore `.cache/`.
-
-This keeps environments reproducible and self-contained — a `rm -rf sft/` or `rm -rf continual-learning/backend/` cleanly removes everything.
+uv uses its default system cache (`~/.cache/uv`) — no override needed. The root `.gitignore` covers the shared `.cache/`.

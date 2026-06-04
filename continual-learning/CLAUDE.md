@@ -9,3 +9,7 @@ Whenever you change user-facing behaviour — a new endpoint, a new CLI flag, ch
 - `continual-learning/cli/README.md` — CLI commands and flags
 
 For the CLI README, don't enumerate every flag — just keep the usage example and key behaviour accurate, and point users to `--help` for the full option list. For the backend README, keep the API table up to date with any new or changed endpoints.
+
+## Cache policy
+
+HuggingFace cache is shared at the repo root (`../../.cache/huggingface` from `backend/`). The backend `Makefile` sets `HF_HOME=$(CURDIR)/../../.cache/huggingface` on every relevant target. See the root `CLAUDE.md` for the full policy.

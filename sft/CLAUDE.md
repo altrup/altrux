@@ -6,4 +6,6 @@ Whenever you change user-facing behaviour — new CLI flags, changed defaults, a
 
 ## Cache policy
 
-Follow the root `CLAUDE.md` cache policy: all caches go in `.cache/` (gitignored). Every `Makefile` target that downloads weights or packages must set `HF_HOME=.cache/huggingface` and `UV_CACHE_DIR=.cache/uv`.
+HuggingFace cache is shared at the repo root (`../.cache/huggingface`), not inside this folder. The Makefile sets `HF_HOME=$(CURDIR)/../.cache/huggingface` on every relevant target. See the root `CLAUDE.md` for the full policy.
+
+uv uses its default system cache — no override needed.

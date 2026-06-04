@@ -1,3 +1,5 @@
+HF_CACHE := $(CURDIR)/../../.cache/huggingface
+
 .PHONY: sync install dev run spike
 
 sync:
@@ -8,12 +10,13 @@ sync:
 install: sync
 
 spike:
+	HF_HOME=$(HF_CACHE) \
 	uv run --no-sync python spike/check_load.py
 
 dev:
-	HSA_ENABLE_INTERRUPT=1 \
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 \
 	uv run --no-sync uvicorn app.main:app --reload
 
 run:
-	HSA_ENABLE_INTERRUPT=1 \
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 \
 	uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000
