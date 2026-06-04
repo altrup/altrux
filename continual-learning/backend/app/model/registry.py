@@ -1,68 +1,22 @@
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import torch
-from transformers import AutoTokenizer, Mamba2ForCausalLM, Mamba2Config
-from transformers.cache_utils import DynamicCache
-from huggingface_hub import snapshot_download
+from transformers import AutoTokenizer
+from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
+from mamba_ssm.utils.generation import InferenceParams
 
 from .architecture import ContinualLearningModel
 
 _MODEL_ID = "state-spaces/mamba2-780m"
 _TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
+_MAX_SEQ = 8192
 
 _DAT_PATH = Path("data/collected/trunk_hiddens.dat")
 _JSONL_PATH = Path("data/collected/records.jsonl")
-
-def _config_from_state_dict(state_dict: dict) -> Mamba2Config:
-    """Derive Mamba2Config from the weight shapes in a mamba-ssm checkpoint."""
-    vocab_size, hidden_size = state_dict["backbone.embedding.weight"].shape
-    num_hidden_layers = sum(
-        1 for k in state_dict if k.endswith(".mixer.A_log")
-    )
-    num_heads = int(state_dict["backbone.layers.0.mixer.A_log"].shape[0])
-    conv1d_w = state_dict["backbone.layers.0.mixer.conv1d.weight"]
-    conv_kernel = conv1d_w.shape[2]
-    expand = 2  # universal for state-spaces mamba2 checkpoints
-    d_inner = expand * hidden_size
-    state_size = (conv1d_w.shape[0] - d_inner) // 2
-    return Mamba2Config(
-        hidden_size=hidden_size,
-        num_hidden_layers=num_hidden_layers,
-        state_size=state_size,
-        num_heads=num_heads,
-        expand=expand,
-        head_dim=d_inner // num_heads,
-        vocab_size=vocab_size,
-        n_groups=1,
-        conv_kernel=conv_kernel,
-        residual_in_fp32=True,
-        rms_norm=True,
-        tie_word_embeddings=True,
-    )
-
-
-def _load_mamba2_from_pretrained(model_id: str, device: str) -> Mamba2ForCausalLM:
-    """Load a mamba-ssm-format checkpoint into a transformers Mamba2ForCausalLM."""
-    try:
-        cache_path = snapshot_download(model_id, local_files_only=True)
-    except Exception:
-        cache_path = snapshot_download(model_id)
-    state_dict = torch.load(
-        os.path.join(cache_path, "pytorch_model.bin"),
-        map_location="cpu",
-        weights_only=True,
-    )
-    config = _config_from_state_dict(state_dict)
-    # Rename the single mismatched key between mamba-ssm and transformers conventions.
-    state_dict["backbone.embeddings.weight"] = state_dict.pop("backbone.embedding.weight")
-    model = Mamba2ForCausalLM(config)
-    model.load_state_dict(state_dict)
-    return model.to(device)
 
 
 class ModelRegistry:
@@ -76,8 +30,8 @@ class ModelRegistry:
         self.pending_trunk_hidden: np.ndarray | None = None  # (d_model,) float32
         self.pending_token_id: int | None = None
 
-        self._cache: DynamicCache | None = None
-        self._critic_cache: DynamicCache | None = None
+        self._cache: InferenceParams | None = None
+        self._critic_cache: InferenceParams | None = None
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -93,7 +47,7 @@ class ModelRegistry:
         # and excess threads spin-wait, compounding the ROCm HSA busy-wait problem.
         torch.set_num_threads(4)
         device = get_device()
-        mamba_model = _load_mamba2_from_pretrained(_MODEL_ID, device)
+        mamba_model = MambaLMHeadModel.from_pretrained(_MODEL_ID, device=device)
         self.model = ContinualLearningModel(mamba_model)
         self.model.eval()
         self.set_mode("frozen")
@@ -207,8 +161,8 @@ class ModelRegistry:
 
         if self._cache is None:
             # Cold start: process the full session to hydrate both caches.
-            self._cache = DynamicCache(config=self.model._config)
-            self._critic_cache = DynamicCache(config=self.model._critic_config)
+            self._cache = InferenceParams(max_seqlen=_MAX_SEQ, max_batch_size=1)
+            self._critic_cache = InferenceParams(max_seqlen=_MAX_SEQ, max_batch_size=1)
             input_ids = torch.tensor(
                 [self.session_input_ids or [bos_id]],
                 dtype=torch.long,
@@ -225,9 +179,12 @@ class ModelRegistry:
         with torch.no_grad():
             logits, per_token_rewards, trunk_hidden = self.model(
                 input_ids,
-                cache_params=self._cache,
-                critic_cache_params=self._critic_cache,
+                inference_params=self._cache,
+                critic_inference_params=self._critic_cache,
             )
+
+        self._cache.seqlen_offset += input_ids.shape[1]
+        self._critic_cache.seqlen_offset += input_ids.shape[1]
 
         next_token_logits = logits[0, -1, :]
         if temperature == 0.0:

@@ -3,6 +3,7 @@
 sync:
 	uv sync
 	UV_TORCH_BACKEND=auto uv pip install torch
+	MAX_JOBS=12 uv pip install causal-conv1d mamba-ssm --no-build-isolation
 
 install: sync
 

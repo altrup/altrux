@@ -10,8 +10,8 @@ dependencies = [
     "numpy>=2.0",
     "python-dotenv>=1.2.2",
     "transformers>=4.51.0",
-    "huggingface-hub>=0.30.0",
 ]
 
-# torch is installed by `make sync` via uv pip because it requires
-# hardware-specific builds (ROCm/CUDA) that cannot be locked portably in uv.lock.
+# torch, causal-conv1d, and mamba-ssm are installed by `make sync` via uv pip
+# because they require hardware-specific builds (ROCm torch, CUDA/ROCm kernels)
+# that cannot be locked portably in uv.lock.

@@ -1,86 +1,126 @@
-import copy
 import torch
 import torch.nn as nn
 
-from transformers import Mamba2ForCausalLM
-from transformers.cache_utils import Cache
-from transformers.models.mamba2.modeling_mamba2 import Mamba2Block, Mamba2RMSNorm
+from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, create_block
+from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
 
 class ContinualLearningModel(nn.Module):
-    def __init__(self, mamba_model: Mamba2ForCausalLM):
+    def __init__(self, mamba_model: MambaLMHeadModel):
         super().__init__()
         backbone = mamba_model.backbone
-        config = mamba_model.config
         n_layers = len(backbone.layers)
         trunk_end = (n_layers * 2) // 3
         critic_depth = n_layers // 3
 
-        self.d_model: int = config.hidden_size
-        self._config = config
-        critic_cfg = copy.deepcopy(config)
-        critic_cfg.num_hidden_layers = critic_depth
-        self._critic_config = critic_cfg
+        self.d_model: int = backbone.layers[0].mixer.d_model
+        self.fused_add_norm: bool = backbone.fused_add_norm
+        self.residual_in_fp32: bool = backbone.residual_in_fp32
 
-        self.embedding = backbone.embeddings
+        self.embedding = backbone.embedding
         self.trunk_layers = nn.ModuleList(list(backbone.layers[:trunk_end]))
         self.main_layers = nn.ModuleList(list(backbone.layers[trunk_end:]))
         self.norm_f = backbone.norm_f
         self.lm_head = mamba_model.lm_head
 
-        device = backbone.embeddings.weight.device
-        dtype = backbone.embeddings.weight.dtype
+        device = backbone.embedding.weight.device
+        dtype = backbone.embedding.weight.dtype
 
-        self.critic_layers = nn.ModuleList([
-            Mamba2Block(config, layer_idx=i).to(device=device, dtype=dtype)
-            for i in range(critic_depth)
-        ])
-        # Apply the same weight init used by the pre-trained model so A_log is
-        # log(1..num_heads) — this ensures contractive SSM dynamics.
-        for block in self.critic_layers:
-            for submodule in block.modules():
-                mamba_model._init_weights(submodule)
-        self.critic_norm_f = Mamba2RMSNorm(
-            config.hidden_size, eps=config.layer_norm_epsilon
-        ).to(device=device, dtype=dtype)
+        self.critic_layers = nn.ModuleList(
+            _make_critic_blocks(critic_depth, self.d_model, device, dtype)
+        )
+        self.critic_norm_f = RMSNorm(self.d_model, eps=1e-5, device=device, dtype=dtype)
         self.critic_head = nn.Sequential(
-            nn.Linear(config.hidden_size, 1, device=device, dtype=dtype),
+            nn.Linear(self.d_model, 1, device=device, dtype=dtype),
             nn.Tanh(),
         )
 
     def forward(
         self,
         input_ids: torch.Tensor,
-        cache_params: Cache | None = None,
-        critic_cache_params: Cache | None = None,
+        inference_params=None,
+        critic_inference_params=None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Returns (logits, per_token_rewards, trunk_hidden).
           logits:             (B, T, vocab_size)
           per_token_rewards:  (B, T) in [-1, 1]
-          trunk_hidden:       (B, T, d_model) model-dtype, pre-norm trunk output
+          trunk_hidden:       (B, T, d_model) float32, pre-norm trunk output
 
-        When cache_params / critic_cache_params are provided, caches are updated
-        in-place and incremental (single-token) inputs are supported.
+        When inference_params / critic_inference_params are provided, SSM states are
+        updated in-place and incremental (single-token) inputs are supported.
         """
         h = self.embedding(input_ids)
+        residual = None
 
         for layer in self.trunk_layers:
-            h = layer(h, cache_params=cache_params)
+            h, residual = layer(h, residual, inference_params=inference_params)
 
-        # Keep trunk output in model dtype; caller casts the single position it needs.
-        trunk_hidden = h
+        # Unnormalized trunk output in float32; used for data collection and critic entry.
+        trunk_hidden = (h.float() + residual) if residual is not None else h.float()
 
-        # Main path
-        h2 = h
+        # Main path: continue through remaining layers then lm_head.
+        h2, r2 = h, residual
         for layer in self.main_layers:
-            h2 = layer(h2, cache_params=cache_params)
-        logits = self.lm_head(self.norm_f(h2))
+            h2, r2 = layer(h2, r2, inference_params=inference_params)
+        logits = self.lm_head(self._apply_norm_f(h2, r2))
 
         # Critic always runs to keep its SSM state in sync with the main model.
-        h_c = trunk_hidden.detach()
+        h_c = trunk_hidden.detach().to(h.dtype)
+        r_c = None
         for layer in self.critic_layers:
-            h_c = layer(h_c, cache_params=critic_cache_params)
-        per_token_rewards = self.critic_head(self.critic_norm_f(h_c)).squeeze(-1)
+            h_c, r_c = layer(h_c, r_c, inference_params=critic_inference_params)
+        per_token_rewards = self.critic_head(self._apply_critic_norm_f(h_c, r_c)).squeeze(-1)
 
         return logits, per_token_rewards, trunk_hidden
+
+    def _apply_norm_f(self, h: torch.Tensor, residual: torch.Tensor | None) -> torch.Tensor:
+        if not self.fused_add_norm:
+            combined = (h + residual) if residual is not None else h
+            return self.norm_f(combined.to(self.norm_f.weight.dtype))
+        return layer_norm_fn(
+            h,
+            self.norm_f.weight,
+            self.norm_f.bias,
+            eps=self.norm_f.eps,
+            residual=residual,
+            prenorm=False,
+            residual_in_fp32=self.residual_in_fp32,
+            is_rms_norm=isinstance(self.norm_f, RMSNorm),
+        )
+
+    def _apply_critic_norm_f(
+        self, h: torch.Tensor, residual: torch.Tensor | None
+    ) -> torch.Tensor:
+        if not self.fused_add_norm:
+            combined = (h + residual) if residual is not None else h
+            return self.critic_norm_f(combined.to(self.critic_norm_f.weight.dtype))
+        return layer_norm_fn(
+            h,
+            self.critic_norm_f.weight,
+            self.critic_norm_f.bias,
+            eps=self.critic_norm_f.eps,
+            residual=residual,
+            prenorm=False,
+            residual_in_fp32=self.residual_in_fp32,
+            is_rms_norm=True,
+        )
+
+
+def _make_critic_blocks(
+    n_blocks: int, d_model: int, device: torch.device, dtype: torch.dtype
+) -> list:
+    return [
+        create_block(
+            d_model=d_model,
+            d_intermediate=0,
+            ssm_cfg={"layer": "Mamba2"},
+            rms_norm=True,
+            residual_in_fp32=True,
+            fused_add_norm=True,
+            layer_idx=i,
+            device=device,
+            dtype=dtype,
+        )
+        for i in range(n_blocks)
+    ]
