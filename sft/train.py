@@ -115,7 +115,7 @@ def main() -> None:
     parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--ckpt-every", type=int, default=50, help="Save checkpoint every N optimizer steps")
-    parser.add_argument("--keep-ckpts", type=int, default=3, help="Number of checkpoints to retain")
+    parser.add_argument("--keep-ckpts", type=int, default=10, help="Number of checkpoints to retain")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
@@ -201,19 +201,21 @@ def main() -> None:
             ids, mask = ids.to(device), mask.to(device)
             loss, n_tokens = compute_loss(model, ids, mask)
 
-            # weight gradient contribution by token count for correct accumulation
-            (loss * n_tokens).backward()
+            if not torch.isfinite(loss):
+                print(f"  warning: non-finite loss {loss.item()}, skipping example")
+                optimizer.zero_grad()
+                accum_count = 0
+                window_loss_sum = 0.0
+                window_tokens = 0
+                continue
+
+            (loss / args.accum_steps).backward()
             window_loss_sum += loss.item() * n_tokens
             window_tokens += n_tokens
             accum_count += 1
 
             is_last = i == len(order) - 1
             if accum_count == args.accum_steps or is_last:
-                # normalize accumulated gradients by total tokens in the window
-                for p in lora_params:
-                    if p.grad is not None:
-                        p.grad /= window_tokens
-
                 grad_norm = torch.nn.utils.clip_grad_norm_(lora_params, 1.0).item()
                 optimizer.step()
                 optimizer.zero_grad()
@@ -224,6 +226,12 @@ def main() -> None:
                 window_tokens = 0
 
                 print(f"epoch {epoch + 1}  step {global_step:>6}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
+
+                bad = [n for n, p in model.named_parameters() if not torch.isfinite(p).all()]
+                if bad:
+                    print(f"FATAL: non-finite weights after step {global_step}: {bad[:5]}")
+                    print("Checkpoints NOT saved. Exiting.")
+                    raise SystemExit(1)
 
                 if global_step % args.ckpt_every == 0:
                     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
