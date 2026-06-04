@@ -212,5 +212,8 @@ data/
 # Model checkpoints
 checkpoints/
 
+# Training logs
+logs/
+
 # Local caches (HuggingFace, uv)
 .cache/

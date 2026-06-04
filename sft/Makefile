@@ -16,9 +16,11 @@ prepare:
 	uv run --no-sync python prepare_data.py $(ARGS)
 
 train:
+	@mkdir -p logs
 	HF_HOME=.cache/huggingface HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-	uv run --no-sync python train.py
+	uv run --no-sync python train.py 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
 resume:
+	@mkdir -p logs
 	HF_HOME=.cache/huggingface HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-	uv run --no-sync python train.py --resume
+	uv run --no-sync python train.py --resume 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
