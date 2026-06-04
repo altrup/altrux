@@ -36,10 +36,17 @@ def rotate_checkpoints(keep: int) -> None:
         shutil.rmtree(CKPT_DIR / f"step-{step}")
 
 
-def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int) -> Path:
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    step: int,
+    epoch: int,
+    example_idx: int,
+) -> Path:
     path = CKPT_DIR / f"step-{step}"
     save_lora(model, path)
     torch.save(optimizer.state_dict(), path / "optimizer.pt")
+    torch.save({"epoch": epoch, "example_idx": example_idx}, path / "state.pt")
     return path
 
 
@@ -147,6 +154,8 @@ def main() -> None:
     optimizer = torch.optim.AdamW(lora_params, lr=args.lr, weight_decay=0.01)
 
     start_step = 0
+    start_epoch = 0
+    start_example = 0
     if args.resume:
         ckpt = latest_checkpoint()
         if ckpt is not None:
@@ -158,7 +167,12 @@ def main() -> None:
                     torch.load(opt_path, map_location=device, weights_only=True)
                 )
             start_step = int(ckpt.name.split("-")[1])
-            print(f"resumed at step {start_step}")
+            state_path = ckpt / "state.pt"
+            if state_path.exists():
+                state = torch.load(state_path, weights_only=True)
+                start_epoch = state["epoch"]
+                start_example = state["example_idx"] + 1  # resume after last-seen example
+            print(f"resumed at step {start_step}, epoch {start_epoch + 1}, example {start_example}")
         else:
             print("no checkpoint found, starting fresh")
 
@@ -184,14 +198,15 @@ def main() -> None:
     model.train()
     optimizer.zero_grad()
 
-    for epoch in range(args.epochs):
-        order = torch.randperm(n).tolist()
+    for epoch in range(start_epoch, args.epochs):
+        # deterministic shuffle per epoch so resume can reproduce the same order
+        order = torch.randperm(n, generator=torch.Generator().manual_seed(epoch)).tolist()
+        skip = start_example if epoch == start_epoch else 0
         accum_count = 0
-        # track token-weighted loss sum over the accumulation window
         window_loss_sum = 0.0
         window_tokens = 0
 
-        for i, idx in enumerate(order):
+        for i, idx in enumerate(order[skip:], start=skip):
             ids = train_ids[idx]
             mask = train_masks[idx]
 
@@ -235,12 +250,12 @@ def main() -> None:
 
                 if global_step % args.ckpt_every == 0:
                     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
-                    path = save_checkpoint(model, optimizer, global_step)
+                    path = save_checkpoint(model, optimizer, global_step, epoch, i)
                     rotate_checkpoints(args.keep_ckpts)
                     print(f"  eval_loss {el:.4f}  saved {path}")
 
     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
-    path = save_checkpoint(model, optimizer, global_step)
+    path = save_checkpoint(model, optimizer, global_step, epoch, len(order) - 1)
     rotate_checkpoints(args.keep_ckpts)
     print(f"done. eval_loss {el:.4f}  final checkpoint: {path}")
 
