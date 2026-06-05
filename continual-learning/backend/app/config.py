@@ -13,3 +13,8 @@ def get_device() -> str:
         import torch
         return "cuda" if torch.cuda.is_available() else "cpu"
     return _raw
+
+
+def get_sft_checkpoint() -> Path | None:
+    val = os.getenv("SFT_CHECKPOINT", "").strip()
+    return Path(val) if val else None

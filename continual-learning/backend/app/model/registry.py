@@ -42,12 +42,19 @@ class ModelRegistry:
         self._reconcile_data_files()
 
     def _load_blocking(self) -> None:
-        from ..config import get_device
+        from ..config import get_device, get_sft_checkpoint
+        from .lora import apply_lora, load_lora, read_lora_config
         # Limit PyTorch's OpenMP thread pool — GPU inference doesn't need many CPU threads
         # and excess threads spin-wait, compounding the ROCm HSA busy-wait problem.
         torch.set_num_threads(4)
         device = get_device()
         mamba_model = MambaLMHeadModel.from_pretrained(_MODEL_ID, device=device)
+        ckpt = get_sft_checkpoint()
+        if ckpt is not None:
+            print(f"loading SFT checkpoint: {ckpt}")
+            rank, alpha = read_lora_config(ckpt)
+            apply_lora(mamba_model, ["in_proj", "out_proj"], rank, alpha)
+            load_lora(mamba_model, ckpt)
         self.model = ContinualLearningModel(mamba_model)
         self.model.eval()
         self.set_mode("frozen")

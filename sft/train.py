@@ -42,9 +42,11 @@ def save_checkpoint(
     step: int,
     epoch: int,
     example_idx: int,
+    lora_rank: int,
+    lora_alpha: float,
 ) -> Path:
     path = CKPT_DIR / f"step-{step}"
-    save_lora(model, path)
+    save_lora(model, path, lora_rank, lora_alpha)
     torch.save(optimizer.state_dict(), path / "optimizer.pt")
     torch.save({"epoch": epoch, "example_idx": example_idx}, path / "state.pt")
     return path
@@ -250,12 +252,12 @@ def main() -> None:
 
                 if global_step % args.ckpt_every == 0:
                     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
-                    path = save_checkpoint(model, optimizer, global_step, epoch, i)
+                    path = save_checkpoint(model, optimizer, global_step, epoch, i, args.lora_rank, args.lora_alpha)
                     rotate_checkpoints(args.keep_ckpts)
                     print(f"  eval_loss {el:.4f}  saved {path}")
 
     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
-    path = save_checkpoint(model, optimizer, global_step, epoch, len(order) - 1)
+    path = save_checkpoint(model, optimizer, global_step, epoch, len(order) - 1, args.lora_rank, args.lora_alpha)
     rotate_checkpoints(args.keep_ckpts)
     print(f"done. eval_loss {el:.4f}  final checkpoint: {path}")
 

@@ -59,11 +59,13 @@ def apply_lora(
     return model
 
 
-def save_lora(model: nn.Module, path: str | Path) -> None:
+def save_lora(model: nn.Module, path: str | Path, rank: int, alpha: float) -> None:
+    import json
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     state = {k: v for k, v in model.state_dict().items() if "lora_A" in k or "lora_B" in k}
     torch.save(state, path / "adapter.pt")
+    (path / "lora_config.json").write_text(json.dumps({"rank": rank, "alpha": alpha}))
 
 
 def load_lora(model: nn.Module, path: str | Path) -> nn.Module:

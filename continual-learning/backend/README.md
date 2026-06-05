@@ -23,6 +23,15 @@ make sync
 
 > **First run**: kernel compilation takes several minutes. Compiled kernels are cached in `~/.triton/cache/` — subsequent runs are fast.
 
+## Configuration
+
+Copy `.env.example` to `.env` and adjust as needed. Key variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEVICE` | `auto` | `auto` uses CUDA/ROCm if available |
+| `SFT_CHECKPOINT` | _(unset)_ | Path to an SFT checkpoint directory (e.g. `../../sft/checkpoints/step-1200`). When set, LoRA adapter weights are applied on top of the base model at startup. Rank and alpha are read automatically from `lora_config.json` inside the checkpoint. Leave unset to run the plain base model. |
+
 ## Running
 
 ```bash

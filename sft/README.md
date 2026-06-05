@@ -44,11 +44,16 @@ See `python train.py --help` for all options (learning rate, rank, accumulation 
 
 ## Using the adapter
 
+Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them:
+
 ```python
+import json
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from lora import apply_lora, load_lora
 
+ckpt = "checkpoints/step-N"
+cfg = json.loads(open(f"{ckpt}/lora_config.json").read())
 model = MambaLMHeadModel.from_pretrained("state-spaces/mamba2-780m", dtype=torch.float32)
-model = apply_lora(model, ["in_proj", "out_proj"])
-load_lora(model, "checkpoints/step-N")
+model = apply_lora(model, ["in_proj", "out_proj"], cfg["rank"], cfg["alpha"])
+load_lora(model, ckpt)
 ```
