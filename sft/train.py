@@ -13,27 +13,37 @@ MODEL_ID = "state-spaces/mamba2-780m"
 TARGET_MODULES = ["in_proj", "out_proj"]
 
 
+def iter_checkpoints():
+    """Yield (step, path) for every checkpoints/epoch-*/step-* directory.
+    Step numbers are globally monotonic, so they order checkpoints across epochs."""
+    if not CKPT_DIR.exists():
+        return
+    for epoch_dir in CKPT_DIR.glob("epoch-*"):
+        if not epoch_dir.is_dir():
+            continue
+        for p in epoch_dir.iterdir():
+            if p.is_dir() and p.name.startswith("step-"):
+                yield int(p.name.split("-")[1]), p
+
+
 def latest_checkpoint() -> Path | None:
-    if not CKPT_DIR.exists():
-        return None
-    steps = sorted(
-        int(p.name.split("-")[1])
-        for p in CKPT_DIR.iterdir()
-        if p.is_dir() and p.name.startswith("step-")
-    )
-    return CKPT_DIR / f"step-{steps[-1]}" if steps else None
+    ckpts = sorted(iter_checkpoints())
+    return ckpts[-1][1] if ckpts else None
 
 
-def rotate_checkpoints(keep: int) -> None:
-    if not CKPT_DIR.exists():
+def rotate_checkpoints(keep: int, epoch: int) -> None:
+    """Keep only the newest `keep` checkpoints within this epoch's folder, so a
+    later epoch never prunes an earlier epoch's history."""
+    epoch_dir = CKPT_DIR / f"epoch-{epoch + 1}"
+    if not epoch_dir.exists():
         return
     steps = sorted(
         int(p.name.split("-")[1])
-        for p in CKPT_DIR.iterdir()
+        for p in epoch_dir.iterdir()
         if p.is_dir() and p.name.startswith("step-")
     )
     for step in steps[:-keep]:
-        shutil.rmtree(CKPT_DIR / f"step-{step}")
+        shutil.rmtree(epoch_dir / f"step-{step}")
 
 
 def save_checkpoint(
@@ -45,26 +55,36 @@ def save_checkpoint(
     lora_rank: int,
     lora_alpha: float,
 ) -> Path:
-    path = CKPT_DIR / f"step-{step}"
+    path = CKPT_DIR / f"epoch-{epoch + 1}" / f"step-{step}"
     save_lora(model, path, lora_rank, lora_alpha)
     torch.save(optimizer.state_dict(), path / "optimizer.pt")
     torch.save({"epoch": epoch, "example_idx": example_idx}, path / "state.pt")
     return path
 
 
+EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
+
+
 def compute_loss(
     model: torch.nn.Module,
     ids: torch.Tensor,
     mask: torch.Tensor,
-) -> tuple[torch.Tensor, int]:
-    """Returns (loss, n_tokens). Loss is mean over assistant tokens."""
+    eos_weight: float = 1.0,
+) -> tuple[torch.Tensor, float]:
+    """Returns (loss, weight). loss is the (optionally EOS-weighted) mean over
+    assistant tokens; weight is the sum of loss weights — equal to the assistant
+    token count when eos_weight == 1.0 — and is the correct factor for combining
+    per-example losses into a corpus mean."""
     input_ids = ids[:-1].unsqueeze(0)
     target_ids = ids[1:].unsqueeze(0)
-    loss_mask = mask[1:].float()
-    n_tokens = int(loss_mask.sum().item())
+    loss_mask = mask[1:].float().clone()  # clone: never mutate the cached mask in place
+    if eos_weight != 1.0:
+        eos_positions = (target_ids.view(-1) == EOS_ID) & (loss_mask > 0)
+        loss_mask[eos_positions] = eos_weight
+    weight = loss_mask.sum()
     logits = model(input_ids).logits
     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_ids.view(-1), reduction="none")
-    return (loss * loss_mask).sum() / loss_mask.sum(), n_tokens
+    return (loss * loss_mask).sum() / weight, weight.item()
 
 
 def eval_loss(
@@ -94,6 +114,7 @@ def preflight(
     all_masks: list[torch.Tensor],
     device: torch.device,
     max_len: int,
+    eos_weight: float = 1.0,
 ) -> None:
     sample_ids = sample_mask = None
     for ids, mask in zip(all_ids, all_masks):
@@ -103,7 +124,7 @@ def preflight(
     assert sample_ids is not None, "no valid examples found in dataset"
 
     model.train()
-    loss, _ = compute_loss(model, sample_ids.to(device), sample_mask.to(device))
+    loss, _ = compute_loss(model, sample_ids.to(device), sample_mask.to(device), eos_weight)
     loss.backward()
 
     grads_nonzero = sum(1 for p in lora_params if p.grad is not None and p.grad.abs().max() > 0)
@@ -128,6 +149,7 @@ def main() -> None:
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,7 +216,7 @@ def main() -> None:
     n = len(train_ids)
     print(f"train: {n}  eval: {n_eval}  epochs: {args.epochs}")
 
-    preflight(model, lora_params, train_ids, train_masks, device, args.max_len)
+    preflight(model, lora_params, train_ids, train_masks, device, args.max_len, args.eos_weight)
 
     global_step = start_step
     model.train()
@@ -216,7 +238,7 @@ def main() -> None:
                 continue
 
             ids, mask = ids.to(device), mask.to(device)
-            loss, n_tokens = compute_loss(model, ids, mask)
+            loss, weight = compute_loss(model, ids, mask, args.eos_weight)
 
             if not torch.isfinite(loss):
                 print(f"  warning: non-finite loss {loss.item()}, skipping example")
@@ -227,8 +249,8 @@ def main() -> None:
                 continue
 
             (loss / args.accum_steps).backward()
-            window_loss_sum += loss.item() * n_tokens
-            window_tokens += n_tokens
+            window_loss_sum += loss.item() * weight
+            window_tokens += weight
             accum_count += 1
 
             is_last = i == len(order) - 1
@@ -253,12 +275,16 @@ def main() -> None:
                 if global_step % args.ckpt_every == 0:
                     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
                     path = save_checkpoint(model, optimizer, global_step, epoch, i, args.lora_rank, args.lora_alpha)
-                    rotate_checkpoints(args.keep_ckpts)
+                    rotate_checkpoints(args.keep_ckpts, epoch)
                     print(f"  eval_loss {el:.4f}  saved {path}")
+
+    if global_step == start_step:
+        print("nothing to train — already at or past the requested epochs. Pass a larger --epochs to continue.")
+        return
 
     el = eval_loss(model, eval_ids, eval_masks, device, args.max_len)
     path = save_checkpoint(model, optimizer, global_step, epoch, len(order) - 1, args.lora_rank, args.lora_alpha)
-    rotate_checkpoints(args.keep_ckpts)
+    rotate_checkpoints(args.keep_ckpts, epoch)
     print(f"done. eval_loss {el:.4f}  final checkpoint: {path}")
 
 

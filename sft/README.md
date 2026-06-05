@@ -34,11 +34,16 @@ See `python prepare_data.py --help` for all options (`--max-examples`, `--hf-spl
 ## Training
 
 ```bash
-make train    # start fresh
-make resume   # resume from latest checkpoint
+make train                      # start fresh
+make resume                     # resume from latest checkpoint
+make resume ARGS="--epochs 2"   # resume and train an extra epoch
 ```
 
-Checkpoints are saved every 100 steps to `checkpoints/step-N/` (LoRA adapter + optimizer state). Only the last 3 checkpoints are kept; older ones are deleted automatically.
+Pass any `train.py` flag through either target with `ARGS="..."` (e.g. `make train ARGS="--eos-weight 10"`).
+
+Checkpoints are saved every 50 optimizer steps to `checkpoints/epoch-E/step-N/` (LoRA adapter + optimizer state), where `E` is the 1-indexed epoch. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every` and `--keep-ckpts`.
+
+**EOS under-generation**: if the model doesn't emit `<|endoftext|>` to end turns, pass `--eos-weight 5` (or higher) to upweight EOS positions in the loss. EOS tokens are ~0.8% of assistant tokens so they get little gradient by default.
 
 See `python train.py --help` for all options (learning rate, rank, accumulation steps, etc.).
 
