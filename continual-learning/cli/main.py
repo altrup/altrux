@@ -136,13 +136,14 @@ def chat(
             sess_resp.raise_for_status()
             sess = sess_resp.json()
 
-            # Build display: all text up to the generated token, then highlight it.
-            # On EOS, don't render the raw <|endoftext|> token — the <end of text>
-            # marker below signals the stop. (EOS still lives in the session.)
+            # Build display: render all text up to the latest token, then highlight it.
+            # EOS (id 0) renders as a newline rather than the literal <|endoftext|>, so
+            # turns separate cleanly. Display-only — the session keeps the real token, so
+            # the model still conditions on the trained <EOS>[USER] format.
             tokens = sess["tokens"]
             display = Text()
             if tokens:
-                display.append("".join(t["text"] for t in tokens[:-1]))
+                display.append("".join("\n" if t["id"] == 0 else t["text"] for t in tokens[:-1]))
                 if not last_token.get("is_eos"):
                     display.append(f"[{tokens[-1]['text']}]", style="bold green")
 
