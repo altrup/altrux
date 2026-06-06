@@ -11,6 +11,7 @@ from ..schemas import (
     GenerateResponse,
     GeneratedToken,
     SessionInputRequest,
+    SessionMessageRequest,
     SessionResponse,
     TokenInfo,
 )
@@ -40,6 +41,18 @@ async def reset_session() -> SessionResponse:
 async def session_input(req: SessionInputRequest) -> SessionResponse:
     async with registry.lock:
         registry.append_input(req.text)
+    return SessionResponse(
+        text=registry.get_session_text(),
+        tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
+    )
+
+
+@router.put("/session/message", response_model=SessionResponse)
+async def session_message(req: SessionMessageRequest) -> SessionResponse:
+    """Append a chat turn, wrapped with the configured role openers (USER_OPEN /
+    ASST_OPEN) so you don't have to type them by hand. Defaults to the user role."""
+    async with registry.lock:
+        registry.append_message(req.role, req.content)
     return SessionResponse(
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],

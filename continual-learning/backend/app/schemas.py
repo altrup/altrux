@@ -20,6 +20,11 @@ class SessionInputRequest(BaseModel):
     text: str
 
 
+class SessionMessageRequest(BaseModel):
+    role: str = Field(default="user", pattern="^(user|assistant)$")
+    content: str
+
+
 class GenerateRequest(BaseModel):
     max_tokens: int = Field(default=512, ge=1, le=2048)
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)

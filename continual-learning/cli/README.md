@@ -20,15 +20,13 @@ The `cl` command is then available in your PATH. Because it's an editable instal
 cl chat
 ```
 
-Continues the existing session if one is in progress, or prompts for initial text if the session is empty. Each turn the backend streams a response (until EOS) and the display updates live as tokens arrive, with the newly generated tokens highlighted. Then you're prompted to inject more text — submit empty to quit.
+The conversation flows inline like a transcript. You type after the `[USER] ` prompt; the backend wraps it with the configured `[USER] ` opener, so you don't type that by hand. The assistant response then streams in place below it (in green) — the model emits its own `[ASSISTANT] ` opener, so it appears at the start of the response. Then the next `[USER] ` prompt appears. Submit an empty message to quit.
 
 ```
-Continuing session (12 tokens)
-
-─────────────────────────────────────────
-Once upon a time there was a king who ruled a small kingdom.
-─────────────────────────────────────────
-Inject text into session (Enter on empty = quit):
+Enter = new line  |  Meta+Enter (or Esc then Enter) = submit  |  empty = quit
+[USER] Hello
+[ASSISTANT] How can I help you today?
+[USER]
 ```
 
 Run `cl chat --help` for all options (e.g. `--temperature`, `--top-p`, `--reset`).
@@ -38,7 +36,8 @@ Run `cl chat --help` for all options (e.g. `--temperature`, `--top-p`, `--reset`
 ```bash
 cl health                        # server status
 cl session get                   # print current session token history
-cl session reset --text "Hello"  # reset conversation to given text
+cl session message "Hello"       # append a chat turn (wrapped with role openers)
+cl session reset --text "Hello"  # reset conversation to given raw text
 ```
 
 All commands accept `--url` to point at a non-default server:

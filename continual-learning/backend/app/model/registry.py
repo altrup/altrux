@@ -72,9 +72,31 @@ class ModelRegistry:
             self.session_input_ids = self.tokenizer.encode(text)
 
     def append_input(self, text: str) -> None:
-        """Append user text to the session and invalidate the cache."""
+        """Append raw text to the session and invalidate the cache."""
         assert self.tokenizer is not None
         self.session_input_ids.extend(self.tokenizer.encode(text))
+        self._cache = None
+
+    def append_message(self, role: str, content: str) -> None:
+        """Append a chat turn formatted with the configured role openers.
+
+        Matches the fine-tuning format (see sft/prepare_data.py): user turns are
+        `USER_OPEN + content + "\\n"`; assistant turns are `ASST_OPEN + content`
+        followed by EOS. Special tokens are not added — the openers carry the
+        structure, exactly as during training.
+        """
+        assert self.tokenizer is not None
+        from ..config import ASST_OPEN, USER_OPEN
+
+        if role == "user":
+            ids = self.tokenizer.encode(USER_OPEN + content + "\n", add_special_tokens=False)
+        elif role == "assistant":
+            ids = self.tokenizer.encode(ASST_OPEN + content, add_special_tokens=False)
+            ids = ids + [self.tokenizer.eos_token_id]
+        else:
+            raise ValueError(f"unknown role: {role!r}")
+
+        self.session_input_ids.extend(ids)
         self._cache = None
 
     def get_session_tokens(self) -> list[dict]:
