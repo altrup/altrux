@@ -10,8 +10,14 @@ class LoRALinear(nn.Module):
         super().__init__()
         self.linear = linear
         self.scale = alpha / rank
-        self.lora_A = nn.Parameter(torch.empty(rank, linear.in_features))
-        self.lora_B = nn.Parameter(torch.zeros(linear.out_features, rank))
+        # Create the adapter params on the same device/dtype as the layer they wrap,
+        # so apply_lora works whether the base model is already on GPU or still on CPU.
+        self.lora_A = nn.Parameter(
+            torch.empty(rank, linear.in_features, device=linear.weight.device, dtype=linear.weight.dtype)
+        )
+        self.lora_B = nn.Parameter(
+            torch.zeros(linear.out_features, rank, device=linear.weight.device, dtype=linear.weight.dtype)
+        )
         nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
         linear.weight.requires_grad_(False)
         if linear.bias is not None:

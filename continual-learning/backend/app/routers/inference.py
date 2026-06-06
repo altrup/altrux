@@ -86,7 +86,7 @@ async def generate(req: GenerateRequest) -> GenerateResponse:
 
     return GenerateResponse(
         tokens=generated,
-        generated_text="".join(t.token for t in generated),
+        generated_text="".join(t.token for t in generated if not t.is_eos),
     )
 
 

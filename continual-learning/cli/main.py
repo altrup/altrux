@@ -136,12 +136,15 @@ def chat(
             sess_resp.raise_for_status()
             sess = sess_resp.json()
 
-            # Build display: all text up to generated token, then highlight it
+            # Build display: all text up to the generated token, then highlight it.
+            # On EOS, don't render the raw <|endoftext|> token — the <end of text>
+            # marker below signals the stop. (EOS still lives in the session.)
             tokens = sess["tokens"]
             display = Text()
             if tokens:
                 display.append("".join(t["text"] for t in tokens[:-1]))
-                display.append(f"[{tokens[-1]['text']}]", style="bold green")
+                if not last_token.get("is_eos"):
+                    display.append(f"[{tokens[-1]['text']}]", style="bold green")
 
             console.print(Rule())
             console.print(display)

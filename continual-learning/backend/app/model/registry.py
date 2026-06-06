@@ -48,6 +48,12 @@ class ModelRegistry:
         # and excess threads spin-wait, compounding the ROCm HSA busy-wait problem.
         torch.set_num_threads(4)
         device = get_device()
+        if device.startswith("cuda"):
+            print(f"device: {device} — {torch.cuda.get_device_name(device)} (index {torch.cuda.current_device()})")
+            print(f"  VRAM total:  {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
+            print(f"  VRAM free:   {torch.cuda.mem_get_info(device)[0] / 1024**3:.1f} GB")
+        else:
+            print(f"device: {device} (no CUDA/ROCm device found)")
         mamba_model = MambaLMHeadModel.from_pretrained(_MODEL_ID, device=device)
         ckpt = get_sft_checkpoint()
         if ckpt is not None:

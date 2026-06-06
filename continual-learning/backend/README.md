@@ -60,6 +60,8 @@ make run
 | POST | `/generate` | Generate one token — `{"temperature": 0.8, "top_p": 0.95}` |
 | POST | `/reward` | Submit reward — `{"reward": 0.8}` |
 
+**Generation:** `/generate` runs until the model emits EOS (`<|endoftext|>`) or `max_tokens` is reached. The response `generated_text` is the clean readable output with the trailing EOS token stripped; the per-token `tokens` list still includes it flagged `is_eos: true`, so you can tell a natural stop from a `max_tokens` cutoff. The EOS token is kept in the session history either way, so it's fed back into the model on continued generation.
+
 **Modes:**
 - `frozen` — no parameter updates; data is collected for critic training
 - `unfrozen` — base model parameters trainable, critic frozen (no train step in v1)
