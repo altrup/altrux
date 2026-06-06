@@ -1,12 +1,17 @@
 import json
+import os
+from pathlib import Path
 from typing import Annotated
 
 import httpx
 import typer
+from dotenv import load_dotenv
 from prompt_toolkit import prompt as pt_prompt
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 from rich.text import Text
+
+load_dotenv(Path(__file__).parent / ".env")
 
 app = typer.Typer(no_args_is_help=True)
 session_app = typer.Typer()
@@ -18,10 +23,43 @@ _DEFAULT_URL = "http://localhost:8000"
 
 _HELP = "Enter = new line  |  Meta+Enter (or Esc then Enter) = submit  |  empty = quit"
 
+# Role openers — must match the server's USER_OPEN / ASST_OPEN (see backend config).
+# The trailing space is significant.
+_USER_OPEN = os.getenv("USER_OPEN", "[USER] ")
+_ASST_OPEN = os.getenv("ASST_OPEN", "[ASSISTANT] ")
+
 
 def _user_prompt() -> str:
     """Inline `[USER] ` prompt; the typed text stays in the transcript."""
-    return pt_prompt(HTML("<ansicyan>[USER] </ansicyan>"), multiline=True)
+    return pt_prompt(HTML(f"<ansicyan>{_USER_OPEN}</ansicyan>"), multiline=True)
+
+
+def _styled_transcript(full: str) -> Text:
+    """Recolor a replayed transcript to match how it looked when typed live.
+
+    The transcript is a flat string segmented by the role openers: the `[USER] `
+    opener is cyan with default-coloured user text after it, while the entire
+    assistant turn (opener + response) is bold green.
+    """
+    out = Text()
+    i = 0
+    role: str | None = None
+    while i < len(full):
+        if full.startswith(_USER_OPEN, i):
+            out.append(_USER_OPEN, style="cyan")
+            i += len(_USER_OPEN)
+            role = "user"
+        elif full.startswith(_ASST_OPEN, i):
+            i += len(_ASST_OPEN)
+            role = "assistant"
+            out.append(_ASST_OPEN, style="bold green")
+        else:
+            # Consume up to the next opener; this chunk belongs to the current role.
+            nexts = [p for p in (full.find(_USER_OPEN, i), full.find(_ASST_OPEN, i)) if p != -1]
+            end = min(nexts) if nexts else len(full)
+            out.append(full[i:end], style="bold green" if role == "assistant" else None)
+            i = end
+    return out
 
 
 def _client(url: str) -> httpx.Client:
@@ -107,12 +145,11 @@ def chat(
         if reset or not has_session:
             c.delete("/session").raise_for_status()
         else:
-            # Replay the existing transcript so the conversation reads continuously.
-            # EOS (id 0) renders as a newline rather than the literal <|endoftext|>.
-            transcript = Text()
-            for t in existing["tokens"]:
-                transcript.append("\n" if t["id"] == 0 else t["text"])
-            console.print(transcript, end="", soft_wrap=True)
+            # Replay the existing transcript so the conversation reads continuously,
+            # recoloured to match the live view (cyan user openers, green assistant
+            # turns). EOS (id 0) renders as a newline rather than <|endoftext|>.
+            full = "".join("\n" if t["id"] == 0 else t["text"] for t in existing["tokens"])
+            console.print(_styled_transcript(full), end="", soft_wrap=True)
 
         # The transcript flows inline: each turn prints the `[USER] ` prompt (typed in
         # place), then streams the assistant response — which begins with the model's

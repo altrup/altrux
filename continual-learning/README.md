@@ -1,6 +1,6 @@
 # Continual Learning Model
 
-Goal is to build toward an LLM that can revise its own output based on user feedback. The model is fine-tuned to **emit a `<revise>` tag after its response**, which becomes the trigger for a revision step.
+Goal is to build toward an LLM that can revise its own output based on user feedback. The model is fine-tuned to **emit a `<revise>` tag after a user's response**, which becomes the trigger for a revision step.
 
 ## Base Model
 

@@ -46,6 +46,13 @@ All commands accept `--url` to point at a non-default server:
 cl chat --url http://myserver:8000
 ```
 
+## Configuration
+
+The role openers used to label the input prompt and recolour the replayed transcript
+(cyan user openers, green assistant turns) are read from a `.env` file in this directory.
+Copy `.env.example` to `.env` to override them; they must match the server's `USER_OPEN` /
+`ASST_OPEN` (`backend/.env`). The defaults are `[USER] ` and `[ASSISTANT] `.
+
 ## Default server
 
 `http://localhost:8000` — start the backend with `make dev` from `continual-learning/backend/`.
