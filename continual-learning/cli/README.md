@@ -1,13 +1,13 @@
 # CL CLI
 
-Interactive command-line client for the continual learning backend. Generates tokens one at a time and lets you rate each one, collecting reward data for critic training.
+Interactive command-line client for the continual learning backend. Generates a full response (until EOS) each turn, then lets you inject more text to continue the conversation.
 
 ## Setup
 
-Install once as a system-wide tool via uv:
+From this directory (`continual-learning/cli/`), install once as a system-wide tool via uv:
 
 ```bash
-uv tool install --editable continual-learning/cli
+uv tool install --editable .
 ```
 
 The `cl` command is then available in your PATH. Because it's an editable install, changes to `main.py` take effect immediately without reinstalling.
@@ -20,32 +20,23 @@ The `cl` command is then available in your PATH. Because it's an editable instal
 cl chat
 ```
 
-Continues the existing session if one is in progress, or prompts for initial text if the session is empty. Generates one token at a time — after each token the full conversation is shown with the newest token highlighted.
+Continues the existing session if one is in progress, or prompts for initial text if the session is empty. Each turn the backend streams a response (until EOS) and the display updates live as tokens arrive, with the newly generated tokens highlighted. Then you're prompted to inject more text — submit empty to quit.
 
 ```
 Continuing session (12 tokens)
 
 ─────────────────────────────────────────
-Once upon a time there was a [king]
+Once upon a time there was a king who ruled a small kingdom.
 ─────────────────────────────────────────
-critic: 0.0023  (random — critic not yet trained)
-Reward [-1..1, Enter=skip, q=quit]: 0.8
-  ✓ saved (total: 1)
+Inject text into session (Enter on empty = quit):
 ```
 
-- **Enter** — skip, no reward saved
-- **float** — save reward in [-1, 1]
-- **`history`** — print full token list with IDs
-- **`q`** — quit
-
-Run `cl chat --help` for all options.
+Run `cl chat --help` for all options (e.g. `--temperature`, `--top-p`, `--reset`).
 
 ### Other commands
 
 ```bash
 cl health                        # server status
-cl mode get                      # current mode (frozen/unfrozen)
-cl mode set frozen               # switch mode
 cl session get                   # print current session token history
 cl session reset --text "Hello"  # reset conversation to given text
 ```

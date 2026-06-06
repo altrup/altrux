@@ -1,6 +1,6 @@
 # CL Backend
 
-FastAPI server that loads the continual learning model and exposes API endpoints for token generation, per-token reward collection, and session management.
+FastAPI server that loads the continual learning model and exposes API endpoints for token generation and session management. It exists for testing the model interactively; the model generates tokens until EOS.
 
 ## Requirements
 
@@ -50,26 +50,14 @@ make run
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Status, mode, records collected |
+| GET | `/health` | Status, whether the model is loaded |
 | GET | `/device` | Which GPU the model is on |
-| GET | `/mode` | Current mode (`frozen` / `unfrozen`) |
-| POST | `/mode` | Switch mode — `{"mode": "frozen"}` |
 | GET | `/session` | Full token history (source of truth) |
 | DELETE | `/session` | Clear the session |
 | PUT | `/session` | Append user text — `{"text": "tell me more"}` |
-| POST | `/generate` | Generate one token — `{"temperature": 0.8, "top_p": 0.95}` |
-| POST | `/reward` | Submit reward — `{"reward": 0.8}` |
+| POST | `/generate` | Generate a response (batch) — `{"temperature": 0.8, "top_p": 0.95}` |
+| POST | `/generate/stream` | Same, but stream tokens as NDJSON as they're generated |
 
-**Generation:** `/generate` runs until the model emits EOS (`<|endoftext|>`) or `max_tokens` is reached. The response `generated_text` is the clean readable output with the trailing EOS token stripped; the per-token `tokens` list still includes it flagged `is_eos: true`, so you can tell a natural stop from a `max_tokens` cutoff. The EOS token is kept in the session history either way, so it's fed back into the model on continued generation.
+**Generation:** both endpoints run until the model emits EOS (`<|endoftext|>`) or `max_tokens` is reached (default 512). `/generate` returns the whole response at once: `generated_text` is the clean readable output with the trailing EOS token stripped, while the per-token `tokens` list still includes it flagged `is_eos: true`, so you can tell a natural stop from a `max_tokens` cutoff. `/generate/stream` emits one JSON object per line (`{"token", "token_id", "is_eos"}`) as each token is produced — used by the CLI for live-updating output. The EOS token is kept in the session history either way, so it's fed back into the model on continued generation.
 
-**Modes:**
-- `frozen` — no parameter updates; data is collected for critic training
-- `unfrozen` — base model parameters trainable, critic frozen (no train step in v1)
-
-## Data
-
-Collected training data is written to `data/collected/` (gitignored):
-- `trunk_hiddens.dat` — raw float32 bytes, one `d_model`-length vector per record
-- `records.jsonl` — `{"index", "token_id", "reward"}` per line
-
-Both files are O(1)-append and reconciled on startup to recover from crashes.
+The model is being fine-tuned to emit a `<revise>` tag after its response. For now that tag is generated as ordinary text — detecting it and acting on it is a TODO (see the top-level `README.md`).

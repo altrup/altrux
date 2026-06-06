@@ -1,4 +1,4 @@
-import sys
+import json
 from typing import Annotated
 
 import httpx
@@ -6,13 +6,12 @@ import typer
 from prompt_toolkit import prompt as pt_prompt
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
+from rich.live import Live
 from rich.rule import Rule
 from rich.text import Text
 
 app = typer.Typer(no_args_is_help=True)
-mode_app = typer.Typer()
 session_app = typer.Typer()
-app.add_typer(mode_app, name="mode")
 app.add_typer(session_app, name="session")
 
 console = Console()
@@ -40,30 +39,6 @@ def _client(url: str) -> httpx.Client:
 def health(url: Annotated[str, typer.Option()] = _DEFAULT_URL) -> None:
     with _client(url) as c:
         r = c.get("/health")
-        r.raise_for_status()
-    console.print_json(r.text)
-
-
-# ------------------------------------------------------------------
-# mode
-# ------------------------------------------------------------------
-
-
-@mode_app.command("get")
-def mode_get(url: Annotated[str, typer.Option()] = _DEFAULT_URL) -> None:
-    with _client(url) as c:
-        r = c.get("/mode")
-        r.raise_for_status()
-    console.print_json(r.text)
-
-
-@mode_app.command("set")
-def mode_set(
-    value: str,
-    url: Annotated[str, typer.Option()] = _DEFAULT_URL,
-) -> None:
-    with _client(url) as c:
-        r = c.post("/mode", json={"mode": value})
         r.raise_for_status()
     console.print_json(r.text)
 
@@ -125,82 +100,39 @@ def chat(
             console.print(f"[dim]Continuing session ({len(existing['tokens'])} tokens)[/dim]")
 
         while True:
-            # Generate next token
-            gen_resp = c.post("/generate", json={"temperature": temperature, "top_p": top_p})
-            gen_resp.raise_for_status()
-            gen = gen_resp.json()
-            last_token = gen["tokens"][-1]
-
-            # Fetch full session for context display
-            sess_resp = c.get("/session")
-            sess_resp.raise_for_status()
-            sess = sess_resp.json()
-
-            # Build display: render all text up to the latest token, then highlight it.
-            # EOS (id 0) renders as a newline rather than the literal <|endoftext|>, so
-            # turns separate cleanly. Display-only — the session keeps the real token, so
-            # the model still conditions on the trained <EOS>[USER] format.
-            tokens = sess["tokens"]
+            # Render the existing context, then stream the new response into it,
+            # updating the display live as each token arrives. EOS (id 0) renders as a
+            # newline rather than the literal <|endoftext|>, so turns separate cleanly.
+            # Display-only — the session keeps the real token, so the model still
+            # conditions on the trained <EOS>[USER] format.
+            sess = c.get("/session").raise_for_status().json()
             display = Text()
-            if tokens:
-                display.append("".join("\n" if t["id"] == 0 else t["text"] for t in tokens[:-1]))
-                if not last_token.get("is_eos"):
-                    display.append(f"[{tokens[-1]['text']}]", style="bold green")
+            for t in sess["tokens"]:
+                display.append("\n" if t["id"] == 0 else t["text"])
 
             console.print(Rule())
-            console.print(display)
+            with Live(display, console=console, auto_refresh=False) as live:
+                live.refresh()
+                with c.stream(
+                    "POST", "/generate/stream",
+                    json={"temperature": temperature, "top_p": top_p},
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line.strip():
+                            continue
+                        tok = json.loads(line)
+                        display.append(
+                            "\n" if tok["token_id"] == 0 else tok["token"],
+                            style="bold green",
+                        )
+                        live.refresh()
             console.print(Rule())
 
-            if last_token.get("is_eos"):
-                console.print("[dim]<end of text>[/dim]")
-                user_msg = _prompt("Inject text into session:")
-                if not user_msg.strip():
-                    break
-                c.put("/session", json={"text": user_msg}).raise_for_status()
-                continue
-
-            if last_token["critic_reward"] is not None:
-                console.print(
-                    f"critic: [dim]{last_token['critic_reward']:.4f}  {last_token.get('critic_reward_note', '')}[/dim]"
-                )
-
-            raw = pt_prompt("Reward [-1..1, Enter=skip, i=interrupt, q=quit]: ")
-
-            if raw.strip().lower() == "q":
+            user_msg = _prompt("Inject text into session (Enter on empty = quit):")
+            if not user_msg.strip():
                 break
-
-            if raw.strip().lower() == "i":
-                user_msg = _prompt("Inject text into session:")
-                if user_msg.strip():
-                    c.put("/session", json={"text": user_msg}).raise_for_status()
-                continue
-
-            if raw.strip() == "":
-                continue
-
-            if raw.strip().lower() == "history":
-                for t in sess["tokens"]:
-                    console.print(f"  {t['id']:6d}  {repr(t['text'])}")
-                continue
-
-            try:
-                reward = float(raw.strip())
-            except ValueError:
-                console.print("[red]Invalid reward — enter a number in [-1, 1] or press Enter to skip.[/red]")
-                continue
-
-            if not -1.0 <= reward <= 1.0:
-                console.print("[red]Reward must be in [-1, 1].[/red]")
-                continue
-
-            reward_resp = c.post("/reward", json={"reward": reward})
-            reward_resp.raise_for_status()
-            rdata = reward_resp.json()
-            saved_flag = rdata.get("saved", False)
-            if saved_flag:
-                console.print(f"  [green]✓ saved (total: {rdata['total_records']})[/green]")
-            else:
-                console.print("  [dim](unfrozen mode — reward acknowledged but not stored)[/dim]")
+            c.put("/session", json={"text": user_msg}).raise_for_status()
 
 
 if __name__ == "__main__":

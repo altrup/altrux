@@ -12,9 +12,7 @@ router = APIRouter()
 async def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
-        mode=registry.mode,
         model_loaded=registry.model is not None,
-        records_collected=registry.total_records() if registry.model is not None else 0,
     )
 
 

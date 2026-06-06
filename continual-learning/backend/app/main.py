@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .model.registry import registry
-from .routers import health, inference, training
+from .routers import health, inference
 
 
 @asynccontextmanager
@@ -16,4 +16,3 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(health.router)
 app.include_router(inference.router)
-app.include_router(training.router)

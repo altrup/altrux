@@ -1,16 +1,15 @@
 import asyncio
+import json
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from ..model.registry import registry
 from ..schemas import (
     GenerateRequest,
     GenerateResponse,
     GeneratedToken,
-    ModeRequest,
-    ModeResponse,
-    RewardRequest,
-    RewardResponse,
     SessionInputRequest,
     SessionResponse,
     TokenInfo,
@@ -19,24 +18,11 @@ from ..schemas import (
 router = APIRouter()
 
 
-@router.get("/mode", response_model=ModeResponse)
-async def get_mode() -> ModeResponse:
-    return ModeResponse(mode=registry.mode)
-
-
-@router.post("/mode", response_model=ModeResponse)
-async def set_mode(req: ModeRequest) -> ModeResponse:
-    async with registry.lock:
-        registry.set_mode(req.mode)  # type: ignore[arg-type]
-    return ModeResponse(mode=registry.mode)
-
-
 @router.get("/session", response_model=SessionResponse)
 async def get_session() -> SessionResponse:
     return SessionResponse(
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
-        pending_token_id=registry.pending_token_id,
     )
 
 
@@ -47,7 +33,6 @@ async def reset_session() -> SessionResponse:
     return SessionResponse(
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
-        pending_token_id=None,
     )
 
 
@@ -58,8 +43,24 @@ async def session_input(req: SessionInputRequest) -> SessionResponse:
     return SessionResponse(
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
-        pending_token_id=None,
     )
+
+
+async def _iter_generate(req: GenerateRequest) -> AsyncIterator[dict]:
+    """Yield one generated token at a time, holding the lock for the whole response.
+
+    Generation runs until the model emits EOS or max_tokens is reached.
+    TODO: detect the fine-tuned <revise> tag here and act on it instead of
+    treating it like any other token.
+    """
+    async with registry.lock:
+        for _ in range(req.max_tokens):
+            result = await asyncio.to_thread(
+                registry.generate_one_token, temperature=req.temperature, top_p=req.top_p
+            )
+            yield result
+            if result["is_eos"]:
+                break
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -67,22 +68,14 @@ async def generate(req: GenerateRequest) -> GenerateResponse:
     if registry.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    generated: list[GeneratedToken] = []
-
-    async with registry.lock:
-        for _ in range(req.max_tokens):
-            result = await asyncio.to_thread(
-                registry.generate_one_token, temperature=req.temperature, top_p=req.top_p
-            )
-            generated.append(GeneratedToken(
-                token=result["generated_token"],
-                token_id=result["token_id"],
-                critic_reward=result["critic_reward"],
-                critic_reward_note="(random — critic not yet trained)",
-                is_eos=result["is_eos"],
-            ))
-            if result["is_eos"]:
-                break
+    generated = [
+        GeneratedToken(
+            token=result["generated_token"],
+            token_id=result["token_id"],
+            is_eos=result["is_eos"],
+        )
+        async for result in _iter_generate(req)
+    ]
 
     return GenerateResponse(
         tokens=generated,
@@ -90,14 +83,17 @@ async def generate(req: GenerateRequest) -> GenerateResponse:
     )
 
 
-@router.post("/reward", response_model=RewardResponse)
-async def submit_reward(req: RewardRequest) -> RewardResponse:
-    if registry.pending_token_id is None:
-        raise HTTPException(
-            status_code=422, detail="No pending token — call POST /generate first"
-        )
+@router.post("/generate/stream")
+async def generate_stream(req: GenerateRequest) -> StreamingResponse:
+    if registry.model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
 
-    async with registry.lock:
-        total = await asyncio.to_thread(registry.save_reward, req.reward)
+    async def body() -> AsyncIterator[str]:
+        async for result in _iter_generate(req):
+            yield json.dumps({
+                "token": result["generated_token"],
+                "token_id": result["token_id"],
+                "is_eos": result["is_eos"],
+            }) + "\n"
 
-    return RewardResponse(saved=registry.mode == "frozen", total_records=total)
+    return StreamingResponse(body(), media_type="application/x-ndjson")
