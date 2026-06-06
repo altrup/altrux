@@ -21,13 +21,28 @@ make data
 # outputs data/train.pt
 ```
 
-To use a local JSONL file instead (one `{"messages": [...]}` object per line):
+To use a local JSONL file instead:
 
 ```bash
 make prepare ARGS="--input data/raw.jsonl"
 ```
 
-Loss is computed on assistant turns only; user tokens are masked out.
+Each line is a single JSON object with a `messages` list of `{"role", "content"}` turns. Loss is computed on assistant turns only; user tokens are masked out.
+
+Add `"train": false` to an assistant turn to keep it in the context but exclude it from the loss — e.g. an earlier answer that a later turn revises, so the model learns the revision without learning the original mistake. The field is optional and defaults to `true`.
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "Tell me about the 2024 election." },
+    { "role": "assistant", "train": false, "content": "Trump won, losing the popular vote to Biden." },
+    { "role": "user", "content": "Actually he beat Kamala Harris." },
+    { "role": "assistant", "content": "Trump won the 2024 election, beating Kamala Harris." }
+  ]
+}
+```
+
+(Shown formatted for readability; in the file each object must be on a single line.)
 
 See `python prepare_data.py --help` for all options (`--max-examples`, `--hf-split`, `--max-len`, etc.).
 

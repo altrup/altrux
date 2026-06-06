@@ -30,7 +30,10 @@ def format_conversation(
             text = ASST_OPEN + content
             toks = tokenizer.encode(text, add_special_tokens=False)
             turn_ids = toks + [tokenizer.eos_token_id]
-            turn_mask = [True] * len(turn_ids)
+            # "train": false keeps the turn as context but excludes it from the
+            # loss (e.g. an earlier answer that a later turn revises)
+            trainable = msg.get("train", True)
+            turn_mask = [trainable] * len(turn_ids)
         else:
             continue
 
