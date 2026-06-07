@@ -5,11 +5,13 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ..config import ASST_OPEN
 from ..model.registry import registry
 from ..schemas import (
     GenerateRequest,
     GenerateResponse,
     GeneratedToken,
+    ReviseEntry,
     SessionInputRequest,
     SessionMessageRequest,
     SessionResponse,
@@ -19,32 +21,35 @@ from ..schemas import (
 router = APIRouter()
 
 
-@router.get("/session", response_model=SessionResponse)
-async def get_session() -> SessionResponse:
+def _session_response() -> SessionResponse:
     return SessionResponse(
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
+        messages=list(registry.messages),
+        revise_suggestions=[
+            ReviseEntry(at_turn=t, revision=s)
+            for t, s in registry.revise_suggestions
+        ],
     )
+
+
+@router.get("/session", response_model=SessionResponse)
+async def get_session() -> SessionResponse:
+    return _session_response()
 
 
 @router.delete("/session", response_model=SessionResponse)
 async def reset_session() -> SessionResponse:
     async with registry.lock:
         registry.reset_session()
-    return SessionResponse(
-        text=registry.get_session_text(),
-        tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
-    )
+    return _session_response()
 
 
 @router.put("/session", response_model=SessionResponse)
 async def session_input(req: SessionInputRequest) -> SessionResponse:
     async with registry.lock:
         registry.append_input(req.text)
-    return SessionResponse(
-        text=registry.get_session_text(),
-        tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
-    )
+    return _session_response()
 
 
 @router.put("/session/message", response_model=SessionResponse)
@@ -53,27 +58,30 @@ async def session_message(req: SessionMessageRequest) -> SessionResponse:
     ASST_OPEN) so you don't have to type them by hand. Defaults to the user role."""
     async with registry.lock:
         registry.append_message(req.role, req.content)
-    return SessionResponse(
-        text=registry.get_session_text(),
-        tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
-    )
+    return _session_response()
 
 
 async def _iter_generate(req: GenerateRequest) -> AsyncIterator[dict]:
     """Yield one generated token at a time, holding the lock for the whole response.
 
     Generation runs until the model emits EOS or max_tokens is reached.
-    TODO: detect the fine-tuned <revise> tag here and act on it instead of
-    treating it like any other token.
+    Appends the completed assistant turn to registry.messages when done.
     """
+    accumulated = ""
     async with registry.lock:
         for _ in range(req.max_tokens):
             result = await asyncio.to_thread(
                 registry.generate_one_token, temperature=req.temperature, top_p=req.top_p
             )
+            if not result["is_eos"]:
+                accumulated += result["generated_token"]
             yield result
             if result["is_eos"]:
                 break
+        content = accumulated
+        if content.startswith(ASST_OPEN):
+            content = content[len(ASST_OPEN):]
+        registry.messages.append({"role": "assistant", "content": content.strip()})
 
 
 @router.post("/generate", response_model=GenerateResponse)

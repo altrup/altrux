@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_cors_origins
 from .model.registry import registry
-from .routers import health, inference
+from .routers import data, health, inference
 
 
 @asynccontextmanager
@@ -25,3 +25,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(inference.router)
+app.include_router(data.router)

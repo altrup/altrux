@@ -21,6 +21,14 @@ class ModelRegistry:
         self.session_input_ids: list[int] = []
         self._cache: InferenceParams | None = None
 
+        # Structured message list kept in sync with token storage.
+        # Only updated by append_message(); append_input() does not touch it.
+        self.messages: list[dict] = []
+
+        # Revise data collection state — reset with each session.
+        self.revise_entry_offset: int | None = None
+        self.revise_suggestions: list[tuple[int, str]] = []
+
     # ------------------------------------------------------------------
     # Startup / shutdown
     # ------------------------------------------------------------------
@@ -67,6 +75,9 @@ class ModelRegistry:
     def reset_session(self, text: str | None = None) -> None:
         self.session_input_ids = []
         self._cache = None
+        self.messages = []
+        self.revise_entry_offset = None
+        self.revise_suggestions = []
         if text:
             assert self.tokenizer is not None
             self.session_input_ids = self.tokenizer.encode(text)
@@ -98,6 +109,7 @@ class ModelRegistry:
 
         self.session_input_ids.extend(ids)
         self._cache = None
+        self.messages.append({"role": role, "content": content})
 
     def get_session_tokens(self) -> list[dict]:
         assert self.tokenizer is not None

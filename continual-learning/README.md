@@ -32,6 +32,11 @@ Input Tokens
 
 The model is fine-tuned to generate a `<revise>` tag after completing a response. For now the tag is treated like any other token — generation simply runs until EOS and the tag flows through as ordinary text.
 
+### Syntax
+```text
+<revise turn=N>What should've been said N turns ago, will be trained with W * loss</revise weight=W> Message actually shown to user
+```
+
 **TODO:** detect the `<revise>` tag during generation and act on it (trigger a revision pass) rather than treating it as plain output.
 
 ---

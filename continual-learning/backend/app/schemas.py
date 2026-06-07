@@ -11,11 +11,6 @@ class TokenInfo(BaseModel):
     text: str
 
 
-class SessionResponse(BaseModel):
-    text: str
-    tokens: list[TokenInfo]
-
-
 class SessionInputRequest(BaseModel):
     text: str
 
@@ -40,3 +35,24 @@ class GeneratedToken(BaseModel):
 class GenerateResponse(BaseModel):
     tokens: list[GeneratedToken]
     generated_text: str
+
+
+class ReviseEntry(BaseModel):
+    at_turn: int  # message index of the latest model response when this revision was recorded
+    revision: str  # full "<revise back=N>...</revise weight=0.5>" tag string
+
+
+class SessionResponse(BaseModel):
+    text: str
+    tokens: list[TokenInfo]
+    messages: list[dict]
+    revise_suggestions: list[ReviseEntry]
+
+
+class ReviseRequest(BaseModel):
+    n: int = Field(ge=1)  # how many model messages back the revision targets
+    revision: str
+
+
+class ReviseResponse(BaseModel):
+    ok: bool

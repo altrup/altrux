@@ -9,23 +9,51 @@ import {
   getSession,
   resetSession,
   streamGenerate,
+  submitRevision,
   type Message,
+  type ReviseEntry,
 } from "~/lib/api";
+import { useHealth } from "~/lib/useHealth";
 
 // eslint-disable-next-line no-empty-pattern
 export function meta({}: Route.MetaArgs) {
   return [{ title: "continual-learning" }];
 }
 
+interface SuggestTarget {
+  messageIndex: number;
+  n: number; // N model messages back from last — goes inside <revise turn=N>
+}
+
 export default function Home() {
+  const { online } = useHealth();
   const [messages, setMessages] = useState<Message[]>([]);
+  // keyed by message index so suggestions stay on the right message as the conversation grows
+  const [reviseByIndex, setReviseByIndex] = useState<
+    Record<number, ReviseEntry[]>
+  >({});
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [suggestTarget, setSuggestTarget] = useState<SuggestTarget | null>(
+    null,
+  );
+  const [suggestInput, setSuggestInput] = useState("");
+  const [focusKey, setFocusKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getSession()
-      .then(setMessages)
+      .then(({ messages, reviseSuggestions }) => {
+        setMessages(messages);
+        // Map flat revise list back to per-message indices.
+        // Parse N from "<revise turn=N>..." in each suggestion, then walk N assistant
+        // messages back from atTurn to find the target message index.
+        const byIndex: Record<number, ReviseEntry[]> = {};
+        for (const entry of reviseSuggestions) {
+          byIndex[entry.atTurn] = [...(byIndex[entry.atTurn] ?? []), entry];
+        }
+        setReviseByIndex(byIndex);
+      })
       .catch(() => {});
   }, []);
 
@@ -75,6 +103,9 @@ export default function Home() {
 
   async function handleReset() {
     if (isGenerating) return;
+    setSuggestTarget(null);
+    setSuggestInput("");
+    setReviseByIndex({});
     try {
       await resetSession();
       setMessages([]);
@@ -82,6 +113,41 @@ export default function Home() {
       // silently ignore — local state is still cleared
     }
   }
+
+  async function handleSuggest() {
+    if (!suggestTarget || !suggestInput.trim()) return;
+    const { n } = suggestTarget;
+    const trimmed = suggestInput.trim();
+    const tag = `<revise back=${n}>${trimmed}</revise weight=0.5>`;
+    const atTurn = assistantIndices[assistantIndices.length - 1];
+    try {
+      await submitRevision(n, trimmed);
+      setReviseByIndex((prev) => ({
+        ...prev,
+        [atTurn]: [...(prev[atTurn] ?? []), { atTurn, revision: tag }],
+      }));
+    } catch {
+      // silently ignore — revision may have failed but don't block the UI
+    }
+    setSuggestInput("");
+    setSuggestTarget(null);
+  }
+
+  function handleSuggestKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      setSuggestTarget(null);
+      setSuggestInput("");
+    }
+  }
+
+  // Precompute assistant message indices for turn calculation.
+  const assistantIndices = messages
+    .map((m, i) => (m.role === "assistant" ? i : -1))
+    .filter((i) => i !== -1);
+  const lastAssistantIndex =
+    assistantIndices.length > 0
+      ? assistantIndices[assistantIndices.length - 1]
+      : -1;
 
   return (
     <div className="flex flex-col h-screen bg-page">
@@ -114,29 +180,76 @@ export default function Home() {
               </p>
             </div>
           )}
-          {messages.map((msg, i) => (
-            <ChatMessage
-              key={i}
-              role={msg.role}
-              content={msg.content}
-              isStreaming={
-                isGenerating &&
-                i === messages.length - 1 &&
-                msg.role === "assistant"
-              }
-            />
-          ))}
+          {messages.map((msg, i) => {
+            const isLastAsst = i === lastAssistantIndex;
+            // turn = number of assistant messages after this one (inclusive of this one would be 0, so we count strictly after)
+            const assistantRankFromEnd =
+              msg.role === "assistant"
+                ? assistantIndices.length - 1 - assistantIndices.indexOf(i)
+                : 0;
+            return (
+              <ChatMessage
+                key={i}
+                role={msg.role}
+                content={msg.content}
+                isStreaming={
+                  isGenerating &&
+                  i === messages.length - 1 &&
+                  msg.role === "assistant"
+                }
+                canSuggest={
+                  msg.role === "assistant" && !isLastAsst && !isGenerating
+                }
+                isLastAssistant={isLastAsst}
+                reviseSuggestions={reviseByIndex[i] ?? []}
+                onSuggest={() => {
+                  setSuggestTarget({
+                    messageIndex: i,
+                    n: assistantRankFromEnd,
+                  });
+                  setFocusKey((k) => k + 1);
+                }}
+              />
+            );
+          })}
           <div ref={bottomRef} />
         </div>
 
         <div className="sticky bottom-0 px-2 pb-6 bg-page">
           <div className="mx-auto max-w-[45rem]">
-            <ChatInput
-              value={input}
-              onChange={setInput}
-              onSend={handleSend}
-              disabled={isGenerating}
-            />
+            {suggestTarget !== null && (
+              <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-surface border border-border text-xs text-text-muted">
+                <span>
+                  Suggesting for assistant message ({suggestTarget.n}{" "}
+                  {suggestTarget.n === 1 ? "turn" : "turns"} back)
+                </span>
+                <button
+                  onClick={() => {
+                    setSuggestTarget(null);
+                    setSuggestInput("");
+                  }}
+                  className="ml-3 text-text-faint hover:text-text-muted transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            <div onKeyDown={suggestTarget ? handleSuggestKeyDown : undefined}>
+              <ChatInput
+                value={suggestTarget !== null ? suggestInput : input}
+                onChange={suggestTarget !== null ? setSuggestInput : setInput}
+                onSend={suggestTarget !== null ? handleSuggest : handleSend}
+                disabled={isGenerating || !online}
+                placeholder={
+                  suggestTarget !== null
+                    ? "Type a better response…"
+                    : !online
+                      ? "Backend offline…"
+                      : "Type a message…"
+                }
+                focusKey={focusKey}
+              />
+            </div>
           </div>
         </div>
       </main>

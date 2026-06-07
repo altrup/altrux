@@ -25,6 +25,14 @@ def get_sft_checkpoint() -> Path | None:
     return Path(val) if val else None
 
 
+def get_revise_data_path() -> Path:
+    val = os.getenv("REVISE_DATA_PATH", "").strip()
+    p = Path(val) if val else Path(__file__).parent.parent.parent / "data" / "revise.jsonl"
+    if not p.is_absolute():
+        p = (Path(__file__).parent.parent / p).resolve()
+    return p
+
+
 def get_cors_origins() -> list[str]:
     raw = os.getenv("CORS_ORIGINS", "http://localhost:5173").strip()
     return [o.strip() for o in raw.split(",") if o.strip()]

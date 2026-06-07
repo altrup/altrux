@@ -2,9 +2,6 @@ const BACKEND_URL =
   (import.meta.env.VITE_BACKEND_URL as string | undefined) ??
   "http://localhost:8000";
 
-const USER_OPEN =
-  (import.meta.env.VITE_USER_OPEN as string | undefined) ?? "[USER] ";
-
 const ASST_OPEN =
   (import.meta.env.VITE_ASST_OPEN as string | undefined) ?? "[ASSISTANT] ";
 
@@ -24,44 +21,36 @@ export interface Message {
   content: string;
 }
 
+export interface ReviseEntry {
+  atTurn: number; // message index of the latest model response when this was recorded
+  revision: string; // full "<revise back=N>...</revise weight=0.5>" tag string
+}
+
+export interface SessionData {
+  messages: Message[];
+  reviseSuggestions: ReviseEntry[];
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${BACKEND_URL}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json() as Promise<HealthResponse>;
 }
 
-export async function getSession(): Promise<Message[]> {
+export async function getSession(): Promise<SessionData> {
   const res = await fetch(`${BACKEND_URL}/session`);
   if (!res.ok) throw new Error(`Get session failed: ${res.status}`);
-  const { tokens } = (await res.json()) as {
-    tokens: { id: number; text: string }[];
+  const data = (await res.json()) as {
+    messages: Message[];
+    revise_suggestions: Array<{ at_turn: number; revision: string }>;
   };
-  const text = tokens
-    .filter((t) => t.id !== 0)
-    .map((t) => t.text)
-    .join("");
-  return parseSession(text);
-}
-
-function parseSession(text: string): Message[] {
-  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`(${escape(USER_OPEN)}|${escape(ASST_OPEN)})`, "g");
-
-  const messages: Message[] = [];
-  let currentRole: "user" | "assistant" | null = null;
-
-  for (const part of text.split(regex)) {
-    if (part === USER_OPEN) {
-      currentRole = "user";
-    } else if (part === ASST_OPEN) {
-      currentRole = "assistant";
-    } else if (currentRole) {
-      const content = part.trim();
-      if (content) messages.push({ role: currentRole, content });
-    }
-  }
-
-  return messages;
+  return {
+    messages: data.messages,
+    reviseSuggestions: data.revise_suggestions.map((e) => ({
+      atTurn: e.at_turn,
+      revision: e.revision,
+    })),
+  };
 }
 
 export async function resetSession(): Promise<void> {
@@ -76,6 +65,18 @@ export async function addUserMessage(content: string): Promise<void> {
     body: JSON.stringify({ role: "user", content }),
   });
   if (!res.ok) throw new Error(`Add message failed: ${res.status}`);
+}
+
+export async function submitRevision(
+  n: number,
+  revision: string,
+): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/session/revise`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ n, revision }),
+  });
+  if (!res.ok) throw new Error(`Submit revision failed: ${res.status}`);
 }
 
 export async function* streamGenerate(params?: {

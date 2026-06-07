@@ -33,6 +33,7 @@ Copy `.env.example` to `.env` and adjust as needed. Key variables:
 | `SFT_CHECKPOINT` | _(unset)_ | Path to an SFT checkpoint directory (e.g. `../../sft/checkpoints/step-1200`). When set, LoRA adapter weights are applied on top of the base model at startup. Rank and alpha are read automatically from `lora_config.json` inside the checkpoint. Leave unset to run the plain base model. |
 | `USER_OPEN` | `"[USER] "` | Opener prepended to user turns by `PUT /session/message`. Must match the fine-tuning format (see `sft/prepare_data.py`). Quote the value to preserve the trailing space. |
 | `ASST_OPEN` | `"[ASSISTANT] "` | Opener for assistant turns. The model is trained to emit this itself, so you rarely add assistant turns by hand — but it's used when you do. |
+| `REVISE_DATA_PATH` | `../../sft/data/revise_collected.jsonl` | Path to the JSONL file where revision suggestions are appended. Relative paths are resolved from the backend directory. |
 
 ## Running
 
@@ -58,6 +59,7 @@ make run
 | DELETE | `/session` | Clear the session |
 | PUT | `/session` | Append raw text — `{"text": "tell me more"}` |
 | PUT | `/session/message` | Append a chat turn, wrapped with the configured openers — `{"role": "user", "content": "hi"}` (`role` defaults to `user`) |
+| POST | `/session/revise` | Save a revision suggestion for the current session — `{"turn": 1, "suggestion": "better answer"}`. `turn` is how many assistant turns back from the last message the suggestion is for. Appends a JSONL entry on first call; updates the same line on subsequent calls in the same session. |
 | POST | `/generate` | Generate a response (batch) — `{"temperature": 0.8, "top_p": 0.95}` |
 | POST | `/generate/stream` | Same, but stream tokens as NDJSON as they're generated |
 
