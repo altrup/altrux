@@ -96,7 +96,7 @@ export default function Home() {
           <button
             onClick={handleReset}
             disabled={isGenerating}
-            className="text-sm text-text-muted hover:text-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className="text-sm text-text-muted hover:text-error transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             Reset
           </button>
