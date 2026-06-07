@@ -1,87 +1,53 @@
-# Welcome to React Router!
+# continual-learning — frontend
 
-A modern, production-ready template for building full-stack React applications using React Router.
-
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/remix-run/react-router-templates/tree/main/default)
+React Router v7 chat UI for the continual-learning backend.
 
 ## Features
 
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
+- Streaming chat with the backend model
+- Session persistence — loads existing session on page load
+- Session reset
+- Health indicator (polls `/health` every 5 s)
+- Light / dark / system theme toggle (next-themes)
 
-## Getting Started
-
-### Installation
-
-Install the dependencies:
+## Setup
 
 ```bash
 npm install
+cp .env.example .env   # edit as needed
 ```
 
-### Development
+### Environment variables
 
-Start the development server with HMR:
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_BACKEND_URL` | `http://localhost:8000` | Backend API base URL |
+| `VITE_USER_OPEN` | `[USER] ` | User turn opener — must match `backend/.env` |
+| `VITE_ASST_OPEN` | `[ASSISTANT] ` | Assistant turn opener — must match `backend/.env` |
+
+## Development
 
 ```bash
-npm run dev
+npm run dev        # dev server at http://localhost:5173
 ```
 
-Your application will be available at `http://localhost:5173`.
+The backend must be running at `VITE_BACKEND_URL` and have `CORS_ORIGINS` set to include the frontend origin (see `backend/.env`).
 
-## Building for Production
+## Quality checks
 
-Create a production build:
+Run in this order after any change:
+
+```bash
+npm run lint
+npm run typecheck
+npm run format
+```
+
+## Production build
 
 ```bash
 npm run build
+npm run start
 ```
 
-## Deployment
-
-### Docker Deployment
-
-To build and run using Docker:
-
-```bash
-docker build -t my-app .
-
-# Run the container
-docker run -p 3000:3000 my-app
-```
-
-The containerized application can be deployed to any platform that supports Docker, including:
-
-- AWS ECS
-- Google Cloud Run
-- Azure Container Apps
-- Digital Ocean App Platform
-- Fly.io
-- Railway
-
-### DIY Deployment
-
-If you're familiar with deploying Node applications, the built-in app server is production-ready.
-
-Make sure to deploy the output of `npm run build`
-
-```
-├── package.json
-├── package-lock.json (or pnpm-lock.yaml, or bun.lockb)
-├── build/
-│   ├── client/    # Static assets
-│   └── server/    # Server-side code
-```
-
-## Styling
-
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
-
----
-
-Built with ❤️ using React Router.
+Output: `build/client/` (static assets) + `build/server/` (SSR Node app).

@@ -1,16 +1,232 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
+  /* =====================================================================
+     Raw palettes — light-mode values (static, never overridden in dark).
+     Use these when you need a specific shade; prefer semantic vars below.
+  ===================================================================== */
+
+  /* primary — lavender-purple */
+  --color-primary-50: #f3eef7;
+  --color-primary-100: #e6ddee;
+  --color-primary-200: #cdbbdd;
+  --color-primary-300: #b498cd;
+  --color-primary-400: #9b76bc;
+  --color-primary-500: #8254ab;
+  --color-primary-600: #684389;
+  --color-primary-700: #4e3267;
+  --color-primary-800: #342244;
+  --color-primary-900: #1a1122;
+  --color-primary-950: #120c18;
+
+  /* secondary — icy-blue */
+  --color-secondary-50: #e7f4fd;
+  --color-secondary-100: #cfeafc;
+  --color-secondary-200: #9fd5f9;
+  --color-secondary-300: #6fc0f6;
+  --color-secondary-400: #3fabf3;
+  --color-secondary-500: #0f96f0;
+  --color-secondary-600: #0c78c0;
+  --color-secondary-700: #095a90;
+  --color-secondary-800: #063c60;
+  --color-secondary-900: #031e30;
+  --color-secondary-950: #021522;
+
+  /* neutral — ink-black */
+  --color-neutral-50: #edf3f8;
+  --color-neutral-100: #dbe7f0;
+  --color-neutral-200: #b6cee2;
+  --color-neutral-300: #92b6d3;
+  --color-neutral-400: #6d9dc5;
+  --color-neutral-500: #4985b6;
+  --color-neutral-600: #3a6a92;
+  --color-neutral-700: #2c506d;
+  --color-neutral-800: #1d3549;
+  --color-neutral-900: #0f1b24;
+  --color-neutral-950: #0a131a;
+
+  /* success — moss-green */
+  --color-success-50: #f0f9eb;
+  --color-success-100: #e1f3d8;
+  --color-success-200: #c4e7b1;
+  --color-success-300: #a6db8a;
+  --color-success-400: #89cf63;
+  --color-success-500: #6bc33c;
+  --color-success-600: #569c30;
+  --color-success-700: #407524;
+  --color-success-800: #2b4e18;
+  --color-success-900: #15270c;
+  --color-success-950: #0f1b08;
+
+  /* danger — cherry-rose */
+  --color-danger-50: #f9ebed;
+  --color-danger-100: #f4d7db;
+  --color-danger-200: #e8b0b7;
+  --color-danger-300: #dd8894;
+  --color-danger-400: #d16170;
+  --color-danger-500: #c6394c;
+  --color-danger-600: #9e2e3d;
+  --color-danger-700: #77222e;
+  --color-danger-800: #4f171e;
+  --color-danger-900: #280b0f;
+  --color-danger-950: #1c080b;
+
+  /* =====================================================================
+     Semantic utility variables — light-mode defaults.
+     These are what components reference (bg-page, text-text, etc.).
+  ===================================================================== */
+
+  /* Surfaces — derived from neutral */
+  --color-page: var(--color-neutral-50);
+  --color-surface: var(--color-neutral-50);
+  --color-surface-raised: var(--color-neutral-100);
+
+  /* Text */
+  --color-text: var(--color-neutral-900);
+  --color-text-muted: var(--color-neutral-600);
+  --color-text-faint: var(--color-neutral-400);
+
+  /* Borders */
+  --color-border: var(--color-neutral-200);
+  --color-border-strong: var(--color-neutral-300);
+
+  /* Primary accent */
+  --color-accent: var(--color-primary-500);
+  --color-accent-hover: var(--color-primary-600);
+  --color-accent-subtle: var(--color-primary-50);
+  --color-on-accent: var(--color-neutral-50);
+
+  /* Secondary accent */
+  --color-accent2: var(--color-secondary-500);
+  --color-accent2-hover: var(--color-secondary-600);
+  --color-accent2-subtle: var(--color-secondary-50);
+  --color-on-accent2: var(--color-neutral-50);
+
+  /* Chat — only user has a bubble; assistant renders as plain text */
+  --color-user-bubble: var(--color-primary-500);
+  --color-user-bubble-text: var(--color-neutral-50);
+
+  /* States */
+  --color-ok: var(--color-success-600);
+  --color-ok-subtle: var(--color-success-50);
+  --color-ok-text: var(--color-neutral-50);
+  --color-error: var(--color-danger-500);
+  --color-error-subtle: var(--color-danger-50);
+  --color-error-text: var(--color-neutral-50);
+
+  /* Font */
   --font-sans:
     "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
+/* =====================================================================
+   Dark mode — inverted palette shades + semantic overrides.
+   In dark mode: -50 = closest to background (darkest), -950 = highest
+   contrast (lightest). Semantic vars reference these by shade number.
+===================================================================== */
+.dark {
+  /* primary → velvet-orchid (same hex as lavender-purple, reversed) */
+  --color-primary-50: #120c18;
+  --color-primary-100: #1a1122;
+  --color-primary-200: #342244;
+  --color-primary-300: #4e3267;
+  --color-primary-400: #684389;
+  --color-primary-500: #8254ab;
+  --color-primary-600: #9b76bc;
+  --color-primary-700: #b498cd;
+  --color-primary-800: #cdbbdd;
+  --color-primary-900: #e6ddee;
+  --color-primary-950: #f3eef7;
+
+  /* secondary → ocean-blue (reversed) */
+  --color-secondary-50: #031620;
+  --color-secondary-100: #05202e;
+  --color-secondary-200: #0a3f5c;
+  --color-secondary-300: #0f5f8a;
+  --color-secondary-400: #137fb9;
+  --color-secondary-500: #189ee7;
+  --color-secondary-600: #46b2ec;
+  --color-secondary-700: #75c5f0;
+  --color-secondary-800: #a3d8f5;
+  --color-secondary-900: #d1ecfa;
+  --color-secondary-950: #e8f5fd;
+
+  /* neutral → ash-grey (reversed) */
+  --color-neutral-50: #121311;
+  --color-neutral-100: #191b18;
+  --color-neutral-200: #333630;
+  --color-neutral-300: #4c5049;
+  --color-neutral-400: #656b61;
+  --color-neutral-500: #7f8679;
+  --color-neutral-600: #989e94;
+  --color-neutral-700: #b2b6af;
+  --color-neutral-800: #cccfc9;
+  --color-neutral-900: #e5e7e4;
+  --color-neutral-950: #f2f3f2;
+
+  /* success → moss-green (reversed) */
+  --color-success-50: #0f1b08;
+  --color-success-100: #15270c;
+  --color-success-200: #2b4e18;
+  --color-success-300: #407524;
+  --color-success-400: #569c30;
+  --color-success-500: #6bc33c;
+  --color-success-600: #89cf63;
+  --color-success-700: #a6db8a;
+  --color-success-800: #c4e7b1;
+  --color-success-900: #e1f3d8;
+  --color-success-950: #f0f9eb;
+
+  /* danger → burnt-rose (reversed) */
+  --color-danger-50: #180c0d;
+  --color-danger-100: #221112;
+  --color-danger-200: #442224;
+  --color-danger-300: #663336;
+  --color-danger-400: #884448;
+  --color-danger-500: #aa555a;
+  --color-danger-600: #bb777b;
+  --color-danger-700: #cc999c;
+  --color-danger-800: #ddbbbd;
+  --color-danger-900: #eeddde;
+  --color-danger-950: #f6eeee;
+
+  /* Semantic overrides */
+  --color-page: var(--color-neutral-50);
+  --color-surface: var(--color-neutral-100);
+  --color-surface-raised: var(--color-neutral-200);
+
+  --color-text: var(--color-neutral-950);
+  --color-text-muted: var(--color-neutral-600);
+  --color-text-faint: var(--color-neutral-400);
+
+  --color-border: var(--color-neutral-200);
+  --color-border-strong: var(--color-neutral-300);
+
+  --color-accent: var(--color-primary-600);
+  --color-accent-hover: var(--color-primary-700);
+  --color-accent-subtle: var(--color-primary-50);
+  --color-on-accent: var(--color-neutral-950);
+
+  --color-accent2: var(--color-secondary-600);
+  --color-accent2-hover: var(--color-secondary-700);
+  --color-accent2-subtle: var(--color-secondary-50);
+  --color-on-accent2: var(--color-secondary-50);
+
+  --color-user-bubble: var(--color-primary-200);
+  --color-user-bubble-text: var(--color-primary-900);
+
+  --color-ok: var(--color-success-600);
+  --color-ok-subtle: var(--color-success-50);
+  --color-ok-text: var(--color-success-50);
+  --color-error: var(--color-danger-600);
+  --color-error-subtle: var(--color-danger-50);
+  --color-error-text: var(--color-neutral-950);
+}
+
 html,
 body {
-  @apply bg-white dark:bg-gray-950;
-
-  @media (prefers-color-scheme: dark) {
-    color-scheme: dark;
-  }
+  @apply bg-page text-text;
+  color-scheme: light dark;
 }

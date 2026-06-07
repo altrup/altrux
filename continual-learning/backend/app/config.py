@@ -23,3 +23,8 @@ def get_device() -> str:
 def get_sft_checkpoint() -> Path | None:
     val = os.getenv("SFT_CHECKPOINT", "").strip()
     return Path(val) if val else None
+
+
+def get_cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ORIGINS", "http://localhost:5173").strip()
+    return [o.strip() for o in raw.split(",") if o.strip()]

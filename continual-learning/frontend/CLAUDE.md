@@ -40,3 +40,7 @@ Use only custom colour names in JSX — never Tailwind's built-in palette:
 If a colour is needed and doesn't have a variable yet, add one to `app/app.css` first.
 
 Keep all colour variables grouped at the top of the `@theme` block with a comment, before font and other tokens.
+
+## Cursor
+
+Every interactive element — `<button>`, `<a>`, any `<div>`/`<span>` with an `onClick` — must include `cursor-pointer` in its `className`. Never rely on the browser default; always set it explicitly.
