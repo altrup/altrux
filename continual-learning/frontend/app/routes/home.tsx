@@ -24,7 +24,9 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    getSession().then(setMessages).catch(() => {});
+    getSession()
+      .then(setMessages)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

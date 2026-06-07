@@ -45,10 +45,7 @@ export async function getSession(): Promise<Message[]> {
 
 function parseSession(text: string): Message[] {
   const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(
-    `(${escape(USER_OPEN)}|${escape(ASST_OPEN)})`,
-    "g",
-  );
+  const regex = new RegExp(`(${escape(USER_OPEN)}|${escape(ASST_OPEN)})`, "g");
 
   const messages: Message[] = [];
   let currentRole: "user" | "assistant" | null = null;

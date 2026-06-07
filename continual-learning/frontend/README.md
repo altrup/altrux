@@ -19,11 +19,11 @@ cp .env.example .env   # edit as needed
 
 ### Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `VITE_BACKEND_URL` | `http://localhost:8000` | Backend API base URL |
-| `VITE_USER_OPEN` | `[USER] ` | User turn opener — must match `backend/.env` |
-| `VITE_ASST_OPEN` | `[ASSISTANT] ` | Assistant turn opener — must match `backend/.env` |
+| Variable           | Default                 | Description                                       |
+| ------------------ | ----------------------- | ------------------------------------------------- |
+| `VITE_BACKEND_URL` | `http://localhost:8000` | Backend API base URL                              |
+| `VITE_USER_OPEN`   | `[USER] `               | User turn opener — must match `backend/.env`      |
+| `VITE_ASST_OPEN`   | `[ASSISTANT] `          | Assistant turn opener — must match `backend/.env` |
 
 ## Development
 
