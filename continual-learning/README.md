@@ -36,6 +36,16 @@ The model is fine-tuned to generate a `<revise>` tag after completing a response
 
 ---
 
+## Components
+
+| Directory  | Description |
+|------------|-------------|
+| `backend/` | FastAPI server — loads the Mamba model and serves the chat API |
+| `frontend/` | React Router v7 web UI — chat interface for the model |
+| `cli/`     | Command-line client |
+
+---
+
 ## Open Questions / TODO
 
 - **Tag detection:** Detect the `<revise>` tag at generation time and branch on it instead of emitting it as plain text.
