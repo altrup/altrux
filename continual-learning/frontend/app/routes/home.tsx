@@ -104,9 +104,9 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Messages */}
-      <main className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="mx-auto max-w-2xl flex flex-col gap-6">
+      {/* Messages + sticky input */}
+      <main className="flex-1 overflow-y-scroll px-4 pt-8 flex flex-col">
+        <div className="mx-auto w-full max-w-2xl flex-grow flex flex-col gap-6 pb-24">
           {messages.length === 0 && (
             <div className="flex items-center justify-center min-h-[40vh]">
               <p className="text-text-muted text-sm">
@@ -128,19 +128,18 @@ export default function Home() {
           ))}
           <div ref={bottomRef} />
         </div>
-      </main>
 
-      {/* Input */}
-      <footer className="shrink-0 px-4 pb-6 pt-2">
-        <div className="mx-auto max-w-2xl">
-          <ChatInput
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            disabled={isGenerating}
-          />
+        <div className="sticky bottom-0 px-2 pb-6 bg-page">
+          <div className="mx-auto max-w-[45rem]">
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              disabled={isGenerating}
+            />
+          </div>
         </div>
-      </footer>
+      </main>
     </div>
   );
 }
