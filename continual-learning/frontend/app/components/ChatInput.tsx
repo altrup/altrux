@@ -37,7 +37,7 @@ export default function ChatInput({
   }
 
   return (
-    <div className="flex items-end gap-2 bg-surface-raised rounded-2xl border border-border hover:border-border-strong focus-within:border-border-strong transition-colors p-2">
+    <label className="flex items-end gap-2 bg-surface-raised rounded-2xl border border-border hover:border-border-strong focus-within:border-border-strong transition-colors p-2 cursor-text">
       <textarea
         ref={textareaRef}
         rows={1}
@@ -56,6 +56,6 @@ export default function ChatInput({
       >
         <LuArrowUp size={14} />
       </button>
-    </div>
+    </label>
   );
 }

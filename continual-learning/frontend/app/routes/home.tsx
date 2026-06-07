@@ -105,8 +105,8 @@ export default function Home() {
       </header>
 
       {/* Messages + sticky input */}
-      <main className="flex-1 overflow-y-scroll px-4 pt-8 flex flex-col">
-        <div className="mx-auto w-full max-w-2xl flex-grow flex flex-col gap-6 pb-24">
+      <main className="flex-1 overflow-y-scroll flex flex-col px-4 pt-12">
+        <div className="mx-auto w-full max-w-2xl flex-grow flex flex-col gap-6 pb-12">
           {messages.length === 0 && (
             <div className="flex items-center justify-center min-h-[40vh]">
               <p className="text-text-muted text-sm">
