@@ -89,7 +89,7 @@
 
   /* Borders */
   --color-border: var(--color-neutral-200);
-  --color-border-strong: var(--color-neutral-300);
+  --color-border-strong: var(--color-neutral-400);
 
   /* Primary accent */
   --color-accent: var(--color-primary-500);
@@ -202,7 +202,7 @@
   --color-text-faint: var(--color-neutral-400);
 
   --color-border: var(--color-neutral-200);
-  --color-border-strong: var(--color-neutral-300);
+  --color-border-strong: var(--color-neutral-400);
 
   --color-accent: var(--color-primary-600);
   --color-accent-hover: var(--color-primary-700);

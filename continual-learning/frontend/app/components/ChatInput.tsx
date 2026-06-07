@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { LuArrowUp } from "react-icons/lu";
 
 interface ChatInputProps {
@@ -23,6 +23,12 @@ export default function ChatInput({
     }
   }
 
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || value !== "") return;
+    el.style.height = "auto";
+  }, [value]);
+
   function handleInput() {
     const el = textareaRef.current;
     if (!el) return;
@@ -31,7 +37,7 @@ export default function ChatInput({
   }
 
   return (
-    <div className="flex items-end gap-2 bg-surface-raised rounded-2xl border border-border p-2">
+    <div className="flex items-end gap-2 bg-surface-raised rounded-2xl border border-border hover:border-border-strong focus-within:border-border-strong transition-colors p-2">
       <textarea
         ref={textareaRef}
         rows={1}
