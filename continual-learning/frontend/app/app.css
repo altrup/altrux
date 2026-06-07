@@ -33,18 +33,18 @@
   --color-secondary-900: #031e30;
   --color-secondary-950: #021522;
 
-  /* neutral — ink-black */
-  --color-neutral-50: #edf3f8;
-  --color-neutral-100: #dbe7f0;
-  --color-neutral-200: #b6cee2;
-  --color-neutral-300: #92b6d3;
-  --color-neutral-400: #6d9dc5;
-  --color-neutral-500: #4985b6;
-  --color-neutral-600: #3a6a92;
-  --color-neutral-700: #2c506d;
-  --color-neutral-800: #1d3549;
-  --color-neutral-900: #0f1b24;
-  --color-neutral-950: #0a131a;
+  /* neutral — ash-grey */
+  --color-neutral-50: #f2f3f2;
+  --color-neutral-100: #e5e7e4;
+  --color-neutral-200: #cccfc9;
+  --color-neutral-300: #b2b6af;
+  --color-neutral-400: #989e94;
+  --color-neutral-500: #7f8679;
+  --color-neutral-600: #656b61;
+  --color-neutral-700: #4c5049;
+  --color-neutral-800: #333630;
+  --color-neutral-900: #191b18;
+  --color-neutral-950: #121311;
 
   /* success — moss-green */
   --color-success-50: #f0f9eb;
