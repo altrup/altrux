@@ -31,26 +31,24 @@ function sortByBackDesc(entries: ReviseEntry[]): ReviseEntry[] {
   );
 }
 
-interface SuggestTarget {
-  messageIndex: number;
+interface ReviseTarget {
   n: number; // N model messages back from atTurn — goes inside <revise back=N>
   atTurn: number; // message index of the last assistant turn this revision is anchored to
+  isEdit: boolean;
 }
 
 export default function Home() {
   const { online } = useHealth();
   const [messages, setMessages] = useState<Message[]>([]);
-  // keyed by message index so suggestions stay on the right message as the conversation grows
+  // keyed by atTurn so revisions stay on the right message as the conversation grows
   const [reviseByIndex, setReviseByIndex] = useState<
     Record<number, ReviseEntry[]>
   >({});
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [suggestTarget, setSuggestTarget] = useState<SuggestTarget | null>(
-    null,
-  );
-  const [suggestInput, setSuggestInput] = useState("");
-  const [suggestWeight, setSuggestWeight] = useState<number | "">("");
+  const [reviseTarget, setReviseTarget] = useState<ReviseTarget | null>(null);
+  const [revisionInput, setRevisionInput] = useState("");
+  const [revisionWeight, setRevisionWeight] = useState<number | "">("");
   const [focusKey, setFocusKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -58,9 +56,6 @@ export default function Home() {
     getSession()
       .then(({ messages, reviseSuggestions }) => {
         setMessages(messages);
-        // Map flat revise list back to per-message indices.
-        // Parse N from "<revise turn=N>..." in each suggestion, then walk N assistant
-        // messages back from atTurn to find the target message index.
         const byIndex: Record<number, ReviseEntry[]> = {};
         for (const entry of reviseSuggestions) {
           byIndex[entry.atTurn] = [...(byIndex[entry.atTurn] ?? []), entry];
@@ -119,9 +114,9 @@ export default function Home() {
 
   async function handleReset() {
     if (isGenerating) return;
-    setSuggestTarget(null);
-    setSuggestInput("");
-    setSuggestWeight("");
+    setReviseTarget(null);
+    setRevisionInput("");
+    setRevisionWeight("");
     setReviseByIndex({});
     try {
       await resetSession();
@@ -131,11 +126,11 @@ export default function Home() {
     }
   }
 
-  async function handleSuggest() {
-    if (!suggestTarget || !suggestInput.trim()) return;
-    const { n, atTurn } = suggestTarget;
-    const trimmed = suggestInput.trim();
-    const weight = suggestWeight === "" ? undefined : suggestWeight;
+  async function handleRevise() {
+    if (!reviseTarget || !revisionInput.trim()) return;
+    const { n, atTurn } = reviseTarget;
+    const trimmed = revisionInput.trim();
+    const weight = revisionWeight === "" ? undefined : revisionWeight;
     const tag = `<revise back=${n}>${trimmed}</revise weight=${weight ?? 0.5}>`;
     try {
       await submitRevision(n, trimmed, weight, atTurn);
@@ -151,27 +146,31 @@ export default function Home() {
     } catch {
       // silently ignore — revision may have failed but don't block the UI
     }
-    setSuggestInput("");
-    setSuggestWeight("");
-    setSuggestTarget(null);
+    setRevisionInput("");
+    setRevisionWeight("");
+    setReviseTarget(null);
     setFocusKey((k) => k + 1);
   }
 
-  function handleEditRevision(entry: ReviseEntry, messageIndex: number) {
+  function handleEditRevision(entry: ReviseEntry) {
     const backVal = getBackValue(entry.revision);
     const textMatch = entry.revision.match(/back=\d+>([\s\S]*?)<\/revise/);
     const weightMatch = entry.revision.match(/revise weight=([\d.]+)>/);
-    setSuggestTarget({ messageIndex, n: backVal, atTurn: entry.atTurn });
-    setSuggestInput(textMatch ? textMatch[1] : "");
-    setSuggestWeight(weightMatch ? parseFloat(weightMatch[1]) : "");
+    setReviseTarget({
+      n: backVal,
+      atTurn: entry.atTurn,
+      isEdit: true,
+    });
+    setRevisionInput(textMatch ? textMatch[1] : "");
+    setRevisionWeight(weightMatch ? parseFloat(weightMatch[1]) : "");
     setFocusKey((k) => k + 1);
   }
 
-  function handleSuggestKeyDown(e: React.KeyboardEvent) {
+  function handleReviseKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
-      setSuggestTarget(null);
-      setSuggestInput("");
-      setSuggestWeight("");
+      setReviseTarget(null);
+      setRevisionInput("");
+      setRevisionWeight("");
       setFocusKey((k) => k + 1);
     }
   }
@@ -238,30 +237,41 @@ export default function Home() {
                   i === messages.length - 1 &&
                   msg.role === "assistant"
                 }
-                canSuggest={
+                canRevise={
                   msg.role === "assistant" && !isLastAsst && !isGenerating
                 }
                 isLastAssistant={isLastAsst}
+                isReviseTarget={
+                  reviseTarget !== null &&
+                  assistantIndices[
+                    assistantIndices.indexOf(reviseTarget.atTurn) -
+                      reviseTarget.n
+                  ] === i
+                }
                 reviseSuggestions={reviseByIndex[i] ?? []}
-                suggestLabel={hasRevisionForN ? "Edit suggestion" : "Suggest"}
-                onSuggest={() => {
+                revisionLabel={
+                  hasRevisionForN ? "Edit revision" : "Add revision"
+                }
+                onRevise={() => {
                   if (hasRevisionForN) {
                     const existing = (
                       reviseByIndex[lastAssistantIndex] ?? []
                     ).find(
                       (e) => getBackValue(e.revision) === assistantRankFromEnd,
                     )!;
-                    handleEditRevision(existing, i);
+                    handleEditRevision(existing);
                   } else {
-                    setSuggestTarget({
-                      messageIndex: i,
+                    setReviseTarget({
                       n: assistantRankFromEnd,
                       atTurn: lastAssistantIndex,
+                      isEdit: false,
                     });
+                    setRevisionInput("");
+                    setRevisionWeight("");
                     setFocusKey((k) => k + 1);
                   }
                 }}
-                onEdit={(entry) => handleEditRevision(entry, i)}
+                onEdit={(entry) => handleEditRevision(entry)}
               />
             );
           })}
@@ -270,17 +280,16 @@ export default function Home() {
 
         <div className="sticky bottom-0 px-2 pb-6 bg-page">
           <div className="mx-auto max-w-[45rem]">
-            {suggestTarget !== null && (
+            {reviseTarget !== null && (
               <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-surface border border-border text-xs text-text-muted">
                 <span>
-                  Suggesting for assistant message ({suggestTarget.n}{" "}
-                  {suggestTarget.n === 1 ? "turn" : "turns"} back)
+                  {reviseTarget.isEdit ? "Editing revision" : "Adding revision"}
                 </span>
                 <button
                   onClick={() => {
-                    setSuggestTarget(null);
-                    setSuggestInput("");
-                    setSuggestWeight("");
+                    setReviseTarget(null);
+                    setRevisionInput("");
+                    setRevisionWeight("");
                     setFocusKey((k) => k + 1);
                   }}
                   className="ml-3 text-text-faint hover:text-text-muted transition-colors cursor-pointer"
@@ -289,23 +298,23 @@ export default function Home() {
                 </button>
               </div>
             )}
-            <div onKeyDown={suggestTarget ? handleSuggestKeyDown : undefined}>
+            <div onKeyDown={reviseTarget ? handleReviseKeyDown : undefined}>
               <ChatInput
-                value={suggestTarget !== null ? suggestInput : input}
-                onChange={suggestTarget !== null ? setSuggestInput : setInput}
-                onSend={suggestTarget !== null ? handleSuggest : handleSend}
+                value={reviseTarget !== null ? revisionInput : input}
+                onChange={reviseTarget !== null ? setRevisionInput : setInput}
+                onSend={reviseTarget !== null ? handleRevise : handleSend}
                 disabled={isGenerating || !online}
                 placeholder={
-                  suggestTarget !== null
-                    ? "Type a better response…"
+                  reviseTarget !== null
+                    ? "Type a revision…"
                     : !online
                       ? "Backend offline…"
                       : "Type a message…"
                 }
                 focusKey={focusKey}
-                weight={suggestTarget !== null ? suggestWeight : undefined}
+                weight={reviseTarget !== null ? revisionWeight : undefined}
                 onWeightChange={
-                  suggestTarget !== null ? setSuggestWeight : undefined
+                  reviseTarget !== null ? setRevisionWeight : undefined
                 }
               />
             </div>

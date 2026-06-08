@@ -1,14 +1,16 @@
+import { AnimatePresence, motion } from "motion/react";
 import type { ReviseEntry } from "~/lib/api";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
-  canSuggest?: boolean;
+  canRevise?: boolean;
   isLastAssistant?: boolean;
+  isReviseTarget?: boolean;
   reviseSuggestions?: ReviseEntry[];
-  suggestLabel?: string;
-  onSuggest?: () => void;
+  revisionLabel?: string;
+  onRevise?: () => void;
   onEdit?: (entry: ReviseEntry) => void;
 }
 
@@ -16,11 +18,12 @@ export default function ChatMessage({
   role,
   content,
   isStreaming = false,
-  canSuggest = false,
+  canRevise = false,
   isLastAssistant = false,
+  isReviseTarget = false,
   reviseSuggestions = [],
-  suggestLabel = "Suggest",
-  onSuggest,
+  revisionLabel = "Add revision",
+  onRevise,
   onEdit,
 }: ChatMessageProps) {
   if (role === "user") {
@@ -33,16 +36,58 @@ export default function ChatMessage({
     );
   }
 
-  const suggestTitle =
-    "Suggestions are only available for messages you've already replied to";
+  const revisionOnlyTitle =
+    "Revisions are only available for messages you've already replied to";
 
   return (
     <div className="group relative flex flex-col gap-1 max-w-[85%]">
-      <div className="text-text text-sm leading-relaxed whitespace-pre-wrap">
-        {content}
-        {isStreaming && (
-          <span className="inline-block w-0.5 h-4 ml-0.5 bg-text-muted align-middle animate-pulse" />
+      <div className="group/msg relative">
+        {(isLastAssistant || canRevise || isReviseTarget) && (
+          <div className="w-full h-0 z-10 overflow-visible relative">
+            {!isReviseTarget && isLastAssistant && (
+              <p className="absolute top-0 -translate-y-full text-xs text-text-faint opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                {revisionOnlyTitle}
+              </p>
+            )}
+            {!isReviseTarget && canRevise && (
+              <button
+                onClick={onRevise}
+                title={
+                  revisionLabel === "Add revision"
+                    ? "Add a revision"
+                    : "Edit this revision"
+                }
+                className="absolute top-0 -translate-y-full text-xs text-text-faint opacity-0 group-hover/msg:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
+              >
+                {revisionLabel}
+              </button>
+            )}
+            <AnimatePresence>
+              {isReviseTarget && (
+                <motion.p
+                  key="revise-label"
+                  initial={{ opacity: 1 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="absolute top-0 -translate-y-full text-xs text-text-faint"
+                >
+                  {revisionLabel === "Edit revision"
+                    ? "Editing revision"
+                    : "Adding revision"}
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </div>
         )}
+        <div
+          className={`relative text-text text-sm w-fit leading-relaxed whitespace-pre-wrap rounded-lg`}
+        >
+          {content}
+          {isStreaming && (
+            <span className="inline-block w-0.5 h-4 ml-0.5 bg-text-muted align-middle animate-pulse" />
+          )}
+        </div>
       </div>
       {reviseSuggestions.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -56,33 +101,11 @@ export default function ChatMessage({
                   onClick={() => onEdit(r)}
                   className="shrink-0 text-xs text-text-faint opacity-0 group-hover/rev:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
                 >
-                  Edit
+                  Edit revision
                 </button>
               )}
             </div>
           ))}
-        </div>
-      )}
-      {canSuggest && (
-        <div className="w-full h-0 overflow-visible absolute bottom-0">
-          <button
-            onClick={onSuggest}
-            title={
-              suggestLabel === "Suggest"
-                ? "Suggest a better response"
-                : "Edit your suggestion"
-            }
-            className="absolute top-0 pt-1 text-xs text-text-faint opacity-0 group-hover:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
-          >
-            {suggestLabel}
-          </button>
-        </div>
-      )}
-      {isLastAssistant && (
-        <div className="w-full h-0 overflow-visible absolute bottom-0">
-          <p className="absolute top-0 pt-1 text-xs text-text-faint opacity-0 group-hover:opacity-100 transition-opacity">
-            {suggestTitle}
-          </p>
         </div>
       )}
     </div>
