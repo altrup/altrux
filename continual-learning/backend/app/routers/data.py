@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..config import get_revise_data_path
 from ..model.registry import registry
-from ..schemas import ReviseRequest, ReviseResponse
+from ..schemas import DeleteReviseRequest, ReviseRequest, ReviseResponse
 
 router = APIRouter()
 
@@ -75,5 +75,39 @@ async def session_revise(req: ReviseRequest) -> ReviseResponse:
                 f.seek(registry.revise_entry_offset)
                 f.truncate()
                 f.write(line)
+
+    return ReviseResponse(ok=True)
+
+
+@router.delete("/session/revise", response_model=ReviseResponse)
+async def delete_revise(req: DeleteReviseRequest) -> ReviseResponse:
+    async with registry.lock:
+        before = len(registry.revise_suggestions)
+        registry.revise_suggestions = [
+            (t, tag) for t, tag in registry.revise_suggestions
+            if not (t == req.at_turn and _back_value(tag) == req.n)
+        ]
+        if len(registry.revise_suggestions) == before:
+            raise HTTPException(status_code=404, detail="Revision not found")
+
+        path = get_revise_data_path()
+        if registry.revise_entry_offset is not None:
+            if registry.revise_suggestions:
+                base_messages = [
+                    ({"role": m["role"], "content": m["content"], "train": False}
+                     if m["role"] == "assistant"
+                     else {"role": m["role"], "content": m["content"]})
+                    for m in registry.messages
+                ]
+                line = _build_revise_line(base_messages, registry.revise_suggestions)
+                with path.open("r+b") as f:
+                    f.seek(registry.revise_entry_offset)
+                    f.truncate()
+                    f.write(line)
+            else:
+                with path.open("r+b") as f:
+                    f.seek(registry.revise_entry_offset)
+                    f.truncate()
+                registry.revise_entry_offset = None
 
     return ReviseResponse(ok=True)

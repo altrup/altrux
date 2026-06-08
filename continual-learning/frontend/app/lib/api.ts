@@ -86,6 +86,15 @@ export async function submitRevision(
   if (!res.ok) throw new Error(`Submit revision failed: ${res.status}`);
 }
 
+export async function deleteRevision(atTurn: number, n: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/session/revise`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ at_turn: atTurn, n }),
+  });
+  if (!res.ok) throw new Error(`Delete revision failed: ${res.status}`);
+}
+
 export async function* streamGenerate(params?: {
   max_tokens?: number;
   temperature?: number;

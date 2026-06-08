@@ -12,6 +12,7 @@ interface ChatMessageProps {
   revisionLabel?: string;
   onRevise?: () => void;
   onEdit?: (entry: ReviseEntry) => void;
+  onDelete?: (entry: ReviseEntry) => void;
 }
 
 export default function ChatMessage({
@@ -25,6 +26,7 @@ export default function ChatMessage({
   revisionLabel = "Add revision",
   onRevise,
   onEdit,
+  onDelete,
 }: ChatMessageProps) {
   if (role === "user") {
     return (
@@ -81,7 +83,7 @@ export default function ChatMessage({
           </div>
         )}
         <div
-          className={`relative text-text text-sm w-fit leading-relaxed whitespace-pre-wrap rounded-lg`}
+          className={`relative text-text text-sm w-fit leading-relaxed whitespace-pre-wrap`}
         >
           {content}
           {isStreaming && (
@@ -92,7 +94,7 @@ export default function ChatMessage({
       {reviseSuggestions.length > 0 && (
         <div className="flex flex-col gap-1">
           {reviseSuggestions.map((r, i) => (
-            <div key={i} className="group/rev flex items-center gap-2">
+            <div key={i} className="group/rev flex items-center gap-2 w-fit">
               <code className="text-xs text-text-muted font-mono bg-surface rounded px-2 py-1 whitespace-pre-wrap break-words w-fit">
                 {r.revision}
               </code>
@@ -102,6 +104,14 @@ export default function ChatMessage({
                   className="shrink-0 text-xs text-text-faint opacity-0 group-hover/rev:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
                 >
                   Edit
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={() => onDelete(r)}
+                  className="shrink-0 text-xs text-text-faint opacity-0 group-hover/rev:opacity-100 hover:text-error transition-[opacity,color] cursor-pointer"
+                >
+                  Delete
                 </button>
               )}
             </div>

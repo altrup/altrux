@@ -59,7 +59,8 @@ make run
 | DELETE | `/session` | Clear the session |
 | PUT | `/session` | Append raw text — `{"text": "tell me more"}` |
 | PUT | `/session/message` | Append a chat turn, wrapped with the configured openers — `{"role": "user", "content": "hi"}` (`role` defaults to `user`) |
-| POST | `/session/revise` | Save a revision suggestion for the current session — `{"turn": 1, "suggestion": "better answer"}`. `turn` is how many assistant turns back from the last message the suggestion is for. Appends a JSONL entry on first call; updates the same line on subsequent calls in the same session. |
+| POST | `/session/revise` | Save a revision suggestion — `{"n": 1, "revision": "better answer", "weight": 0.5, "at_turn": 3}`. `n` is how many assistant turns back to target; `at_turn` is the message index of the anchor turn (defaults to the last assistant turn). Appends a JSONL entry on first call; updates the same line on subsequent calls in the same session. |
+| DELETE | `/session/revise` | Remove a single revision suggestion — `{"at_turn": 3, "n": 1}`. Returns 404 if the revision does not exist. |
 | POST | `/generate` | Generate a response (batch) — `{"temperature": 0.8, "top_p": 0.95}` |
 | POST | `/generate/stream` | Same, but stream tokens as NDJSON as they're generated |
 

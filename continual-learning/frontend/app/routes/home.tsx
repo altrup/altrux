@@ -6,6 +6,7 @@ import HealthBadge from "~/components/HealthBadge";
 import ThemeToggle from "~/components/ThemeToggle";
 import {
   addUserMessage,
+  deleteRevision,
   getSession,
   resetSession,
   streamGenerate,
@@ -152,6 +153,27 @@ export default function Home() {
     setFocusKey((k) => k + 1);
   }
 
+  async function handleDeleteRevision(entry: ReviseEntry) {
+    const backVal = getBackValue(entry.revision);
+    try {
+      await deleteRevision(entry.atTurn, backVal);
+      setReviseByIndex((prev) => {
+        const filtered = (prev[entry.atTurn] ?? []).filter(
+          (e) => getBackValue(e.revision) !== backVal,
+        );
+        const updated = { ...prev };
+        if (filtered.length === 0) {
+          delete updated[entry.atTurn];
+        } else {
+          updated[entry.atTurn] = filtered;
+        }
+        return updated;
+      });
+    } catch {
+      // silently ignore
+    }
+  }
+
   function handleEditRevision(entry: ReviseEntry) {
     const backVal = getBackValue(entry.revision);
     const textMatch = entry.revision.match(/back=\d+>([\s\S]*?)<\/revise/);
@@ -272,6 +294,7 @@ export default function Home() {
                   }
                 }}
                 onEdit={(entry) => handleEditRevision(entry)}
+                onDelete={(entry) => handleDeleteRevision(entry)}
               />
             );
           })}
@@ -283,9 +306,9 @@ export default function Home() {
             {reviseTarget !== null && (
               <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-surface border border-border text-xs text-text-muted">
                 <span>
-                  {reviseTarget.isEdit ? "Editing revision" : "Adding revision"}{" for assistant message "}
-                  ({reviseTarget.n} {reviseTarget.n === 1 ? "turn" : "turns"}{" "}
-                  back)
+                  {reviseTarget.isEdit ? "Editing revision" : "Adding revision"}
+                  {" for assistant message "}({reviseTarget.n}{" "}
+                  {reviseTarget.n === 1 ? "turn" : "turns"} back)
                 </span>
                 <button
                   onClick={() => {

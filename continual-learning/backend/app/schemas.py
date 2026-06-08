@@ -58,3 +58,8 @@ class ReviseRequest(BaseModel):
 
 class ReviseResponse(BaseModel):
     ok: bool
+
+
+class DeleteReviseRequest(BaseModel):
+    at_turn: int
+    n: int
