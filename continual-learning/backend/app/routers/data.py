@@ -1,4 +1,5 @@
 import json
+import re
 
 from fastapi import APIRouter, HTTPException
 
@@ -9,14 +10,20 @@ from ..schemas import ReviseRequest, ReviseResponse
 router = APIRouter()
 
 
+def _back_value(tag: str) -> int:
+    m = re.search(r"back=(\d+)", tag)
+    return int(m.group(1)) if m else 0
+
+
 def _build_revise_line(base_messages: list[dict], suggestions: list[tuple[int, str]]) -> bytes:
     messages = [m.copy() for m in base_messages]
     tags_by_turn: dict[int, list[str]] = {}
     for at_turn, tag in suggestions:
         tags_by_turn.setdefault(at_turn, []).append(tag)
     for at_turn, tags in tags_by_turn.items():
+        tags_sorted = sorted(tags, key=_back_value, reverse=True)
         msg = messages[at_turn]
-        msg["content"] = " ".join(tags) + " " + msg["content"]
+        msg["content"] = " ".join(tags_sorted) + " " + msg["content"]
         msg.pop("train", None)
     return (json.dumps({"messages": messages}) + "\n").encode()
 

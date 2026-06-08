@@ -20,6 +20,17 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "continual-learning" }];
 }
 
+function getBackValue(revision: string): number {
+  const m = revision.match(/back=(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function sortByBackDesc(entries: ReviseEntry[]): ReviseEntry[] {
+  return [...entries].sort(
+    (a, b) => getBackValue(b.revision) - getBackValue(a.revision),
+  );
+}
+
 interface SuggestTarget {
   messageIndex: number;
   n: number; // N model messages back from last — goes inside <revise turn=N>
@@ -52,6 +63,9 @@ export default function Home() {
         const byIndex: Record<number, ReviseEntry[]> = {};
         for (const entry of reviseSuggestions) {
           byIndex[entry.atTurn] = [...(byIndex[entry.atTurn] ?? []), entry];
+        }
+        for (const key of Object.keys(byIndex)) {
+          byIndex[Number(key)] = sortByBackDesc(byIndex[Number(key)]);
         }
         setReviseByIndex(byIndex);
       })
@@ -127,7 +141,10 @@ export default function Home() {
       await submitRevision(n, trimmed, weight);
       setReviseByIndex((prev) => ({
         ...prev,
-        [atTurn]: [...(prev[atTurn] ?? []), { atTurn, revision: tag }],
+        [atTurn]: sortByBackDesc([
+          ...(prev[atTurn] ?? []),
+          { atTurn, revision: tag },
+        ]),
       }));
     } catch {
       // silently ignore — revision may have failed but don't block the UI
