@@ -33,7 +33,8 @@ function sortByBackDesc(entries: ReviseEntry[]): ReviseEntry[] {
 
 interface SuggestTarget {
   messageIndex: number;
-  n: number; // N model messages back from last — goes inside <revise turn=N>
+  n: number; // N model messages back from atTurn — goes inside <revise back=N>
+  atTurn: number; // message index of the last assistant turn this revision is anchored to
 }
 
 export default function Home() {
@@ -132,26 +133,37 @@ export default function Home() {
 
   async function handleSuggest() {
     if (!suggestTarget || !suggestInput.trim()) return;
-    const { n } = suggestTarget;
+    const { n, atTurn } = suggestTarget;
     const trimmed = suggestInput.trim();
     const weight = suggestWeight === "" ? undefined : suggestWeight;
     const tag = `<revise back=${n}>${trimmed}</revise weight=${weight ?? 0.5}>`;
-    const atTurn = assistantIndices[assistantIndices.length - 1];
     try {
-      await submitRevision(n, trimmed, weight);
-      setReviseByIndex((prev) => ({
-        ...prev,
-        [atTurn]: sortByBackDesc([
-          ...(prev[atTurn] ?? []),
-          { atTurn, revision: tag },
-        ]),
-      }));
+      await submitRevision(n, trimmed, weight, atTurn);
+      setReviseByIndex((prev) => {
+        const filtered = (prev[atTurn] ?? []).filter(
+          (e) => getBackValue(e.revision) !== n,
+        );
+        return {
+          ...prev,
+          [atTurn]: sortByBackDesc([...filtered, { atTurn, revision: tag }]),
+        };
+      });
     } catch {
       // silently ignore — revision may have failed but don't block the UI
     }
     setSuggestInput("");
     setSuggestWeight("");
     setSuggestTarget(null);
+    setFocusKey((k) => k + 1);
+  }
+
+  function handleEditRevision(entry: ReviseEntry, messageIndex: number) {
+    const backVal = getBackValue(entry.revision);
+    const textMatch = entry.revision.match(/back=\d+>([\s\S]*?)<\/revise/);
+    const weightMatch = entry.revision.match(/revise weight=([\d.]+)>/);
+    setSuggestTarget({ messageIndex, n: backVal, atTurn: entry.atTurn });
+    setSuggestInput(textMatch ? textMatch[1] : "");
+    setSuggestWeight(weightMatch ? parseFloat(weightMatch[1]) : "");
     setFocusKey((k) => k + 1);
   }
 
@@ -206,11 +218,16 @@ export default function Home() {
           )}
           {messages.map((msg, i) => {
             const isLastAsst = i === lastAssistantIndex;
-            // turn = number of assistant messages after this one (inclusive of this one would be 0, so we count strictly after)
+            const iRank = assistantIndices.indexOf(i);
             const assistantRankFromEnd =
               msg.role === "assistant"
-                ? assistantIndices.length - 1 - assistantIndices.indexOf(i)
+                ? assistantIndices.length - 1 - iRank
                 : 0;
+
+            // Whether the current last turn already has a revision for this message
+            const hasRevisionForN = (
+              reviseByIndex[lastAssistantIndex] ?? []
+            ).some((e) => getBackValue(e.revision) === assistantRankFromEnd);
             return (
               <ChatMessage
                 key={i}
@@ -226,13 +243,25 @@ export default function Home() {
                 }
                 isLastAssistant={isLastAsst}
                 reviseSuggestions={reviseByIndex[i] ?? []}
+                suggestLabel={hasRevisionForN ? "Edit suggestion" : "Suggest"}
                 onSuggest={() => {
-                  setSuggestTarget({
-                    messageIndex: i,
-                    n: assistantRankFromEnd,
-                  });
-                  setFocusKey((k) => k + 1);
+                  if (hasRevisionForN) {
+                    const existing = (
+                      reviseByIndex[lastAssistantIndex] ?? []
+                    ).find(
+                      (e) => getBackValue(e.revision) === assistantRankFromEnd,
+                    )!;
+                    handleEditRevision(existing, i);
+                  } else {
+                    setSuggestTarget({
+                      messageIndex: i,
+                      n: assistantRankFromEnd,
+                      atTurn: lastAssistantIndex,
+                    });
+                    setFocusKey((k) => k + 1);
+                  }
                 }}
+                onEdit={(entry) => handleEditRevision(entry, i)}
               />
             );
           })}

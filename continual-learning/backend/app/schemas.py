@@ -53,6 +53,7 @@ class ReviseRequest(BaseModel):
     n: int = Field(ge=1)  # how many model messages back the revision targets
     revision: str
     weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    at_turn: int | None = None  # message index of the target turn; defaults to last assistant turn
 
 
 class ReviseResponse(BaseModel):

@@ -46,9 +46,21 @@ async def session_revise(req: ReviseRequest) -> ReviseResponse:
             for m in msgs
         ]
 
-        at_turn = max(i for i, m in enumerate(msgs) if m["role"] == "assistant")
+        at_turn = (
+            req.at_turn
+            if req.at_turn is not None
+            else max(i for i, m in enumerate(msgs) if m["role"] == "assistant")
+        )
         tag = f"<revise back={req.n}>{req.revision}</revise weight={req.weight}>"
-        registry.revise_suggestions.append((at_turn, tag))
+        existing_idx = next(
+            (i for i, (t, existing_tag) in enumerate(registry.revise_suggestions)
+             if t == at_turn and _back_value(existing_tag) == req.n),
+            None,
+        )
+        if existing_idx is not None:
+            registry.revise_suggestions[existing_idx] = (at_turn, tag)
+        else:
+            registry.revise_suggestions.append((at_turn, tag))
         line = _build_revise_line(base_messages, registry.revise_suggestions)
 
         path = get_revise_data_path()

@@ -71,11 +71,17 @@ export async function submitRevision(
   n: number,
   revision: string,
   weight: number = 0.5,
+  atTurn?: number,
 ): Promise<void> {
   const res = await fetch(`${BACKEND_URL}/session/revise`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ n, revision, weight }),
+    body: JSON.stringify({
+      n,
+      revision,
+      weight,
+      ...(atTurn !== undefined ? { at_turn: atTurn } : {}),
+    }),
   });
   if (!res.ok) throw new Error(`Submit revision failed: ${res.status}`);
 }

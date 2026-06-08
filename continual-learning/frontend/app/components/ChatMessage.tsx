@@ -7,7 +7,9 @@ interface ChatMessageProps {
   canSuggest?: boolean;
   isLastAssistant?: boolean;
   reviseSuggestions?: ReviseEntry[];
+  suggestLabel?: string;
   onSuggest?: () => void;
+  onEdit?: (entry: ReviseEntry) => void;
 }
 
 export default function ChatMessage({
@@ -17,7 +19,9 @@ export default function ChatMessage({
   canSuggest = false,
   isLastAssistant = false,
   reviseSuggestions = [],
+  suggestLabel = "Suggest",
   onSuggest,
+  onEdit,
 }: ChatMessageProps) {
   if (role === "user") {
     return (
@@ -43,12 +47,19 @@ export default function ChatMessage({
       {reviseSuggestions.length > 0 && (
         <div className="flex flex-col gap-1">
           {reviseSuggestions.map((r, i) => (
-            <code
-              key={i}
-              className="block text-xs text-text-muted font-mono bg-surface rounded px-2 py-1 whitespace-pre-wrap break-words w-fit"
-            >
-              {r.revision}
-            </code>
+            <div key={i} className="group/rev flex items-center gap-2">
+              <code className="text-xs text-text-muted font-mono bg-surface rounded px-2 py-1 whitespace-pre-wrap break-words w-fit">
+                {r.revision}
+              </code>
+              {onEdit && (
+                <button
+                  onClick={() => onEdit(r)}
+                  className="shrink-0 text-xs text-text-faint opacity-0 group-hover/rev:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -56,10 +67,14 @@ export default function ChatMessage({
         <div className="w-full h-0 overflow-visible absolute bottom-0">
           <button
             onClick={onSuggest}
-            title="Suggest a better response"
+            title={
+              suggestLabel === "Suggest"
+                ? "Suggest a better response"
+                : "Edit your suggestion"
+            }
             className="absolute top-0 pt-1 text-xs text-text-faint opacity-0 group-hover:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
           >
-            Suggest
+            {suggestLabel}
           </button>
         </div>
       )}
