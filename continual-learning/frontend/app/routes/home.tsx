@@ -38,6 +38,7 @@ export default function Home() {
     null,
   );
   const [suggestInput, setSuggestInput] = useState("");
+  const [suggestWeight, setSuggestWeight] = useState<number | "">("");
   const [focusKey, setFocusKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -105,6 +106,7 @@ export default function Home() {
     if (isGenerating) return;
     setSuggestTarget(null);
     setSuggestInput("");
+    setSuggestWeight("");
     setReviseByIndex({});
     try {
       await resetSession();
@@ -118,10 +120,11 @@ export default function Home() {
     if (!suggestTarget || !suggestInput.trim()) return;
     const { n } = suggestTarget;
     const trimmed = suggestInput.trim();
-    const tag = `<revise back=${n}>${trimmed}</revise weight=0.5>`;
+    const weight = suggestWeight === "" ? undefined : suggestWeight;
+    const tag = `<revise back=${n}>${trimmed}</revise weight=${weight ?? 0.5}>`;
     const atTurn = assistantIndices[assistantIndices.length - 1];
     try {
-      await submitRevision(n, trimmed);
+      await submitRevision(n, trimmed, weight);
       setReviseByIndex((prev) => ({
         ...prev,
         [atTurn]: [...(prev[atTurn] ?? []), { atTurn, revision: tag }],
@@ -130,13 +133,17 @@ export default function Home() {
       // silently ignore — revision may have failed but don't block the UI
     }
     setSuggestInput("");
+    setSuggestWeight("");
     setSuggestTarget(null);
+    setFocusKey((k) => k + 1);
   }
 
   function handleSuggestKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
       setSuggestTarget(null);
       setSuggestInput("");
+      setSuggestWeight("");
+      setFocusKey((k) => k + 1);
     }
   }
 
@@ -227,6 +234,8 @@ export default function Home() {
                   onClick={() => {
                     setSuggestTarget(null);
                     setSuggestInput("");
+                    setSuggestWeight("");
+                    setFocusKey((k) => k + 1);
                   }}
                   className="ml-3 text-text-faint hover:text-text-muted transition-colors cursor-pointer"
                 >
@@ -248,6 +257,10 @@ export default function Home() {
                       : "Type a message…"
                 }
                 focusKey={focusKey}
+                weight={suggestTarget !== null ? suggestWeight : undefined}
+                onWeightChange={
+                  suggestTarget !== null ? setSuggestWeight : undefined
+                }
               />
             </div>
           </div>

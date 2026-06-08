@@ -70,11 +70,12 @@ export async function addUserMessage(content: string): Promise<void> {
 export async function submitRevision(
   n: number,
   revision: string,
+  weight: number = 0.5,
 ): Promise<void> {
   const res = await fetch(`${BACKEND_URL}/session/revise`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ n, revision }),
+    body: JSON.stringify({ n, revision, weight }),
   });
   if (!res.ok) throw new Error(`Submit revision failed: ${res.status}`);
 }

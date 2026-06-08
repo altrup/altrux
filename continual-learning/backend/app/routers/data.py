@@ -40,7 +40,7 @@ async def session_revise(req: ReviseRequest) -> ReviseResponse:
         ]
 
         at_turn = max(i for i, m in enumerate(msgs) if m["role"] == "assistant")
-        tag = f"<revise back={req.n}>{req.revision}</revise weight=0.5>"
+        tag = f"<revise back={req.n}>{req.revision}</revise weight={req.weight}>"
         registry.revise_suggestions.append((at_turn, tag))
         line = _build_revise_line(base_messages, registry.revise_suggestions)
 
