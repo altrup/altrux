@@ -47,7 +47,6 @@ The model is fine-tuned to generate a `<revise>` tag after completing a response
 |------------|-------------|
 | `backend/` | FastAPI server — loads the Mamba model and serves the chat API |
 | `frontend/` | React Router v7 web UI — chat interface for the model |
-| `cli/`     | Command-line client |
 
 ---
 
