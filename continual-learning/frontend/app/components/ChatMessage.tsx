@@ -101,7 +101,7 @@ export default function ChatMessage({
                   onClick={() => onEdit(r)}
                   className="shrink-0 text-xs text-text-faint opacity-0 group-hover/rev:opacity-100 hover:text-text-muted transition-[opacity,color] cursor-pointer"
                 >
-                  Edit revision
+                  Edit
                 </button>
               )}
             </div>

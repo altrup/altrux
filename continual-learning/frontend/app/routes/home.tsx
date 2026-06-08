@@ -283,7 +283,9 @@ export default function Home() {
             {reviseTarget !== null && (
               <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-surface border border-border text-xs text-text-muted">
                 <span>
-                  {reviseTarget.isEdit ? "Editing revision" : "Adding revision"}
+                  {reviseTarget.isEdit ? "Editing revision" : "Adding revision"}{" for assistant message "}
+                  ({reviseTarget.n} {reviseTarget.n === 1 ? "turn" : "turns"}{" "}
+                  back)
                 </span>
                 <button
                   onClick={() => {
