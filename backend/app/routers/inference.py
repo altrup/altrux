@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from ..config import ASST_OPEN
 from ..model.registry import registry
 from ..schemas import (
     GenerateRequest,
@@ -79,8 +78,8 @@ async def _iter_generate(req: GenerateRequest) -> AsyncIterator[dict]:
             if result["is_eos"]:
                 break
         content = accumulated
-        if content.startswith(ASST_OPEN):
-            content = content[len(ASST_OPEN):]
+        if content.startswith(registry.asst_open):
+            content = content[len(registry.asst_open):]
         registry.messages.append({"role": "assistant", "content": content.strip()})
 
 

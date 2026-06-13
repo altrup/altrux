@@ -8,6 +8,7 @@ dependencies = [
     "datasets>=3.0",
     "sentencepiece>=0.2.0",
     "numpy>=2.0",
+    "python-dotenv>=1.0",
 ]
 
 # torch, causal-conv1d, and mamba-ssm are installed via `make sync`

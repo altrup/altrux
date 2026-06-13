@@ -1,4 +1,4 @@
-# Claude Guidelines — continual-learning/frontend
+# Claude Guidelines — frontend
 
 ## Quality checks (run in this order)
 

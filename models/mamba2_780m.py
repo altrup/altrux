@@ -4,12 +4,20 @@ import torch.nn as nn
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
+MODEL_ID = "state-spaces/mamba2-780m"
+TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
+TARGET_LORA_MODULES = ["in_proj", "out_proj"]
 
-class ContinualLearningModel(nn.Module):
-    """Thin wrapper around the base Mamba LM.
+# Chat format tokens — must match the SFT training format exactly.
+# The trailing space is significant; keep it.
+USER_OPEN = "[USER] "
+ASST_OPEN = "[ASSISTANT] "
 
-    The critic branch has been removed — this is now a plain language model that
-    generates tokens until EOS. The model will be fine-tuned to emit a <revise>
+
+class Model(nn.Module):
+    """Thin wrapper around the base Mamba LM for inference.
+
+    Generates tokens until EOS. The model is fine-tuned to emit a <revise>
     tag after its response; for now that tag is treated like any other token.
     TODO: detect the <revise> tag and act on it.
     """
@@ -59,3 +67,13 @@ class ContinualLearningModel(nn.Module):
             residual_in_fp32=self.residual_in_fp32,
             is_rms_norm=isinstance(self.norm_f, RMSNorm),
         )
+
+
+def load_base(device: str) -> MambaLMHeadModel:
+    """Load the raw HuggingFace model. Used by sft/train.py."""
+    return MambaLMHeadModel.from_pretrained(MODEL_ID, device=device)
+
+
+def load_inference(device: str) -> Model:
+    """Load and wrap the model for inference. Used by the backend registry."""
+    return Model(load_base(device))

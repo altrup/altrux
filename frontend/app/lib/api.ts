@@ -2,12 +2,14 @@ const BACKEND_URL =
   (import.meta.env.VITE_BACKEND_URL as string | undefined) ??
   "http://localhost:8000";
 
-const ASST_OPEN =
-  (import.meta.env.VITE_ASST_OPEN as string | undefined) ?? "[ASSISTANT] ";
-
 export interface HealthResponse {
   status: string;
   model_loaded: boolean;
+}
+
+export interface ConfigResponse {
+  user_open: string;
+  asst_open: string;
 }
 
 export interface GeneratedToken {
@@ -35,6 +37,12 @@ export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${BACKEND_URL}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json() as Promise<HealthResponse>;
+}
+
+export async function getConfig(): Promise<ConfigResponse> {
+  const res = await fetch(`${BACKEND_URL}/config`);
+  if (!res.ok) throw new Error(`Config fetch failed: ${res.status}`);
+  return res.json() as Promise<ConfigResponse>;
 }
 
 export async function getSession(): Promise<SessionData> {
@@ -95,11 +103,14 @@ export async function deleteRevision(atTurn: number, n: number): Promise<void> {
   if (!res.ok) throw new Error(`Delete revision failed: ${res.status}`);
 }
 
-export async function* streamGenerate(params?: {
-  max_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-}): AsyncGenerator<GeneratedToken> {
+export async function* streamGenerate(
+  asstOpen: string,
+  params?: {
+    max_tokens?: number;
+    temperature?: number;
+    top_p?: number;
+  },
+): AsyncGenerator<GeneratedToken> {
   const res = await fetch(`${BACKEND_URL}/generate/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -116,16 +127,16 @@ export async function* streamGenerate(params?: {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let prefixBuf = ""; // accumulates text until ASST_OPEN is fully consumed
+  let prefixBuf = ""; // accumulates text until asstOpen is fully consumed
 
   function* processToken(token: GeneratedToken): Generator<GeneratedToken> {
     if (token.is_eos || token.token_id === 0) return;
 
-    if (prefixBuf.length < ASST_OPEN.length) {
+    if (prefixBuf.length < asstOpen.length) {
       prefixBuf += token.token;
-      if (prefixBuf.length >= ASST_OPEN.length) {
-        const remainder = prefixBuf.startsWith(ASST_OPEN)
-          ? prefixBuf.slice(ASST_OPEN.length)
+      if (prefixBuf.length >= asstOpen.length) {
+        const remainder = prefixBuf.startsWith(asstOpen)
+          ? prefixBuf.slice(asstOpen.length)
           : prefixBuf;
         if (remainder) yield { ...token, token: remainder };
       }

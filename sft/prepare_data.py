@@ -1,15 +1,23 @@
 import argparse
+import importlib
 import json
+import os
+import sys
 from pathlib import Path
 
 import torch
+from dotenv import load_dotenv
 from transformers import AutoTokenizer
 
-MODEL_ID = "state-spaces/mamba2-780m"
-TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
+load_dotenv()
 
-USER_OPEN = "[USER] "
-ASST_OPEN = "[ASSISTANT] "
+# Add the repo root to sys.path so the models/ package is importable.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+_model_mod = importlib.import_module(f"models.{os.getenv('MODEL_NAME', 'mamba2_780m')}")
+TOKENIZER_ID = _model_mod.TOKENIZER_ID
+USER_OPEN = _model_mod.USER_OPEN
+ASST_OPEN = _model_mod.ASST_OPEN
 
 
 def format_conversation(

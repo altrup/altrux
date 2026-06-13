@@ -7,6 +7,7 @@ import ThemeToggle from "~/components/ThemeToggle";
 import {
   addUserMessage,
   deleteRevision,
+  getConfig,
   getSession,
   resetSession,
   streamGenerate,
@@ -41,6 +42,7 @@ interface ReviseTarget {
 export default function Home() {
   const { online } = useHealth();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [asstOpen, setAsstOpen] = useState("[ASSISTANT] ");
   // keyed by atTurn so revisions stay on the right message as the conversation grows
   const [reviseByIndex, setReviseByIndex] = useState<
     Record<number, ReviseEntry[]>
@@ -54,6 +56,9 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    getConfig()
+      .then(({ asst_open }) => setAsstOpen(asst_open))
+      .catch(() => {});
     getSession()
       .then(({ messages, reviseSuggestions }) => {
         setMessages(messages);
@@ -85,7 +90,7 @@ export default function Home() {
       await addUserMessage(content);
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
-      for await (const token of streamGenerate()) {
+      for await (const token of streamGenerate(asstOpen)) {
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];

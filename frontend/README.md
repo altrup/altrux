@@ -1,6 +1,6 @@
-# continual-learning — frontend
+# Frontend
 
-React Router v7 chat UI for the continual-learning backend.
+React Router v7 chat UI for the backend model.
 
 ## Features
 
@@ -19,11 +19,11 @@ cp .env.example .env   # edit as needed
 
 ### Environment variables
 
-| Variable           | Default                 | Description                                       |
-| ------------------ | ----------------------- | ------------------------------------------------- |
-| `VITE_BACKEND_URL` | `http://localhost:8000` | Backend API base URL                              |
-| `VITE_USER_OPEN`   | `[USER] `               | User turn opener — must match `backend/.env`      |
-| `VITE_ASST_OPEN`   | `[ASSISTANT] `          | Assistant turn opener — must match `backend/.env` |
+| Variable           | Default                 | Description          |
+| ------------------ | ----------------------- | -------------------- |
+| `VITE_BACKEND_URL` | `http://localhost:8000` | Backend API base URL |
+
+Chat format tokens (`user_open`, `asst_open`) are fetched automatically from the backend at startup via `GET /config` — they are no longer configured here.
 
 ## Development
 

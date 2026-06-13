@@ -7,17 +7,16 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 _raw = os.getenv("DEVICE", "auto").lower()
 
-# Chat-turn openers. Must match the format the model was fine-tuned on
-# (see sft/prepare_data.py). The trailing space is significant — keep it.
-USER_OPEN = os.getenv("USER_OPEN", "[USER] ")
-ASST_OPEN = os.getenv("ASST_OPEN", "[ASSISTANT] ")
-
 
 def get_device() -> str:
     if _raw == "auto":
         import torch
         return "cuda" if torch.cuda.is_available() else "cpu"
     return _raw
+
+
+def get_model_name() -> str:
+    return os.getenv("MODEL_NAME", "mamba2_780m")
 
 
 def get_sft_checkpoint() -> Path | None:

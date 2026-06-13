@@ -1,16 +1,26 @@
 import argparse
+import importlib
+import os
 import shutil
+import sys
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
+from dotenv import load_dotenv
 
 from lora import apply_lora, load_lora, save_lora
 
+load_dotenv()
+
+# Add the repo root to sys.path so the models/ package is importable.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+_model_mod = importlib.import_module(f"models.{os.getenv('MODEL_NAME', 'mamba2_780m')}")
+MODEL_ID = _model_mod.MODEL_ID
+TARGET_MODULES = _model_mod.TARGET_LORA_MODULES
+
 CKPT_DIR = Path("checkpoints")
-MODEL_ID = "state-spaces/mamba2-780m"
-TARGET_MODULES = ["in_proj", "out_proj"]
 
 
 def iter_checkpoints():
@@ -137,7 +147,7 @@ def preflight(
 def main() -> None:
     parser = argparse.ArgumentParser(description="LoRA SFT for mamba2-780m")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
-    parser.add_argument("--model", default=MODEL_ID, help="Model ID or local path")
+    parser.add_argument("--model", default=MODEL_ID, help="Model ID (informational; actual ID comes from models/ file)")
     parser.add_argument("--data", default="data/train.pt", help="Tokenized dataset from prepare_data.py")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
@@ -161,7 +171,8 @@ def main() -> None:
         print(f"device: {device} (no CUDA/ROCm device found)")
 
     print(f"loading {args.model} ...")
-    model = MambaLMHeadModel.from_pretrained(args.model, dtype=torch.float32)
+    model = _model_mod.load_base(str(device))
+    model = model.to(torch.float32)
     model = apply_lora(model, TARGET_MODULES, args.lora_rank, args.lora_alpha, args.lora_dropout)
 
     for param in model.parameters():
@@ -173,7 +184,6 @@ def main() -> None:
             lora_params.append(param)
 
     print(f"lora trainable params: {sum(p.numel() for p in lora_params):,}")
-    model = model.to(device)
 
     optimizer = torch.optim.AdamW(lora_params, lr=args.lr, weight_decay=0.01)
 
