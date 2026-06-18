@@ -14,4 +14,4 @@ uv uses its default system cache — no override needed.
 
 ## Model configuration
 
-The model is selected via `MODEL_NAME` in `.env`. This controls which file in `models/` is imported. The scripts add the repo root to `sys.path` automatically; the Makefile also sets `PYTHONPATH`. See the root `CLAUDE.md` for the full model interface contract.
+The model is selected via `MODEL_NAME` in `.env`. This controls which package in `models/` is imported. The scripts add the repo root to `sys.path` automatically; the Makefile also sets `PYTHONPATH`. See the root `CLAUDE.md` for the full model interface contract.

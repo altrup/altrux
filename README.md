@@ -6,8 +6,8 @@ Experiments with LLMs — specifically, building toward a model that revises its
 
 ```
 altrux/
-├── models/          # Model definitions — one Python file per model
-│   └── mamba2_780m.py
+├── models/          # Model definitions — one folder per model (package + README.md)
+│   └── mamba2_780m/
 ├── backend/         # FastAPI inference server
 ├── frontend/        # React Router v7 chat UI
 └── sft/             # LoRA supervised fine-tuning scripts
@@ -15,7 +15,7 @@ altrux/
 
 ## Adding a new model
 
-1. Create `models/my_model.py` — see `models/mamba2_780m.py` for the required interface (`MODEL_ID`, `TOKENIZER_ID`, `TARGET_LORA_MODULES`, `USER_OPEN`, `ASST_OPEN`, `Model`, `load_base`, `load_inference`)
+1. Create a `models/my_model/` package — see `models/mamba2_780m/` for the required interface (`MODEL_ID`, `TOKENIZER_ID`, `TARGET_LORA_MODULES`, `USER_OPEN`, `ASST_OPEN`, `Model`, `load_base`, `load_inference`) and add a `README.md` following `models/CLAUDE.md`
 2. Set `MODEL_NAME=my_model` in `backend/.env` and/or `sft/.env`
 3. Start the backend or run sft — no other code changes needed
 

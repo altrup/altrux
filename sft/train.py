@@ -16,15 +16,16 @@ load_dotenv()
 # Add the repo root to sys.path so the models/ package is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_model_mod = importlib.import_module(f"models.{os.getenv('MODEL_NAME', 'mamba2_780m')}")
+MODEL_NAME = os.getenv("MODEL_NAME", "mamba2_780m")
+_model_mod = importlib.import_module(f"models.{MODEL_NAME}")
 MODEL_ID = _model_mod.MODEL_ID
 TARGET_MODULES = _model_mod.TARGET_LORA_MODULES
 
-CKPT_DIR = Path("checkpoints")
+CKPT_DIR = Path("checkpoints") / MODEL_NAME
 
 
 def iter_checkpoints():
-    """Yield (step, path) for every checkpoints/epoch-*/step-* directory.
+    """Yield (step, path) for every checkpoints/{MODEL_NAME}/epoch-*/step-* directory.
     Step numbers are globally monotonic, so they order checkpoints across epochs."""
     if not CKPT_DIR.exists():
         return

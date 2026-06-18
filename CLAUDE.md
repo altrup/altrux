@@ -15,7 +15,7 @@ uv uses its default system cache (`~/.cache/uv`) — no override needed. The roo
 
 ## Models
 
-Each model is a single Python file in `models/` at the repo root. A model file must export:
+Each model is a folder in `models/` at the repo root containing `model.py` (implementation), a thin `__init__.py` that re-exports the interface below, and a `README.md` documenting the model (see `models/CLAUDE.md` for the README checklist). A model must export:
 
 | Name | Type | Description |
 |------|------|-------------|

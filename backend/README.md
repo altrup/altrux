@@ -30,12 +30,12 @@ Copy `.env.example` to `.env` and adjust as needed. Key variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEVICE` | `auto` | `auto` uses CUDA/ROCm if available |
-| `MODEL_NAME` | `mamba2_780m` | Filename (without `.py`) of the model in `models/` at the repo root. The model file defines the architecture, tokenizer, format tokens, and LoRA targets. |
-| `SFT_CHECKPOINT` | _(unset)_ | Path to an SFT checkpoint directory (e.g. `../sft/checkpoints/step-1200`). When set, LoRA adapter weights are applied on top of the base model at startup. Rank and alpha are read automatically from `lora_config.json` inside the checkpoint. Leave unset to run the plain base model. |
+| `MODEL_NAME` | `mamba2_780m` | Name of the model package in `models/` at the repo root. The package defines the architecture, tokenizer, format tokens, and LoRA targets. |
+| `SFT_CHECKPOINT` | _(unset)_ | Path to an SFT checkpoint directory (e.g. `../sft/checkpoints/mamba2_780m/step-1200`). When set, LoRA adapter weights are applied on top of the base model at startup. Rank and alpha are read automatically from `lora_config.json` inside the checkpoint. Leave unset to run the plain base model. |
 | `REVISE_DATA_PATH` | `../sft/data/revise_collected.jsonl` | Path to the JSONL file where revision suggestions are appended. Relative paths are resolved from the backend directory. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated list of allowed CORS origins. |
 
-Chat format tokens (`USER_OPEN`, `ASST_OPEN`) are defined in the model file (`models/{MODEL_NAME}.py`) and are **not** configured here. The frontend fetches them automatically via `GET /config` at startup.
+Chat format tokens (`USER_OPEN`, `ASST_OPEN`) are defined in the model package (`models/{MODEL_NAME}/`) and are **not** configured here. The frontend fetches them automatically via `GET /config` at startup.
 
 ## Running
 
