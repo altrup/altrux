@@ -8,10 +8,13 @@ MODEL_ID = "state-spaces/mamba2-2.7b"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 TARGET_LORA_MODULES = ["in_proj", "out_proj"]
 
-# Chat format tokens — must match the SFT training format exactly.
-# The trailing space is significant; keep it.
-USER_OPEN = "[USER] "
-ASST_OPEN = "[ASSISTANT] "
+# Chat format role markers — registered as tokenizer special tokens (see
+# SPECIAL_TOKENS), so each is a single atomic token id. Callers append the
+# separator between marker and content explicitly (e.g. USER_OPEN + " " + content)
+# — keep that separator a literal space to match the SFT training format exactly.
+USER_OPEN = "[USER]"
+ASST_OPEN = "[ASSISTANT]"
+SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN]
 
 
 class Model(nn.Module):
@@ -71,7 +74,16 @@ class Model(nn.Module):
 
 def load_base(device: str) -> MambaLMHeadModel:
     """Load the raw HuggingFace model. Used by sft/train.py."""
-    return MambaLMHeadModel.from_pretrained(MODEL_ID, device=device)
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from models.common import build_tokenizer, extend_embeddings
+
+    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device)
+    tokenizer = build_tokenizer(sys.modules[__name__])
+    extend_embeddings(model, len(tokenizer))
+    return model
 
 
 def load_inference(device: str) -> Model:
