@@ -7,15 +7,15 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer
 
 load_dotenv()
 
 # Add the repo root to sys.path so the models/ package is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from models.common import build_tokenizer
+
 _model_mod = importlib.import_module(f"models.{os.getenv('MODEL_NAME', 'mamba2_780m')}")
-TOKENIZER_ID = _model_mod.TOKENIZER_ID
 USER_OPEN = _model_mod.USER_OPEN
 ASST_OPEN = _model_mod.ASST_OPEN
 
@@ -31,11 +31,11 @@ def format_conversation(
         content = msg["content"]
 
         if role == "user":
-            text = USER_OPEN + content + "\n"
+            text = USER_OPEN + " " + content + "\n"
             turn_ids = tokenizer.encode(text, add_special_tokens=False)
             turn_mask = [False] * len(turn_ids)
         elif role == "assistant":
-            text = ASST_OPEN + content
+            text = ASST_OPEN + " " + content
             toks = tokenizer.encode(text, add_special_tokens=False)
             turn_ids = toks + [tokenizer.eos_token_id]
             # "train": false keeps the turn as context but excludes it from the
@@ -82,12 +82,7 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=1024, help="Max tokens per example")
     args = parser.parse_args()
 
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID, local_files_only=True)
-    except OSError:
-        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID)
-    if tokenizer.eos_token_id is None:
-        tokenizer.add_special_tokens({"eos_token": "<|endoftext|>"})
+    tokenizer = build_tokenizer(_model_mod)
 
     all_ids: list[torch.Tensor] = []
     all_masks: list[torch.Tensor] = []
