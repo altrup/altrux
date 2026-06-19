@@ -1,12 +1,15 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data prepare train resume
+.PHONY: sync data prepare train resume test
 
 sync:
 	uv sync --inexact
 	UV_TORCH_BACKEND=auto uv pip install torch
 	MAX_JOBS=12 uv pip install causal-conv1d mamba-ssm --no-build-isolation
+
+test:
+	PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest ../models/tests
 
 data:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \

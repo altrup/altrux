@@ -11,5 +11,10 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
 # torch, causal-conv1d, and mamba-ssm are installed via `make sync`
 # (hardware-specific builds; ROCm auto-detected via UV_TORCH_BACKEND=auto)
