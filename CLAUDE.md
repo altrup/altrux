@@ -22,8 +22,9 @@ Each model is a folder in `models/` at the repo root containing `model.py` (impl
 | `MODEL_ID` | `str` | HuggingFace model identifier |
 | `TOKENIZER_ID` | `str` | HuggingFace tokenizer identifier |
 | `TARGET_LORA_MODULES` | `list[str]` | Module name suffixes to attach LoRA adapters to |
-| `USER_OPEN` | `str` | User turn prefix (trailing space significant) |
-| `ASST_OPEN` | `str` | Assistant turn prefix (trailing space significant) |
+| `USER_OPEN` | `str` | Bare user-turn role marker, registered as a tokenizer special token. Callers append a literal `" "` separator before content. |
+| `ASST_OPEN` | `str` | Bare assistant-turn role marker, registered as a tokenizer special token. Callers append a literal `" "` separator before content. |
+| `SPECIAL_TOKENS` | `list[str]` | `[USER_OPEN, ASST_OPEN]` — the list passed to `tokenizer.add_special_tokens` |
 | `Model` | `nn.Module` | Inference wrapper class |
 | `load_base(device)` | `fn` | Load raw HF model (used by sft) |
 | `load_inference(device)` | `fn` | Load and wrap for inference (used by backend) |
