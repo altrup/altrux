@@ -7,6 +7,10 @@
       "Bash(git branch:*)",
       "Bash(git fetch:*)",
       "Bash(git stash:*)",
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git reset:*)",
+      "Bash(git commit:*)",
       "Bash(uv run:*)",
       "Bash(uv sync:*)",
       "Bash(npm test:*)",
@@ -20,11 +24,7 @@
       "Bash(git rm *)"
     ],
     "deny": [
-      "Bash(git add:*)",
-      "Bash(git checkout:*)",
       "Bash(git push:*)",
-      "Bash(git reset:*)",
-      "Bash(git commit:*)",
       "Bash(rm:*)"
     ]
   }
