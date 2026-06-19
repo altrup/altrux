@@ -2,8 +2,9 @@ import asyncio
 import importlib
 
 import torch
-from transformers import AutoTokenizer
 from mamba_ssm.utils.generation import InferenceParams
+
+from models.common import build_tokenizer
 
 _MAX_SEQ = 8192
 
@@ -53,8 +54,8 @@ class ModelRegistry:
         print(f"loading model: {model_name}")
         model_mod = importlib.import_module(f"models.{model_name}")
 
-        self.user_open = model_mod.USER_OPEN
-        self.asst_open = model_mod.ASST_OPEN
+        self.user_open = model_mod.USER_OPEN + " "
+        self.asst_open = model_mod.ASST_OPEN + " "
 
         base = model_mod.load_base(device)
         ckpt = get_sft_checkpoint()
@@ -67,10 +68,7 @@ class ModelRegistry:
         self.model.eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_mod.TOKENIZER_ID, local_files_only=True)
-        except OSError:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_mod.TOKENIZER_ID)
+        self.tokenizer = build_tokenizer(model_mod)
         dummy = torch.zeros(1, 1, dtype=torch.long, device=device)
         with torch.no_grad():
             self.model(dummy)
