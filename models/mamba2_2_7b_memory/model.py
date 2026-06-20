@@ -97,26 +97,34 @@ class _NeuralMemory:
         return torch.einsum("bdh,bh->bd", w2, h) + b2
 
     def write(self, k: torch.Tensor, v: torch.Tensor, eta: torch.Tensor, theta: torch.Tensor, alpha: torch.Tensor):
-        """One test-time gradient step on L = ||M(k) - v||^2.
-
-        `create_graph=True` so the outer (SFT) loss can backprop through this
-        inner gradient step -- i.e. this is genuine, expensive double-backward
-        through the whole test-time-training trajectory, not a stop-gradient
-        approximation. For long sequences this graph grows with every token;
-        a truncated-BPTT or first-order variant is the natural follow-up if
-        memory blows up in practice.
+        """One test-time gradient step on L = ||M(k) - v||^2 -- first-order
+        (truncated) approximation: `params`/`momentum` carried in from the
+        previous token are detached and re-leafed here, so M_{t-1} is treated
+        as a constant w.r.t. autograd. The outer (SFT) loss still backprops
+        through *this* token's own write (via eta/theta/alpha/k/v, all
+        functions of the front-end's learnable projections), but not through
+        the chain of all earlier tokens' writes -- an earlier version of this
+        method used create_graph=True for that full chain, which is exact but
+        makes the graph grow with every token (each token's write becomes
+        differentiably dependent on every previous one); see git history /
+        README for the exact math this trades away. `.detach().requires_grad_(True)`
+        also happens to be what makes the very first call work at all: fresh
+        `w1/b1/w2/b2` are plain leaf tensors with requires_grad=False (see
+        __init__), and torch.autograd.grad requires `inputs` to require grad.
 
         Returns the loss magnitude per batch element ("surprise"), exported
         for Stage 2's write-strength gate.
         """
-        params = [self.w1, self.b1, self.w2, self.b2]
+        params = [p.detach().requires_grad_(True) for p in (self.w1, self.b1, self.w2, self.b2)]
+        momentum = [s.detach() for s in self.momentum]
+
         pred = self._apply(k, *params)
         per_example_loss = ((pred - v) ** 2).sum(dim=-1)
-        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=True)
+        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=False)
 
         new_params = []
         new_momentum = []
-        for p, g, s in zip(params, grads, self.momentum):
+        for p, g, s in zip(params, grads, momentum):
             view = (-1,) + (1,) * (p.dim() - 1)
             s_new = eta.view(*view) * s - theta.view(*view) * g
             p_new = (1 - alpha.view(*view)) * p + s_new
