@@ -14,7 +14,7 @@ Backbone shape: `d_model=2560`, `n_layer=64`, `d_inner=5120` (expand 2), `nheads
 
 `["in_proj", "out_proj"]` — the same choice as the other Mamba2 models in this repo (Mamba2's analogue of a transformer's q/k/v/o projections). Unlike those other models, this one sets `QUANTIZE_LORA_BASE = True`: `load_base` quantizes `in_proj`/`out_proj` to 4-bit (NF4, via `bitsandbytes`, see `models/common.py:quantize_lora_targets`) before LoRA adapters are attached, so this is true QLoRA — a frozen, quantized base plus small trainable low-rank adapters — rather than plain full-precision LoRA. `QUANTIZE_LORA_BASE` is an opt-in, per-model flag; models that don't set it stay on plain LoRA.
 
-`bitsandbytes`'s ROCm support is considerably less mature than its CUDA support — worth verifying this actually works on this hardware before relying on it (see the comment in `sft/pyproject.toml` / `backend/pyproject.toml`).
+`bitsandbytes`'s ROCm support is considerably less mature than its CUDA support: on this dev machine's GPU (an unsupported `gfx1102` arch), 4-bit quantization segfaults outright unless `HSA_OVERRIDE_GFX_VERSION=11.0.0` is set in the shell environment — see the root `CLAUDE.md`. Confirmed working end-to-end (quantize → attach LoRA → forward → backward → gradients on `lora_A`/`lora_B`) with that var set.
 
 The memory subsystem itself (front-end, gate projections) stays outside LoRA either way — it's trained with full gradients from a random init, since it has no pretrained weights to adapt.
 

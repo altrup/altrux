@@ -12,12 +12,13 @@ class LoRALinear(nn.Module):
         self.scale = alpha / rank
         # Create the adapter params on the same device/dtype as the layer they wrap,
         # so apply_lora works whether the base model is already on GPU or still on CPU.
-        self.lora_A = nn.Parameter(
-            torch.empty(rank, linear.in_features, device=linear.weight.device, dtype=linear.weight.dtype)
-        )
-        self.lora_B = nn.Parameter(
-            torch.zeros(linear.out_features, rank, device=linear.weight.device, dtype=linear.weight.dtype)
-        )
+        # linear.weight.dtype is the packed storage dtype (e.g. uint8) when `linear`
+        # is a quantized bitsandbytes Linear4bit (see models.common.quantize_lora_targets
+        # for QLoRA) -- compute_dtype is what it actually dequantizes to, and is what
+        # the adapters need to match. Plain nn.Linear has no compute_dtype attribute.
+        dtype = getattr(linear, "compute_dtype", None) or linear.weight.dtype
+        self.lora_A = nn.Parameter(torch.empty(rank, linear.in_features, device=linear.weight.device, dtype=dtype))
+        self.lora_B = nn.Parameter(torch.zeros(linear.out_features, rank, device=linear.weight.device, dtype=dtype))
         nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
         linear.weight.requires_grad_(False)
         if linear.bias is not None:
@@ -25,6 +26,9 @@ class LoRALinear(nn.Module):
 
     @property
     def weight(self) -> torch.Tensor:
+        # NOTE: not valid when `linear` is a quantized Linear4bit (its .weight is
+        # packed 4-bit storage, not addable) -- see sft/lora.py's LoRALinear.weight
+        # for which models actually exercise this path.
         return self.linear.weight + (self.lora_B @ self.lora_A) * self.scale
 
     @property
