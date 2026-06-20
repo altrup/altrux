@@ -37,7 +37,7 @@ class ModelRegistry:
         await asyncio.to_thread(self._load_blocking)
 
     def _load_blocking(self) -> None:
-        from ..config import get_device, get_model_name, get_sft_checkpoint
+        from ..config import get_checkpoint, get_device, get_model_name
         from .lora import apply_lora, load_lora, read_lora_config
         # Limit PyTorch's OpenMP thread pool — GPU inference doesn't need many CPU threads
         # and excess threads spin-wait, compounding the ROCm HSA busy-wait problem.
@@ -58,9 +58,9 @@ class ModelRegistry:
         self.asst_open = model_mod.ASST_OPEN + " "
 
         base = model_mod.load_base(device)
-        ckpt = get_sft_checkpoint()
+        ckpt = get_checkpoint()
         if ckpt is not None:
-            print(f"loading SFT checkpoint: {ckpt}")
+            print(f"loading checkpoint: {ckpt}")
             rank, alpha = read_lora_config(ckpt)
             apply_lora(base, model_mod.TARGET_LORA_MODULES, rank, alpha)
             load_lora(base, ckpt)

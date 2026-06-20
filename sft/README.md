@@ -56,7 +56,7 @@ make resume ARGS="--epochs 2"   # resume and train an extra epoch
 
 Pass any `train.py` flag through either target with `ARGS="..."` (e.g. `make train ARGS="--eos-weight 10"`).
 
-Checkpoints are saved every 50 optimizer steps to `checkpoints/{MODEL_NAME}/epoch-E/step-N/` (LoRA adapter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every` and `--keep-ckpts`.
+Checkpoints are saved every 50 optimizer steps to `../models/{MODEL_NAME}/checkpoints/epoch-E/step-N/` (LoRA adapter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every` and `--keep-ckpts`.
 
 **EOS under-generation**: if the model doesn't emit `<|endoftext|>` to end turns, pass `--eos-weight 5` (or higher) to upweight EOS positions in the loss. EOS tokens are ~0.8% of assistant tokens so they get little gradient by default.
 
@@ -71,7 +71,7 @@ import json
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from lora import apply_lora, load_lora
 
-ckpt = "checkpoints/mamba2_780m/step-N"
+ckpt = "../models/mamba2_780m/checkpoints/epoch-1/step-N"
 cfg = json.loads(open(f"{ckpt}/lora_config.json").read())
 model = MambaLMHeadModel.from_pretrained("state-spaces/mamba2-780m", dtype=torch.float32)
 model = apply_lora(model, ["in_proj", "out_proj"], cfg["rank"], cfg["alpha"])

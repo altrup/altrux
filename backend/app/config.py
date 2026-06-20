@@ -19,9 +19,11 @@ def get_model_name() -> str:
     return os.getenv("MODEL_NAME", "mamba2_780m")
 
 
-def get_sft_checkpoint() -> Path | None:
-    val = os.getenv("SFT_CHECKPOINT", "").strip()
-    return Path(val) if val else None
+def get_checkpoint() -> Path | None:
+    val = os.getenv("CHECKPOINT", "").strip()
+    if not val:
+        return None
+    return Path(__file__).parent.parent.parent / "models" / get_model_name() / "checkpoints" / val
 
 
 def get_revise_data_path() -> Path:

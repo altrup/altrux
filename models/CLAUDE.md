@@ -9,3 +9,7 @@ Each model folder's `README.md` should briefly cover:
 - **Special tokens** — which role markers are registered as tokenizer special tokens and why
 
 See `models/mamba2_780m/README.md` for an example.
+
+## Checkpoints
+
+Training checkpoints for a model live in `models/{name}/checkpoints/`, gitignored via `models/.gitignore`, since they're a model artifact consumed by both `sft` (writes) and `backend` (reads), not an `sft`-only concern.

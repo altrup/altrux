@@ -209,9 +209,6 @@ __marimo__/
 # Training data
 data/
 
-# Model checkpoints
-checkpoints/
-
 # Training logs
 logs/
 

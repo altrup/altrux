@@ -21,11 +21,11 @@ _model_mod = importlib.import_module(f"models.{MODEL_NAME}")
 MODEL_ID = _model_mod.MODEL_ID
 TARGET_MODULES = _model_mod.TARGET_LORA_MODULES
 
-CKPT_DIR = Path("checkpoints") / MODEL_NAME
+CKPT_DIR = Path(__file__).parent.parent / "models" / MODEL_NAME / "checkpoints"
 
 
 def iter_checkpoints():
-    """Yield (step, path) for every checkpoints/{MODEL_NAME}/epoch-*/step-* directory.
+    """Yield (step, path) for every models/{MODEL_NAME}/checkpoints/epoch-*/step-* directory.
     Step numbers are globally monotonic, so they order checkpoints across epochs."""
     if not CKPT_DIR.exists():
         return
