@@ -23,7 +23,7 @@ This machine's GPU (AMD Radeon RX 7700S, `gfx1102`) isn't an officially-supporte
 
 ## Models
 
-Each model is a folder in `models/` at the repo root containing `model.py` (implementation), a thin `__init__.py` that re-exports the interface below, and a `README.md` documenting the model (see `models/CLAUDE.md` for the README checklist). A model must export:
+Each model is a folder in `models/` at the repo root containing `model.py` (implementation), a thin `__init__.py` that re-exports the interface below, a `train_hooks.py` (training-specific interface — see `models/CLAUDE.md`), and a `README.md` documenting the model (see `models/CLAUDE.md` for the README checklist). A model must export:
 
 | Name | Type | Description |
 |------|------|-------------|

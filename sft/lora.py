@@ -1,5 +1,4 @@
 import math
-from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -68,23 +67,4 @@ def apply_lora(
             "Mamba's projections may not be nn.Linear — inspect model.named_modules()."
         )
     print(f"attached {attached} LoRA adapters")
-    return model
-
-
-def save_lora(model: nn.Module, path: str | Path, rank: int, alpha: float) -> None:
-    import json
-    path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
-    state = {k: v for k, v in model.state_dict().items() if "lora_A" in k or "lora_B" in k}
-    torch.save(state, path / "adapter.pt")
-    (path / "lora_config.json").write_text(json.dumps({"rank": rank, "alpha": alpha}))
-
-
-def load_lora(model: nn.Module, path: str | Path) -> nn.Module:
-    state = torch.load(Path(path) / "adapter.pt", map_location="cpu", weights_only=True)
-    result = model.load_state_dict(state, strict=False)
-    loaded = len(state) - len(result.unexpected_keys)
-    print(f"loaded {loaded}/{len(state)} adapter tensors")
-    if loaded == 0:
-        raise RuntimeError("load_lora loaded 0 tensors — checkpoint keys don't match model structure")
     return model

@@ -38,7 +38,7 @@ class ModelRegistry:
 
     def _load_blocking(self) -> None:
         from ..config import get_checkpoint, get_device, get_model_name
-        from .lora import apply_lora, load_lora, read_lora_config
+        from .lora import apply_lora, load_checkpoint, read_lora_config
         # Limit PyTorch's OpenMP thread pool — GPU inference doesn't need many CPU threads
         # and excess threads spin-wait, compounding the ROCm HSA busy-wait problem.
         torch.set_num_threads(4)
@@ -60,11 +60,16 @@ class ModelRegistry:
         base = model_mod.load_base(device)
         ckpt = get_checkpoint()
         if ckpt is not None:
-            print(f"loading checkpoint: {ckpt}")
             rank, alpha = read_lora_config(ckpt)
             apply_lora(base, model_mod.TARGET_LORA_MODULES, rank, alpha)
-            load_lora(base, ckpt)
         self.model = model_mod.Model(base)
+        if ckpt is not None:
+            # Loaded *after* wrapping in Model, not before: a model like
+            # mamba2_2_7b_memory has trainable state (front_end, injections)
+            # that only exists on the Model wrapper, not on the raw backbone
+            # -- loading into `base` would silently miss those keys.
+            print(f"loading checkpoint: {ckpt}")
+            load_checkpoint(self.model, ckpt)
         self.model.eval()
         for p in self.model.parameters():
             p.requires_grad_(False)

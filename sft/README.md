@@ -72,40 +72,41 @@ make resume ARGS="--epochs 2"   # resume and train an extra epoch
 
 Pass any `train.py` flag through either target with `ARGS="..."` (e.g. `make train ARGS="--eos-weight 10"`).
 
-Checkpoints are saved every 50 optimizer steps to `../models/{MODEL_NAME}/checkpoints/epoch-E/step-N/` (LoRA adapter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every` and `--keep-ckpts`.
+Checkpoints are saved every 50 optimizer steps to `../models/{MODEL_NAME}/checkpoints/epoch-E/step-N/` (every trainable parameter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every` and `--keep-ckpts`.
 
 **EOS under-generation**: if the model doesn't emit `<|endoftext|>` to end turns, pass `--eos-weight 5` (or higher) to upweight EOS positions in the loss. EOS tokens are ~0.8% of assistant tokens so they get little gradient by default.
 
 See `python train.py --help` for all options (learning rate, rank, accumulation steps, etc.).
 
+`train.py` is generic across every model in `models/` — it dispatches to that model's `train_hooks.py` (`models/{name}/train_hooks.py`) for the parts that genuinely differ: how to load/wrap the model for training, and how to run forward+backward for one example. Everything else (shuffling, accumulation counting, checkpoint cadence/rotation, resume, non-finite checks) is shared.
+
 ### Training `mamba2_2_7b_memory`
 
-`train.py` assumes a stateless `model(input_ids).logits` call, which doesn't match this model's `Model.forward(input_ids, state)` signature. Use `train_memory.py` instead, via its own targets:
+This model's `train_hooks.py` differs from the others' in two ways, both visible in its module docstring: `Model.forward(input_ids, state)` is stateful, so examples are processed in `--chunk-len`-token chunks with `state` carried (and detached) across chunks of the *same* example — never across different examples — bounding training RAM by chunk length rather than example length (see the "Long-context data" section above for why examples themselves aren't truncated at prep time instead). And loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns.
 
 ```bash
-MODEL_NAME=mamba2_2_7b_memory make train-memory
-MODEL_NAME=mamba2_2_7b_memory make resume-memory
-MODEL_NAME=mamba2_2_7b_memory make train-memory ARGS="--chunk-len 1024"
+MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt --chunk-len 512"
+MODEL_NAME=mamba2_2_7b_memory make resume ARGS="--data data/train_memory.pt --chunk-len 512"
 ```
-
-Key differences from `train.py`: sequences are processed in `--chunk-len`-token chunks with `state` carried (and detached) across chunks within the same example — never across different examples — so training RAM is bounded by chunk length, not example length (see the "Long-context data" section above for why examples themselves aren't truncated). Loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns. Checkpoints save every trainable parameter (LoRA adapters *and* the memory subsystem's own full-gradient parameters), not just LoRA, since `save_lora` alone would silently drop the memory subsystem from every checkpoint.
 
 On this machine's GPU (unsupported `gfx1102` arch), set `HSA_OVERRIDE_GFX_VERSION=11.0.0` in your shell before training this model — see the root `CLAUDE.md`.
 
-See `python train_memory.py --help` for all options.
-
 ## Using the adapter
 
-Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them:
+Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them, and `trainable.pt` with every trainable parameter (LoRA adapters, plus a model's own full-gradient subsystem if it has one — e.g. `mamba2_2_7b_memory`'s `front_end`/`injections`):
 
 ```python
 import json
+import torch
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
-from lora import apply_lora, load_lora
+from lora import apply_lora
 
 ckpt = "../models/mamba2_780m/checkpoints/epoch-1/step-N"
 cfg = json.loads(open(f"{ckpt}/lora_config.json").read())
 model = MambaLMHeadModel.from_pretrained("state-spaces/mamba2-780m", dtype=torch.float32)
 model = apply_lora(model, ["in_proj", "out_proj"], cfg["rank"], cfg["alpha"])
-load_lora(model, ckpt)
+state = torch.load(f"{ckpt}/trainable.pt", weights_only=True)
+model.load_state_dict(state, strict=False)
 ```
+
+(The backend's loader, `backend/app/model/lora.py:load_checkpoint`, does the same thing — wrap the model first, then load `trainable.pt` into the wrapped model, not the raw backbone, so a model with extra trainable state outside the backbone still loads correctly.)

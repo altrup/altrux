@@ -67,11 +67,18 @@ def read_lora_config(checkpoint_path: str | Path) -> tuple[int, float]:
     return 16, 32.0  # match sft/train.py defaults
 
 
-def load_lora(model: nn.Module, checkpoint_path: str | Path) -> None:
+def load_checkpoint(model: nn.Module, checkpoint_path: str | Path) -> None:
+    """Loads sft/train.py's checkpoint format: every trainable parameter
+    (trainable.pt), not just LoRA adapters -- a model like
+    mamba2_2_7b_memory has an additional full-gradient subsystem (front_end,
+    injections) that a LoRA-only load would silently miss. For a LoRA-only
+    model, trainable.pt only ever contained lora_A/lora_B anyway, so this is
+    a strict superset of the old adapter.pt-based load_lora, not a behavior
+    change for those models."""
     path = Path(checkpoint_path)
-    state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
+    state = torch.load(path / "trainable.pt", map_location="cpu", weights_only=True)
     result = model.load_state_dict(state, strict=False)
     loaded = len(state) - len(result.unexpected_keys)
-    print(f"loaded {loaded}/{len(state)} LoRA adapter tensors from {path}")
+    print(f"loaded {loaded}/{len(state)} trainable tensors from {path}")
     if loaded == 0:
-        raise RuntimeError("load_lora loaded 0 tensors — checkpoint keys don't match model structure")
+        raise RuntimeError("load_checkpoint loaded 0 tensors — checkpoint keys don't match model structure")

@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume train-memory resume-memory test
+.PHONY: sync data data-memory prepare train resume test
 
 sync:
 	uv sync --inexact
@@ -64,21 +64,14 @@ resume:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
-# Chunked, state-threaded training for mamba2_2_7b_memory -- train.py's
-# single-shot model(input_ids).logits doesn't fit this model's
-# Model.forward(input_ids, state) signature. See train_memory.py and
-# models/mamba2_2_7b_memory/README.md.
+# train.py is generic across every model in models/ -- it dispatches to
+# models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to
+# load the model, how to run forward+backward for one example). For
+# mamba2_2_7b_memory specifically:
+#   MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt --chunk-len 512"
 #
 # On this machine's GPU (unsupported gfx1102 arch) bitsandbytes segfaults
-# unless HSA_OVERRIDE_GFX_VERSION=11.0.0 is set -- see the root CLAUDE.md.
-# Not baked in here: it's a property of this specific machine's GPU, not of
-# this model in general (a supported-arch ROCm GPU, or CUDA, needs neither).
-train-memory:
-	@mkdir -p logs
-	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u train_memory.py $(ARGS) 2>&1 | tee logs/train-memory-$(shell date +%Y%m%d-%H%M%S).log
-
-resume-memory:
-	@mkdir -p logs
-	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u train_memory.py --resume $(ARGS) 2>&1 | tee logs/train-memory-$(shell date +%Y%m%d-%H%M%S).log
+# unless HSA_OVERRIDE_GFX_VERSION=11.0.0 is set when training that model --
+# see the root CLAUDE.md. Not baked in here: it's a property of this specific
+# machine's GPU, not of any model in general (a supported-arch ROCm GPU, or
+# CUDA, needs neither).
