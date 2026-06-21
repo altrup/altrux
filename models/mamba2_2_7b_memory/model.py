@@ -301,12 +301,14 @@ class Model(nn.Module):
     LoRA adapters on in_proj/out_proj and the memory subsystem itself are the
     only trainable parameters.
 
-    Unlike the other models in this repo, `forward` does not take an
-    `inference_params` object from the mamba_ssm library -- it manages its
-    own `MemoryState` (see above), since the memory subsystem's recurrence
-    needs token-level access the library's cache object doesn't expose.
-    Pass `state=None` to start a fresh conversation; pass back the returned
-    state to continue one.
+    `forward` does not take an `inference_params` object from the mamba_ssm
+    library (none of this repo's models do -- see models/mamba2_780m/model.py
+    for why) -- it manages its own `MemoryState` (see above), which on top of
+    the per-layer SSM/conv state the other models also carry, additionally
+    threads the Titans fast-weight memory across calls, since the memory
+    subsystem's recurrence needs token-level access a generic cache object
+    wouldn't expose. Pass `state=None` to start a fresh conversation; pass
+    back the returned state to continue one.
     """
 
     def __init__(self, mamba_model: MambaLMHeadModel):

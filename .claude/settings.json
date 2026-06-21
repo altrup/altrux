@@ -24,8 +24,7 @@
       "Bash(git rm *)"
     ],
     "deny": [
-      "Bash(git push:*)",
-      "Bash(rm:*)"
+      "Bash(git push:*)"
     ]
   }
 }

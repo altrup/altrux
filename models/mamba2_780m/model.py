@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange
 
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
@@ -17,8 +19,46 @@ ASST_OPEN = "[ASSISTANT]"
 SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN]
 
 
+class MixerState:
+    """Per-layer SSM/conv state threaded across calls to Model.forward, so a
+    sequence can be processed incrementally (decode) or in chunks (long-
+    sequence training) without holding every token's activations at once.
+
+    Mirrors mamba2_2_7b_memory's MemoryState, minus anything memory-specific
+    -- this model has no memory subsystem, just the backbone's own state.
+    """
+
+    def __init__(self, conv_states, ssm_states):
+        self.conv_states = conv_states
+        self.ssm_states = ssm_states
+
+    def detach(self) -> "MixerState":
+        return MixerState([c.detach() for c in self.conv_states], [s.detach() for s in self.ssm_states])
+
+
 class Model(nn.Module):
-    """Thin wrapper around the base Mamba LM for inference.
+    """Mamba LM wrapper for inference and training.
+
+    Manually replicates Mamba2.step()'s arithmetic in plain PyTorch (no
+    causal_conv1d, no Triton SSD chunk-scan kernel) instead of calling the
+    library's own Mamba2.forward/Block.forward. Both of mamba_ssm's fused
+    kernel families are broken on this hardware (an unsupported ROCm gfx
+    arch): causal_conv1d's compiled kernel segfaults (confirmed on both the
+    multi-token "channellast" path and the single-token decode path), and
+    the Triton SSD scan kernel hangs -- both confirmed independent of model
+    size, package version, and a from-source rebuild. This is the same fix
+    already used in mamba2_2_7b_memory's _mixer_step; see that model's
+    README for the full investigation. Slower per-token than the (currently
+    broken) fused path would be, but it's the only thing proven to actually
+    run on this hardware.
+
+    `forward` loops over tokens explicitly and threads/returns a MixerState,
+    so calling it repeatedly with state carried (and detached) across calls
+    supports incremental decode and chunked training on long sequences
+    without holding the whole sequence's activations at once -- the same
+    pattern as mamba2_2_7b_memory's MemoryState. This replaces the previous
+    `inference_params`-based forward; see git history if a comparison is
+    ever needed.
 
     Generates tokens until EOS. The model is fine-tuned to emit a <revise>
     tag after its response; for now that tag is treated like any other token.
@@ -38,23 +78,76 @@ class Model(nn.Module):
         self.norm_f = backbone.norm_f
         self.lm_head = mamba_model.lm_head
 
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        inference_params=None,
-    ) -> torch.Tensor:
-        """Returns logits (B, T, vocab_size).
-
-        When inference_params is provided, SSM states are updated in-place and
-        incremental (single-token) inputs are supported.
-        """
-        h = self.embedding(input_ids)
-        residual = None
-
         for layer in self.layers:
-            h, residual = layer(h, residual, inference_params=inference_params)
+            assert layer.mixer.ngroups == 1, "manual mixer step assumes ngroups=1"
 
-        return self.lm_head(self._apply_norm_f(h, residual))
+    def _init_state(self, batch_size: int, dtype) -> MixerState:
+        conv_states, ssm_states = [], []
+        for layer in self.layers:
+            conv_state, ssm_state = layer.mixer.allocate_inference_cache(batch_size, 1, dtype=dtype)
+            conv_states.append(conv_state)
+            ssm_states.append(ssm_state)
+        return MixerState(conv_states, ssm_states)
+
+    def _prenorm(self, layer, hidden_states: torch.Tensor, residual: torch.Tensor | None):
+        if not layer.fused_add_norm:
+            residual = (hidden_states + residual) if residual is not None else hidden_states
+            normed = layer.norm(residual.to(dtype=layer.norm.weight.dtype))
+            if layer.residual_in_fp32:
+                residual = residual.to(torch.float32)
+            return normed, residual
+        return layer_norm_fn(
+            hidden_states,
+            layer.norm.weight,
+            layer.norm.bias,
+            residual=residual,
+            prenorm=True,
+            residual_in_fp32=layer.residual_in_fp32,
+            eps=layer.norm.eps,
+            is_rms_norm=isinstance(layer.norm, RMSNorm),
+        )
+
+    def _mixer_step(self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state):
+        """One token through `mixer`, replicating Mamba2.step()'s arithmetic
+        manually (see class docstring for why). `ssm_state`/`conv_state` are
+        *not* mutated in place (unlike the library's own decode cache): each
+        is rebound to a fresh tensor every call so gradients flow correctly
+        across tokens within a forward pass.
+        """
+        dtype = hidden_states.dtype
+        zxbcdt = mixer.in_proj(hidden_states)
+        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        z0, x0, z, xBC, dt = torch.split(
+            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+        )
+
+        conv_state = torch.roll(conv_state, shifts=-1, dims=-1)
+        conv_state[:, :, -1] = xBC
+        xBC = torch.sum(conv_state * rearrange(mixer.conv1d.weight, "d 1 w -> d w"), dim=-1)
+        if mixer.conv1d.bias is not None:
+            xBC = xBC + mixer.conv1d.bias
+        xBC = mixer.act(xBC).to(dtype=dtype)
+
+        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        A = -torch.exp(mixer.A_log.float())
+
+        dt = F.softplus(dt + mixer.dt_bias.to(dtype=dt.dtype))
+        dA = torch.exp(dt * A)
+        x_h = rearrange(x, "b (h p) -> b h p", p=mixer.headdim)
+        dBx = torch.einsum("bh,bn,bhp->bhpn", dt, B, x_h)
+        ssm_state = ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx
+
+        y = torch.einsum("bhpn,bn->bhp", ssm_state.to(dtype), C)
+        y = y + rearrange(mixer.D.to(dtype), "h -> h 1") * x_h
+        y = rearrange(y, "b h p -> b (h p)")
+        if not mixer.rmsnorm:
+            y = y * mixer.act(z)
+        else:
+            y = mixer.norm(y, z)
+        if d_mlp > 0:
+            y = torch.cat([F.silu(z0) * x0, y], dim=-1)
+        out = mixer.out_proj(y)
+        return out, conv_state, ssm_state
 
     def _apply_norm_f(self, h: torch.Tensor, residual: torch.Tensor | None) -> torch.Tensor:
         if not self.fused_add_norm:
@@ -70,6 +163,36 @@ class Model(nn.Module):
             residual_in_fp32=self.residual_in_fp32,
             is_rms_norm=isinstance(self.norm_f, RMSNorm),
         )
+
+    def forward(self, input_ids: torch.Tensor, state: MixerState | None = None) -> tuple[torch.Tensor, MixerState]:
+        """Returns (logits (B, T, vocab_size), updated MixerState).
+
+        Pass state=None to start a fresh sequence; pass the returned state
+        back in to continue it (incremental decode, or the next chunk of a
+        long sequence). Processes `input_ids` one token at a time regardless
+        of T -- correct for both a many-token prefill/chunk and a single
+        incremental decode step, just not parallelized across T (see class
+        docstring for why).
+        """
+        batch_size, seqlen = input_ids.shape
+        dtype = self.embedding.weight.dtype
+        if state is None:
+            state = self._init_state(batch_size, dtype)
+
+        all_logits = []
+        for t in range(seqlen):
+            h = self.embedding(input_ids[:, t])
+            residual = None
+            for i, layer in enumerate(self.layers):
+                h, residual = self._prenorm(layer, h, residual)
+                h, conv_state, ssm_state = self._mixer_step(layer.mixer, h, state.conv_states[i], state.ssm_states[i])
+                state.conv_states[i] = conv_state
+                state.ssm_states[i] = ssm_state
+
+            h = self._apply_norm_f(h, residual)
+            all_logits.append(self.lm_head(h))
+
+        return torch.stack(all_logits, dim=1), state
 
 
 def load_base(device: str) -> MambaLMHeadModel:
@@ -88,4 +211,4 @@ def load_base(device: str) -> MambaLMHeadModel:
 
 def load_inference(device: str) -> Model:
     """Load and wrap the model for inference. Used by the backend registry."""
-    return Model(load_base(device))
+    return Model(load_base(device)).to(device)

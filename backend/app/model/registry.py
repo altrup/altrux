@@ -2,11 +2,8 @@ import asyncio
 import importlib
 
 import torch
-from mamba_ssm.utils.generation import InferenceParams
 
 from models.common import build_tokenizer
-
-_MAX_SEQ = 8192
 
 
 class ModelRegistry:
@@ -19,7 +16,14 @@ class ModelRegistry:
         self.asst_open: str = ""
 
         self.session_input_ids: list[int] = []
-        self._cache: InferenceParams | None = None
+        # Per-layer SSM/conv (and, for mamba2_2_7b_memory, memory) state --
+        # every model's Model.forward(input_ids, state) -> (logits, state)
+        # convention, carried across generate_one_token calls. Not an
+        # mamba_ssm InferenceParams object: none of this repo's models use
+        # that anymore (their fused kernels are broken on this hardware --
+        # see models/mamba2_780m/model.py), so they all manage their own
+        # plain-PyTorch state object instead.
+        self._cache = None
 
         # Structured message list kept in sync with token storage.
         # Only updated by append_message(); append_input() does not touch it.
@@ -144,15 +148,15 @@ class ModelRegistry:
             raise RuntimeError("Tokenizer has no bos_token_id — cannot seed an empty session")
 
         if self._cache is None:
-            # Cold start: process the full session to hydrate the cache.
-            self._cache = InferenceParams(max_seqlen=_MAX_SEQ, max_batch_size=1)
+            # Cold start: process the full session, starting state from scratch.
             input_ids = torch.tensor(
                 [self.session_input_ids or [bos_id]],
                 dtype=torch.long,
                 device=device,
             )
         else:
-            # Incremental: only process the token appended by the previous call.
+            # Incremental: only process the token appended by the previous call,
+            # continuing from the state returned by that call.
             input_ids = torch.tensor(
                 [[self.session_input_ids[-1]]],
                 dtype=torch.long,
@@ -160,9 +164,7 @@ class ModelRegistry:
             )
 
         with torch.no_grad():
-            logits = self.model(input_ids, inference_params=self._cache)
-
-        self._cache.seqlen_offset += input_ids.shape[1]
+            logits, self._cache = self.model(input_ids, state=self._cache)
 
         next_token_logits = logits[0, -1, :]
         if temperature == 0.0:
