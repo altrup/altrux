@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume test
+.PHONY: sync data data-memory prepare train resume preflight test
 
 sync:
 	uv sync --inexact
@@ -63,6 +63,15 @@ resume:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
+
+# Loads the real model and data and runs the preflight gradient check, then
+# exits before the full training loop -- a quick sanity check (still pays for
+# loading the real model/checkpoint, but skips everything after that) before
+# committing to a real run. Same env/flags as `train`, so pass --data,
+# --chunk-len, etc. through ARGS the same way.
+preflight:
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u train.py --preflight-only $(ARGS)
 
 # train.py is generic across every model in models/ -- it dispatches to
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to

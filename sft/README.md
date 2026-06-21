@@ -68,9 +68,12 @@ MODEL_NAME=mamba2_2_7b_memory make data-memory
 make train                      # start fresh
 make resume                     # resume from latest checkpoint
 make resume ARGS="--epochs 2"   # resume and train an extra epoch
+make preflight                  # load the real model+data, run the preflight gradient check, exit
 ```
 
-Pass any `train.py` flag through either target with `ARGS="..."` (e.g. `make train ARGS="--eos-weight 10"`).
+Pass any `train.py` flag through any of these targets with `ARGS="..."` (e.g. `make train ARGS="--eos-weight 10"`).
+
+`make preflight` is worth running before a real training run, especially after touching a model's `train_hooks.py` or `model.py`: it loads the actual model and dataset (so it still pays for that, unlike the synthetic-model unit test in `models/tests/`) and runs one example through `process_example`, asserting gradients actually reached every trainable parameter — then exits before the full loop. This is what would have caught this model's "the gated-delta merge never actually ran" and "k_proj/v_proj never received gradient" bugs immediately, instead of after a full run.
 
 Checkpoints are saved every 50 optimizer steps to `../models/{MODEL_NAME}/checkpoints/epoch-E/step-N/` (every trainable parameter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every` and `--keep-ckpts`.
 

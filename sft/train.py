@@ -120,6 +120,7 @@ def main() -> None:
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
+    parser.add_argument("--preflight-only", action="store_true", help="Load the real model and data, run the preflight gradient check, then exit -- skips the full training loop. For sanity-checking a setup before committing to a real run.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -175,6 +176,10 @@ def main() -> None:
     print(f"train: {n}  eval: {n_eval}  epochs: {args.epochs}")
 
     hooks.preflight(model, trainable_params, train_ids, train_masks, device, args.max_len, args.eos_weight, args.chunk_len)
+
+    if args.preflight_only:
+        print("preflight passed (--preflight-only set) -- exiting before the training loop")
+        return
 
     global_step = start_step
     model.train()
