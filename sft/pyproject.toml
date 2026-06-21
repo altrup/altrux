@@ -17,8 +17,14 @@ dev = [
     "pytest>=8.0",
 ]
 
-# torch, causal-conv1d, and mamba-ssm are installed via `make sync`
-# (hardware-specific builds; ROCm auto-detected via UV_TORCH_BACKEND=auto)
+# torch and mamba-ssm are installed via `make sync` (hardware-specific
+# builds; ROCm auto-detected via UV_TORCH_BACKEND=auto). causal-conv1d is
+# deliberately NOT installed: mamba_ssm's fused causal_conv1d/Triton SSD-scan
+# kernels segfault/hang on this machine's GPU (unsupported gfx1102 arch,
+# confirmed independent of model size, package version, and a from-source
+# rebuild), so every model here drives Mamba2's mixer manually in plain
+# PyTorch instead (see models/mamba2_2_7b_memory/model.py's _mixer_step and
+# its README for the investigation) -- causal-conv1d is simply unused.
 #
 # bitsandbytes (used for QLoRA's 4-bit quantization, see models/common.py's
 # quantize_lora_targets) has much less mature ROCm support than CUDA -- only

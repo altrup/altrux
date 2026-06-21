@@ -13,9 +13,12 @@ dependencies = [
     "bitsandbytes>=0.45.0",
 ]
 
-# torch, causal-conv1d, and mamba-ssm are installed by `make sync` via uv pip
-# because they require hardware-specific builds (ROCm torch, CUDA/ROCm kernels)
-# that cannot be locked portably in uv.lock.
+# torch and mamba-ssm are installed by `make sync` via uv pip because they
+# require hardware-specific builds (ROCm torch, CUDA/ROCm kernels) that cannot
+# be locked portably in uv.lock. causal-conv1d is deliberately NOT installed:
+# mamba_ssm's fused causal_conv1d/Triton SSD-scan kernels segfault/hang on
+# this machine's GPU (unsupported gfx1102 arch), so every model here drives
+# Mamba2's mixer manually in plain PyTorch instead -- causal-conv1d is unused.
 #
 # bitsandbytes (used for QLoRA's 4-bit quantization, see models/common.py's
 # quantize_lora_targets) has much less mature ROCm support than CUDA -- only
