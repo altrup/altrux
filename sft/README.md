@@ -78,6 +78,22 @@ Checkpoints are saved every 50 optimizer steps to `../models/{MODEL_NAME}/checkp
 
 See `python train.py --help` for all options (learning rate, rank, accumulation steps, etc.).
 
+### Training `mamba2_2_7b_memory`
+
+`train.py` assumes a stateless `model(input_ids).logits` call, which doesn't match this model's `Model.forward(input_ids, state)` signature. Use `train_memory.py` instead, via its own targets:
+
+```bash
+MODEL_NAME=mamba2_2_7b_memory make train-memory
+MODEL_NAME=mamba2_2_7b_memory make resume-memory
+MODEL_NAME=mamba2_2_7b_memory make train-memory ARGS="--chunk-len 1024"
+```
+
+Key differences from `train.py`: sequences are processed in `--chunk-len`-token chunks with `state` carried (and detached) across chunks within the same example — never across different examples — so training RAM is bounded by chunk length, not example length (see the "Long-context data" section above for why examples themselves aren't truncated). Loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns. Checkpoints save every trainable parameter (LoRA adapters *and* the memory subsystem's own full-gradient parameters), not just LoRA, since `save_lora` alone would silently drop the memory subsystem from every checkpoint.
+
+On this machine's GPU (unsupported `gfx1102` arch), set `HSA_OVERRIDE_GFX_VERSION=11.0.0` in your shell before training this model — see the root `CLAUDE.md`.
+
+See `python train_memory.py --help` for all options.
+
 ## Using the adapter
 
 Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them:

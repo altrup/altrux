@@ -100,17 +100,17 @@ class _NeuralMemory:
         """One test-time gradient step on L = ||M(k) - v||^2 -- first-order
         (truncated) approximation: `params`/`momentum` carried in from the
         previous token are detached and re-leafed here, so M_{t-1} is treated
-        as a constant w.r.t. autograd. The outer (SFT) loss still backprops
-        through *this* token's own write (via eta/theta/alpha/k/v, all
-        functions of the front-end's learnable projections), but not through
-        the chain of all earlier tokens' writes -- an earlier version of this
-        method used create_graph=True for that full chain, which is exact but
-        makes the graph grow with every token (each token's write becomes
-        differentiably dependent on every previous one); see git history /
-        README for the exact math this trades away. `.detach().requires_grad_(True)`
-        also happens to be what makes the very first call work at all: fresh
-        `w1/b1/w2/b2` are plain leaf tensors with requires_grad=False (see
-        __init__), and torch.autograd.grad requires `inputs` to require grad.
+        as a constant w.r.t. autograd. THIS is what bounds the graph to O(1)
+        per token instead of O(T) -- each token starts from a fresh leaf, so
+        nothing chains back to token t-1, regardless of the create_graph value
+        below. The outer (SFT) loss still backprops through *this* token's own
+        write (via eta/theta/alpha/k/v, all functions of the front-end's
+        learnable projections), but not through the chain of all earlier
+        tokens' writes -- see git history / README for the exact math this
+        trades away. `.detach().requires_grad_(True)` also happens to be what
+        makes the very first call work at all: fresh `w1/b1/w2/b2` are plain
+        leaf tensors with requires_grad=False (see __init__), and
+        torch.autograd.grad requires `inputs` to require grad.
 
         Returns the loss magnitude per batch element ("surprise"), exported
         for Stage 2's write-strength gate.
@@ -120,7 +120,15 @@ class _NeuralMemory:
 
         pred = self._apply(k, *params)
         per_example_loss = ((pred - v) ** 2).sum(dim=-1)
-        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=False)
+        # create_graph=True: g must stay differentiable w.r.t. k/v (and the
+        # freshly-detached `params` above) so k_proj/v_proj actually receive
+        # gradient -- with create_graph=False, g is a plain non-differentiable
+        # number, severing k_proj/v_proj from the outer loss entirely
+        # (confirmed: this was happening). This does NOT reintroduce the O(T)
+        # blowup -- that came from *not* detaching params/momentum per token,
+        # not from this flag; `params` being a fresh leaf each call means
+        # differentiating g w.r.t. it can't chain past this single token.
+        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=True)
 
         new_params = []
         new_momentum = []
@@ -163,14 +171,26 @@ class _TitansFrontEnd(nn.Module):
         """residual: (batch, d_model) residual stream entering READ_LAYER.
 
         Returns (o_t, surprise) -- o_t is (batch, mem_dim), surprise is (batch,).
+
+        The write is a genuine gradient step (autograd.grad inside
+        _NeuralMemory.write), which needs grad tracking enabled regardless of
+        whether the *caller* is in a torch.no_grad() block -- this isn't
+        optional training-time machinery, it's the actual write operation, so
+        it has to run even during eval/inference. torch.enable_grad() punches
+        through an enclosing no_grad() for exactly this; it's scoped to just
+        this method, so the rest of the model (the 64-layer backbone, the
+        gated-delta merge, the C readout) stays grad-free and cheap under an
+        outer no_grad() as normal -- only this small MLP's self-contained
+        write pays for gradient tracking.
         """
-        q = self.q_proj(residual)
-        k = self.k_proj(residual)
-        v = self.v_proj(residual)
-        knobs = torch.sigmoid(self.knob_proj(residual))
-        eta, theta, alpha = knobs[..., 0], knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
-        surprise = memory.write(k, v, eta, theta, alpha)
-        o_t = memory.read(q)
+        with torch.enable_grad():
+            q = self.q_proj(residual)
+            k = self.k_proj(residual)
+            v = self.v_proj(residual)
+            knobs = torch.sigmoid(self.knob_proj(residual))
+            eta, theta, alpha = knobs[..., 0], knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
+            surprise = memory.write(k, v, eta, theta, alpha)
+            o_t = memory.read(q)
         return o_t, surprise
 
 
@@ -244,6 +264,33 @@ class MemoryState:
         self.neural_memory = neural_memory
         self.last_o_t = last_o_t
         self.last_surprise = last_surprise
+
+    def detach(self) -> "MemoryState":
+        """Returns a copy with every tensor detached from the autograd graph.
+
+        `_NeuralMemory.write` already detaches/re-leafs its params at the start
+        of *each token's* write, but the state returned after a whole chunk of
+        tokens still carries a live graph back through every token in that
+        chunk (that's what makes within-chunk backprop work). For chunked
+        training, the state handed to the *next* chunk must be cut here --
+        otherwise a long sequence processed as many chunks would still build
+        one ever-growing graph across chunk boundaries, defeating the point of
+        chunking. Safe to call between tokens too (it's a no-op there, since
+        write() already detached).
+        """
+        neural_memory = _NeuralMemory.__new__(_NeuralMemory)
+        neural_memory.w1 = self.neural_memory.w1.detach()
+        neural_memory.b1 = self.neural_memory.b1.detach()
+        neural_memory.w2 = self.neural_memory.w2.detach()
+        neural_memory.b2 = self.neural_memory.b2.detach()
+        neural_memory.momentum = [s.detach() for s in self.neural_memory.momentum]
+        return MemoryState(
+            conv_states=[c.detach() for c in self.conv_states],
+            ssm_states=[s.detach() for s in self.ssm_states],
+            neural_memory=neural_memory,
+            last_o_t=self.last_o_t.detach(),
+            last_surprise=self.last_surprise.detach(),
+        )
 
 
 class Model(nn.Module):
@@ -426,7 +473,7 @@ class Model(nn.Module):
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
-                if i in self.injections:
+                if i in INJECTED_LAYERS:
                     gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
                 h, conv_state, ssm_state = self._mixer_step(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i], gated_delta

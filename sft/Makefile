@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume test
+.PHONY: sync data data-memory prepare train resume train-memory resume-memory test
 
 sync:
 	uv sync --inexact
@@ -63,3 +63,22 @@ resume:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
+
+# Chunked, state-threaded training for mamba2_2_7b_memory -- train.py's
+# single-shot model(input_ids).logits doesn't fit this model's
+# Model.forward(input_ids, state) signature. See train_memory.py and
+# models/mamba2_2_7b_memory/README.md.
+#
+# On this machine's GPU (unsupported gfx1102 arch) bitsandbytes segfaults
+# unless HSA_OVERRIDE_GFX_VERSION=11.0.0 is set -- see the root CLAUDE.md.
+# Not baked in here: it's a property of this specific machine's GPU, not of
+# this model in general (a supported-arch ROCm GPU, or CUDA, needs neither).
+train-memory:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u train_memory.py $(ARGS) 2>&1 | tee logs/train-memory-$(shell date +%Y%m%d-%H%M%S).log
+
+resume-memory:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u train_memory.py --resume $(ARGS) 2>&1 | tee logs/train-memory-$(shell date +%Y%m%d-%H%M%S).log
