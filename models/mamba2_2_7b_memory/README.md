@@ -122,3 +122,7 @@ Only a subset of layers carry a merge point — every even layer from 20 to 62 i
 The Titans front-end and the gated-delta accumulator are both gradient-based associative memories (the delta rule is one step of gradient descent on the same associative objective), so they may be partially redundant. Before committing to the full two-stage stack, the plan is to ablate a gated-delta-only variant (plain nonlinear projection straight to `p`/`B`, no Stage 1) against the full stack, and keep Stage 1 only if it earns its cost in long-context recall.
 
 This model has no `<revise>`-tag behavior — that's specific to [`mamba2_2_7b_continuous_learning`](../mamba2_2_7b_continuous_learning/README.md). The two models target different problems (revision-on-feedback vs. long-context memory) on the same backbone.
+
+## Training data
+
+The whole point of this model is long-range recall, so it needs long-session training data, not the short multi-turn chats the other models in this repo use. See [`sft/README.md`](../../sft/README.md#long-context-data-mamba2_2_7b_memory) — `MODEL_NAME=mamba2_2_7b_memory make data-memory` builds a mix of real long conversations ([`THUDM/LongAlign-10k`](https://huggingface.co/datasets/THUDM/LongAlign-10k)) and synthetic needle-in-haystack recall QA ([`RMT-team/babilong`](https://huggingface.co/datasets/RMT-team/babilong)), since long text alone doesn't force the memory gates to actually do anything — only tasks that depend on far-back information do.

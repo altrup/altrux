@@ -46,6 +46,22 @@ Add `"train": false` to an assistant turn to keep it in the context but exclude 
 
 See `python prepare_data.py --help` for all options (`--max-examples`, `--hf-split`, `--max-len`, etc.).
 
+### Long-context data (`mamba2_2_7b_memory`)
+
+That model's whole point is long-range recall, so its training data needs long sessions, not the short ones above. `make data-memory` (set `MODEL_NAME=mamba2_2_7b_memory` first) builds and merges two sources:
+
+```bash
+MODEL_NAME=mamba2_2_7b_memory make data-memory
+# outputs data/train_memory.pt
+```
+
+- [`THUDM/LongAlign-10k`](https://huggingface.co/datasets/THUDM/LongAlign-10k) — real long multi-turn conversations, already in the `messages` shape `prepare_data.py` expects.
+- [`RMT-team/babilong`](https://huggingface.co/datasets/RMT-team/babilong) — synthetic needle-in-haystack recall QA (`prepare_babilong.py` converts its `{input, question, target}` schema into a synthetic one-turn `messages` conversation first). Mixed in deliberately: long natural text alone doesn't force a model to actually *use* far-back information, only babilong-style tasks do, since getting the answer right depends on it.
+
+`merge_data.py` concatenates the two tokenized outputs into one `.pt` file, since `train.py` only accepts a single `--data` path.
+
+`--max-len 100000` here is intentionally far above any real example (LongAlign-10k's longest is ~65k tokens) — it only controls what gets written to disk, which is nearly free, so there's no reason to truncate at prep time. `format_conversation`'s truncation (drops trailing turns once a conversation exceeds `--max-len`) used to silently discard conversations where a single long turn alone exceeded a too-small `--max-len` before the assistant turn was ever reached; at a too-tight `--max-len 16384` this dropped roughly half of LongAlign-10k as "no assistant turns." Bounding training-time RAM belongs in chunked/truncated-BPTT training (`Model.forward`'s `state` param exists for exactly this — see `models/mamba2_2_7b_memory/README.md`), not in dropping data at prep time.
+
 ## Training
 
 ```bash
