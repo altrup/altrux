@@ -18,6 +18,7 @@ criterion either way.
 import argparse
 import importlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -110,8 +111,8 @@ def main() -> None:
     parser.add_argument("--data", default="data/train.pt", help="Tokenized dataset from prepare_data.py")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--max-len", type=int, default=2048, help="Skip examples longer than this")
-    parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk (only used by models whose train_hooks chunk -- e.g. mamba2_2_7b_memory; ignored otherwise)")
+    parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
+    parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk (only used by models whose train_hooks chunk -- defaults to that model's own DEFAULT_CHUNK_LEN, e.g. 512 for mamba2_2_7b_memory; ignored otherwise)")
     parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=8, help="Gradient accumulation steps (counted per backward() call -- one per example for stateless models, one per chunk for chunked ones)")
     parser.add_argument("--ckpt-every", type=int, default=50, help="Save checkpoint every N optimizer steps")
@@ -122,6 +123,7 @@ def main() -> None:
     parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
     parser.add_argument("--preflight-only", action="store_true", help="Load the real model and data, run the preflight gradient check, then exit -- skips the full training loop. For sanity-checking a setup before committing to a real run.")
     args = parser.parse_args()
+    max_len = args.max_len if args.max_len is not None else math.inf
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == "cuda":
@@ -175,7 +177,7 @@ def main() -> None:
     n = len(train_ids)
     print(f"train: {n}  eval: {n_eval}  epochs: {args.epochs}")
 
-    hooks.preflight(model, trainable_params, train_ids, train_masks, device, args.max_len, args.eos_weight, args.chunk_len)
+    hooks.preflight(model, trainable_params, train_ids, train_masks, device, max_len, args.eos_weight, args.chunk_len)
 
     if args.preflight_only:
         print("preflight passed (--preflight-only set) -- exiting before the training loop")
@@ -197,7 +199,7 @@ def main() -> None:
             ids = train_ids[idx]
             mask = train_masks[idx]
 
-            if ids.numel() > args.max_len or ids.numel() < 2:
+            if ids.numel() > max_len or ids.numel() < 2:
                 continue
 
             ids = ids.to(device)
@@ -237,7 +239,7 @@ def main() -> None:
                     raise SystemExit(1)
 
                 if global_step % args.ckpt_every == 0:
-                    el = hooks.eval_loss(model, eval_ids, eval_masks, device, args.max_len, args.chunk_len)
+                    el = hooks.eval_loss(model, eval_ids, eval_masks, device, max_len, args.chunk_len)
                     path = save_checkpoint(model, optimizer, global_step, epoch, i, args.lora_rank, args.lora_alpha)
                     rotate_checkpoints(args.keep_ckpts, epoch)
                     print(f"  eval_loss {el:.4f}  saved {path}")
@@ -246,7 +248,7 @@ def main() -> None:
         print("nothing to train -- already at or past the requested epochs. Pass a larger --epochs to continue.")
         return
 
-    el = hooks.eval_loss(model, eval_ids, eval_masks, device, args.max_len, args.chunk_len)
+    el = hooks.eval_loss(model, eval_ids, eval_masks, device, max_len, args.chunk_len)
     path = save_checkpoint(model, optimizer, global_step, epoch, len(order) - 1, args.lora_rank, args.lora_alpha)
     rotate_checkpoints(args.keep_ckpts, epoch)
     print(f"done. eval_loss {el:.4f}  final checkpoint: {path}")

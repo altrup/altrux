@@ -88,8 +88,8 @@ See `python train.py --help` for all options (learning rate, rank, accumulation 
 This model's `train_hooks.py` differs from the others' in two ways, both visible in its module docstring: `Model.forward(input_ids, state)` is stateful, so examples are processed in `--chunk-len`-token chunks with `state` carried (and detached) across chunks of the *same* example — never across different examples — bounding training RAM by chunk length rather than example length (see the "Long-context data" section above for why examples themselves aren't truncated at prep time instead). And loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns.
 
 ```bash
-MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt --chunk-len 512"
-MODEL_NAME=mamba2_2_7b_memory make resume ARGS="--data data/train_memory.pt --chunk-len 512"
+MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
+MODEL_NAME=mamba2_2_7b_memory make resume ARGS="--data data/train_memory.pt"
 ```
 
 On this machine's GPU (unsupported `gfx1102` arch), set `HSA_OVERRIDE_GFX_VERSION=11.0.0` in your shell before training this model — see the root `CLAUDE.md`.

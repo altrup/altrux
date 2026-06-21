@@ -77,7 +77,7 @@ preflight:
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to
 # load the model, how to run forward+backward for one example). For
 # mamba2_2_7b_memory specifically:
-#   MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt --chunk-len 512"
+#   MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
 #
 # On this machine's GPU (unsupported gfx1102 arch) bitsandbytes segfaults
 # unless HSA_OVERRIDE_GFX_VERSION=11.0.0 is set when training that model --
