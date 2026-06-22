@@ -10,6 +10,13 @@ MODEL_ID = "state-spaces/mamba2-2.7b"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 TARGET_LORA_MODULES = ["in_proj", "out_proj"]
 
+# At full fp32 precision this 2.7B-parameter backbone alone needs ~11GB,
+# more than this project's dev GPU (8GB) has -- preflight/training OOM'd
+# before ever reaching a forward pass. QLoRA (4-bit in_proj/out_proj,
+# frozen, plus small trainable LoRA adapters) is the same fix already used
+# by mamba2_2_7b_memory for the same backbone; see that model's README.
+QUANTIZE_LORA_BASE = True
+
 # Chat format role markers — registered as tokenizer special tokens (see
 # SPECIAL_TOKENS), so each is a single atomic token id. Callers append the
 # separator between marker and content explicitly (e.g. USER_OPEN + " " + content)
@@ -196,16 +203,29 @@ class Model(nn.Module):
 
 
 def load_base(device: str) -> MambaLMHeadModel:
-    """Load the raw HuggingFace model. Used by sft/train.py."""
+    """Load the raw HuggingFace model, with TARGET_LORA_MODULES quantized to
+    4-bit per QUANTIZE_LORA_BASE. Used by sft/train.py and the backend
+    registry; LoRA adapters themselves are attached separately by the
+    caller (see sft/lora.py / backend/app/model/lora.py), after this.
+
+    Loads in bf16, not fp32: quantize_lora_targets only shrinks the model
+    *after* from_pretrained has already materialized it on `device`, so the
+    transient peak during loading is the full unquantized model's size --
+    at fp32 that's ~11GB for this 2.7B-parameter backbone, more than this
+    project's dev GPU (8GB) has, so loading itself would OOM before
+    quantization ever got a chance to run. bf16 halves that peak to ~5.4GB.
+    """
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from models.common import build_tokenizer, extend_embeddings
+    from models.common import build_tokenizer, extend_embeddings, quantize_lora_targets
 
-    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device)
+    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
     extend_embeddings(model, len(tokenizer))
+    if QUANTIZE_LORA_BASE:
+        quantize_lora_targets(model, TARGET_LORA_MODULES)
     return model
 
 

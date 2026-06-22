@@ -31,12 +31,15 @@ DEFAULT_CHUNK_LEN = 512
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
-    """Loads the base backbone with LoRA attached, then wraps it in the
-    inference Model (needed now since training goes through Model.forward's
+    """Loads the base backbone (quantizing TARGET_LORA_MODULES to 4-bit per
+    QUANTIZE_LORA_BASE) with LoRA attached, then wraps it in the inference
+    Model (needed now since training goes through Model.forward's
     chunked/state-threaded path, not load_base()'s raw output directly).
-    Returns (model, trainable_params)."""
+    Does not upcast the backbone to float32 -- on top of being unnecessary
+    (load_base's non-quantized params are already float32), it would
+    destroy the 4-bit quantization of in_proj/out_proj. Returns (model,
+    trainable_params)."""
     base = _model_mod.load_base(str(device))
-    base = base.to(torch.float32)
     base = apply_lora(base, _model_mod.TARGET_LORA_MODULES, lora_rank, lora_alpha, lora_dropout)
     model = _model_mod.Model(base).to(device)
 

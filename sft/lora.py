@@ -29,10 +29,14 @@ class LoRALinear(nn.Module):
     def weight(self) -> torch.Tensor:
         # mamba2's fused kernel accesses .weight directly; return the merged weight
         # so LoRA is applied even through the fused path and gradients flow correctly.
-        # NOTE: not valid when `linear` is a quantized Linear4bit (its .weight is
-        # packed 4-bit storage, not addable) -- only reachable today for models
-        # that go through mamba_ssm's fused path, which the QLoRA-quantized
-        # mamba2_2_7b_memory model does not (see its model.py docstring).
+        # When `linear` is a quantized Linear4bit (detected the same way __init__
+        # does, via compute_dtype), its .weight is packed 4-bit storage -- not
+        # addable to lora_B @ lora_A -- so skip the merge. Harmless for QLoRA
+        # models: they never reach the fused-kernel path (see this class's
+        # historical note), the only other caller is mamba_ssm's
+        # allocate_inference_cache, which just reads .weight.device.
+        if getattr(self.linear, "compute_dtype", None) is not None:
+            return self.linear.weight
         return self.linear.weight + (self.lora_B @ self.lora_A) * self.scale
 
     @property

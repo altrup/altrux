@@ -297,9 +297,9 @@ class Model(nn.Module):
     """QLoRA-adapted Mamba2-2.7B backbone with the memory subsystem spliced in.
 
     in_proj/out_proj are frozen and 4-bit-quantized (see QUANTIZE_LORA_BASE,
-    load_base); everything else in the backbone is frozen at full precision;
-    LoRA adapters on in_proj/out_proj and the memory subsystem itself are the
-    only trainable parameters.
+    load_base); everything else in the backbone is frozen at bf16 (see
+    load_base for why not fp32); LoRA adapters on in_proj/out_proj and the
+    memory subsystem itself are the only trainable parameters.
 
     `forward` does not take an `inference_params` object from the mamba_ssm
     library (none of this repo's models do -- see models/mamba2_780m/model.py
@@ -350,9 +350,15 @@ class Model(nn.Module):
             conv_state, ssm_state = layer.mixer.allocate_inference_cache(batch_size, 1, dtype=dtype)
             conv_states.append(conv_state)
             ssm_states.append(ssm_state)
-        neural_memory = self.front_end.init_memory(batch_size, device, dtype)
-        last_o_t = torch.zeros(batch_size, MEM_DIM, device=device, dtype=dtype)
-        last_surprise = torch.zeros(batch_size, device=device, dtype=dtype)
+        # The memory subsystem (front_end/injections) is full-precision and
+        # trained from scratch, independent of whatever dtype the backbone
+        # itself loads in (`dtype` here, bf16 -- see load_base) -- its own
+        # state must use its own params' dtype, not the backbone's, or
+        # Injection.signals/_TitansFrontEnd.step mismatch dtypes against it.
+        mem_dtype = self.front_end.q_proj.weight.dtype
+        neural_memory = self.front_end.init_memory(batch_size, device, mem_dtype)
+        last_o_t = torch.zeros(batch_size, MEM_DIM, device=device, dtype=mem_dtype)
+        last_surprise = torch.zeros(batch_size, device=device, dtype=mem_dtype)
         return MemoryState(conv_states, ssm_states, neural_memory, last_o_t, last_surprise)
 
     def _prenorm(self, layer, hidden_states: torch.Tensor, residual: torch.Tensor | None):
@@ -422,7 +428,12 @@ class Model(nn.Module):
         ssm_state = ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx
 
         if gated_delta is not None:
-            p, key, beta, clear = gated_delta
+            # gated_delta's tensors come from the memory subsystem, which runs
+            # at its own (fp32) dtype regardless of the backbone's (see
+            # _init_state) -- cast to ssm_state's dtype (bf16 since the
+            # backbone now loads in bf16, see model.py's load_base) so the
+            # merge below doesn't hit a dtype mismatch.
+            p, key, beta, clear = (t.to(ssm_state.dtype) for t in gated_delta)
             readback = torch.einsum("bhpn,bn->bhp", ssm_state, key)
             forgotten = ssm_state - beta * torch.einsum("bhp,bn->bhpn", readback, key)
             written = beta * torch.einsum("bhp,bn->bhpn", p, key)
@@ -498,14 +509,22 @@ def load_base(device: str) -> MambaLMHeadModel:
     """Load the raw HuggingFace model, with TARGET_LORA_MODULES quantized to
     4-bit per QUANTIZE_LORA_BASE. Used by sft/train.py and the backend
     registry; LoRA adapters themselves are attached separately by the
-    caller (see sft/lora.py / backend/app/model/lora.py), after this."""
+    caller (see sft/lora.py / backend/app/model/lora.py), after this.
+
+    Loads in bf16, not fp32: quantize_lora_targets only shrinks the model
+    *after* from_pretrained has already materialized it on `device`, so the
+    transient peak during loading is the full unquantized model's size --
+    at fp32 that's ~11GB for this 2.7B-parameter backbone, more than this
+    project's dev GPU (8GB) has, so loading itself would OOM before
+    quantization ever got a chance to run. bf16 halves that peak to ~5.4GB.
+    """
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from models.common import build_tokenizer, extend_embeddings, quantize_lora_targets
 
-    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device)
+    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
     extend_embeddings(model, len(tokenizer))
     if QUANTIZE_LORA_BASE:
