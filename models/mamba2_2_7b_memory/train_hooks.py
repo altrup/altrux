@@ -28,7 +28,16 @@ from lora import apply_lora
 from . import model as _model_mod
 
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
-DEFAULT_CHUNK_LEN = 512
+# This model's manual, unfused, per-token mixer step costs ~1GB of VRAM per
+# token while a backward graph is live -- on this project's dev GPU (8GB),
+# chunk_len 512 (or even 32) OOMs before finishing a single chunk's forward
+# pass; chunk_len 4 gets through forward but OOMs in .backward(); 3 is the
+# largest value confirmed to get through forward without OOMing. NOTE: this
+# is not a confirmed-safe value for backward specifically -- chunk_len 1-3
+# all hit a separate non-finite-loss bug (see process_example) before ever
+# reaching .backward(), so backward's memory cost at this size is still
+# unverified. Override with --chunk-len once that's resolved.
+DEFAULT_CHUNK_LEN = 3
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
