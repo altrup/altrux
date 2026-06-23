@@ -48,19 +48,57 @@ def _build_tiny_model():
     return model, trainable_params
 
 
-def test_process_example_chunks_and_gradients_flow():
-    model, trainable_params = _build_tiny_model()
+def test_chunk_loss_weight_sum_counts_assistant_tokens_only():
+    model, _ = _build_tiny_model()
+    ids = torch.randint(0, 50, (1, 10), device=DEVICE)
+    target_ids = torch.randint(0, 50, (1, 10), device=DEVICE)
+    mask_slice = torch.zeros(10, dtype=torch.bool, device=DEVICE)
+    mask_slice[3:] = True  # 7 assistant-turn positions
+
+    loss_sum, weight_sum, state = hooks.chunk_loss(model, ids, target_ids, mask_slice, None, eos_weight=1.0)
+
+    assert weight_sum == 7
+    assert torch.isfinite(loss_sum)
+    assert state is not None
+
+
+def test_chunk_loss_upweights_eos_positions():
+    model, _ = _build_tiny_model()
+    ids = torch.randint(1, 50, (1, 10), device=DEVICE)
+    target_ids = torch.randint(1, 50, (1, 10), device=DEVICE)
+    target_ids[0, 5] = hooks.EOS_ID
+    mask_slice = torch.ones(10, dtype=torch.bool, device=DEVICE)
+
+    _, weight_sum, _ = hooks.chunk_loss(model, ids, target_ids, mask_slice, None, eos_weight=3.0)
+
+    assert weight_sum == 9 + 3.0  # 9 ordinary positions weight 1, the EOS position weight 3
+
+
+def test_chunk_loss_state_threads_across_calls_and_gradients_flow_to_lora():
+    model, _ = _build_tiny_model()
     ids = torch.randint(0, 50, (37,), device=DEVICE)
     mask = torch.zeros(37, dtype=torch.bool, device=DEVICE)
     mask[20:] = True
+    chunk_len = 10
 
-    loss_sum, weight_sum, n_chunks = hooks.process_example(
-        model, ids, mask, DEVICE, eos_weight=2.0, backward_scale=1.0, chunk_len=10
-    )
+    state = None
+    total_weight = 0.0
+    n_chunks = 0
+    seqlen = ids.numel()
+    for start in range(0, seqlen - 1, chunk_len):
+        end = min(start + chunk_len, seqlen - 1)
+        input_ids = ids[start:end].unsqueeze(0)
+        target_ids = ids[start + 1:end + 1].unsqueeze(0)
+        mask_slice = mask[start + 1:end + 1]
+        loss_sum, weight_sum, state = hooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=2.0)
+        if weight_sum > 0:
+            (loss_sum / weight_sum).backward()
+        state = state.detach()
+        total_weight += weight_sum
+        n_chunks += 1
 
     assert n_chunks == 4
-    assert weight_sum == 17  # the 17 assistant-turn tokens in `mask`
-    assert torch.isfinite(torch.tensor(loss_sum))
+    assert total_weight == 17  # the 17 assistant-turn tokens in `mask`
 
     # lora_B gets gradient on the very first step; lora_A's gradient is
     # exactly zero until lora_B (zero-initialized) moves off zero -- expected
@@ -83,12 +121,3 @@ def test_chunking_matches_single_call():
 
     diff = (logits_one - logits_chunked).abs().max().item()
     assert diff < 1e-3, f"chunking diverges from single-call forward: {diff}"
-
-
-def test_preflight_passes():
-    model, trainable_params = _build_tiny_model()
-    ids = [torch.randint(0, 50, (37,), device=DEVICE)]
-    mask = torch.zeros(37, dtype=torch.bool, device=DEVICE)
-    mask[20:] = True
-
-    hooks.preflight(model, trainable_params, ids, [mask], DEVICE, max_len=1000, eos_weight=1.0, chunk_len=10)

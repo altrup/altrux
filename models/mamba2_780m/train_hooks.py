@@ -9,10 +9,10 @@ across chunks of the *same* example, never across different examples, so
 training RAM is bounded by chunk length rather than example length.
 
 sft/train.py owns everything that's the same across models: shuffling,
-gradient-accumulation counting, checkpoint cadence/rotation, resume, and
-non-finite checks. What's irreducibly model-specific -- how to load/wrap the
-model for training, and how to run forward+backward for one example -- lives
-here.
+gradient-accumulation counting, checkpoint cadence/rotation (including
+mid-example resume), non-finite checks, chunk iteration itself, evaluation,
+and preflight. What's irreducibly model-specific -- how to load/wrap the
+model for training, and how to compute loss for one chunk -- lives here.
 """
 
 import sys
@@ -51,108 +51,23 @@ def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: floa
     return model, trainable_params
 
 
-def _chunk_loss(model, input_ids: torch.Tensor, target_ids: torch.Tensor, loss_mask: torch.Tensor, state):
-    """loss_mask: per-target-position weight (0 for non-assistant tokens,
-    1 or eos_weight for assistant tokens -- computed by the caller, which
-    already has both the conversation mask and eos_weight available)."""
+def chunk_loss(
+    model,
+    input_ids: torch.Tensor,
+    target_ids: torch.Tensor,
+    mask_slice: torch.Tensor,
+    state,
+    eos_weight: float,
+):
+    """input_ids/target_ids: shape (1, T). mask_slice: shape (T,), bool/0-1,
+    1 for assistant-turn positions, 0 otherwise -- unlike mamba2_2_7b_memory,
+    this model has no reason to train on user turns too. Returns (loss_sum,
+    weight_sum, state); the generic loop in sft/train.py owns chunking,
+    accumulation, and checkpointing across calls."""
     logits, state = model(input_ids, state=state)
     loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
+    loss_mask = mask_slice.float().clone()
+    if eos_weight != 1.0:
+        eos_positions = (target_ids.reshape(-1) == EOS_ID) & (loss_mask > 0)
+        loss_mask[eos_positions] = eos_weight
     return (loss * loss_mask).sum(), loss_mask.sum(), state
-
-
-def process_example(
-    model,
-    ids: torch.Tensor,
-    mask: torch.Tensor,
-    device,
-    eos_weight: float,
-    backward_scale: float,
-    chunk_len: int | None = None,
-) -> tuple[float, float, int]:
-    """ids, mask already on `device`. Loss is masked to assistant turns via
-    `mask`, same as before chunking -- unlike mamba2_2_7b_memory, this model
-    has no reason to train on user turns too. Returns (loss_sum, weight_sum,
-    n_chunks) -- n_chunks is what the generic loop counts against
-    --accum-steps."""
-    chunk_len = chunk_len or DEFAULT_CHUNK_LEN
-    state = None
-    total_loss = total_weight = 0.0
-    seqlen = ids.numel()
-    n_chunks = 0
-    for start in range(0, seqlen - 1, chunk_len):
-        end = min(start + chunk_len, seqlen - 1)
-        input_ids = ids[start:end].unsqueeze(0)
-        target_ids = ids[start + 1 : end + 1].unsqueeze(0)
-        loss_mask = mask[start + 1 : end + 1].float().clone()
-        if eos_weight != 1.0:
-            eos_positions = (target_ids.view(-1) == EOS_ID) & (loss_mask > 0)
-            loss_mask[eos_positions] = eos_weight
-
-        weighted_loss, weight, state = _chunk_loss(model, input_ids, target_ids, loss_mask, state)
-        if weight > 0:
-            if not torch.isfinite(weighted_loss):
-                raise FloatingPointError(f"non-finite loss at chunk [{start}:{end}]")
-            (weighted_loss / weight * backward_scale).backward()
-            total_loss += weighted_loss.item()
-            total_weight += weight.item()
-        state = state.detach()
-        n_chunks += 1
-    return total_loss, total_weight, n_chunks
-
-
-def eval_loss(
-    model,
-    eval_ids: list[torch.Tensor],
-    eval_masks: list[torch.Tensor],
-    device,
-    max_len: int,
-    chunk_len: int | None = None,
-) -> float:
-    chunk_len = chunk_len or DEFAULT_CHUNK_LEN
-    model.eval()
-    total_loss = total_tokens = 0.0
-    with torch.no_grad():
-        for ids, mask in zip(eval_ids, eval_masks):
-            if ids.numel() > max_len or mask.sum() == 0:
-                continue
-            ids, mask = ids.to(device), mask.to(device)
-            state = None
-            seqlen = ids.numel()
-            for start in range(0, seqlen - 1, chunk_len):
-                end = min(start + chunk_len, seqlen - 1)
-                input_ids = ids[start:end].unsqueeze(0)
-                target_ids = ids[start + 1 : end + 1].unsqueeze(0)
-                loss_mask = mask[start + 1 : end + 1].float()
-                weighted_loss, weight, state = _chunk_loss(model, input_ids, target_ids, loss_mask, state)
-                total_loss += weighted_loss.item()
-                total_tokens += weight.item()
-                state = state.detach()
-    model.train()
-    return total_loss / total_tokens if total_tokens > 0 else float("nan")
-
-
-def preflight(
-    model,
-    trainable_params: list[torch.nn.Parameter],
-    all_ids: list[torch.Tensor],
-    all_masks: list[torch.Tensor],
-    device,
-    max_len: int,
-    eos_weight: float = 1.0,
-    chunk_len: int | None = None,
-) -> None:
-    sample_ids = sample_mask = None
-    for ids, mask in zip(all_ids, all_masks):
-        if mask.any() and ids.numel() <= max_len:
-            sample_ids, sample_mask = ids, mask
-            break
-    assert sample_ids is not None, "no valid examples found in dataset"
-
-    model.train()
-    process_example(model, sample_ids.to(device), sample_mask.to(device), device, eos_weight, backward_scale=1.0, chunk_len=chunk_len)
-
-    grads_nonzero = sum(1 for p in trainable_params if p.grad is not None and p.grad.abs().max() > 0)
-    model.zero_grad()
-
-    assert grads_nonzero > 0, f"preflight: 0/{len(trainable_params)} params received gradients"
-    print(f"preflight OK -- {grads_nonzero}/{len(trainable_params)} params have gradients")

@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume preflight test
+.PHONY: sync data data-memory prepare train resume preflight smoke-test test
 
 sync:
 	uv sync --inexact
@@ -9,7 +9,7 @@ sync:
 	MAX_JOBS=12 uv pip install mamba-ssm --no-build-isolation
 
 test:
-	PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest ../models/tests
+	PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest tests ../models/tests
 
 data:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
@@ -72,6 +72,16 @@ resume:
 preflight:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --preflight-only $(ARGS)
+
+# Same gradient-wiring check as `preflight`, but on a short synthetic
+# sequence instead of the real dataset's first valid example -- useful for
+# mamba2_2_7b_memory, whose real examples are thousands of tokens and whose
+# --chunk-len is capped at 2 on this hardware (see smoke_test.py). Still
+# pays for loading the real model. Pass --length to change the synthetic
+# sequence length (default 10).
+smoke-test:
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u smoke_test.py $(ARGS)
 
 # train.py is generic across every model in models/ -- it dispatches to
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to

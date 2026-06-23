@@ -72,17 +72,47 @@ def _build_tiny_model(monkeypatch):
     return model, trainable_params
 
 
-def test_process_example_chunks_correctly(monkeypatch):
+def _run_chunked(model, ids, eos_weight, chunk_len=CHUNK_LEN):
+    """Drives hooks.chunk_loss across an example's chunks -- this loop lives
+    in sft/train.py's generic training loop now; tests reproduce just enough
+    of it to exercise chunk_loss's state-threading and gradient wiring."""
+    state = None
+    total_weight = 0.0
+    n_chunks = 0
+    seqlen = ids.numel()
+    for start in range(0, seqlen - 1, chunk_len):
+        end = min(start + chunk_len, seqlen - 1)
+        input_ids = ids[start:end].unsqueeze(0)
+        target_ids = ids[start + 1:end + 1].unsqueeze(0)
+        loss_sum, weight_sum, state = hooks.chunk_loss(model, input_ids, target_ids, None, state, eos_weight)
+        (loss_sum / weight_sum).backward()
+        state = state.detach()
+        total_weight += weight_sum.item()
+        n_chunks += 1
+    return total_weight, n_chunks
+
+
+def test_chunk_loss_chunks_correctly(monkeypatch):
     model, _ = _build_tiny_model(monkeypatch)
     ids = torch.randint(0, 50, (37,), device=DEVICE)  # seqlen-1=36, chunk_len=10 -> 4 chunks
 
-    loss_sum, weight_sum, n_chunks = hooks.process_example(
-        model, ids, None, DEVICE, eos_weight=2.0, backward_scale=1.0, chunk_len=CHUNK_LEN
-    )
+    total_weight, n_chunks = _run_chunked(model, ids, eos_weight=2.0)
 
     assert n_chunks == 4
-    assert weight_sum > 0
-    assert torch.isfinite(torch.tensor(loss_sum))
+    assert total_weight > 0
+
+
+def test_chunk_loss_ignores_mask_and_trains_on_every_token(monkeypatch):
+    """Unlike mamba2_780m, this model trains on every token (mask is
+    accepted for interface parity but ignored) -- weight_sum should count
+    every position in the chunk, not just a masked subset."""
+    model, _ = _build_tiny_model(monkeypatch)
+    input_ids = torch.randint(0, 50, (1, 9), device=DEVICE)
+    target_ids = torch.randint(0, 50, (1, 9), device=DEVICE)
+
+    _, weight_sum, _ = hooks.chunk_loss(model, input_ids, target_ids, None, None, eos_weight=1.0)
+
+    assert weight_sum == 9
 
 
 def test_gradients_reach_both_lora_and_memory_subsystem(monkeypatch):
@@ -93,7 +123,7 @@ def test_gradients_reach_both_lora_and_memory_subsystem(monkeypatch):
     model, _ = _build_tiny_model(monkeypatch)
     ids = torch.randint(0, 50, (37,), device=DEVICE)
 
-    hooks.process_example(model, ids, None, DEVICE, eos_weight=1.0, backward_scale=1.0, chunk_len=CHUNK_LEN)
+    _run_chunked(model, ids, eos_weight=1.0)
 
     lora_grads = memory_grads = 0
     for name, p in model.named_parameters():
@@ -108,17 +138,10 @@ def test_gradients_reach_both_lora_and_memory_subsystem(monkeypatch):
     assert memory_grads > 0, "no memory-subsystem (front_end/injections) params received gradients"
 
 
-def test_preflight_passes(monkeypatch):
-    model, trainable_params = _build_tiny_model(monkeypatch)
-    ids = [torch.randint(0, 50, (37,), device=DEVICE)]
-
-    hooks.preflight(model, trainable_params, ids, [None], DEVICE, max_len=1000, eos_weight=1.0, chunk_len=CHUNK_LEN)
-
-
 def test_checkpoint_round_trip(monkeypatch):
     model, _ = _build_tiny_model(monkeypatch)
     ids = torch.randint(0, 50, (37,), device=DEVICE)
-    hooks.process_example(model, ids, None, DEVICE, eos_weight=1.0, backward_scale=1.0, chunk_len=CHUNK_LEN)
+    _run_chunked(model, ids, eos_weight=1.0)
 
     before = {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
 
