@@ -22,12 +22,20 @@ import math
 import os
 import shutil
 import sys
+import warnings
 from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# bitsandbytes (as of 0.49.2, the latest release) calls the deprecated
+# torch._check_is_size internally (bitsandbytes/backends/cuda/ops.py) -- a
+# bug in their code, not ours, and not yet fixed upstream. Suppress just
+# this one warning rather than patching the installed package (make sync
+# would overwrite that) or silencing FutureWarning project-wide.
+warnings.filterwarnings("ignore", message=r".*_check_is_size.*", category=FutureWarning)
 
 # Add the repo root to sys.path so the models/ package is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -231,6 +239,17 @@ def main() -> None:
                 window_loss_sum = window_tokens = 0.0
 
                 print(f"epoch {epoch + 1}  step {global_step:>6}  example {i:>6}/{n}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
+
+                # Optional generic hook: a model's train_hooks can define
+                # extra_log(model) -> str | None to print extra per-step
+                # status (e.g. mamba2_2_7b_memory uses it to report whether
+                # its memory subsystem is actually being used). Most models
+                # won't define it -- skip silently if absent.
+                extra_log = getattr(hooks, "extra_log", None)
+                if extra_log is not None:
+                    line = extra_log(model)
+                    if line is not None:
+                        print(f"    {line}")
 
                 bad = [name for name, p in model.named_parameters() if p.requires_grad and not torch.isfinite(p).all()]
                 if bad:

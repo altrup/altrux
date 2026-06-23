@@ -68,6 +68,28 @@ INJECTED_LAYERS: tuple[int, ...] = tuple(range(20, N_LAYER, 2))
 BOTTLENECK_R = 128
 MEM_DIM = D_MODEL
 MEM_HIDDEN = 4 * D_MODEL
+# Caps the per-token test-time gradient step in _NeuralMemory.write() (see
+# its comment there) -- bounds the update size regardless of how large the
+# raw prediction error/gradient is, which an untrained memory MLP can
+# produce on its very first few tokens. Tried raising this to 3000 on the
+# theory that w1/w2's ~26M elements each make a *healthy* gradient norm
+# naturally land in the thousands -- wrong in practice: it only delayed the
+# explosion by a few tokens rather than preventing it, since momentum `s` in
+# write() has no decay of its own (only `p` decays, via alpha) -- eta near 1
+# lets bounded-but-nonzero per-step contributions accumulate across tokens
+# regardless of the single-step clip. 1.0 is the only value confirmed (with
+# q/k/v normalized -- see _rms_normalize) to run a full example through
+# preflight without going non-finite. Revisit alongside decaying/clamping
+# momentum itself, not just the per-step gradient, before raising this again.
+MAX_WRITE_GRAD_NORM = 1.0
+# Diagnostic-only threshold for counting an injected layer as "actively"
+# writing into ssm_state this token (see Model.last_token_log) -- beta > 0.5
+# means that layer's gated-delta merge is overwriting more than half its
+# forgotten state with the memory's content, vs. its near-0 no-op init.
+# Used only to report active_layers for live logging; the actual gated-delta
+# merge in _mixer_step always uses the raw, continuous beta value -- this
+# threshold has no effect on the forward pass or training.
+ACTIVE_BETA_THRESHOLD = 0.5
 
 
 class _NeuralMemory:
@@ -129,6 +151,17 @@ class _NeuralMemory:
         # not from this flag; `params` being a fresh leaf each call means
         # differentiating g w.r.t. it can't chain past this single token.
         grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=True)
+        # Clip the combined per-example gradient norm: M starts randomly
+        # initialized, so its first prediction error (and hence g) can
+        # already be huge -- uncapped, eta near 1 (near-zero momentum decay)
+        # lets that single huge step make the next token's error (and g)
+        # even bigger, a runaway that overflows fp32 within ~4 tokens
+        # (confirmed: this was happening, independent of chunk_len/dtype).
+        # Clipping g caps the per-token update size regardless of how bad
+        # M's current prediction is, breaking that feedback loop.
+        sq_norm = sum((g.float() ** 2).reshape(g.shape[0], -1).sum(dim=1) for g in grads)
+        clip_scale = (MAX_WRITE_GRAD_NORM / sq_norm.clamp_min(1e-12).sqrt()).clamp(max=1.0)
+        grads = [g * clip_scale.view(-1, *([1] * (g.dim() - 1))) for g in grads]
 
         new_params = []
         new_momentum = []
@@ -146,6 +179,13 @@ class _NeuralMemory:
         """o_t = M_t(q_t), called after write() so the read uses the
         just-updated weights."""
         return self._apply(q, self.w1, self.b1, self.w2, self.b2)
+
+
+def _rms_normalize(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Scales x to unit RMS along its last dim -- no learnable weight, since
+    q_proj/k_proj/v_proj already have one; this only strips the raw,
+    unbounded magnitude those projections would otherwise pass through."""
+    return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
 
 
 class _TitansFrontEnd(nn.Module):
@@ -184,11 +224,30 @@ class _TitansFrontEnd(nn.Module):
         write pays for gradient tracking.
         """
         with torch.enable_grad():
-            q = self.q_proj(residual)
-            k = self.k_proj(residual)
-            v = self.v_proj(residual)
+            # RMS-normalize q/k/v to unit scale before they reach the memory:
+            # raw projections of the (unnormalized) residual stream can have
+            # individual components in the tens (confirmed: k/v components up
+            # to ~50-60), which made M's write loss ||M(k) - v||^2 -- and its
+            # gradient -- scale with that raw, unbounded magnitude rather than
+            # with anything learned. Normalizing bounds the *input* magnitude
+            # at the source so MAX_WRITE_GRAD_NORM clipping in
+            # _NeuralMemory.write isn't permanently saturated; theta/eta
+            # regain control over how strongly a given token's write lands.
+            q = _rms_normalize(self.q_proj(residual))
+            k = _rms_normalize(self.k_proj(residual))
+            v = _rms_normalize(self.v_proj(residual))
             knobs = torch.sigmoid(self.knob_proj(residual))
-            eta, theta, alpha = knobs[..., 0], knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
+            # eta capped at 0.9 (not left at sigmoid's full (0, 1) range like
+            # theta/alpha's caps, which bound them *small* on purpose --
+            # small theta/alpha is what makes the write step gentle and the
+            # memory's content persist across a long document): S_t = eta *
+            # S_{t-1} - theta * g_t accumulates with essentially no decay
+            # when eta is allowed to approach 1 (confirmed: 0.9999974 in a
+            # real run), turning the momentum into an undamped running sum of
+            # every token's write -- the actual mechanism behind chunk 8:10
+            # still going non-finite even with grads clipped to a generous
+            # 3000. Capping below 1 guarantees at least 10% decay per token.
+            eta, theta, alpha = knobs[..., 0] * 0.9, knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
             surprise = memory.write(k, v, eta, theta, alpha)
             o_t = memory.read(q)
         return o_t, surprise
@@ -239,7 +298,17 @@ class _GatedDeltaInjection(nn.Module):
         z = self.down(o_t)
         p = rearrange(self.value_proj(z), "b (h p) -> b h p", p=self.headdim)
         key = self.key_proj(z)
-        beta = torch.sigmoid(self.beta_proj(z).squeeze(-1) + surprise).view(-1, 1, 1, 1)
+        # surprise is a sum of squared error over MEM_DIM dims, so raw values
+        # land in the hundreds-to-thousands -- added directly into beta's
+        # logit it completely swamps the -4.0 no-op bias (confirmed: a real
+        # run measured beta=0.9968 right at the first step, not the intended
+        # ~0.02). Normalize to mean-squared-error-per-dim (an O(1) quantity,
+        # ~0.45 in that same run) and squash with its own sigmoid -- bounded
+        # to [0.5, 1) since surprise >= 0 -- before adding, so its
+        # contribution to the logit is bounded and beta_proj's -4.0 bias can
+        # still dominate by default, preserving the no-op-at-init behavior.
+        surprise_signal = torch.sigmoid(surprise / MEM_DIM)
+        beta = torch.sigmoid(self.beta_proj(z).squeeze(-1) + surprise_signal).view(-1, 1, 1, 1)
         clear = torch.sigmoid(self.clear_proj(z)).view(-1, 1, 1, 1)
         return p, key, beta, clear
 
@@ -343,6 +412,23 @@ class Model(nn.Module):
 
         self.front_end = _TitansFrontEnd()
         self.injections = nn.ModuleDict({str(i): _GatedDeltaInjection() for i in INJECTED_LAYERS})
+        # Running sums for pop_memory_stats() -- plain floats, not tensors, so
+        # they never hold a reference into any autograd graph. beta/clear are
+        # accumulated once per injected layer per token; surprise/o_t_norm
+        # once per token (at READ_LAYER only). See pop_memory_stats for why
+        # these matter: beta/clear start near 0/1 (no-op init, see
+        # _GatedDeltaInjection.__init__) and are the only direct signal of
+        # whether the memory subsystem is actually being used or still
+        # sitting at its identity init.
+        self._mem_stat_sums = {"beta": 0.0, "clear": 0.0, "surprise": 0.0, "o_t_norm": 0.0}
+        self._mem_stat_inj_count = 0
+        self._mem_stat_tok_count = 0
+        # Snapshot of the single most-recently-processed token, for live
+        # per-token logging (overwritten every token, never accumulated --
+        # see last_token_log). "active" = beta above ACTIVE_BETA_THRESHOLD,
+        # i.e. that layer's gated-delta merge is actually overwriting
+        # ssm_state this token rather than sitting near its no-op init.
+        self._last_token_log: dict = {}
 
     def _init_state(self, batch_size: int, device, dtype) -> MemoryState:
         conv_states, ssm_states = [], []
@@ -483,11 +569,20 @@ class Model(nn.Module):
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])
             residual = None
+            token_betas, token_clears = [], []
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
                 if i in INJECTED_LAYERS:
                     gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
+                    beta, clear = gated_delta[2], gated_delta[3]
+                    beta_val = beta.detach().mean().item()
+                    clear_val = clear.detach().mean().item()
+                    self._mem_stat_sums["beta"] += beta_val
+                    self._mem_stat_sums["clear"] += clear_val
+                    self._mem_stat_inj_count += 1
+                    token_betas.append(beta_val)
+                    token_clears.append(clear_val)
                 h, conv_state, ssm_state = self._mixer_step(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i], gated_delta
                 )
@@ -498,11 +593,57 @@ class Model(nn.Module):
                     o_t, surprise = self.front_end.step(residual, state.neural_memory)
                     state.last_o_t = o_t
                     state.last_surprise = surprise
+                    surprise_val = surprise.detach().mean().item()
+                    o_t_norm_val = o_t.detach().norm(dim=-1).mean().item()
+                    self._mem_stat_sums["surprise"] += surprise_val
+                    self._mem_stat_sums["o_t_norm"] += o_t_norm_val
+                    self._mem_stat_tok_count += 1
+                    self._last_token_log["surprise"] = surprise_val
+                    self._last_token_log["o_t_norm"] = o_t_norm_val
+
+            if token_betas:
+                self._last_token_log["beta"] = sum(token_betas) / len(token_betas)
+                self._last_token_log["clear"] = sum(token_clears) / len(token_clears)
+                self._last_token_log["active_layers"] = sum(b > ACTIVE_BETA_THRESHOLD for b in token_betas)
+                self._last_token_log["n_layers"] = len(token_betas)
 
             h = self._apply_norm_f(h, residual)
             all_logits.append(self.lm_head(h))
 
         return torch.stack(all_logits, dim=1), state
+
+    def last_token_log(self) -> dict | None:
+        """Snapshot of the most recently processed token's memory-usage
+        signals (beta/clear averaged across injected layers, active_layers =
+        how many of them are above ACTIVE_BETA_THRESHOLD -- diagnostic only,
+        doesn't affect the merge itself; surprise/o_t_norm from the
+        front-end's last read). None until forward() has run at least once.
+        Unlike pop_memory_stats, this never resets -- it's meant for live
+        per-token logging, not a per-step average."""
+        return dict(self._last_token_log) if self._last_token_log else None
+
+    def pop_memory_stats(self) -> dict[str, float] | None:
+        """Returns averages since the last call (None if forward hasn't run
+        since then) and resets the running sums. `beta`/`clear` are the most
+        direct usage signal: both start pinned near their no-op init
+        (beta~0.02, clear~0.98, see _GatedDeltaInjection.__init__) so the
+        backbone behaves like the unmodified pretrained model until training
+        moves them -- beta staying near 0.02 over many steps means the memory
+        is still effectively disconnected, not actually writing into
+        ssm_state, regardless of how much gradient the memory params receive
+        in preflight."""
+        if self._mem_stat_tok_count == 0:
+            return None
+        stats = {
+            "beta": self._mem_stat_sums["beta"] / max(self._mem_stat_inj_count, 1),
+            "clear": self._mem_stat_sums["clear"] / max(self._mem_stat_inj_count, 1),
+            "surprise": self._mem_stat_sums["surprise"] / self._mem_stat_tok_count,
+            "o_t_norm": self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count,
+        }
+        self._mem_stat_sums = {k: 0.0 for k in self._mem_stat_sums}
+        self._mem_stat_inj_count = 0
+        self._mem_stat_tok_count = 0
+        return stats
 
 
 def load_base(device: str) -> MambaLMHeadModel:
