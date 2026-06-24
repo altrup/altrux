@@ -29,18 +29,16 @@ from lora import apply_lora
 from . import model as _model_mod
 
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
-# Measured against this model's *previous* 2.7B QLoRA backbone: this model's
-# manual, unfused, per-token mixer step cost ~1GB of VRAM per token while a
-# backward graph was live, and on this project's dev GPU (8GB) chunk_len 2
-# was the largest value confirmed to get all the way through both forward
-# and backward without OOMing (chunk_len 3+ OOM'd in .backward()). The
-# backbone is now the smaller 780M model with plain LoRA (no 4-bit
-# quantization) instead -- both changes shrink the real per-token VRAM cost,
-# but by how much hasn't been re-measured on this backbone, so this value is
-# left unchanged (conservative) rather than guessed upward. Re-run `make
-# preflight` with a range of --chunk-len values on this backbone to find the
-# new ceiling; gradient checkpointing on the per-token mixer step is the way
-# to raise it further within a fixed VRAM budget if needed.
+# This value hasn't been re-measured against this 780M, plain-LoRA backbone
+# and is left deliberately conservative rather than guessed upward: this
+# model's manual, unfused, per-token mixer step holds a live backward graph
+# whose VRAM cost scales with chunk_len, and the actual per-token cost on
+# this backbone (smaller than this architecture's other variants, and
+# without 4-bit quantization overhead) hasn't been confirmed on this
+# project's dev GPU (8GB). Re-run `make preflight` with a range of
+# --chunk-len values to find the real ceiling; gradient checkpointing on the
+# per-token mixer step is the way to raise it further within a fixed VRAM
+# budget if needed.
 DEFAULT_CHUNK_LEN = 2
 
 

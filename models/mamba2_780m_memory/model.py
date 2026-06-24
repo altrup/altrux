@@ -41,12 +41,11 @@ TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 # trainable low-rank adapters) rather than left fully frozen, on the theory
 # that a fully frozen backbone is unlikely to integrate a memory signal
 # injected straight into its SSM state well. This 780M backbone is small
-# enough to fit this project's dev GPU (8GB) without 4-bit quantization,
-# unlike the 2.7B backbone this model used previously (see git history),
-# which needed QLoRA -- so no QUANTIZE_LORA_BASE flag here, same as
-# mamba2_780m. The memory subsystem (front-end, gate projections) is
-# separate from LoRA: it has no pretrained weights to adapt, so it trains
-# with ordinary full-parameter gradients from a random init.
+# enough to fit this project's dev GPU (8GB) without 4-bit quantization, so
+# no QUANTIZE_LORA_BASE flag here, same as mamba2_780m. The memory subsystem
+# (front-end, gate projections) is separate from LoRA: it has no pretrained
+# weights to adapt, so it trains with ordinary full-parameter gradients from
+# a random init.
 TARGET_LORA_MODULES: list[str] = ["in_proj", "out_proj"]
 
 # Chat format role markers -- see models/mamba2_780m/model.py for the
@@ -63,12 +62,11 @@ HEADDIM = 64
 D_STATE = 128
 
 # Memory subsystem hyperparameters (see README.md for the rationale).
-# READ_LAYER/INJECTED_LAYERS are rescaled proportionally from this model's
-# previous 2.7B backbone (READ_LAYER=42/64, INJECTED_LAYERS=range(20,64,2))
-# to preserve the same relative depth (~2/3) and coverage (~1/3) on this
-# backbone's 48 layers, not re-derived from scratch -- see git history for
-# the original rationale (weak keys too early, collapsed-to-next-token too
-# late).
+# READ_LAYER sits at roughly 2/3 depth and INJECTED_LAYERS covers roughly
+# the last third of the stack on this backbone's 48 layers -- early layers
+# produce weak keys (too little semantic content yet) while late layers are
+# already collapsed toward next-token prediction, so the read/injection
+# window sits in between.
 READ_LAYER = 32
 INJECTED_LAYERS: tuple[int, ...] = tuple(range(16, N_LAYER, 2))
 BOTTLENECK_R = 128
@@ -660,8 +658,7 @@ def load_base(device: str) -> MambaLMHeadModel:
     Loads in bf16, not fp32, matching the other Mamba2 models in this repo
     (see models/mamba2_780m/model.py's load_base) -- this 780M-parameter
     backbone is small enough that plain LoRA (no 4-bit quantization) fits
-    this project's dev GPU (8GB) comfortably, unlike the 2.7B backbone this
-    model used previously (see git history), which needed QLoRA to fit.
+    this project's dev GPU (8GB) comfortably.
     """
     import sys
     from pathlib import Path
