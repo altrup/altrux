@@ -61,7 +61,7 @@ Replace the full content of `models/mamba2_780m_continuous_learning/README.md` w
 
 ## LoRA target modules
 
-`in_proj`, `out_proj` — the input/output projections of the SSM mixer block. These are the linear layers that dominate parameter count in each Mamba2 block and where adapting them gives the most leverage for fine-tuning, analogous to targeting `q_proj`/`v_proj` in a transformer. Plain full-precision LoRA, no 4-bit quantization — the 780M backbone fits this project's dev GPU (8GB) comfortably without it, unlike the 2.7B backbone this model used previously (see git history), which needed QLoRA.
+`in_proj`, `out_proj` — the input/output projections of the SSM mixer block. These are the linear layers that dominate parameter count in each Mamba2 block and where adapting them gives the most leverage for fine-tuning, analogous to targeting `q_proj`/`v_proj` in a transformer. Plain full-precision LoRA, no 4-bit quantization — the 780M backbone fits this project's dev GPU (8GB) comfortably without it.
 
 ## Special tokens
 
@@ -176,12 +176,11 @@ TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 # trainable low-rank adapters) rather than left fully frozen, on the theory
 # that a fully frozen backbone is unlikely to integrate a memory signal
 # injected straight into its SSM state well. This 780M backbone is small
-# enough to fit this project's dev GPU (8GB) without 4-bit quantization,
-# unlike the 2.7B backbone this model used previously (see git history),
-# which needed QLoRA -- so no QUANTIZE_LORA_BASE flag here, same as
-# mamba2_780m. The memory subsystem (front-end, gate projections) is
-# separate from LoRA: it has no pretrained weights to adapt, so it trains
-# with ordinary full-parameter gradients from a random init.
+# enough to fit this project's dev GPU (8GB) without 4-bit quantization, so
+# no QUANTIZE_LORA_BASE flag here, same as mamba2_780m. The memory subsystem
+# (front-end, gate projections) is separate from LoRA: it has no pretrained
+# weights to adapt, so it trains with ordinary full-parameter gradients from
+# a random init.
 TARGET_LORA_MODULES: list[str] = ["in_proj", "out_proj"]
 ```
 
@@ -230,12 +229,11 @@ HEADDIM = 64
 D_STATE = 128
 
 # Memory subsystem hyperparameters (see README.md for the rationale).
-# READ_LAYER/INJECTED_LAYERS are rescaled proportionally from this model's
-# previous 2.7B backbone (READ_LAYER=42/64, INJECTED_LAYERS=range(20,64,2))
-# to preserve the same relative depth (~2/3) and coverage (~1/3) on this
-# backbone's 48 layers, not re-derived from scratch -- see git history for
-# the original rationale (weak keys too early, collapsed-to-next-token too
-# late).
+# READ_LAYER sits at roughly 2/3 depth and INJECTED_LAYERS covers roughly
+# the last third of the stack on this backbone's 48 layers -- early layers
+# produce weak keys (too little semantic content yet) while late layers are
+# already collapsed toward next-token prediction, so the read/injection
+# window sits in between.
 READ_LAYER = 32
 INJECTED_LAYERS: tuple[int, ...] = tuple(range(16, N_LAYER, 2))
 BOTTLENECK_R = 128
@@ -326,8 +324,7 @@ def load_base(device: str) -> MambaLMHeadModel:
     Loads in bf16, not fp32, matching the other Mamba2 models in this repo
     (see models/mamba2_780m/model.py's load_base) -- this 780M-parameter
     backbone is small enough that plain LoRA (no 4-bit quantization) fits
-    this project's dev GPU (8GB) comfortably, unlike the 2.7B backbone this
-    model used previously (see git history), which needed QLoRA to fit.
+    this project's dev GPU (8GB) comfortably.
     """
     import sys
     from pathlib import Path
@@ -456,18 +453,16 @@ to:
 
 ```python
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
-# Measured against this model's *previous* 2.7B QLoRA backbone: this model's
-# manual, unfused, per-token mixer step cost ~1GB of VRAM per token while a
-# backward graph was live, and on this project's dev GPU (8GB) chunk_len 2
-# was the largest value confirmed to get all the way through both forward
-# and backward without OOMing (chunk_len 3+ OOM'd in .backward()). The
-# backbone is now the smaller 780M model with plain LoRA (no 4-bit
-# quantization) instead -- both changes shrink the real per-token VRAM cost,
-# but by how much hasn't been re-measured on this backbone, so this value is
-# left unchanged (conservative) rather than guessed upward. Re-run `make
-# preflight` with a range of --chunk-len values on this backbone to find the
-# new ceiling; gradient checkpointing on the per-token mixer step is the way
-# to raise it further within a fixed VRAM budget if needed.
+# This value hasn't been re-measured against this 780M, plain-LoRA backbone
+# and is left deliberately conservative rather than guessed upward: this
+# model's manual, unfused, per-token mixer step holds a live backward graph
+# whose VRAM cost scales with chunk_len, and the actual per-token cost on
+# this backbone (smaller than this architecture's other variants, and
+# without 4-bit quantization overhead) hasn't been confirmed on this
+# project's dev GPU (8GB). Re-run `make preflight` with a range of
+# --chunk-len values to find the real ceiling; gradient checkpointing on the
+# per-token mixer step is the way to raise it further within a fixed VRAM
+# budget if needed.
 DEFAULT_CHUNK_LEN = 2
 ```
 
@@ -639,7 +634,7 @@ Backbone shape: `d_model=1536`, `n_layer=48`, `d_inner=3072` (expand 2), `nheads
 
 ## LoRA target modules
 
-`["in_proj", "out_proj"]` — the same choice as the other Mamba2 models in this repo (Mamba2's analogue of a transformer's q/k/v/o projections). Plain full-precision LoRA, no 4-bit quantization — this 780M backbone fits this project's dev GPU (8GB) comfortably without it, unlike the 2.7B backbone this model used previously (see git history), which needed QLoRA to fit.
+`["in_proj", "out_proj"]` — the same choice as the other Mamba2 models in this repo (Mamba2's analogue of a transformer's q/k/v/o projections). Plain full-precision LoRA, no 4-bit quantization — this 780M backbone fits this project's dev GPU (8GB) comfortably without it.
 
 The memory subsystem itself (front-end, gate projections) stays outside LoRA either way — it's trained with full gradients from a random init, since it has no pretrained weights to adapt.
 
@@ -736,7 +731,7 @@ Only a subset of layers carry a merge point — every even layer from 16 to 46 i
 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46
 ```
 
-`READ_LAYER` (32) falls inside this range, so layer 32 both merges memory into its own state *and* is read by Stage 1 — see the diagram note above for why that doesn't create a same-token cycle. The injected-layer set is itself a hyperparameter, not architecturally required to be this exact stride/range; it (and `READ_LAYER`) is rescaled proportionally from this model's previous 2.7B/64-layer backbone, not re-derived from scratch — see git history for the original rationale.
+`READ_LAYER` (32) falls inside this range, so layer 32 both merges memory into its own state *and* is read by Stage 1 — see the diagram note above for why that doesn't create a same-token cycle. The injected-layer set is itself a hyperparameter, not architecturally required to be this exact stride/range — it (and `READ_LAYER`) follows this architecture's general depth/coverage proportions (roughly 2/3 depth for `READ_LAYER`, roughly the last third of layers for `INJECTED_LAYERS`).
 
 ### Parameter budget
 
@@ -938,8 +933,8 @@ check on a short synthetic sequence instead of a real dataset example.
 
 `make preflight` picks the first valid example in the real dataset, which
 for mamba2_780m_memory can be tens of thousands of tokens -- at this model's
---chunk-len (2, inherited conservatively from this model's previous 2.7B
-QLoRA backbone -- see models/mamba2_780m_memory/train_hooks.py), that's
+--chunk-len (2, kept deliberately conservative pending re-measurement on
+this backbone -- see models/mamba2_780m_memory/train_hooks.py), that's
 thousands of slow chunks before the check tells you anything. This script
 exists for the case where you just want "does the wiring still work" fast,
 without waiting on dataset example length -- it does NOT replace `make
