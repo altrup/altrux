@@ -70,7 +70,7 @@ def read_lora_config(checkpoint_path: str | Path) -> tuple[int, float]:
 def load_checkpoint(model: nn.Module, checkpoint_path: str | Path) -> None:
     """Loads sft/train.py's checkpoint format: every trainable parameter
     (trainable.pt), not just LoRA adapters -- a model like
-    mamba2_2_7b_memory has an additional full-gradient subsystem (front_end,
+    mamba2_780m_memory has an additional full-gradient subsystem (front_end,
     injections) that a LoRA-only load would silently miss. For a LoRA-only
     model, trainable.pt only ever contained lora_A/lora_B anyway, so this is
     a strict superset of the old adapter.pt-based load_lora, not a behavior

@@ -7,12 +7,12 @@ evaluation, preflight, and non-finite checks -- and delegates the
 irreducibly model-specific part (how to load the model for training, and how
 to compute loss for one chunk) to those hooks. See
 models/mamba2_780m/train_hooks.py for the simple case and
-models/mamba2_2_7b_memory/train_hooks.py for the one that also defines
+models/mamba2_780m_memory/train_hooks.py for the one that also defines
 chunk_extra_log for its live per-chunk progress display.
 
 Checkpointing is also generic: every parameter with requires_grad=True is
 saved, which covers both a LoRA-only model (mamba2_780m) and a model with an
-additional full-gradient subsystem (mamba2_2_7b_memory's front_end/
+additional full-gradient subsystem (mamba2_780m_memory's front_end/
 injections) with the same code, since "trainable" is exactly the right
 criterion either way.
 
@@ -107,7 +107,7 @@ def save_checkpoint(
     lora_alpha: float,
 ) -> Path:
     """Saves every trainable parameter -- not just LoRA adapters, since a
-    model like mamba2_2_7b_memory has an additional full-gradient subsystem
+    model like mamba2_780m_memory has an additional full-gradient subsystem
     that a LoRA-only save would silently drop. `chunk_pos` is the token
     offset of the next chunk to process within `example_idx` (0 if this
     checkpoint landed exactly on an example boundary) -- no model `state`
@@ -219,7 +219,7 @@ def preflight(
     main loop uses, then asserts gradients actually reached the trainable
     parameters -- this is what catches a model whose forward silently fails
     to connect some part of itself to the loss (see
-    models/mamba2_2_7b_memory/train_hooks.py's history for why this check
+    models/mamba2_780m_memory/train_hooks.py's history for why this check
     matters). LoRA params and any other trainable params (e.g. a model's own
     full-gradient subsystem) are checked separately so one silently
     disconnected branch can't hide behind the other's gradient."""
@@ -298,7 +298,7 @@ def _show_chunk_progress(model, chunk_extra_log, end: int, seqlen: int, loss_sum
     """Updates the in-place live progress display for one chunk, if the
     model's hooks define chunk_extra_log -- used by both the main training
     loop and preflight, since a slow model's chunks (e.g.
-    mamba2_2_7b_memory's manual per-token mixer step) need this visibility
+    mamba2_780m_memory's manual per-token mixer step) need this visibility
     in either place, not just during real training."""
     if chunk_extra_log is None or weight_sum <= 0:
         return prev_n_lines
@@ -468,7 +468,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
-    parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN (e.g. 512 for mamba2_780m, 2 for mamba2_2_7b_memory)")
+    parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN (e.g. 512 for mamba2_780m, 2 for mamba2_780m_memory)")
     parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=8, help="Gradient accumulation steps (counted per backward() call -- one per chunk)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=2500, help="Save checkpoint every N tokens of training, checked after every gradient-accumulation boundary -- can land mid-example for a long one (resume replays the seen prefix to regenerate model state, see replay_state)")

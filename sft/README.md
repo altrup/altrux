@@ -46,12 +46,12 @@ Add `"train": false` to an assistant turn to keep it in the context but exclude 
 
 See `python prepare_data.py --help` for all options (`--max-examples`, `--hf-split`, `--max-len`, etc.).
 
-### Long-context data (`mamba2_2_7b_memory`)
+### Long-context data (`mamba2_780m_memory`)
 
-That model's whole point is long-range recall, so its training data needs long sessions, not the short ones above. `make data-memory` (set `MODEL_NAME=mamba2_2_7b_memory` first) builds and merges two sources:
+That model's whole point is long-range recall, so its training data needs long sessions, not the short ones above. `make data-memory` (set `MODEL_NAME=mamba2_780m_memory` first) builds and merges two sources:
 
 ```bash
-MODEL_NAME=mamba2_2_7b_memory make data-memory
+MODEL_NAME=mamba2_780m_memory make data-memory
 # outputs data/train_memory.pt
 ```
 
@@ -60,7 +60,7 @@ MODEL_NAME=mamba2_2_7b_memory make data-memory
 
 `merge_data.py` concatenates the two tokenized outputs into one `.pt` file, since `train.py` only accepts a single `--data` path.
 
-`--max-len 100000` here is intentionally far above any real example (LongAlign-10k's longest is ~65k tokens) — it only controls what gets written to disk, which is nearly free, so there's no reason to truncate at prep time. `format_conversation`'s truncation (drops trailing turns once a conversation exceeds `--max-len`) used to silently discard conversations where a single long turn alone exceeded a too-small `--max-len` before the assistant turn was ever reached; at a too-tight `--max-len 16384` this dropped roughly half of LongAlign-10k as "no assistant turns." Bounding training-time RAM belongs in chunked/truncated-BPTT training (`Model.forward`'s `state` param exists for exactly this — see `models/mamba2_2_7b_memory/README.md`), not in dropping data at prep time.
+`--max-len 100000` here is intentionally far above any real example (LongAlign-10k's longest is ~65k tokens) — it only controls what gets written to disk, which is nearly free, so there's no reason to truncate at prep time. `format_conversation`'s truncation (drops trailing turns once a conversation exceeds `--max-len`) used to silently discard conversations where a single long turn alone exceeded a too-small `--max-len` before the assistant turn was ever reached; at a too-tight `--max-len 16384` this dropped roughly half of LongAlign-10k as "no assistant turns." Bounding training-time RAM belongs in chunked/truncated-BPTT training (`Model.forward`'s `state` param exists for exactly this — see `models/mamba2_780m_memory/README.md`), not in dropping data at prep time.
 
 ## Training
 
@@ -83,20 +83,18 @@ See `python train.py --help` for all options (learning rate, rank, accumulation 
 
 `train.py` is generic across every model in `models/` — it dispatches to that model's `train_hooks.py` (`models/{name}/train_hooks.py`) for the only part that genuinely differs: how to load/wrap the model for training, and how to compute loss for one chunk. Everything else — chunk iteration, shuffling, accumulation counting, checkpoint cadence/rotation (including mid-example resume), evaluation, preflight, non-finite checks — is shared, since both models here are chunked, state-threaded ones (just with very different `--chunk-len`s).
 
-### Training `mamba2_2_7b_memory`
+### Training `mamba2_780m_memory`
 
 This model's `train_hooks.py` differs from `mamba2_780m`'s in two ways, both visible in its module docstring: `Model.forward(input_ids, state)` is stateful, so `train.py` processes examples in `--chunk-len`-token chunks with `state` carried (and detached) across chunks of the *same* example — never across different examples — bounding training RAM by chunk length rather than example length (see the "Long-context data" section above for why examples themselves aren't truncated at prep time instead). And loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns.
 
 ```bash
-MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
-MODEL_NAME=mamba2_2_7b_memory make resume ARGS="--data data/train_memory.pt"
+MODEL_NAME=mamba2_780m_memory make train ARGS="--data data/train_memory.pt"
+MODEL_NAME=mamba2_780m_memory make resume ARGS="--data data/train_memory.pt"
 ```
-
-On this machine's GPU (unsupported `gfx1102` arch), set `HSA_OVERRIDE_GFX_VERSION=11.0.0` in your shell before training this model — see the root `CLAUDE.md`.
 
 ## Using the adapter
 
-Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them, and `trainable.pt` with every trainable parameter (LoRA adapters, plus a model's own full-gradient subsystem if it has one — e.g. `mamba2_2_7b_memory`'s `front_end`/`injections`):
+Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them, and `trainable.pt` with every trainable parameter (LoRA adapters, plus a model's own full-gradient subsystem if it has one — e.g. `mamba2_780m_memory`'s `front_end`/`injections`):
 
 ```python
 import json

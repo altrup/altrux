@@ -17,17 +17,17 @@ data:
 		--hf-dataset HuggingFaceH4/ultrachat_200k \
 		--max-examples 20000
 
-# Long-context training data for mamba2_2_7b_memory: THUDM/LongAlign-10k
+# Long-context training data for mamba2_780m_memory: THUDM/LongAlign-10k
 # (real long multi-turn conversations) mixed with RMT-team/babilong (synthetic
 # needle-in-haystack recall QA, so the memory gates get genuine long-range
-# recall pressure, not just long text -- see models/mamba2_2_7b_memory/README.md).
+# recall pressure, not just long text -- see models/mamba2_780m_memory/README.md).
 #
 # --max-len here is deliberately way above any real example (LongAlign-10k's
 # longest is ~65k tokens) -- this --max-len only controls what gets written to
 # disk, which is nearly free (a few hundred KB per extra 100k tokens), so there
 # is no reason to truncate at prep time. RAM is a *training*-time problem and
 # belongs in chunked/truncated-BPTT training (Model.forward's state param is
-# built for this -- see models/mamba2_2_7b_memory/README.md), not here.
+# built for this -- see models/mamba2_780m_memory/README.md), not here.
 data-memory:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python prepare_babilong.py \
@@ -75,10 +75,10 @@ preflight:
 
 # Same gradient-wiring check as `preflight`, but on a short synthetic
 # sequence instead of the real dataset's first valid example -- useful for
-# mamba2_2_7b_memory, whose real examples are thousands of tokens and whose
-# --chunk-len is capped at 2 on this hardware (see smoke_test.py). Still
-# pays for loading the real model. Pass --length to change the synthetic
-# sequence length (default 10).
+# mamba2_780m_memory, whose real examples are thousands of tokens and whose
+# --chunk-len is conservatively left at 2 (see smoke_test.py). Still pays
+# for loading the real model. Pass --length to change the synthetic sequence
+# length (default 10).
 smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u smoke_test.py $(ARGS)
@@ -86,11 +86,5 @@ smoke-test:
 # train.py is generic across every model in models/ -- it dispatches to
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to
 # load the model, how to run forward+backward for one example). For
-# mamba2_2_7b_memory specifically:
-#   MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
-#
-# On this machine's GPU (unsupported gfx1102 arch) bitsandbytes segfaults
-# unless HSA_OVERRIDE_GFX_VERSION=11.0.0 is set when training that model --
-# see the root CLAUDE.md. Not baked in here: it's a property of this specific
-# machine's GPU, not of any model in general (a supported-arch ROCm GPU, or
-# CUDA, needs neither).
+# mamba2_780m_memory specifically:
+#   MODEL_NAME=mamba2_780m_memory make train ARGS="--data data/train_memory.pt"

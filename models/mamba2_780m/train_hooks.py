@@ -4,7 +4,7 @@ loop.
 Model.forward loops over tokens and threads a MixerState across calls (see
 model.py for why -- mamba_ssm's own fused kernels are broken on this
 hardware), so training here chunks long examples the same way
-models/mamba2_2_7b_memory/train_hooks.py does: state is carried and detached
+models/mamba2_780m_memory/train_hooks.py does: state is carried and detached
 across chunks of the *same* example, never across different examples, so
 training RAM is bounded by chunk length rather than example length.
 
@@ -60,7 +60,7 @@ def chunk_loss(
     eos_weight: float,
 ):
     """input_ids/target_ids: shape (1, T). mask_slice: shape (T,), bool/0-1,
-    1 for assistant-turn positions, 0 otherwise -- unlike mamba2_2_7b_memory,
+    1 for assistant-turn positions, 0 otherwise -- unlike mamba2_780m_memory,
     this model has no reason to train on user turns too. Returns (loss_sum,
     weight_sum, state); the generic loop in sft/train.py owns chunking,
     accumulation, and checkpointing across calls."""

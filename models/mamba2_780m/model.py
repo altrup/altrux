@@ -24,7 +24,7 @@ class MixerState:
     sequence can be processed incrementally (decode) or in chunks (long-
     sequence training) without holding every token's activations at once.
 
-    Mirrors mamba2_2_7b_memory's MemoryState, minus anything memory-specific
+    Mirrors mamba2_780m_memory's MemoryState, minus anything memory-specific
     -- this model has no memory subsystem, just the backbone's own state.
     """
 
@@ -47,7 +47,7 @@ class Model(nn.Module):
     multi-token "channellast" path and the single-token decode path), and
     the Triton SSD scan kernel hangs -- both confirmed independent of model
     size, package version, and a from-source rebuild. This is the same fix
-    already used in mamba2_2_7b_memory's _mixer_step; see that model's
+    already used in mamba2_780m_memory's _mixer_step; see that model's
     README for the full investigation. Slower per-token than the (currently
     broken) fused path would be, but it's the only thing proven to actually
     run on this hardware.
@@ -56,7 +56,7 @@ class Model(nn.Module):
     so calling it repeatedly with state carried (and detached) across calls
     supports incremental decode and chunked training on long sequences
     without holding the whole sequence's activations at once -- the same
-    pattern as mamba2_2_7b_memory's MemoryState. This replaces the previous
+    pattern as mamba2_780m_memory's MemoryState. This replaces the previous
     `inference_params`-based forward; see git history if a comparison is
     ever needed.
 
