@@ -1,7 +1,7 @@
-"""Fast (seconds, no download) regression test for mamba2_2_7b_memory's
+"""Fast (seconds, no download) regression test for mamba2_780m_memory's
 training path.
 
-Built at a tiny synthetic size instead of the real 2.7B checkpoint -- this is
+Built at a tiny synthetic size instead of the real checkpoint -- this is
 what catches a model whose forward silently fails to connect some part of
 itself to the loss (exactly the class of bug found in this model's history:
 an int/string key mismatch that made the memory merge never run at all, and
@@ -28,8 +28,8 @@ from lora import apply_lora
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
-import models.mamba2_2_7b_memory.model as M
-import models.mamba2_2_7b_memory.train_hooks as hooks
+import models.mamba2_780m_memory.model as M
+import models.mamba2_780m_memory.train_hooks as hooks
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a real GPU (Mamba2's fused norm path uses a Triton kernel, no CPU fallback)")
 
