@@ -1,10 +1,10 @@
-"""Training hooks for mamba2_2_7b_memory, called by sft/train.py's generic
+"""Training hooks for mamba2_780m_memory, called by sft/train.py's generic
 training loop. Contrast with models/mamba2_780m/train_hooks.py: this model's
 Model.forward(input_ids, state) is stateful, so sft/train.py processes
 examples in --chunk-len chunks with `state` carried (and detached) across
 chunks of the SAME example -- never across different examples -- bounding
 training RAM by chunk length rather than example length. See
-models/mamba2_2_7b_memory/README.md for why long examples aren't truncated at
+models/mamba2_780m_memory/README.md for why long examples aren't truncated at
 data-prep time instead.
 
 Unlike standard SFT (and unlike the other model's hooks), loss is computed
@@ -29,23 +29,23 @@ from lora import apply_lora
 from . import model as _model_mod
 
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
-# This model's manual, unfused, per-token mixer step costs ~1GB of VRAM per
-# token while a backward graph is live -- on this project's dev GPU (8GB),
-# chunk_len 512 (or even 32) OOMs before finishing a single chunk's forward
-# pass; chunk_len 4 gets through forward but OOMs in .backward(). chunk_len 3
-# was confirmed to OOM in .backward() too once the non-finite-loss bug (see
-# model.py's MAX_WRITE_GRAD_NORM/_rms_normalize/eta cap) was fixed and
-# backward could actually be reached -- 2 is the largest value confirmed to
-# get all the way through both forward and backward without OOMing. Gradient
-# checkpointing on the per-token mixer step would be the way to raise this
-# again within the same 8GB budget (at the cost of ~2x forward compute);
-# override with --chunk-len if running on a GPU with more VRAM.
+# Measured against this model's *previous* 2.7B QLoRA backbone: this model's
+# manual, unfused, per-token mixer step cost ~1GB of VRAM per token while a
+# backward graph was live, and on this project's dev GPU (8GB) chunk_len 2
+# was the largest value confirmed to get all the way through both forward
+# and backward without OOMing (chunk_len 3+ OOM'd in .backward()). The
+# backbone is now the smaller 780M model with plain LoRA (no 4-bit
+# quantization) instead -- both changes shrink the real per-token VRAM cost,
+# but by how much hasn't been re-measured on this backbone, so this value is
+# left unchanged (conservative) rather than guessed upward. Re-run `make
+# preflight` with a range of --chunk-len values on this backbone to find the
+# new ceiling; gradient checkpointing on the per-token mixer step is the way
+# to raise it further within a fixed VRAM budget if needed.
 DEFAULT_CHUNK_LEN = 2
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
-    """Loads the backbone (quantizing TARGET_LORA_MODULES if
-    QUANTIZE_LORA_BASE), attaches LoRA, then wraps in Model -- training
+    """Loads the backbone, attaches LoRA, then wraps in Model -- training
     operates on the full memory-augmented wrapper, not the raw backbone, since
     the memory subsystem (front_end, injections) only exists on Model.
     Model.__init__ already freezes everything except lora_A/lora_B and the

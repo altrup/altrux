@@ -1,4 +1,4 @@
-"""Mamba2-2.7B backbone (frozen) + a trainable long-term memory subsystem.
+"""Mamba2-780M backbone (frozen) + a trainable long-term memory subsystem.
 
 The memory is a single Titans-style fast-weight MLP that is test-time-trained
 token by token, feeding a per-layer gated-delta rule that's merged directly
@@ -35,19 +35,19 @@ except ImportError:
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
-MODEL_ID = "state-spaces/mamba2-2.7b"
+MODEL_ID = "state-spaces/mamba2-780m"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
-# The backbone is QLoRA-adapted (frozen, 4-bit-quantized in_proj/out_proj +
-# trainable low-rank adapters) rather than left fully frozen -- see
-# QUANTIZE_LORA_BASE below. The memory subsystem (front-end, gate
-# projections) is separate from LoRA: it has no pretrained weights to adapt,
-# so it trains with ordinary full-parameter gradients from a random init.
+# The backbone is LoRA-adapted (frozen, full-precision in_proj/out_proj +
+# trainable low-rank adapters) rather than left fully frozen, on the theory
+# that a fully frozen backbone is unlikely to integrate a memory signal
+# injected straight into its SSM state well. This 780M backbone is small
+# enough to fit this project's dev GPU (8GB) without 4-bit quantization,
+# unlike the 2.7B backbone this model used previously (see git history),
+# which needed QLoRA -- so no QUANTIZE_LORA_BASE flag here, same as
+# mamba2_780m. The memory subsystem (front-end, gate projections) is
+# separate from LoRA: it has no pretrained weights to adapt, so it trains
+# with ordinary full-parameter gradients from a random init.
 TARGET_LORA_MODULES: list[str] = ["in_proj", "out_proj"]
-# Opt-in, per-model flag: load_base() below checks this and, if set, quantizes
-# TARGET_LORA_MODULES to 4-bit (NF4) via models.common.quantize_lora_targets,
-# for true QLoRA rather than plain full-precision LoRA. Other models in this
-# repo don't define this constant and so stay on plain LoRA.
-QUANTIZE_LORA_BASE = True
 
 # Chat format role markers -- see models/mamba2_780m/model.py for the
 # rationale; identical convention here.
@@ -55,16 +55,22 @@ USER_OPEN = "[USER]"
 ASST_OPEN = "[ASSISTANT]"
 SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN]
 
-# Mamba2-2.7B backbone shape (state-spaces/mamba2-2.7b).
-D_MODEL = 2560
-N_LAYER = 64
-NHEADS = 80
+# Mamba2-780M backbone shape (state-spaces/mamba2-780m).
+D_MODEL = 1536
+N_LAYER = 48
+NHEADS = 48
 HEADDIM = 64
 D_STATE = 128
 
 # Memory subsystem hyperparameters (see README.md for the rationale).
-READ_LAYER = 42
-INJECTED_LAYERS: tuple[int, ...] = tuple(range(20, N_LAYER, 2))
+# READ_LAYER/INJECTED_LAYERS are rescaled proportionally from this model's
+# previous 2.7B backbone (READ_LAYER=42/64, INJECTED_LAYERS=range(20,64,2))
+# to preserve the same relative depth (~2/3) and coverage (~1/3) on this
+# backbone's 48 layers, not re-derived from scratch -- see git history for
+# the original rationale (weak keys too early, collapsed-to-next-token too
+# late).
+READ_LAYER = 32
+INJECTED_LAYERS: tuple[int, ...] = tuple(range(16, N_LAYER, 2))
 BOTTLENECK_R = 128
 MEM_DIM = D_MODEL
 MEM_HIDDEN = 4 * D_MODEL
@@ -72,11 +78,12 @@ MEM_HIDDEN = 4 * D_MODEL
 # its comment there) -- bounds the update size regardless of how large the
 # raw prediction error/gradient is, which an untrained memory MLP can
 # produce on its very first few tokens. Tried raising this to 3000 on the
-# theory that w1/w2's ~26M elements each make a *healthy* gradient norm
-# naturally land in the thousands -- wrong in practice: it only delayed the
-# explosion by a few tokens rather than preventing it, since momentum `s` in
-# write() has no decay of its own (only `p` decays, via alpha) -- eta near 1
-# lets bounded-but-nonzero per-step contributions accumulate across tokens
+# theory that w1/w2's ~9.4M elements each (on this backbone's MEM_DIM/
+# MEM_HIDDEN) make a *healthy* gradient norm naturally land in the
+# thousands -- wrong in practice: it only delayed the explosion by a few
+# tokens rather than preventing it, since momentum `s` in write() has no
+# decay of its own (only `p` decays, via alpha) -- eta near 1 lets
+# bounded-but-nonzero per-step contributions accumulate across tokens
 # regardless of the single-step clip. 1.0 is the only value confirmed (with
 # q/k/v normalized -- see _rms_normalize) to run a full example through
 # preflight without going non-finite. Revisit alongside decaying/clamping
@@ -363,10 +370,9 @@ class MemoryState:
 
 
 class Model(nn.Module):
-    """QLoRA-adapted Mamba2-2.7B backbone with the memory subsystem spliced in.
+    """LoRA-adapted Mamba2-780M backbone with the memory subsystem spliced in.
 
-    in_proj/out_proj are frozen and 4-bit-quantized (see QUANTIZE_LORA_BASE,
-    load_base); everything else in the backbone is frozen at bf16 (see
+    in_proj/out_proj and the rest of the backbone are frozen at bf16 (see
     load_base for why not fp32); LoRA adapters on in_proj/out_proj and the
     memory subsystem itself are the only trainable parameters.
 
@@ -647,29 +653,25 @@ class Model(nn.Module):
 
 
 def load_base(device: str) -> MambaLMHeadModel:
-    """Load the raw HuggingFace model, with TARGET_LORA_MODULES quantized to
-    4-bit per QUANTIZE_LORA_BASE. Used by sft/train.py and the backend
+    """Load the raw HuggingFace model. Used by sft/train.py and the backend
     registry; LoRA adapters themselves are attached separately by the
     caller (see sft/lora.py / backend/app/model/lora.py), after this.
 
-    Loads in bf16, not fp32: quantize_lora_targets only shrinks the model
-    *after* from_pretrained has already materialized it on `device`, so the
-    transient peak during loading is the full unquantized model's size --
-    at fp32 that's ~11GB for this 2.7B-parameter backbone, more than this
-    project's dev GPU (8GB) has, so loading itself would OOM before
-    quantization ever got a chance to run. bf16 halves that peak to ~5.4GB.
+    Loads in bf16, not fp32, matching the other Mamba2 models in this repo
+    (see models/mamba2_780m/model.py's load_base) -- this 780M-parameter
+    backbone is small enough that plain LoRA (no 4-bit quantization) fits
+    this project's dev GPU (8GB) comfortably, unlike the 2.7B backbone this
+    model used previously (see git history), which needed QLoRA to fit.
     """
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from models.common import build_tokenizer, extend_embeddings, quantize_lora_targets
+    from models.common import build_tokenizer, extend_embeddings
 
     model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
     extend_embeddings(model, len(tokenizer))
-    if QUANTIZE_LORA_BASE:
-        quantize_lora_targets(model, TARGET_LORA_MODULES)
     return model
 
 
