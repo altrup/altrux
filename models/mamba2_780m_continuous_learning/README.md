@@ -10,7 +10,7 @@
 
 ## LoRA target modules
 
-`in_proj`, `out_proj` — the input/output projections of the SSM mixer block. These are the linear layers that dominate parameter count in each Mamba2 block and where adapting them gives the most leverage for fine-tuning, analogous to targeting `q_proj`/`v_proj` in a transformer. Plain full-precision LoRA, no 4-bit quantization — the 780M backbone fits this project's dev GPU (8GB) comfortably without it, unlike the 2.7B backbone this model used previously (see git history), which needed QLoRA.
+`in_proj`, `out_proj` — the input/output projections of the SSM mixer block. These are the linear layers that dominate parameter count in each Mamba2 block and where adapting them gives the most leverage for fine-tuning, analogous to targeting `q_proj`/`v_proj` in a transformer. Plain full-precision LoRA, no 4-bit quantization — the 780M backbone fits this project's dev GPU (8GB) comfortably without it.
 
 ## Special tokens
 
