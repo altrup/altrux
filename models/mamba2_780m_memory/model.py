@@ -223,7 +223,7 @@ class _TitansFrontEnd(nn.Module):
         optional training-time machinery, it's the actual write operation, so
         it has to run even during eval/inference. torch.enable_grad() punches
         through an enclosing no_grad() for exactly this; it's scoped to just
-        this method, so the rest of the model (the 64-layer backbone, the
+        this method, so the rest of the model (the 48-layer backbone, the
         gated-delta merge, the C readout) stays grad-free and cheap under an
         outer no_grad() as normal -- only this small MLP's self-contained
         write pays for gradient tracking.
@@ -403,8 +403,7 @@ class Model(nn.Module):
             # LoRA adapters (lora_A/lora_B) may already be attached to
             # in_proj/out_proj before this model is constructed -- see
             # apply_lora in sft/lora.py / backend/app/model/lora.py. Leave
-            # those trainable; freeze the rest of the (QLoRA-quantized)
-            # backbone, same as before.
+            # those trainable; freeze the rest of the backbone.
             p.requires_grad_("lora_A" in name or "lora_B" in name)
         for p in self.norm_f.parameters():
             p.requires_grad_(False)

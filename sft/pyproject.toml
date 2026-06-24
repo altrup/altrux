@@ -23,12 +23,13 @@ dev = [
 # kernels segfault/hang on this machine's GPU (unsupported gfx1102 arch,
 # confirmed independent of model size, package version, and a from-source
 # rebuild), so every model here drives Mamba2's mixer manually in plain
-# PyTorch instead (see models/mamba2_2_7b_memory/model.py's _mixer_step and
+# PyTorch instead (see models/mamba2_780m_memory/model.py's _mixer_step and
 # its README for the investigation) -- causal-conv1d is simply unused.
 #
 # bitsandbytes (used for QLoRA's 4-bit quantization, see models/common.py's
 # quantize_lora_targets) has much less mature ROCm support than CUDA -- only
-# needed by models that set QUANTIZE_LORA_BASE = True (currently
-# mamba2_2_7b_memory). On an unsupported ROCm gfx arch (e.g. this machine's
-# gfx1102), it segfaults outright unless HSA_OVERRIDE_GFX_VERSION is set in
-# the shell -- see the root CLAUDE.md.
+# needed by models that set QUANTIZE_LORA_BASE = True. No model in this repo
+# currently sets that flag; quantize_lora_targets is opt-in infra for any
+# future model that does. On an unsupported ROCm gfx arch (e.g. this
+# machine's gfx1102), it segfaults outright unless HSA_OVERRIDE_GFX_VERSION
+# is set in the shell -- see the root CLAUDE.md.
