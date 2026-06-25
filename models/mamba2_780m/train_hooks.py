@@ -27,7 +27,13 @@ from lora import apply_lora
 from . import model as _model_mod
 
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
-DEFAULT_CHUNK_LEN = 512
+# This model's manual, unfused, per-token mixer step holds a live backward
+# graph whose VRAM cost scales with chunk_len -- on this project's dev GPU
+# (8GB), chunk_len 56 is the largest value confirmed (via `make smoke-test
+# --chunk-len N --length N` for increasing N) to run a full chunk's forward
+# and backward without OOMing; chunk_len 58 OOMs. Override with --chunk-len
+# on a GPU with more VRAM.
+DEFAULT_CHUNK_LEN = 56
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
