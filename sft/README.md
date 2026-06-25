@@ -104,7 +104,7 @@ from lora import apply_lora
 
 ckpt = "../models/mamba2_780m/checkpoints/epoch-1/step-N"
 cfg = json.loads(open(f"{ckpt}/lora_config.json").read())
-model = MambaLMHeadModel.from_pretrained("state-spaces/mamba2-780m", dtype=torch.float32)
+model = MambaLMHeadModel.from_pretrained("state-spaces/mamba2-780m", dtype=torch.bfloat16)
 model = apply_lora(model, ["in_proj", "out_proj"], cfg["rank"], cfg["alpha"])
 state = torch.load(f"{ckpt}/trainable.pt", weights_only=True)
 model.load_state_dict(state, strict=False)

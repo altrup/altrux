@@ -31,12 +31,16 @@ from . import model as _model_mod
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
 # This model's manual, unfused, per-token mixer step holds a live backward
 # graph whose VRAM cost scales with chunk_len -- on this project's dev GPU
-# (8GB), chunk_len 12 is the largest value confirmed (via `make smoke-test
-# --chunk-len N --length N` for increasing N) to run a full chunk's forward
-# and backward without OOMing; chunk_len 13 OOMs. Gradient checkpointing on
-# the per-token mixer step is the way to raise this further within a fixed
-# VRAM budget; override with --chunk-len on a GPU with more VRAM.
-DEFAULT_CHUNK_LEN = 12
+# (8GB), chunk_len 8 is the largest value confirmed (via `make smoke-test
+# --chunk-len N`, which now runs 5+ consecutive chunks rather than one
+# isolated chunk -- a single chunk's peak VRAM is NOT representative of real
+# multi-chunk training, since the held-over gradient/cache floor from
+# earlier chunks eats into the next chunk's headroom) to run clean across 10
+# consecutive chunks; chunk_len 9 OOMs by the second chunk. Gradient
+# checkpointing on the per-token mixer step is the way to raise this further
+# within a fixed VRAM budget; override with --chunk-len on a GPU with more
+# VRAM.
+DEFAULT_CHUNK_LEN = 8
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):

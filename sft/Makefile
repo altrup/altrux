@@ -76,9 +76,11 @@ preflight:
 # Same gradient-wiring check as `preflight`, but on a short synthetic
 # sequence instead of the real dataset's first valid example -- useful for
 # mamba2_780m_memory, whose real examples are thousands of tokens and whose
-# --chunk-len is capped at 12 by this hardware's 8GB VRAM (see
-# smoke_test.py). Still pays for loading the real model. Pass --length to
-# change the synthetic sequence length (default 10).
+# --chunk-len is capped at 8 by this hardware's 8GB VRAM (see
+# smoke_test.py). Still pays for loading the real model. --length defaults
+# to 5x the resolved chunk_len (exercises several consecutive chunks, not
+# one isolated chunk -- see smoke_test.py's docstring for why that matters);
+# pass --length to override.
 smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u smoke_test.py $(ARGS)

@@ -29,11 +29,15 @@ from . import model as _model_mod
 EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
 # This model's manual, unfused, per-token mixer step holds a live backward
 # graph whose VRAM cost scales with chunk_len -- on this project's dev GPU
-# (8GB), chunk_len 56 is the largest value confirmed (via `make smoke-test
-# --chunk-len N --length N` for increasing N) to run a full chunk's forward
-# and backward without OOMing; chunk_len 58 OOMs. Override with --chunk-len
+# (8GB, bf16 -- see load_base), chunk_len 52 is the largest value confirmed
+# (via `make smoke-test --chunk-len N`, which now runs 5+ consecutive chunks
+# rather than one isolated chunk -- a single chunk's peak VRAM is NOT
+# representative of real multi-chunk training, since the held-over
+# gradient/cache floor from earlier chunks eats into the next chunk's
+# headroom) to run clean; chunk_len 54 OOMs by the second chunk. 48 leaves a
+# small margin below that for real-data variance. Override with --chunk-len
 # on a GPU with more VRAM.
-DEFAULT_CHUNK_LEN = 56
+DEFAULT_CHUNK_LEN = 48
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
@@ -42,7 +46,6 @@ def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: floa
     chunked/state-threaded path, not load_base()'s raw output directly).
     Returns (model, trainable_params)."""
     base = _model_mod.load_base(str(device))
-    base = base.to(torch.float32)
     base = apply_lora(base, _model_mod.TARGET_LORA_MODULES, lora_rank, lora_alpha, lora_dropout)
     model = _model_mod.Model(base).to(device)
 
@@ -69,7 +72,25 @@ def chunk_loss(
     1 for assistant-turn positions, 0 otherwise -- unlike mamba2_780m_memory,
     this model has no reason to train on user turns too. Returns (loss_sum,
     weight_sum, state); the generic loop in sft/train.py owns chunking,
-    accumulation, and checkpointing across calls."""
+    accumulation, and checkpointing across calls.
+
+    A chunk with no assistant-turn tokens (mask_slice all zero -- the common
+    case for a conversation's opening chunk(s), which are pure user-turn
+    content) gets weight_sum == 0, so the caller never calls .backward() on
+    it -- but without that, the chunk's forward graph (every token's
+    activations across all 48 layers) was never freed at all, just left for
+    Python's cyclic GC to eventually catch -- which doesn't happen before the
+    *next* chunk's forward needs that VRAM (confirmed: this OOMs real
+    conversations well before chunk_len's own VRAM ceiling is ever reached,
+    since every conversation opens with user-turn content). Running the
+    no-trainable-tokens case under no_grad avoids building that graph at all
+    -- state still advances correctly, it's detached again by the caller
+    regardless of which branch produced it."""
+    if not mask_slice.any():
+        with torch.no_grad():
+            _, state = model(input_ids, state=state)
+        zero = torch.zeros((), device=input_ids.device)
+        return zero, zero, state
     logits, state = model(input_ids, state=state)
     loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
     loss_mask = mask_slice.float().clone()

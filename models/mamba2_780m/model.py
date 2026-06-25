@@ -196,14 +196,20 @@ class Model(nn.Module):
 
 
 def load_base(device: str) -> MambaLMHeadModel:
-    """Load the raw HuggingFace model. Used by sft/train.py."""
+    """Load the raw HuggingFace model. Used by sft/train.py.
+
+    Loads in bf16, not fp32, matching mamba2_780m_memory -- this model's
+    manual per-token mixer step (see Model docstring) holds a live backward
+    graph whose activation memory scales with chunk_len; bf16 halves both
+    that and the frozen backbone's own weight memory, same as it does there.
+    """
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from models.common import build_tokenizer, extend_embeddings
 
-    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device)
+    model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
     extend_embeddings(model, len(tokenizer))
     return model
