@@ -29,10 +29,6 @@ class ModelRegistry:
         # Only updated by append_message(); append_input() does not touch it.
         self.messages: list[dict] = []
 
-        # Revise data collection state — reset with each session.
-        self.revise_entry_offset: int | None = None
-        self.revise_suggestions: list[tuple[int, str]] = []
-
     # ------------------------------------------------------------------
     # Startup / shutdown
     # ------------------------------------------------------------------
@@ -90,8 +86,6 @@ class ModelRegistry:
         self.session_input_ids = []
         self._cache = None
         self.messages = []
-        self.revise_entry_offset = None
-        self.revise_suggestions = []
         if text:
             assert self.tokenizer is not None
             self.session_input_ids = self.tokenizer.encode(text)

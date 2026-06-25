@@ -37,29 +37,7 @@ class GenerateResponse(BaseModel):
     generated_text: str
 
 
-class ReviseEntry(BaseModel):
-    at_turn: int  # message index of the latest model response when this revision was recorded
-    revision: str  # full "<revise back=N>...</revise weight=0.5>" tag string
-
-
 class SessionResponse(BaseModel):
     text: str
     tokens: list[TokenInfo]
     messages: list[dict]
-    revise_suggestions: list[ReviseEntry]
-
-
-class ReviseRequest(BaseModel):
-    n: int = Field(ge=1)  # how many model messages back the revision targets
-    revision: str
-    weight: float = Field(default=0.5, ge=0.0, le=1.0)
-    at_turn: int | None = None  # message index of the target turn; defaults to last assistant turn
-
-
-class ReviseResponse(BaseModel):
-    ok: bool
-
-
-class DeleteReviseRequest(BaseModel):
-    at_turn: int
-    n: int

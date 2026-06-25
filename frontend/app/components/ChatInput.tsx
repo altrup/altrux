@@ -21,8 +21,6 @@ interface ChatInputProps {
   disabled?: boolean;
   placeholder?: string;
   focusKey?: number;
-  weight?: number | "";
-  onWeightChange?: (weight: number | "") => void;
 }
 
 export default function ChatInput({
@@ -32,8 +30,6 @@ export default function ChatInput({
   disabled = false,
   placeholder = "Type a message…",
   focusKey = 0,
-  weight,
-  onWeightChange,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -42,11 +38,9 @@ export default function ChatInput({
     if (focusKey > 0) textareaRef.current?.focus();
   }, [focusKey]);
 
-  const showWeight = weight !== undefined && onWeightChange !== undefined;
-
   function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
-    if (!disabled && value.trim() && !(showWeight && weight === "")) onSend();
+    if (!disabled && value.trim()) onSend();
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -86,42 +80,8 @@ export default function ChatInput({
           placeholder={placeholder}
           className="w-full p-3 resize-none bg-transparent text-text placeholder:text-text-faint text-sm leading-relaxed outline-none max-h-[200px]"
         />
-        {!showWeight && (
-          <SubmitButton
-            disabled={
-              disabled || !value.trim() || (showWeight && weight === "")
-            }
-          />
-        )}
+        <SubmitButton disabled={disabled || !value.trim()} />
       </label>
-      {showWeight && (
-        <label className="cursor-text self-stretch flex items-end">
-          <div className="self-stretch w-[0.5px] bg-border group-hover:bg-border-strong group-focus-within:bg-border-strong transition-colors" />
-          <input
-            type="number"
-            min={0}
-            max={1}
-            step={0.1}
-            value={weight}
-            placeholder="Weight"
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === "") {
-                onWeightChange("");
-              } else {
-                const v = parseFloat(raw);
-                if (!isNaN(v)) onWeightChange(Math.min(1, Math.max(0, v)));
-              }
-            }}
-            className="w-24 p-3 resize-none bg-transparent text-text placeholder:text-text-faint text-sm leading-relaxed outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-          />
-          <SubmitButton
-            disabled={
-              disabled || !value.trim() || (showWeight && weight === "")
-            }
-          />
-        </label>
-      )}
     </form>
   );
 }

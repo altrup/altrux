@@ -10,7 +10,6 @@ from ..schemas import (
     GenerateRequest,
     GenerateResponse,
     GeneratedToken,
-    ReviseEntry,
     SessionInputRequest,
     SessionMessageRequest,
     SessionResponse,
@@ -25,10 +24,6 @@ def _session_response() -> SessionResponse:
         text=registry.get_session_text(),
         tokens=[TokenInfo(**t) for t in registry.get_session_tokens()],
         messages=list(registry.messages),
-        revise_suggestions=[
-            ReviseEntry(at_turn=t, revision=s)
-            for t, s in registry.revise_suggestions
-        ],
     )
 
 

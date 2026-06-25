@@ -6,14 +6,11 @@ import HealthBadge from "~/components/HealthBadge";
 import ThemeToggle from "~/components/ThemeToggle";
 import {
   addUserMessage,
-  deleteRevision,
   getConfig,
   getSession,
   resetSession,
   streamGenerate,
-  submitRevision,
   type Message,
-  type ReviseEntry,
 } from "~/lib/api";
 import { useHealth } from "~/lib/useHealth";
 
@@ -22,37 +19,12 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "continual-learning" }];
 }
 
-function getBackValue(revision: string): number {
-  const m = revision.match(/back=(\d+)/);
-  return m ? parseInt(m[1], 10) : 0;
-}
-
-function sortByBackDesc(entries: ReviseEntry[]): ReviseEntry[] {
-  return [...entries].sort(
-    (a, b) => getBackValue(b.revision) - getBackValue(a.revision),
-  );
-}
-
-interface ReviseTarget {
-  n: number; // N model messages back from atTurn — goes inside <revise back=N>
-  atTurn: number; // message index of the last assistant turn this revision is anchored to
-  isEdit: boolean;
-}
-
 export default function Home() {
   const { online } = useHealth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [asstOpen, setAsstOpen] = useState("[ASSISTANT] ");
-  // keyed by atTurn so revisions stay on the right message as the conversation grows
-  const [reviseByIndex, setReviseByIndex] = useState<
-    Record<number, ReviseEntry[]>
-  >({});
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [reviseTarget, setReviseTarget] = useState<ReviseTarget | null>(null);
-  const [revisionInput, setRevisionInput] = useState("");
-  const [revisionWeight, setRevisionWeight] = useState<number | "">("");
-  const [focusKey, setFocusKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,17 +32,7 @@ export default function Home() {
       .then(({ asst_open }) => setAsstOpen(asst_open))
       .catch(() => {});
     getSession()
-      .then(({ messages, reviseSuggestions }) => {
-        setMessages(messages);
-        const byIndex: Record<number, ReviseEntry[]> = {};
-        for (const entry of reviseSuggestions) {
-          byIndex[entry.atTurn] = [...(byIndex[entry.atTurn] ?? []), entry];
-        }
-        for (const key of Object.keys(byIndex)) {
-          byIndex[Number(key)] = sortByBackDesc(byIndex[Number(key)]);
-        }
-        setReviseByIndex(byIndex);
-      })
+      .then(({ messages }) => setMessages(messages))
       .catch(() => {});
   }, []);
 
@@ -120,10 +82,6 @@ export default function Home() {
 
   async function handleReset() {
     if (isGenerating) return;
-    setReviseTarget(null);
-    setRevisionInput("");
-    setRevisionWeight("");
-    setReviseByIndex({});
     try {
       await resetSession();
       setMessages([]);
@@ -131,85 +89,6 @@ export default function Home() {
       // silently ignore — local state is still cleared
     }
   }
-
-  async function handleRevise() {
-    if (!reviseTarget || !revisionInput.trim()) return;
-    const { n, atTurn } = reviseTarget;
-    const trimmed = revisionInput.trim();
-    const weight = revisionWeight === "" ? undefined : revisionWeight;
-    const tag = `<revise back=${n}>${trimmed}</revise weight=${weight ?? 0.5}>`;
-    try {
-      await submitRevision(n, trimmed, weight, atTurn);
-      setReviseByIndex((prev) => {
-        const filtered = (prev[atTurn] ?? []).filter(
-          (e) => getBackValue(e.revision) !== n,
-        );
-        return {
-          ...prev,
-          [atTurn]: sortByBackDesc([...filtered, { atTurn, revision: tag }]),
-        };
-      });
-    } catch {
-      // silently ignore — revision may have failed but don't block the UI
-    }
-    setRevisionInput("");
-    setRevisionWeight("");
-    setReviseTarget(null);
-    setFocusKey((k) => k + 1);
-  }
-
-  async function handleDeleteRevision(entry: ReviseEntry) {
-    const backVal = getBackValue(entry.revision);
-    try {
-      await deleteRevision(entry.atTurn, backVal);
-      setReviseByIndex((prev) => {
-        const filtered = (prev[entry.atTurn] ?? []).filter(
-          (e) => getBackValue(e.revision) !== backVal,
-        );
-        const updated = { ...prev };
-        if (filtered.length === 0) {
-          delete updated[entry.atTurn];
-        } else {
-          updated[entry.atTurn] = filtered;
-        }
-        return updated;
-      });
-    } catch {
-      // silently ignore
-    }
-  }
-
-  function handleEditRevision(entry: ReviseEntry) {
-    const backVal = getBackValue(entry.revision);
-    const textMatch = entry.revision.match(/back=\d+>([\s\S]*?)<\/revise/);
-    const weightMatch = entry.revision.match(/revise weight=([\d.]+)>/);
-    setReviseTarget({
-      n: backVal,
-      atTurn: entry.atTurn,
-      isEdit: true,
-    });
-    setRevisionInput(textMatch ? textMatch[1] : "");
-    setRevisionWeight(weightMatch ? parseFloat(weightMatch[1]) : "");
-    setFocusKey((k) => k + 1);
-  }
-
-  function handleReviseKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") {
-      setReviseTarget(null);
-      setRevisionInput("");
-      setRevisionWeight("");
-      setFocusKey((k) => k + 1);
-    }
-  }
-
-  // Precompute assistant message indices for turn calculation.
-  const assistantIndices = messages
-    .map((m, i) => (m.role === "assistant" ? i : -1))
-    .filter((i) => i !== -1);
-  const lastAssistantIndex =
-    assistantIndices.length > 0
-      ? assistantIndices[assistantIndices.length - 1]
-      : -1;
 
   return (
     <div className="flex flex-col h-screen bg-page">
@@ -242,112 +121,30 @@ export default function Home() {
               </p>
             </div>
           )}
-          {messages.map((msg, i) => {
-            const isLastAsst = i === lastAssistantIndex;
-            const iRank = assistantIndices.indexOf(i);
-            const assistantRankFromEnd =
-              msg.role === "assistant"
-                ? assistantIndices.length - 1 - iRank
-                : 0;
-
-            // Whether the current last turn already has a revision for this message
-            const hasRevisionForN = (
-              reviseByIndex[lastAssistantIndex] ?? []
-            ).some((e) => getBackValue(e.revision) === assistantRankFromEnd);
-            return (
-              <ChatMessage
-                key={i}
-                role={msg.role}
-                content={msg.content}
-                isStreaming={
-                  isGenerating &&
-                  i === messages.length - 1 &&
-                  msg.role === "assistant"
-                }
-                canRevise={
-                  msg.role === "assistant" && !isLastAsst && !isGenerating
-                }
-                isLastAssistant={isLastAsst}
-                isReviseTarget={
-                  reviseTarget !== null &&
-                  assistantIndices[
-                    assistantIndices.indexOf(reviseTarget.atTurn) -
-                      reviseTarget.n
-                  ] === i
-                }
-                reviseSuggestions={reviseByIndex[i] ?? []}
-                revisionLabel={
-                  hasRevisionForN ? "Edit revision" : "Add revision"
-                }
-                onRevise={() => {
-                  if (hasRevisionForN) {
-                    const existing = (
-                      reviseByIndex[lastAssistantIndex] ?? []
-                    ).find(
-                      (e) => getBackValue(e.revision) === assistantRankFromEnd,
-                    )!;
-                    handleEditRevision(existing);
-                  } else {
-                    setReviseTarget({
-                      n: assistantRankFromEnd,
-                      atTurn: lastAssistantIndex,
-                      isEdit: false,
-                    });
-                    setRevisionInput("");
-                    setRevisionWeight("");
-                    setFocusKey((k) => k + 1);
-                  }
-                }}
-                onEdit={(entry) => handleEditRevision(entry)}
-                onDelete={(entry) => handleDeleteRevision(entry)}
-              />
-            );
-          })}
+          {messages.map((msg, i) => (
+            <ChatMessage
+              key={i}
+              role={msg.role}
+              content={msg.content}
+              isStreaming={
+                isGenerating &&
+                i === messages.length - 1 &&
+                msg.role === "assistant"
+              }
+            />
+          ))}
           <div ref={bottomRef} />
         </div>
 
         <div className="sticky bottom-0 px-2 pb-6 bg-page">
           <div className="mx-auto max-w-[45rem]">
-            {reviseTarget !== null && (
-              <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-surface border border-border text-xs text-text-muted">
-                <span>
-                  {reviseTarget.isEdit ? "Editing revision" : "Adding revision"}
-                  {" for assistant message "}({reviseTarget.n}{" "}
-                  {reviseTarget.n === 1 ? "turn" : "turns"} back)
-                </span>
-                <button
-                  onClick={() => {
-                    setReviseTarget(null);
-                    setRevisionInput("");
-                    setRevisionWeight("");
-                    setFocusKey((k) => k + 1);
-                  }}
-                  className="ml-3 text-text-faint hover:text-text-muted transition-colors cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-            <div onKeyDown={reviseTarget ? handleReviseKeyDown : undefined}>
-              <ChatInput
-                value={reviseTarget !== null ? revisionInput : input}
-                onChange={reviseTarget !== null ? setRevisionInput : setInput}
-                onSend={reviseTarget !== null ? handleRevise : handleSend}
-                disabled={isGenerating || !online}
-                placeholder={
-                  reviseTarget !== null
-                    ? "Type a revision…"
-                    : !online
-                      ? "Backend offline…"
-                      : "Type a message…"
-                }
-                focusKey={focusKey}
-                weight={reviseTarget !== null ? revisionWeight : undefined}
-                onWeightChange={
-                  reviseTarget !== null ? setRevisionWeight : undefined
-                }
-              />
-            </div>
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              disabled={isGenerating || !online}
+              placeholder={!online ? "Backend offline…" : "Type a message…"}
+            />
           </div>
         </div>
       </main>

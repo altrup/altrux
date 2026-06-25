@@ -23,14 +23,8 @@ export interface Message {
   content: string;
 }
 
-export interface ReviseEntry {
-  atTurn: number; // message index of the latest model response when this was recorded
-  revision: string; // full "<revise back=N>...</revise weight=0.5>" tag string
-}
-
 export interface SessionData {
   messages: Message[];
-  reviseSuggestions: ReviseEntry[];
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -48,17 +42,8 @@ export async function getConfig(): Promise<ConfigResponse> {
 export async function getSession(): Promise<SessionData> {
   const res = await fetch(`${BACKEND_URL}/session`);
   if (!res.ok) throw new Error(`Get session failed: ${res.status}`);
-  const data = (await res.json()) as {
-    messages: Message[];
-    revise_suggestions: Array<{ at_turn: number; revision: string }>;
-  };
-  return {
-    messages: data.messages,
-    reviseSuggestions: data.revise_suggestions.map((e) => ({
-      atTurn: e.at_turn,
-      revision: e.revision,
-    })),
-  };
+  const data = (await res.json()) as { messages: Message[] };
+  return { messages: data.messages };
 }
 
 export async function resetSession(): Promise<void> {
@@ -73,34 +58,6 @@ export async function addUserMessage(content: string): Promise<void> {
     body: JSON.stringify({ role: "user", content }),
   });
   if (!res.ok) throw new Error(`Add message failed: ${res.status}`);
-}
-
-export async function submitRevision(
-  n: number,
-  revision: string,
-  weight: number = 0.5,
-  atTurn?: number,
-): Promise<void> {
-  const res = await fetch(`${BACKEND_URL}/session/revise`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      n,
-      revision,
-      weight,
-      ...(atTurn !== undefined ? { at_turn: atTurn } : {}),
-    }),
-  });
-  if (!res.ok) throw new Error(`Submit revision failed: ${res.status}`);
-}
-
-export async function deleteRevision(atTurn: number, n: number): Promise<void> {
-  const res = await fetch(`${BACKEND_URL}/session/revise`, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ at_turn: atTurn, n }),
-  });
-  if (!res.ok) throw new Error(`Delete revision failed: ${res.status}`);
 }
 
 export async function* streamGenerate(

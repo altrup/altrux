@@ -32,7 +32,6 @@ Copy `.env.example` to `.env` and adjust as needed. Key variables:
 | `DEVICE` | `auto` | `auto` uses CUDA/ROCm if available |
 | `MODEL_NAME` | `mamba2_780m` | Name of the model package in `models/` at the repo root. The package defines the architecture, tokenizer, format tokens, and LoRA targets. |
 | `CHECKPOINT` | _(unset)_ | Checkpoint subpath under `models/{MODEL_NAME}/checkpoints/` (e.g. `epoch-1/step-1200`). When set, LoRA adapter weights are applied on top of the base model at startup. Rank and alpha are read automatically from `lora_config.json` inside the checkpoint. Leave unset to run the plain base model. |
-| `REVISE_DATA_PATH` | `../sft/data/revise_collected.jsonl` | Path to the JSONL file where revision suggestions are appended. Relative paths are resolved from the backend directory. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated list of allowed CORS origins. |
 
 Chat format tokens (`USER_OPEN`, `ASST_OPEN`) are defined in the model package (`models/{MODEL_NAME}/`) and are **not** configured here. The frontend fetches them automatically via `GET /config` at startup.
@@ -64,8 +63,6 @@ make run
 | DELETE | `/session` | Clear the session |
 | PUT | `/session` | Append raw text — `{"text": "tell me more"}` |
 | PUT | `/session/message` | Append a chat turn, wrapped with the model's openers — `{"role": "user", "content": "hi"}` |
-| POST | `/session/revise` | Save a revision suggestion — `{"n": 1, "revision": "better answer", "weight": 0.5, "at_turn": 3}`. `n` is how many assistant turns back to target; `at_turn` is the message index of the anchor turn (defaults to the last assistant turn). |
-| DELETE | `/session/revise` | Remove a single revision suggestion — `{"at_turn": 3, "n": 1}`. Returns 404 if the revision does not exist. |
 | POST | `/generate` | Generate a response (batch) — `{"temperature": 0.8, "top_p": 0.95}` |
 | POST | `/generate/stream` | Same, but stream tokens as NDJSON as they're generated |
 
