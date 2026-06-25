@@ -72,21 +72,6 @@ INJECTED_LAYERS: tuple[int, ...] = tuple(range(16, N_LAYER, 2))
 BOTTLENECK_R = 128
 MEM_DIM = D_MODEL
 MEM_HIDDEN = 4 * D_MODEL
-# Caps the per-token test-time gradient step in _NeuralMemory.write() (see
-# its comment there) -- bounds the update size regardless of how large the
-# raw prediction error/gradient is, which an untrained memory MLP can
-# produce on its very first few tokens. Tried raising this to 3000 on the
-# theory that w1/w2's ~9.4M elements each (on this backbone's MEM_DIM/
-# MEM_HIDDEN) make a *healthy* gradient norm naturally land in the
-# thousands -- wrong in practice: it only delayed the explosion by a few
-# tokens rather than preventing it, since momentum `s` in write() has no
-# decay of its own (only `p` decays, via alpha) -- eta near 1 lets
-# bounded-but-nonzero per-step contributions accumulate across tokens
-# regardless of the single-step clip. 1.0 is the only value confirmed (with
-# q/k/v normalized -- see _rms_normalize) to run a full example through
-# preflight without going non-finite. Revisit alongside decaying/clamping
-# momentum itself, not just the per-step gradient, before raising this again.
-MAX_WRITE_GRAD_NORM = 1.0
 # Diagnostic-only threshold for counting an injected layer as "actively"
 # writing into ssm_state this token (see Model.last_token_log) -- beta > 0.5
 # means that layer's gated-delta merge is overwriting more than half its
@@ -94,7 +79,7 @@ MAX_WRITE_GRAD_NORM = 1.0
 # Used only to report active_layers for live logging; the actual gated-delta
 # merge in _mixer_step always uses the raw, continuous beta value -- this
 # threshold has no effect on the forward pass or training.
-ACTIVE_BETA_THRESHOLD = 0.5
+ACTIVE_BETA_THRESHOLD = 0.2
 
 
 class _NeuralMemory:
@@ -124,8 +109,18 @@ class _NeuralMemory:
         return torch.einsum("bdh,bh->bd", w2, h) + b2
 
     def write(self, k: torch.Tensor, v: torch.Tensor, eta: torch.Tensor, theta: torch.Tensor, alpha: torch.Tensor):
-        """One test-time gradient step on L = ||M(k) - v||^2 -- first-order
-        (truncated) approximation: `params`/`momentum` carried in from the
+        """One test-time gradient step on L = mean((M(k) - v)^2) -- mean, not
+        sum, over MEM_DIM dims: since k/v are RMS-normalized to unit scale
+        (see _rms_normalize), a sum over MEM_DIM=1536 dims of O(1) per-dim
+        terms would land in the hundreds-to-thousands by dimensionality
+        alone, before anything is actually wrong with the prediction --
+        inflating both the loss and, via the ~9.4M-element w1/w2 it
+        backprops through, the resulting gradient norm. Mean reduction keeps
+        L (and `surprise`, the per-injected-layer write gate in
+        _GatedDeltaInjection.signals) at the O(1) per-dim scale its
+        consumers already assume.
+
+        First-order (truncated) approximation: `params`/`momentum` carried in from the
         previous token are detached and re-leafed here, so M_{t-1} is treated
         as a constant w.r.t. autograd. THIS is what bounds the graph to O(1)
         per token instead of O(T) -- each token starts from a fresh leaf, so
@@ -146,7 +141,7 @@ class _NeuralMemory:
         momentum = [s.detach() for s in self.momentum]
 
         pred = self._apply(k, *params)
-        per_example_loss = ((pred - v) ** 2).sum(dim=-1)
+        per_example_loss = ((pred - v) ** 2).mean(dim=-1)
         # create_graph=True: g must stay differentiable w.r.t. k/v (and the
         # freshly-detached `params` above) so k_proj/v_proj actually receive
         # gradient -- with create_graph=False, g is a plain non-differentiable
@@ -156,17 +151,6 @@ class _NeuralMemory:
         # not from this flag; `params` being a fresh leaf each call means
         # differentiating g w.r.t. it can't chain past this single token.
         grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=True)
-        # Clip the combined per-example gradient norm: M starts randomly
-        # initialized, so its first prediction error (and hence g) can
-        # already be huge -- uncapped, eta near 1 (near-zero momentum decay)
-        # lets that single huge step make the next token's error (and g)
-        # even bigger, a runaway that overflows fp32 within ~4 tokens
-        # (confirmed: this was happening, independent of chunk_len/dtype).
-        # Clipping g caps the per-token update size regardless of how bad
-        # M's current prediction is, breaking that feedback loop.
-        sq_norm = sum((g.float() ** 2).reshape(g.shape[0], -1).sum(dim=1) for g in grads)
-        clip_scale = (MAX_WRITE_GRAD_NORM / sq_norm.clamp_min(1e-12).sqrt()).clamp(max=1.0)
-        grads = [g * clip_scale.view(-1, *([1] * (g.dim() - 1))) for g in grads]
 
         new_params = []
         new_momentum = []
@@ -234,10 +218,9 @@ class _TitansFrontEnd(nn.Module):
             # individual components in the tens (confirmed: k/v components up
             # to ~50-60), which made M's write loss ||M(k) - v||^2 -- and its
             # gradient -- scale with that raw, unbounded magnitude rather than
-            # with anything learned. Normalizing bounds the *input* magnitude
-            # at the source so MAX_WRITE_GRAD_NORM clipping in
-            # _NeuralMemory.write isn't permanently saturated; theta/eta
-            # regain control over how strongly a given token's write lands.
+            # with anything learned. Normalizing bounds the input magnitude
+            # at the source, so theta/eta (rather than k/v's raw scale)
+            # control how strongly a given token's write lands.
             q = _rms_normalize(self.q_proj(residual))
             k = _rms_normalize(self.k_proj(residual))
             v = _rms_normalize(self.v_proj(residual))
@@ -303,16 +286,13 @@ class _GatedDeltaInjection(nn.Module):
         z = self.down(o_t)
         p = rearrange(self.value_proj(z), "b (h p) -> b h p", p=self.headdim)
         key = self.key_proj(z)
-        # surprise is a sum of squared error over MEM_DIM dims, so raw values
-        # land in the hundreds-to-thousands -- added directly into beta's
-        # logit it completely swamps the -4.0 no-op bias (confirmed: a real
-        # run measured beta=0.9968 right at the first step, not the intended
-        # ~0.02). Normalize to mean-squared-error-per-dim (an O(1) quantity,
-        # ~0.45 in that same run) and squash with its own sigmoid -- bounded
-        # to [0.5, 1) since surprise >= 0 -- before adding, so its
-        # contribution to the logit is bounded and beta_proj's -4.0 bias can
-        # still dominate by default, preserving the no-op-at-init behavior.
-        surprise_signal = torch.sigmoid(surprise / MEM_DIM)
+        # surprise is already a mean-squared-error-per-dim (see
+        # _NeuralMemory.write) -- an O(1) quantity -- so it can be squashed
+        # with its own sigmoid directly, bounded to [0.5, 1) since surprise
+        # >= 0, before adding into beta's logit; that bound keeps its
+        # contribution small enough that beta_proj's -4.0 bias can still
+        # dominate by default, preserving the no-op-at-init behavior.
+        surprise_signal = torch.sigmoid(surprise)
         beta = torch.sigmoid(self.beta_proj(z).squeeze(-1) + surprise_signal).view(-1, 1, 1, 1)
         clear = torch.sigmoid(self.clear_proj(z)).view(-1, 1, 1, 1)
         return p, key, beta, clear
