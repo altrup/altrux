@@ -36,6 +36,7 @@ import os
 import shutil
 import sys
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -303,7 +304,8 @@ def _show_chunk_progress(model, chunk_extra_log, end: int, seqlen: int, loss_sum
     if chunk_extra_log is None or weight_sum <= 0:
         return prev_n_lines
     chunk_loss_val = loss_sum.item() / weight_sum.item()
-    lines = [f"  token {end:>6}/{seqlen:<6}  loss {chunk_loss_val:.4f}"]
+    ts = datetime.now().strftime("%H:%M:%S")
+    lines = [f"[{ts}]  token {end:>6}/{seqlen:<6}  loss {chunk_loss_val:.4f}"]
     extra_line = chunk_extra_log(model)
     if extra_line is not None:
         lines.append(f"  {extra_line}")
@@ -410,6 +412,14 @@ def run_training(
                         _clear_live(prev_n_lines)
                         prev_n_lines = 0
 
+                    if accum_count == 0:
+                        # No tokens contributed to this window (all chunks had
+                        # zero weight or example was fully masked) -- skip the
+                        # optimizer step entirely rather than taking a no-op
+                        # step and printing a misleading NaN loss.
+                        window_loss_sum = window_tokens = 0.0
+                        continue
+
                     # Each chunk's backward() above adds its (already
                     # per-token-averaged) gradient into .grad unscaled, since
                     # an example boundary can now force a step before
@@ -419,23 +429,23 @@ def run_training(
                     # would underweight every such step. Dividing by the
                     # true accum_count here instead always yields the
                     # average gradient over however many chunks actually ran.
-                    if accum_count > 0:
-                        for p in trainable_params:
-                            if p.grad is not None:
-                                p.grad /= accum_count
+                    for p in trainable_params:
+                        if p.grad is not None:
+                            p.grad /= accum_count
 
                     grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, 1.0).item()
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
-                    avg_loss = window_loss_sum / window_tokens if window_tokens > 0 else float("nan")
+                    avg_loss = window_loss_sum / window_tokens
                     accum_count = 0
                     window_loss_sum = window_tokens = 0.0
+                    ts = datetime.now().strftime("%H:%M:%S")
 
                     if on_step is not None:
                         on_step(model, total_tokens)
 
-                    print(f"epoch {epoch + 1}  step {global_step:>6}  example {i:>6}/{n}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
+                    print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  example {i:>6}/{n}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
                     if extra_log is not None:
                         line = extra_log(model)
                         if line is not None:
@@ -451,6 +461,9 @@ def run_training(
                     last_epoch, last_example_idx, last_chunk_pos = epoch, i, next_chunk_pos
 
                     if total_tokens - last_ckpt_tokens >= args.ckpt_every_tokens:
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        print(f"[{ts}]  evaluating ...")
+                        sys.stdout.flush()
                         el = evaluate(hooks, model, eval_ids, eval_masks, device, args.max_len, chunk_len)
                         path = save_checkpoint(
                             model, optimizer, global_step, epoch, i, next_chunk_pos,
@@ -458,7 +471,11 @@ def run_training(
                         )
                         last_ckpt_tokens = total_tokens
                         rotate_checkpoints(args.keep_ckpts, epoch)
-                        print(f"  eval_loss {el:.4f}  saved {path}")
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        if math.isnan(el):
+                            print(f"[{ts}]  WARNING: eval_loss is nan -- checkpoint saved but eval metric is unreliable  {path}")
+                        else:
+                            print(f"[{ts}]  eval_loss {el:.4f}  saved {path}")
 
             if chunk_extra_log is not None:
                 _clear_live(prev_n_lines)
@@ -470,13 +487,17 @@ def run_training(
         print("nothing to train -- already at or past the requested epochs. Pass a larger --epochs to continue.")
         return
 
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}]  evaluating (final) ...")
+    sys.stdout.flush()
     el = evaluate(hooks, model, eval_ids, eval_masks, device, args.max_len, chunk_len)
     path = save_checkpoint(
         model, optimizer, global_step, last_epoch, last_example_idx, last_chunk_pos,
         total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
     )
     rotate_checkpoints(args.keep_ckpts, last_epoch)
-    print(f"done. eval_loss {el:.4f}  final checkpoint: {path}")
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}]  done. eval_loss {el:.4f}  final checkpoint: {path}")
 
 
 def main() -> None:
@@ -490,7 +511,7 @@ def main() -> None:
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN (e.g. 48 for mamba2_780m, 8 for mamba2_780m_memory)")
     parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=25, help="Gradient accumulation steps (counted per backward() call -- one per chunk; capped by example boundaries, since accumulation never spans two examples -- see the training loop)")
-    parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training, checked after every gradient-accumulation boundary -- can land mid-example for a long one (resume replays the seen prefix to regenerate model state, see replay_state)")
+    parser.add_argument("--ckpt-every-tokens", type=int, default=2000, help="Save checkpoint every N tokens of training, checked after every gradient-accumulation boundary -- can land mid-example for a long one (resume replays the seen prefix to regenerate model state, see replay_state)")
     parser.add_argument("--keep-ckpts", type=int, default=20, help="Number of checkpoints to retain")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
