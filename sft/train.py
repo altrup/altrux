@@ -337,6 +337,7 @@ def run_training(
     chunk_len = args.chunk_len or hooks.DEFAULT_CHUNK_LEN
     extra_log = getattr(hooks, "extra_log", None)
     chunk_extra_log = getattr(hooks, "chunk_extra_log", None)
+    on_step = getattr(hooks, "on_step", None)
 
     n = len(train_ids)
     global_step = start_step
@@ -344,6 +345,8 @@ def run_training(
     last_ckpt_tokens = start_last_ckpt_tokens
     model.train()
     optimizer.zero_grad()
+    if on_step is not None:
+        on_step(model, total_tokens)
 
     trained_any = False
     last_epoch = last_example_idx = None
@@ -428,6 +431,9 @@ def run_training(
                     avg_loss = window_loss_sum / window_tokens if window_tokens > 0 else float("nan")
                     accum_count = 0
                     window_loss_sum = window_tokens = 0.0
+
+                    if on_step is not None:
+                        on_step(model, total_tokens)
 
                     print(f"epoch {epoch + 1}  step {global_step:>6}  example {i:>6}/{n}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
                     if extra_log is not None:

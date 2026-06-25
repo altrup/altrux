@@ -81,6 +81,19 @@ MEM_HIDDEN = 4 * D_MODEL
 # threshold has no effect on the forward pass or training.
 ACTIVE_BETA_THRESHOLD = 0.2
 
+# beta's startup suppression (see _GatedDeltaInjection) is a fixed additive
+# offset on the gate logit, linearly annealed from BETA_BIAS_ANNEAL_START to
+# 0 over the first BETA_BIAS_ANNEAL_TOKENS tokens of training, then held at
+# 0 forever after -- a pure function of cumulative training tokens (see
+# Model.set_beta_anneal), not a counter of its own, so it survives resume
+# without extra checkpoint state. This anneals away from -3 rather than
+# disabling the suppression outright: beta_proj's own *bias* is left at its
+# untouched nn.Linear default (near 0) so gradient can shape it from the
+# start, while this offset -- not the learnable bias -- is what keeps the
+# gated-delta merge close to a no-op at init.
+BETA_BIAS_ANNEAL_START = -3.0
+BETA_BIAS_ANNEAL_TOKENS = 2000
+
 
 class _NeuralMemory:
     """Titans-style fast-weight MLP: a 2-layer MLP whose *weights* are the
@@ -266,15 +279,37 @@ class _GatedDeltaInjection(nn.Module):
         self.key_proj = nn.Linear(r, d_state)
         self.beta_proj = nn.Linear(r, 1)
         self.clear_proj = nn.Linear(r, 1)
-        # beta starts near 0 and clear starts near 1 (sigmoid(-4) ~ 0.02,
-        # sigmoid(4) ~ 0.98) so the gated-delta merge is a no-op at init --
-        # the wrapped backbone behaves exactly like the unmodified pretrained
-        # model until these gates learn otherwise. There is no separate
-        # gamma scalar (as an earlier version had): beta itself is now the
-        # only knob controlling how strongly memory overwrites backbone
-        # state, since the merge is applied directly to ssm_state.
-        nn.init.constant_(self.beta_proj.bias, -4.0)
+        # clear starts near 1 (sigmoid(4) ~ 0.98) so the gated-delta merge's
+        # global wipe never forces decay on its own -- this one is a true
+        # fixed-forever init, not annealed.
+        #
+        # beta starts near 0 too, but via beta_anneal_offset (see
+        # BETA_BIAS_ANNEAL_START/_TOKENS above and Model.set_beta_anneal),
+        # not via beta_proj.bias itself: an earlier version pinned
+        # beta_proj.bias to -4 permanently, which kept the merge a no-op at
+        # init (matching the unmodified pretrained backbone until the gate
+        # learned otherwise) but also saturated the gate's own gradient
+        # (sigmoid'(-4) ~ 0.02x the gradient at 0), and in practice beta
+        # never woke up over a full run. beta_proj.bias is left at its
+        # ordinary nn.Linear default (small, ~0) so it gets full gradient
+        # signal from step 0; beta_anneal_offset supplies the near-no-op
+        # suppression instead, as a non-learnable term that decays away
+        # rather than one the optimizer has to fight through saturation to
+        # move.
         nn.init.constant_(self.clear_proj.bias, 4.0)
+        # Defaults to 0 (i.e. *no* suppression), not BETA_BIAS_ANNEAL_START --
+        # this is a plain Python float, not a buffer/parameter, so it is
+        # never part of state_dict and is NOT restored by checkpoint
+        # loading (see load_checkpoint in backend/app/model/lora.py, which
+        # loads only named_parameters with requires_grad). Inference
+        # (load_inference) never calls Model.set_beta_anneal, so it must
+        # default to the *post-anneal* state (0) -- the state every
+        # checkpoint actually represents once training has run past
+        # BETA_BIAS_ANNEAL_TOKENS. Training itself overrides this to the
+        # correct in-progress value immediately via the one-time
+        # pre-training-loop on_step call in sft/train.py, before this would
+        # otherwise matter.
+        self.beta_anneal_offset = 0.0
 
     def signals(self, o_t: torch.Tensor, surprise: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns (p, key, beta, clear) for this layer's gated-delta merge.
@@ -293,7 +328,9 @@ class _GatedDeltaInjection(nn.Module):
         # contribution small enough that beta_proj's -4.0 bias can still
         # dominate by default, preserving the no-op-at-init behavior.
         surprise_signal = torch.sigmoid(surprise)
-        beta = torch.sigmoid(self.beta_proj(z).squeeze(-1) + surprise_signal).view(-1, 1, 1, 1)
+        beta = torch.sigmoid(
+            self.beta_proj(z).squeeze(-1) + surprise_signal + self.beta_anneal_offset
+        ).view(-1, 1, 1, 1)
         clear = torch.sigmoid(self.clear_proj(z)).view(-1, 1, 1, 1)
         return p, key, beta, clear
 
@@ -595,6 +632,18 @@ class Model(nn.Module):
 
         return torch.stack(all_logits, dim=1), state
 
+    def set_beta_anneal(self, total_tokens: float) -> None:
+        """Updates every injected layer's beta_anneal_offset for the given
+        cumulative training-token count (see BETA_BIAS_ANNEAL_START/_TOKENS).
+        A pure function of total_tokens -- not a counter incremented here --
+        so calling this with a resumed run's total_tokens lands the offset
+        exactly where it would have been had training never stopped, with no
+        extra checkpoint state needed."""
+        frac = min(total_tokens / BETA_BIAS_ANNEAL_TOKENS, 1.0)
+        offset = BETA_BIAS_ANNEAL_START * (1.0 - frac)
+        for injection in self.injections.values():
+            injection.beta_anneal_offset = offset
+
     def last_token_log(self) -> dict | None:
         """Snapshot of the most recently processed token's memory-usage
         signals (beta/clear averaged across injected layers, active_layers =
@@ -608,13 +657,14 @@ class Model(nn.Module):
     def pop_memory_stats(self) -> dict[str, float] | None:
         """Returns averages since the last call (None if forward hasn't run
         since then) and resets the running sums. `beta`/`clear` are the most
-        direct usage signal: both start pinned near their no-op init
-        (beta~0.02, clear~0.98, see _GatedDeltaInjection.__init__) so the
-        backbone behaves like the unmodified pretrained model until training
-        moves them -- beta staying near 0.02 over many steps means the memory
-        is still effectively disconnected, not actually writing into
-        ssm_state, regardless of how much gradient the memory params receive
-        in preflight."""
+        direct usage signal: both start near their no-op init (beta~0.05 via
+        beta_anneal_offset, clear~0.98, see _GatedDeltaInjection.__init__) so
+        the backbone behaves like the unmodified pretrained model until
+        training moves them -- beta staying near its init over many steps
+        (well past BETA_BIAS_ANNEAL_TOKENS, once the anneal offset is gone)
+        means the memory is still effectively disconnected, not actually
+        writing into ssm_state, regardless of how much gradient the memory
+        params receive in preflight."""
         if self._mem_stat_tok_count == 0:
             return None
         stats = {

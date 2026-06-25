@@ -78,6 +78,18 @@ def chunk_loss(
     return (loss * weight).sum(), weight.sum(), state
 
 
+def on_step(model, total_tokens: float) -> None:
+    """Optional hook -- train.py calls this (if defined) once before training
+    starts and again after every optimizer step, passing cumulative training
+    tokens. Used here to anneal beta's startup suppression away over the
+    first BETA_BIAS_ANNEAL_TOKENS tokens (see model.py's
+    BETA_BIAS_ANNEAL_START/_TOKENS and Model.set_beta_anneal) -- keyed on
+    total_tokens rather than optimizer steps so it lines up with this
+    project's other token-denominated knobs (e.g. --ckpt-every-tokens) and
+    resumes correctly without extra checkpoint state."""
+    model.set_beta_anneal(total_tokens)
+
+
 def extra_log(model) -> str | None:
     """Optional hook -- train.py calls this (if defined) after each optimizer
     step and prints whatever string it returns (None to print nothing this
