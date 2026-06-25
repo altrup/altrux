@@ -391,7 +391,7 @@ def run_training(
                     break
 
                 if weight_sum > 0:
-                    (loss_sum / weight_sum * (1.0 / args.accum_steps)).backward()
+                    (loss_sum / weight_sum).backward()
                     window_loss_sum += loss_sum.item()
                     window_tokens += weight_sum.item()
                     total_tokens += weight_sum.item()
@@ -402,11 +402,24 @@ def run_training(
                 state = state.detach()
 
                 is_example_done = end >= seqlen - 1
-                is_last_in_epoch = is_example_done and i == len(order) - 1
-                if accum_count >= args.accum_steps or is_last_in_epoch:
+                if accum_count >= args.accum_steps or is_example_done:
                     if chunk_extra_log is not None:
                         _clear_live(prev_n_lines)
                         prev_n_lines = 0
+
+                    # Each chunk's backward() above adds its (already
+                    # per-token-averaged) gradient into .grad unscaled, since
+                    # an example boundary can now force a step before
+                    # accum_steps chunks have accumulated (see is_example_done
+                    # above) -- dividing by the fixed args.accum_steps
+                    # regardless of how many chunks actually contributed
+                    # would underweight every such step. Dividing by the
+                    # true accum_count here instead always yields the
+                    # average gradient over however many chunks actually ran.
+                    if accum_count > 0:
+                        for p in trainable_params:
+                            if p.grad is not None:
+                                p.grad /= accum_count
 
                     grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, 1.0).item()
                     optimizer.step()
@@ -470,7 +483,7 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN (e.g. 48 for mamba2_780m, 8 for mamba2_780m_memory)")
     parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
-    parser.add_argument("--accum-steps", type=int, default=8, help="Gradient accumulation steps (counted per backward() call -- one per chunk)")
+    parser.add_argument("--accum-steps", type=int, default=25, help="Gradient accumulation steps (counted per backward() call -- one per chunk; capped by example boundaries, since accumulation never spans two examples -- see the training loop)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training, checked after every gradient-accumulation boundary -- can land mid-example for a long one (resume replays the seen prefix to regenerate model state, see replay_state)")
     parser.add_argument("--keep-ckpts", type=int, default=20, help="Number of checkpoints to retain")
     parser.add_argument("--lora-rank", type=int, default=16)
