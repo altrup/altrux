@@ -88,13 +88,16 @@ def main() -> None:
     all_masks: list[torch.Tensor] = []
     skipped = 0
 
-    for record in iter_records(args):
+    records = iter_records(args)
+    for i, record in enumerate(records, 1):
+        print(f"\r{i}/{len(records)}", end="", flush=True)
         ids, mask = format_conversation(record.get("messages", []), tokenizer, args.max_len)
         if not any(mask):
             skipped += 1
             continue
         all_ids.append(torch.tensor(ids, dtype=torch.long))
         all_masks.append(torch.tensor(mask, dtype=torch.bool))
+    print()
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
