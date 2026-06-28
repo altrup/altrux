@@ -13,6 +13,9 @@ dependencies = [
     "bitsandbytes>=0.45.0",
 ]
 
+[tool.uv.extra-build-dependencies]
+mamba-ssm = ["wheel"]
+
 # torch and mamba-ssm are installed by `make sync` via uv pip because they
 # require hardware-specific builds (ROCm torch, CUDA/ROCm kernels) that cannot
 # be locked portably in uv.lock. causal-conv1d is deliberately NOT installed:
