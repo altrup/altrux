@@ -75,7 +75,19 @@ Pass any `train.py` flag through any of these targets with `ARGS="..."` (e.g. `m
 
 `make preflight` is worth running before a real training run, especially after touching a model's `train_hooks.py` or `model.py`: it loads the actual model and dataset (so it still pays for that, unlike the synthetic-model unit test in `models/tests/`) and runs one example through the same chunked forward+backward path training uses, asserting gradients actually reached every trainable parameter — then exits before the full loop. This is what would have caught this model's "the gated-delta merge never actually ran" and "k_proj/v_proj never received gradient" bugs immediately, instead of after a full run.
 
-Checkpoints are saved every `--ckpt-every-tokens` tokens of training (default 2500) to `../models/{MODEL_NAME}/checkpoints/epoch-E/step-N/` (every trainable parameter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Cadence is counted in cumulative tokens trained on rather than optimizer steps, since examples vary enormously in length (a few thousand to ~100k tokens) — a step-based cadence means wildly different amounts of training between checkpoints depending on what examples happen to fall in the window. The trigger is checked after every gradient-accumulation boundary, so a checkpoint can land *mid-example* for a long one; resuming such a checkpoint replays (forward-only) the already-seen prefix of that example to regenerate the model's carried state, then continues from exactly where it left off. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every-tokens` and `--keep-ckpts`.
+**Slot-based batching** (`--batch-size`, default 4): `train.py` runs `B` examples in parallel using a slot-based loop. Each slot independently advances through its own example; when a slot finishes, it resets and picks up the next example. All slots are processed in one batched forward+backward per chunk, so the GPU sees a `(B, chunk_len)` tensor every step rather than `(1, chunk_len)`. This is the primary mechanism for saturating GPU utilisation on stateful models like `mamba2_2_7b_memory` whose per-token step prevents the parallel-scan kernel from helping. Gradient accumulation (`--accum-steps`, default 12) sums gradients across all active slots before stepping; the optimizer step fires every `accum_steps` chunks (i.e., after `accum_steps × B × chunk_len` token-positions processed, minus any padding).
+
+The live per-chunk progress display (in-place terminal output) shows one line per active slot:
+
+```
+[14:32:01]  avg_loss 2.34
+  slot 0  token   3421/65000  beta 0.6369  clear 0.9821  active 21/21  surprise 0.1922  o_t_norm 1.0752
+  slot 1  token    891/12400  beta 0.5821  clear 0.9734  active 19/21  surprise 0.2103  o_t_norm 0.9841
+  slot 2  token  12004/98221  beta 0.7012  clear 0.9901  active 21/21  surprise 0.1654  o_t_norm 1.1203
+  slot 3  token    203/8831   beta 0.6543  clear 0.9812  active 20/21  surprise 0.1877  o_t_norm 1.0341
+```
+
+Checkpoints are saved every `--ckpt-every-tokens` tokens of training (default 2000) to `../models/{MODEL_NAME}/checkpoints/epoch-E/step-N/` (every trainable parameter + optimizer state), where `E` is the 1-indexed epoch and `MODEL_NAME` is read from `.env`. Cadence is counted in cumulative tokens trained on rather than optimizer steps, since examples vary enormously in length (a few thousand to ~100k tokens) — a step-based cadence means wildly different amounts of training between checkpoints depending on what examples happen to fall in the window. The trigger is checked after every gradient-accumulation boundary, so a checkpoint can land *mid-example* for long examples; resuming replays (forward-only) each slot's already-seen prefix to regenerate carried state, then continues from exactly where it left off. Only the last 20 checkpoints **per epoch** are kept; older ones in the same epoch are deleted automatically, so completed epochs retain their final 20. Tune with `--ckpt-every-tokens` and `--keep-ckpts`.
 
 **EOS under-generation**: if the model doesn't emit `<|endoftext|>` to end turns, pass `--eos-weight 5` (or higher) to upweight EOS positions in the loss. EOS tokens are ~0.8% of assistant tokens so they get little gradient by default.
 
@@ -90,6 +102,13 @@ This model's `train_hooks.py` differs from `mamba2_780m`'s in two ways, both vis
 ```bash
 MODEL_NAME=mamba2_780m_memory make train ARGS="--data data/train_memory.pt"
 MODEL_NAME=mamba2_780m_memory make resume ARGS="--data data/train_memory.pt"
+```
+
+For `mamba2_2_7b_memory`, use the same pattern. The default `--batch-size 4` and `--chunk-len 12` are tuned for that model on an H100 (80 GB); the 2.7B model's per-token fast-weight snapshot is ~210 MB, so a single chunk of length 12 with B=4 costs roughly 10 GB of backward graph on top of the 5–6 GB model weight floor. Benchmark with `make preflight` before raising either.
+
+```bash
+MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
+MODEL_NAME=mamba2_2_7b_memory make resume ARGS="--data data/train_memory.pt"
 ```
 
 ## Using the adapter

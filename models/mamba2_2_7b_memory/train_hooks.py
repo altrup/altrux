@@ -8,16 +8,17 @@ models/mamba2_2_7b_memory/README.md for why long examples aren't truncated at
 data-prep time instead.
 
 Unlike standard SFT (and unlike the other model's hooks), loss is computed
-over EVERY token, not just assistant turns: prepare_data.py's mask marks user
-turns as non-trainable, which is correct for short Q&A-style chat, but for
-this model most of the content that's supposed to exercise long-range recall
-is *in* the long user turns (a document, a long context) -- masking that out
-would throw away most of the signal this model exists to learn from.
-`mask_slice` is accepted by chunk_loss (for interface parity with the other
-model's hook) but ignored.
+over EVERY non-padded token: prepare_data.py's mask marks user turns as
+non-trainable, which is correct for short Q&A-style chat, but for this model
+most of the content that's supposed to exercise long-range recall is *in* the
+long user turns (a document, a long context) -- masking that out would throw
+away most of the signal this model exists to learn from. mask_slice is used
+only as a padding mask (True = real token, False = padded position) -- it
+does NOT restrict loss to assistant turns.
 """
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
@@ -32,13 +33,13 @@ EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
 # This model's manual, unfused, per-token mixer step holds a live backward
 # graph whose VRAM cost scales with chunk_len -- the cost per token is larger
 # than the 780m variant (MEM_HIDDEN scales from 6144 to 10240, so the
-# fast-weight snapshot per token is ~210 MB vs ~75 MB). DEFAULT_CHUNK_LEN=128
-# is a conservative starting point for a cloud A100/H100 (80 GB). Benchmark
-# with `make smoke-test --chunk-len N` across 10+ consecutive chunks before
+# fast-weight snapshot per token is ~210 MB vs ~75 MB). DEFAULT_CHUNK_LEN=12
+# is tuned for batch_size=4 on a cloud H100 (80 GB). Benchmark with
+# `make smoke-test --chunk-len N` across 10+ consecutive chunks before
 # raising it -- a single isolated chunk's peak VRAM is NOT representative of
 # real multi-chunk training, since the held-over gradient/cache floor from
 # earlier chunks eats into the next chunk's headroom.
-DEFAULT_CHUNK_LEN = 32
+DEFAULT_CHUNK_LEN = 12
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
@@ -56,6 +57,12 @@ def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: floa
     return model, trainable_params
 
 
+def init_state(model, batch_size: int, device):
+    """Create a fresh batched MemoryState for batch_size parallel slots."""
+    dtype = model.embedding.weight.dtype
+    return model._init_state(batch_size, device, dtype)
+
+
 def chunk_loss(
     model,
     input_ids: torch.Tensor,
@@ -64,8 +71,9 @@ def chunk_loss(
     state,
     eos_weight: float,
 ):
-    """mask_slice ignored (see module docstring -- trains on every token).
-    Returns (loss_sum, weight_sum, state); the generic loop in
+    """mask_slice is a (B, T) bool tensor: True = real token, False = padding.
+    Trains on every real token (no user/assistant distinction -- see module
+    docstring). Returns (loss_sum, weight_sum, state); the generic loop in
     sft/train.py owns chunking, accumulation, checkpointing, and live
     progress display across calls."""
     logits, state = model(input_ids, state=state)
@@ -73,14 +81,41 @@ def chunk_loss(
     weight = torch.ones_like(loss)
     if eos_weight != 1.0:
         weight[target_ids.reshape(-1) == EOS_ID] = eos_weight
+    if mask_slice is not None:
+        weight = weight * mask_slice.reshape(-1).float()
     return (loss * weight).sum(), weight.sum(), state
+
+
+def reset_slot(model, state, slot_idx: int) -> None:
+    """Reset slot slot_idx's MemoryState to fresh random init, leaving all
+    other slots unchanged. Call only on a detached state."""
+    model.reset_slot(state, slot_idx)
+
+
+def set_slot_state(model, batched_state, slot_idx: int, single_state) -> None:
+    """Copy single_state (batch_size=1) into slot slot_idx of batched_state.
+    Used to restore a per-slot state after per-slot replay on resume."""
+    model.set_slot_state(batched_state, slot_idx, single_state)
+
+
+@contextmanager
+def replay_context(model):
+    """Context manager that disables create_graph in the neural memory write
+    during state replay -- the replay only needs the correct updated weights,
+    not a backward graph through k/v projections, so skipping create_graph
+    makes replay materially faster without affecting the reproduced state."""
+    model._in_replay = True
+    try:
+        yield
+    finally:
+        model._in_replay = False
 
 
 def on_step(model, total_tokens: float) -> None:
     """Optional hook -- train.py calls this (if defined) once before training
     starts and again after every optimizer step, passing cumulative training
     tokens. Used here to anneal beta's startup suppression away over the
-    first BETA_BIAS_ANNEAL_TOKENS tokens (see model.py's
+    first BETA_BIAS_ANNEAL_TOKENS tokens of training (see model.py's
     BETA_BIAS_ANNEAL_START/_TOKENS and Model.set_beta_anneal) -- keyed on
     total_tokens rather than optimizer steps so it lines up with this
     project's other token-denominated knobs (e.g. --ckpt-every-tokens) and
@@ -103,17 +138,17 @@ def extra_log(model) -> str | None:
     )
 
 
-def chunk_extra_log(model) -> str | None:
+def chunk_extra_log(model) -> list[str] | None:
     """Optional hook -- train.py's generic per-chunk live progress display
-    calls this (if defined) for an extra status line beyond the generic
-    token/loss line. last_token_log is a live snapshot of exactly this
-    chunk's last token (unlike extra_log's per-optimizer-step average from
-    pop_memory_stats)."""
-    log = model.last_token_log()
-    if log is None:
+    calls this (if defined) for extra per-slot status lines. Returns one
+    string per batch slot (last_token_log is a live snapshot of each slot's
+    last token). None if forward() hasn't run yet."""
+    logs = model.last_token_log()
+    if logs is None:
         return None
-    return (
+    return [
         f"beta {log['beta']:.4f}  clear {log['clear']:.4f}"
         f"  active {log['active_layers']:>2}/{log['n_layers']}"
         f"  surprise {log['surprise']:.4f}  o_t_norm {log['o_t_norm']:.4f}"
-    )
+        for log in logs
+    ]

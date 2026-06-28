@@ -120,7 +120,7 @@ class _NeuralMemory:
         h = torch.tanh(torch.einsum("bhd,bd->bh", w1, x) + b1)
         return torch.einsum("bdh,bh->bd", w2, h) + b2
 
-    def write(self, k: torch.Tensor, v: torch.Tensor, eta: torch.Tensor, theta: torch.Tensor, alpha: torch.Tensor):
+    def write(self, k: torch.Tensor, v: torch.Tensor, eta: torch.Tensor, theta: torch.Tensor, alpha: torch.Tensor, create_graph: bool = True):
         """One test-time gradient step on L = mean((M(k) - v)^2) -- mean, not
         sum, over MEM_DIM dims: since k/v are RMS-normalized to unit scale
         (see _rms_normalize), a sum over MEM_DIM=2560 dims of O(1) per-dim
@@ -162,7 +162,7 @@ class _NeuralMemory:
         # blowup -- that came from *not* detaching params/momentum per token,
         # not from this flag; `params` being a fresh leaf each call means
         # differentiating g w.r.t. it can't chain past this single token.
-        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=True)
+        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=create_graph)
 
         new_params = []
         new_momentum = []
@@ -208,7 +208,7 @@ class _TitansFrontEnd(nn.Module):
     def init_memory(self, batch_size: int, device, dtype) -> _NeuralMemory:
         return _NeuralMemory(batch_size, self.mem_dim, self.mem_hidden, device, dtype)
 
-    def step(self, residual: torch.Tensor, memory: _NeuralMemory) -> tuple[torch.Tensor, torch.Tensor]:
+    def step(self, residual: torch.Tensor, memory: _NeuralMemory, create_graph: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
         """residual: (batch, d_model) residual stream entering READ_LAYER.
 
         Returns (o_t, surprise) -- o_t is (batch, mem_dim), surprise is (batch,).
@@ -247,7 +247,7 @@ class _TitansFrontEnd(nn.Module):
             # undamped running sum of every token's write. Capping below 1
             # guarantees at least 10% decay per token.
             eta, theta, alpha = knobs[..., 0] * 0.9, knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
-            surprise = memory.write(k, v, eta, theta, alpha)
+            surprise = memory.write(k, v, eta, theta, alpha, create_graph=create_graph)
             o_t = memory.read(q)
         return o_t, surprise
 
@@ -442,12 +442,14 @@ class Model(nn.Module):
         self._mem_stat_sums = {"beta": 0.0, "clear": 0.0, "surprise": 0.0, "o_t_norm": 0.0}
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
-        # Snapshot of the single most-recently-processed token, for live
-        # per-token logging (overwritten every token, never accumulated --
-        # see last_token_log). "active" = beta above ACTIVE_BETA_THRESHOLD,
-        # i.e. that layer's gated-delta merge is actually overwriting
-        # ssm_state this token rather than sitting near its no-op init.
-        self._last_token_log: dict = {}
+        # Per-slot snapshot of the most-recently-processed token's memory
+        # signals, for live per-slot logging (overwritten every token).
+        # List of dicts, one per batch element -- see last_token_log().
+        self._last_token_logs: list[dict] = []
+        # Set to True during state replay to skip create_graph in the
+        # neural memory write (replay doesn't need the backward graph
+        # through k/v projections, only the correct updated weights).
+        self._in_replay: bool = False
 
     def _init_state(self, batch_size: int, device, dtype) -> MemoryState:
         conv_states, ssm_states = [], []
@@ -588,20 +590,23 @@ class Model(nn.Module):
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])
             residual = None
-            token_betas, token_clears = [], []
+            token_betas: list[torch.Tensor] = []   # (B,) per injected layer
+            token_clears: list[torch.Tensor] = []
+            last_surprise_per_slot: torch.Tensor | None = None
+            last_o_t_norm_per_slot: torch.Tensor | None = None
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
                 if i in INJECTED_LAYERS:
                     gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
                     beta, clear = gated_delta[2], gated_delta[3]
-                    beta_val = beta.detach().mean().item()
-                    clear_val = clear.detach().mean().item()
-                    self._mem_stat_sums["beta"] += beta_val
-                    self._mem_stat_sums["clear"] += clear_val
+                    beta_per_slot = beta[:, 0, 0, 0].detach()   # (B,)
+                    clear_per_slot = clear[:, 0, 0, 0].detach()  # (B,)
+                    self._mem_stat_sums["beta"] += beta_per_slot.mean().item()
+                    self._mem_stat_sums["clear"] += clear_per_slot.mean().item()
                     self._mem_stat_inj_count += 1
-                    token_betas.append(beta_val)
-                    token_clears.append(clear_val)
+                    token_betas.append(beta_per_slot)
+                    token_clears.append(clear_per_slot)
                 h, conv_state, ssm_state = self._mixer_step(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i], gated_delta
                 )
@@ -609,22 +614,33 @@ class Model(nn.Module):
                 state.ssm_states[i] = ssm_state
 
                 if i == READ_LAYER:
-                    o_t, surprise = self.front_end.step(residual, state.neural_memory)
+                    o_t, surprise = self.front_end.step(
+                        residual, state.neural_memory, create_graph=not self._in_replay
+                    )
                     state.last_o_t = o_t
                     state.last_surprise = surprise
-                    surprise_val = surprise.detach().mean().item()
-                    o_t_norm_val = o_t.detach().norm(dim=-1).mean().item()
-                    self._mem_stat_sums["surprise"] += surprise_val
-                    self._mem_stat_sums["o_t_norm"] += o_t_norm_val
+                    last_surprise_per_slot = surprise.detach()          # (B,)
+                    last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)  # (B,)
+                    self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean().item()
+                    self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean().item()
                     self._mem_stat_tok_count += 1
-                    self._last_token_log["surprise"] = surprise_val
-                    self._last_token_log["o_t_norm"] = o_t_norm_val
 
             if token_betas:
-                self._last_token_log["beta"] = sum(token_betas) / len(token_betas)
-                self._last_token_log["clear"] = sum(token_clears) / len(token_clears)
-                self._last_token_log["active_layers"] = sum(b > ACTIVE_BETA_THRESHOLD for b in token_betas)
-                self._last_token_log["n_layers"] = len(token_betas)
+                logs = []
+                for b in range(batch_size):
+                    betas_b = [tb[b].item() for tb in token_betas]
+                    clears_b = [tc[b].item() for tc in token_clears]
+                    entry: dict = {
+                        "beta": sum(betas_b) / len(betas_b),
+                        "clear": sum(clears_b) / len(clears_b),
+                        "active_layers": sum(bv > ACTIVE_BETA_THRESHOLD for bv in betas_b),
+                        "n_layers": len(betas_b),
+                    }
+                    if last_surprise_per_slot is not None:
+                        entry["surprise"] = last_surprise_per_slot[b].item()
+                        entry["o_t_norm"] = last_o_t_norm_per_slot[b].item()
+                    logs.append(entry)
+                self._last_token_logs = logs
 
             h = self._apply_norm_f(h, residual)
             all_logits.append(self.lm_head(h))
@@ -643,15 +659,55 @@ class Model(nn.Module):
         for injection in self.injections.values():
             injection.beta_anneal_offset = offset
 
-    def last_token_log(self) -> dict | None:
-        """Snapshot of the most recently processed token's memory-usage
-        signals (beta/clear averaged across injected layers, active_layers =
-        how many of them are above ACTIVE_BETA_THRESHOLD -- diagnostic only,
-        doesn't affect the merge itself; surprise/o_t_norm from the
-        front-end's last read). None until forward() has run at least once.
-        Unlike pop_memory_stats, this never resets -- it's meant for live
-        per-token logging, not a per-step average."""
-        return dict(self._last_token_log) if self._last_token_log else None
+    def last_token_log(self) -> list[dict] | None:
+        """Per-slot snapshot of the most recently processed token's memory
+        signals. Returns a list with one dict per batch element (beta/clear
+        averaged across injected layers, active_layers = count above
+        ACTIVE_BETA_THRESHOLD, surprise/o_t_norm from the front-end read).
+        None until forward() has run at least once. Never resets -- meant
+        for live per-token logging, not a per-step average."""
+        return list(self._last_token_logs) if self._last_token_logs else None
+
+    def reset_slot(self, state: "MemoryState", slot_idx: int) -> None:
+        """Reset slot slot_idx to a fresh random init in-place, leaving all
+        other slots unchanged. Call only on a detached state."""
+        device = state.last_o_t.device
+        conv_dtype = state.conv_states[0].dtype
+        mem_dtype = self.front_end.q_proj.weight.dtype
+
+        for i, layer in enumerate(self.layers):
+            fresh_conv, fresh_ssm = layer.mixer.allocate_inference_cache(1, 1, dtype=conv_dtype)
+            state.conv_states[i][slot_idx].copy_(fresh_conv[0])
+            state.ssm_states[i][slot_idx].copy_(fresh_ssm[0])
+
+        nm = state.neural_memory
+        bound1 = 1.0 / math.sqrt(MEM_DIM)
+        bound2 = 1.0 / math.sqrt(MEM_HIDDEN)
+        nm.w1[slot_idx].copy_((torch.rand(MEM_HIDDEN, MEM_DIM, device=device, dtype=mem_dtype) * 2 - 1) * bound1)
+        nm.b1[slot_idx].zero_()
+        nm.w2[slot_idx].copy_((torch.rand(MEM_DIM, MEM_HIDDEN, device=device, dtype=mem_dtype) * 2 - 1) * bound2)
+        nm.b2[slot_idx].zero_()
+        for s in nm.momentum:
+            s[slot_idx].zero_()
+        state.last_o_t[slot_idx].zero_()
+        state.last_surprise[slot_idx].zero_()
+
+    def set_slot_state(self, batched_state: "MemoryState", slot_idx: int, single_state: "MemoryState") -> None:
+        """Copy single_state (batch_size=1) into slot slot_idx of batched_state.
+        Used to restore a per-slot state after replay on resume."""
+        for i in range(len(self.layers)):
+            batched_state.conv_states[i][slot_idx].copy_(single_state.conv_states[i][0])
+            batched_state.ssm_states[i][slot_idx].copy_(single_state.ssm_states[i][0])
+        nm = batched_state.neural_memory
+        snm = single_state.neural_memory
+        nm.w1[slot_idx].copy_(snm.w1[0])
+        nm.b1[slot_idx].copy_(snm.b1[0])
+        nm.w2[slot_idx].copy_(snm.w2[0])
+        nm.b2[slot_idx].copy_(snm.b2[0])
+        for j in range(len(nm.momentum)):
+            nm.momentum[j][slot_idx].copy_(snm.momentum[j][0])
+        batched_state.last_o_t[slot_idx].copy_(single_state.last_o_t[0])
+        batched_state.last_surprise[slot_idx].copy_(single_state.last_surprise[0])
 
     def pop_memory_stats(self) -> dict[str, float] | None:
         """Returns averages since the last call (None if forward hasn't run
