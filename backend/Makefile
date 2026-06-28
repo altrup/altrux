@@ -5,7 +5,7 @@ PYTHONPATH := $(CURDIR)/..
 
 sync:
 	uv sync
-	UV_TORCH_BACKEND=auto uv pip install torch
+	UV_TORCH_BACKEND=auto uv pip install torch --reinstall
 	MAX_JOBS=12 uv pip install mamba-ssm --no-build-isolation
 
 install: sync
