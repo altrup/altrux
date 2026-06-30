@@ -254,7 +254,7 @@ class _TitansFrontEnd(nn.Module):
 
 class _GatedDeltaInjection(nn.Module):
     """One per injected layer. Derives this layer's own gated-delta write
-    signals (p, key, beta, clear) from the shared o_t through a private
+    signals (p, key, beta, retain) from the shared o_t through a private
     bottleneck. Unlike an earlier version of this module, it does not own
     any persistent state itself -- the gated-delta rule is applied directly
     to Mamba2's own `ssm_state` in `Model._mixer_step`, so memory and
@@ -276,8 +276,8 @@ class _GatedDeltaInjection(nn.Module):
         self.value_proj = nn.Linear(r, nheads * headdim)
         self.key_proj = nn.Linear(r, d_state)
         self.beta_proj = nn.Linear(r, 1)
-        self.clear_proj = nn.Linear(r, 1)
-        # clear starts near 1 (sigmoid(4) ~ 0.98) so the gated-delta merge's
+        self.retain_proj = nn.Linear(r, 1)
+        # retain starts near 1 (sigmoid(4) ~ 0.98) so the gated-delta merge's
         # global wipe never forces decay on its own -- this one is a true
         # fixed-forever init, not annealed.
         #
@@ -294,7 +294,7 @@ class _GatedDeltaInjection(nn.Module):
         # suppression instead, as a non-learnable term that decays away
         # rather than one the optimizer has to fight through saturation to
         # move.
-        nn.init.constant_(self.clear_proj.bias, 4.0)
+        nn.init.constant_(self.retain_proj.bias, 4.0)
         # Defaults to 0 (i.e. *no* suppression), not BETA_BIAS_ANNEAL_START --
         # this is a plain Python float, not a buffer/parameter, so it is
         # never part of state_dict and is NOT restored by checkpoint
@@ -310,11 +310,11 @@ class _GatedDeltaInjection(nn.Module):
         self.beta_anneal_offset = 0.0
 
     def signals(self, o_t: torch.Tensor, surprise: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Returns (p, key, beta, clear) for this layer's gated-delta merge.
+        """Returns (p, key, beta, retain) for this layer's gated-delta merge.
 
         p: (batch, nheads, headdim) per-head value to write.
         key: (batch, d_state) shared write address.
-        beta, clear: (batch, 1, 1, 1) gates, broadcastable against ssm_state.
+        beta, retain: (batch, 1, 1, 1) gates, broadcastable against ssm_state.
         """
         z = self.down(o_t)
         p = rearrange(self.value_proj(z), "b (h p) -> b h p", p=self.headdim)
@@ -330,8 +330,8 @@ class _GatedDeltaInjection(nn.Module):
         beta = torch.sigmoid(
             self.beta_proj(z).squeeze(-1) + surprise_signal + self.beta_anneal_offset
         ).view(-1, 1, 1, 1)
-        clear = torch.sigmoid(self.clear_proj(z)).view(-1, 1, 1, 1)
-        return p, key, beta, clear
+        retain = torch.sigmoid(self.retain_proj(z)).view(-1, 1, 1, 1)
+        return p, key, beta, retain
 
 
 class MemoryState:
@@ -432,14 +432,14 @@ class Model(nn.Module):
         self.front_end = _TitansFrontEnd()
         self.injections = nn.ModuleDict({str(i): _GatedDeltaInjection() for i in INJECTED_LAYERS})
         # Running sums for pop_memory_stats() -- plain floats, not tensors, so
-        # they never hold a reference into any autograd graph. beta/clear are
+        # they never hold a reference into any autograd graph. beta/retain are
         # accumulated once per injected layer per token; surprise/o_t_norm
         # once per token (at READ_LAYER only). See pop_memory_stats for why
-        # these matter: beta/clear start near 0/1 (no-op init, see
+        # these matter: beta/retain start near 0/1 (no-op init, see
         # _GatedDeltaInjection.__init__) and are the only direct signal of
         # whether the memory subsystem is actually being used or still
         # sitting at its identity init.
-        self._mem_stat_sums = {"beta": 0.0, "clear": 0.0, "surprise": 0.0, "o_t_norm": 0.0}
+        self._mem_stat_sums = {"beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0}
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
         # Per-slot snapshot of the most-recently-processed token's memory
@@ -496,7 +496,7 @@ class Model(nn.Module):
     ):
         """One token through `mixer`, replicating Mamba2.step()'s arithmetic
         but always via the manual (non-Triton-fused) SSM readout, so the
-        gated-delta memory merge (`gated_delta = (p, key, beta, clear)`) can
+        gated-delta memory merge (`gated_delta = (p, key, beta, retain)`) can
         be applied directly to `ssm_state` immediately after Mamba2's own
         decay+write and before the C readout -- the merged state is what
         gets both read out *and* persisted, so memory content now decays
@@ -540,11 +540,11 @@ class Model(nn.Module):
             # _init_state) -- cast to ssm_state's dtype (bf16 since the
             # backbone now loads in bf16, see model.py's load_base) so the
             # merge below doesn't hit a dtype mismatch.
-            p, key, beta, clear = (t.to(ssm_state.dtype) for t in gated_delta)
+            p, key, beta, retain = (t.to(ssm_state.dtype) for t in gated_delta)
             readback = torch.einsum("bhpn,bn->bhp", ssm_state, key)
             forgotten = ssm_state - beta * torch.einsum("bhp,bn->bhpn", readback, key)
             written = beta * torch.einsum("bhp,bn->bhpn", p, key)
-            ssm_state = clear * forgotten + written
+            ssm_state = retain * forgotten + written
 
         y = torch.einsum("bhpn,bn->bhp", ssm_state.to(dtype), C)
         y = y + rearrange(mixer.D.to(dtype), "h -> h 1") * x_h
@@ -591,7 +591,7 @@ class Model(nn.Module):
             h = self.embedding(input_ids[:, t])
             residual = None
             token_betas: list[torch.Tensor] = []   # (B,) per injected layer
-            token_clears: list[torch.Tensor] = []
+            token_retains: list[torch.Tensor] = []
             last_surprise_per_slot: torch.Tensor | None = None
             last_o_t_norm_per_slot: torch.Tensor | None = None
             for i, layer in enumerate(self.layers):
@@ -599,14 +599,14 @@ class Model(nn.Module):
                 gated_delta = None
                 if i in INJECTED_LAYERS:
                     gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
-                    beta, clear = gated_delta[2], gated_delta[3]
-                    beta_per_slot = beta[:, 0, 0, 0].detach()   # (B,)
-                    clear_per_slot = clear[:, 0, 0, 0].detach()  # (B,)
+                    beta, retain = gated_delta[2], gated_delta[3]
+                    beta_per_slot = beta[:, 0, 0, 0].detach()    # (B,)
+                    retain_per_slot = retain[:, 0, 0, 0].detach()  # (B,)
                     self._mem_stat_sums["beta"] += beta_per_slot.mean().item()
-                    self._mem_stat_sums["clear"] += clear_per_slot.mean().item()
+                    self._mem_stat_sums["retain"] += retain_per_slot.mean().item()
                     self._mem_stat_inj_count += 1
                     token_betas.append(beta_per_slot)
-                    token_clears.append(clear_per_slot)
+                    token_retains.append(retain_per_slot)
                 h, conv_state, ssm_state = self._mixer_step(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i], gated_delta
                 )
@@ -629,10 +629,10 @@ class Model(nn.Module):
                 logs = []
                 for b in range(batch_size):
                     betas_b = [tb[b].item() for tb in token_betas]
-                    clears_b = [tc[b].item() for tc in token_clears]
+                    retains_b = [tr[b].item() for tr in token_retains]
                     entry: dict = {
                         "beta": sum(betas_b) / len(betas_b),
-                        "clear": sum(clears_b) / len(clears_b),
+                        "retain": sum(retains_b) / len(retains_b),
                         "active_layers": sum(bv > ACTIVE_BETA_THRESHOLD for bv in betas_b),
                         "n_layers": len(betas_b),
                     }
@@ -661,7 +661,7 @@ class Model(nn.Module):
 
     def last_token_log(self) -> list[dict] | None:
         """Per-slot snapshot of the most recently processed token's memory
-        signals. Returns a list with one dict per batch element (beta/clear
+        signals. Returns a list with one dict per batch element (beta/retain
         averaged across injected layers, active_layers = count above
         ACTIVE_BETA_THRESHOLD, surprise/o_t_norm from the front-end read).
         None until forward() has run at least once. Never resets -- meant
@@ -711,9 +711,9 @@ class Model(nn.Module):
 
     def pop_memory_stats(self) -> dict[str, float] | None:
         """Returns averages since the last call (None if forward hasn't run
-        since then) and resets the running sums. `beta`/`clear` are the most
+        since then) and resets the running sums. `beta`/`retain` are the most
         direct usage signal: both start near their no-op init (beta~0.05 via
-        beta_anneal_offset, clear~0.98, see _GatedDeltaInjection.__init__) so
+        beta_anneal_offset, retain~0.98, see _GatedDeltaInjection.__init__) so
         the backbone behaves like the unmodified pretrained model until
         training moves them -- beta staying near its init over many steps
         (well past BETA_BIAS_ANNEAL_TOKENS, once the anneal offset is gone)
@@ -724,7 +724,7 @@ class Model(nn.Module):
             return None
         stats = {
             "beta": self._mem_stat_sums["beta"] / max(self._mem_stat_inj_count, 1),
-            "clear": self._mem_stat_sums["clear"] / max(self._mem_stat_inj_count, 1),
+            "retain": self._mem_stat_sums["retain"] / max(self._mem_stat_inj_count, 1),
             "surprise": self._mem_stat_sums["surprise"] / self._mem_stat_tok_count,
             "o_t_norm": self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count,
         }

@@ -128,12 +128,12 @@ def extra_log(model) -> str | None:
     step and prints whatever string it returns (None to print nothing this
     step). Used here to report whether the memory subsystem is actually
     being used, not just receiving gradient -- see Model.pop_memory_stats
-    for what beta/clear/surprise/o_t_norm mean."""
+    for what beta/retain/surprise/o_t_norm mean."""
     stats = model.pop_memory_stats()
     if stats is None:
         return None
     return (
-        f"memory  beta {stats['beta']:.4f}  clear {stats['clear']:.4f}"
+        f"memory  beta {stats['beta']:.4f}  retain {stats['retain']:.4f}"
         f"  surprise {stats['surprise']:.4f}  o_t_norm {stats['o_t_norm']:.4f}"
     )
 
@@ -147,7 +147,7 @@ def chunk_extra_log(model) -> list[str] | None:
     if logs is None:
         return None
     return [
-        f"beta {log['beta']:.4f}  clear {log['clear']:.4f}"
+        f"beta {log['beta']:.4f}  retain {log['retain']:.4f}"
         f"  active {log['active_layers']:>2}/{log['n_layers']}"
         f"  surprise {log['surprise']:.4f}  o_t_norm {log['o_t_norm']:.4f}"
         for log in logs
