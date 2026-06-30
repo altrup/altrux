@@ -39,7 +39,7 @@ EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
 # raising it -- a single isolated chunk's peak VRAM is NOT representative of
 # real multi-chunk training, since the held-over gradient/cache floor from
 # earlier chunks eats into the next chunk's headroom.
-DEFAULT_CHUNK_LEN = 8
+DEFAULT_CHUNK_LEN = 7
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
