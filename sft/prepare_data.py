@@ -1,6 +1,7 @@
 import argparse
 import importlib
 import json
+import multiprocessing
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,20 @@ from models.common import build_tokenizer
 _model_mod = importlib.import_module(f"models.{os.getenv('MODEL_NAME', 'mamba2_780m')}")
 USER_OPEN = _model_mod.USER_OPEN
 ASST_OPEN = _model_mod.ASST_OPEN
+
+_worker_tokenizer = None
+_worker_max_len = None
+
+
+def _worker_init(model_name: str, max_len: int) -> None:
+    global _worker_tokenizer, _worker_max_len
+    mod = importlib.import_module(f"models.{model_name}")
+    _worker_tokenizer = build_tokenizer(mod)
+    _worker_max_len = max_len
+
+
+def _worker_format(record: dict) -> tuple[list[int], list[bool]]:
+    return format_conversation(record.get("messages", []), _worker_tokenizer, _worker_max_len)
 
 
 def format_conversation(
@@ -80,23 +95,39 @@ def main() -> None:
     parser.add_argument("--max-examples", type=int, default=None, help="Cap number of examples loaded")
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
     parser.add_argument("--max-len", type=int, default=1024, help="Max tokens per example")
+    parser.add_argument("--workers", type=int, default=4, help="Parallel tokenization workers")
     args = parser.parse_args()
-
-    tokenizer = build_tokenizer(_model_mod)
 
     all_ids: list[torch.Tensor] = []
     all_masks: list[torch.Tensor] = []
     skipped = 0
 
     records = iter_records(args)
-    for i, record in enumerate(records, 1):
-        print(f"\r{i}/{len(records)}", end="", flush=True)
-        ids, mask = format_conversation(record.get("messages", []), tokenizer, args.max_len)
-        if not any(mask):
-            skipped += 1
-            continue
-        all_ids.append(torch.tensor(ids, dtype=torch.long))
-        all_masks.append(torch.tensor(mask, dtype=torch.bool))
+    model_name = os.getenv("MODEL_NAME", "mamba2_780m")
+
+    if args.workers > 1:
+        with multiprocessing.Pool(
+            args.workers,
+            initializer=_worker_init,
+            initargs=(model_name, args.max_len),
+        ) as pool:
+            for i, (ids, mask) in enumerate(pool.imap(_worker_format, records), 1):
+                print(f"\r{i}/{len(records)}", end="", flush=True)
+                if not any(mask):
+                    skipped += 1
+                    continue
+                all_ids.append(torch.tensor(ids, dtype=torch.long))
+                all_masks.append(torch.tensor(mask, dtype=torch.bool))
+    else:
+        tokenizer = build_tokenizer(_model_mod)
+        for i, record in enumerate(records, 1):
+            print(f"\r{i}/{len(records)}", end="", flush=True)
+            ids, mask = format_conversation(record.get("messages", []), tokenizer, args.max_len)
+            if not any(mask):
+                skipped += 1
+                continue
+            all_ids.append(torch.tensor(ids, dtype=torch.long))
+            all_masks.append(torch.tensor(mask, dtype=torch.bool))
     print()
 
     out = Path(args.output)
