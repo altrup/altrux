@@ -692,7 +692,7 @@ def main() -> None:
     parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=12, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=2000, help="Save checkpoint every N tokens of training")
-    parser.add_argument("--keep-ckpts", type=int, default=20, help="Number of checkpoints to retain")
+    parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
