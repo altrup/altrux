@@ -70,6 +70,8 @@ class ModelRegistry:
             # -- loading into `base` would silently miss those keys.
             print(f"loading checkpoint: {ckpt}")
             load_checkpoint(self.model, ckpt)
+            if hasattr(model_mod, "post_load"):
+                model_mod.post_load(self.model, ckpt)
         # Move everything to device after checkpoint load: models like
         # mamba2_780m_memory add new nn.Modules (front_end, injections) that
         # initialize on CPU and are not covered by load_base's device placement.
