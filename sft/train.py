@@ -766,6 +766,8 @@ def main() -> None:
     n = len(train_ids)
     print(f"train: {n}  eval: {n_eval}  epochs: {args.epochs}  batch_size: {args.batch_size}")
 
+    print("running preflight gradient check ...")
+    sys.stdout.flush()
     preflight(hooks, model, trainable_params, train_ids, train_masks, device, args.max_len, args.eos_weight, args.chunk_len)
 
     if args.preflight_only:
