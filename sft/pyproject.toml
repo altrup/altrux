@@ -17,9 +17,6 @@ dev = [
     "pytest>=8.0",
 ]
 
-[tool.uv.extra-build-dependencies]
-mamba-ssm = ["wheel"]
-
 # torch and mamba-ssm are installed via `make sync` (hardware-specific
 # builds; ROCm auto-detected via UV_TORCH_BACKEND=auto). causal-conv1d is
 # deliberately NOT installed: mamba_ssm's fused causal_conv1d/Triton SSD-scan
