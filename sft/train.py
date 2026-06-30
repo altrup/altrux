@@ -223,12 +223,14 @@ def evaluate(hooks, model, eval_ids: list[torch.Tensor], eval_masks: list, devic
     chunk_len = chunk_len or hooks.DEFAULT_CHUNK_LEN
     model.eval()
     total_loss = total_weight = 0.0
+    n = len(eval_ids)
     with torch.no_grad():
-        for ids, mask in zip(eval_ids, eval_masks):
+        for i, (ids, mask) in enumerate(zip(eval_ids, eval_masks), 1):
             if ids.numel() > max_len or ids.numel() < 2:
                 continue
             if mask is not None and not mask.any():
                 continue
+            print(f"\r  eval {i}/{n} ({ids.numel()} tokens)", end="", flush=True)
             ids = ids.to(device)
             mask = mask.to(device) if mask is not None else None
             state = None
@@ -237,6 +239,7 @@ def evaluate(hooks, model, eval_ids: list[torch.Tensor], eval_masks: list, devic
                 total_loss += loss_sum.item()
                 total_weight += weight_sum.item()
                 state = state.detach() if state is not None else None
+    print()
     model.train()
     return total_loss / total_weight if total_weight > 0 else float("nan")
 
@@ -600,7 +603,7 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN")
     parser.add_argument("--batch-size", type=int, default=4, help="Number of examples to train in parallel (slot-based batching)")
-    parser.add_argument("--eval-examples", type=int, default=200, help="Examples held out for eval")
+    parser.add_argument("--eval-examples", type=int, default=5, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=12, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=2000, help="Save checkpoint every N tokens of training")
     parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")

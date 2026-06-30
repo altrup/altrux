@@ -59,6 +59,6 @@ Whenever you add, rename, or remove a backend environment variable, also update 
 Whenever you add, rename, or remove a frontend environment variable, also update `frontend/.env.example`.
 Whenever you add, rename, or remove an sft environment variable, also update `sft/.env.example`.
 
-## Frontend
+## Live progress logs
 
-See `frontend/CLAUDE.md` for frontend-specific rules (quality checks, Tailwind colour policy).
+Any operation that takes more than a few seconds must print live progress so it's clear something is happening. This includes data preparation, evaluation, model loading, and any other blocking step. A `\r`-based counter or periodic print is fine — silence is not. Never leave a long operation running with no output.
