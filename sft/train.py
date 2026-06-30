@@ -3,7 +3,7 @@ module (models/{name}/train_hooks.py): setup_training, chunk_loss, and
 optionally extra_log/chunk_extra_log/on_step/reset_slot/set_slot_state/
 init_state/replay_context. This script owns everything that's the same across
 models -- shuffling, chunk iteration, gradient-accumulation counting,
-checkpoint cadence/rotation (including mid-example resume), evaluation,
+checkpoint cadence/rotation (including mid-example resume),
 preflight, and non-finite checks -- and delegates the irreducibly
 model-specific part (how to load the model for training, and how to compute
 loss for one chunk) to those hooks. See models/mamba2_780m/train_hooks.py
@@ -180,7 +180,7 @@ def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
 def _chunks(ids: torch.Tensor, mask: torch.Tensor | None, chunk_len: int, start_pos: int = 0):
     """Slices one example into (start, end, input_ids, target_ids, mask_slice)
     chunks of at most `chunk_len` tokens, shifted by one for next-token
-    prediction. Used by evaluate, preflight, and replay (single-example
+    prediction. Used by replay (single-example
     paths); the slot-based training loop manages chunking directly."""
     seqlen = ids.numel()
     for start in range(start_pos, seqlen - 1, chunk_len):
@@ -216,32 +216,6 @@ def replay_state(hooks, model, ids: torch.Tensor, mask: torch.Tensor | None, chu
             state = state.detach() if state is not None else None
     return state
 
-
-def evaluate(hooks, model, eval_ids: list[torch.Tensor], eval_masks: list, device, max_len, chunk_len: int | None = None) -> float:
-    """Held-out loss, no backward. Generic across models since chunk_loss is
-    the only model-specific piece."""
-    chunk_len = chunk_len or hooks.DEFAULT_CHUNK_LEN
-    model.eval()
-    total_loss = total_weight = 0.0
-    n = len(eval_ids)
-    with torch.no_grad():
-        for i, (ids, mask) in enumerate(zip(eval_ids, eval_masks), 1):
-            if ids.numel() > max_len or ids.numel() < 2:
-                continue
-            if mask is not None and not mask.any():
-                continue
-            print(f"\r  eval {i}/{n} ({ids.numel()} tokens)", end="", flush=True)
-            ids = ids.to(device)
-            mask = mask.to(device) if mask is not None else None
-            state = None
-            for start, end, input_ids, target_ids, mask_slice in _chunks(ids, mask, chunk_len):
-                loss_sum, weight_sum, state = hooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=1.0)
-                total_loss += loss_sum.item()
-                total_weight += weight_sum.item()
-                state = state.detach() if state is not None else None
-    print()
-    model.train()
-    return total_loss / total_weight if total_weight > 0 else float("nan")
 
 
 
@@ -322,8 +296,6 @@ def run_training(
     trainable_params: list[torch.nn.Parameter],
     train_ids: list[torch.Tensor],
     train_masks: list,
-    eval_ids: list[torch.Tensor],
-    eval_masks: list,
     device,
     args,
     start_epoch: int,
@@ -546,10 +518,6 @@ def run_training(
                     raise SystemExit(1)
 
                 if total_tokens - last_ckpt_tokens >= args.ckpt_every_tokens:
-                    ts = datetime.now().strftime("%H:%M:%S")
-                    print(f"[{ts}]  evaluating ...")
-                    sys.stdout.flush()
-                    el = evaluate(hooks, model, eval_ids, eval_masks, device, args.max_len, chunk_len)
                     path = save_checkpoint(
                         model, optimizer, global_step, epoch, slots, next_ptr,
                         total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
@@ -557,10 +525,7 @@ def run_training(
                     last_ckpt_tokens = total_tokens
                     rotate_checkpoints(args.keep_ckpts, epoch)
                     ts = datetime.now().strftime("%H:%M:%S")
-                    if math.isnan(el):
-                        print(f"[{ts}]  WARNING: eval_loss is nan -- checkpoint saved but eval metric is unreliable  {path}")
-                    else:
-                        print(f"[{ts}]  eval_loss {el:.4f}  saved {path}")
+                    print(f"[{ts}]  saved {path}")
 
         if chunk_extra_log_fn is not None:
             _clear_live(prev_n_lines)
@@ -580,17 +545,13 @@ def run_training(
         print("nothing to train -- already at or past the requested epochs. Pass a larger --epochs to continue.")
         return
 
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}]  evaluating (final) ...")
-    sys.stdout.flush()
-    el = evaluate(hooks, model, eval_ids, eval_masks, device, args.max_len, chunk_len)
     path = save_checkpoint(
         model, optimizer, global_step, epoch, slots, next_ptr,
         total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
     )
     rotate_checkpoints(args.keep_ckpts, epoch)
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}]  done. eval_loss {el:.4f}  final checkpoint: {path}")
+    print(f"[{ts}]  done. final checkpoint: {path}")
 
 
 def main() -> None:
@@ -603,7 +564,6 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN")
     parser.add_argument("--batch-size", type=int, default=6, help="Number of examples to train in parallel (slot-based batching)")
-    parser.add_argument("--eval-examples", type=int, default=5, help="Examples held out for eval")
     parser.add_argument("--accum-steps", type=int, default=32, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training")
     parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")
@@ -667,20 +627,12 @@ def main() -> None:
     all_ids: list[torch.Tensor] = data["ids"]
     all_masks: list[torch.Tensor] = data.get("masks") or [None] * len(all_ids)
 
-    # shuffle with fixed seed before splitting so eval isn't biased by dataset ordering
-    rng = torch.Generator().manual_seed(42)
-    perm = torch.randperm(len(all_ids), generator=rng).tolist()
-    all_ids = [all_ids[i] for i in perm]
-    all_masks = [all_masks[i] for i in perm]
-
-    n_eval = min(args.eval_examples, len(all_ids) // 10)
-    eval_ids, eval_masks = all_ids[:n_eval], all_masks[:n_eval]
-    train_ids, train_masks = all_ids[n_eval:], all_masks[n_eval:]
+    train_ids, train_masks = all_ids, all_masks
     n = len(train_ids)
-    print(f"train: {n}  eval: {n_eval}  epochs: {args.epochs}  batch_size: {args.batch_size}")
+    print(f"train: {n}  epochs: {args.epochs}  batch_size: {args.batch_size}")
 
     run_training(
-        hooks, model, optimizer, trainable_params, train_ids, train_masks, eval_ids, eval_masks, device, args,
+        hooks, model, optimizer, trainable_params, train_ids, train_masks, device, args,
         start_epoch, start_slot_states, start_next_ptr, start_step, start_total_tokens, start_last_ckpt_tokens,
     )
 
