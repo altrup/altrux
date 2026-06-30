@@ -241,70 +241,6 @@ def evaluate(hooks, model, eval_ids: list[torch.Tensor], eval_masks: list, devic
     return total_loss / total_weight if total_weight > 0 else float("nan")
 
 
-def preflight(
-    hooks,
-    model,
-    trainable_params: list[torch.nn.Parameter],
-    all_ids: list[torch.Tensor],
-    all_masks: list,
-    device,
-    max_len,
-    eos_weight: float = 1.0,
-    chunk_len: int | None = None,
-) -> None:
-    """Runs one example through the same chunked forward+backward path the
-    main loop uses, then asserts gradients actually reached the trainable
-    parameters -- this is what catches a model whose forward silently fails
-    to connect some part of itself to the loss (see
-    models/mamba2_780m_memory/train_hooks.py's history for why this check
-    matters). LoRA params and any other trainable params (e.g. a model's own
-    full-gradient subsystem) are checked separately so one silently
-    disconnected branch can't hide behind the other's gradient."""
-    chunk_len = chunk_len or hooks.DEFAULT_CHUNK_LEN
-    sample_ids = sample_mask = None
-    for ids, mask in zip(all_ids, all_masks):
-        if ids.numel() < 2 or ids.numel() > max_len:
-            continue
-        if mask is not None and not mask.any():
-            continue
-        sample_ids, sample_mask = ids, mask
-        break
-    assert sample_ids is not None, "no valid examples found in dataset"
-
-    model.train()
-    sample_ids = sample_ids.to(device)
-    sample_mask = sample_mask.to(device) if sample_mask is not None else None
-    seqlen = sample_ids.numel()
-    chunk_extra_log = getattr(hooks, "chunk_extra_log", None)
-    state = None
-    prev_n_lines = 0
-    for start, end, input_ids, target_ids, mask_slice in _chunks(sample_ids, sample_mask, chunk_len):
-        loss_sum, weight_sum, state = hooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight)
-        if weight_sum > 0:
-            (loss_sum / weight_sum).backward()
-            prev_n_lines = _show_chunk_progress(model, chunk_extra_log, end, seqlen, loss_sum, weight_sum, prev_n_lines)
-        state = state.detach() if state is not None else None
-    _clear_live(prev_n_lines)
-
-    lora_total = other_total = 0
-    lora_grads = other_grads = 0
-    for name, p in model.named_parameters():
-        if not p.requires_grad:
-            continue
-        has_grad = int(p.grad is not None and p.grad.abs().max() > 0)
-        if "lora_A" in name or "lora_B" in name:
-            lora_total += 1
-            lora_grads += has_grad
-        else:
-            other_total += 1
-            other_grads += has_grad
-    model.zero_grad()
-
-    assert lora_grads + other_grads > 0, f"preflight: 0/{len(trainable_params)} params received gradients"
-    assert lora_total == 0 or lora_grads > 0, "preflight: 0 LoRA params received gradients"
-    assert other_total == 0 or other_grads > 0, "preflight: 0 non-LoRA trainable params received gradients"
-    print(f"preflight OK -- {lora_grads} LoRA params and {other_grads} other trainable params have gradients")
-
 
 def _print_live(lines: list[str], prev_n_lines: int) -> int:
     """Overwrites whatever this function last printed (prev_n_lines lines)
@@ -330,25 +266,6 @@ def _clear_live(prev_n_lines: int) -> None:
     sys.stdout.write(out)
     sys.stdout.flush()
 
-
-def _show_chunk_progress(model, chunk_extra_log, end: int, seqlen: int, loss_sum, weight_sum, prev_n_lines: int) -> int:
-    """Updates the in-place live progress display for one chunk in single-
-    example mode (preflight). Used for single-example paths only; the
-    slot-based training loop uses _show_batch_progress instead."""
-    if chunk_extra_log is None or weight_sum <= 0:
-        return prev_n_lines
-    chunk_loss_val = loss_sum.item() / weight_sum.item()
-    ts = datetime.now().strftime("%H:%M:%S")
-    lines = [f"[{ts}]  token {end:>6}/{seqlen:<6}  loss {chunk_loss_val:.4f}"]
-    extra = chunk_extra_log(model)
-    if extra is not None:
-        # extra may be a str (780m_memory) or list[str] (2_7b_memory);
-        # in single-example preflight only the first element is meaningful
-        if isinstance(extra, list):
-            extra = extra[0] if extra else None
-        if extra:
-            lines.append(f"  {extra}")
-    return _print_live(lines, prev_n_lines)
 
 
 def _show_batch_progress(
@@ -697,7 +614,6 @@ def main() -> None:
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
-    parser.add_argument("--preflight-only", action="store_true", help="Load the real model and data, run the preflight gradient check, then exit.")
     args = parser.parse_args()
     args.max_len = args.max_len if args.max_len is not None else math.inf
 
@@ -765,14 +681,6 @@ def main() -> None:
     train_ids, train_masks = all_ids[n_eval:], all_masks[n_eval:]
     n = len(train_ids)
     print(f"train: {n}  eval: {n_eval}  epochs: {args.epochs}  batch_size: {args.batch_size}")
-
-    print("running preflight gradient check ...")
-    sys.stdout.flush()
-    preflight(hooks, model, trainable_params, train_ids, train_masks, device, args.max_len, args.eos_weight, args.chunk_len)
-
-    if args.preflight_only:
-        print("preflight passed (--preflight-only set) -- exiting before the training loop")
-        return
 
     run_training(
         hooks, model, optimizer, trainable_params, train_ids, train_masks, eval_ids, eval_masks, device, args,

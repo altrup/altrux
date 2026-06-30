@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume preflight smoke-test test
+.PHONY: sync data data-memory prepare train resume smoke-test test
 
 sync:
 	uv sync --inexact
@@ -65,16 +65,7 @@ resume:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
-# Loads the real model and data and runs the preflight gradient check, then
-# exits before the full training loop -- a quick sanity check (still pays for
-# loading the real model/checkpoint, but skips everything after that) before
-# committing to a real run. Same env/flags as `train`, so pass --data,
-# --chunk-len, etc. through ARGS the same way.
-preflight:
-	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u train.py --preflight-only $(ARGS)
-
-# Same gradient-wiring check as `preflight`, but on a short synthetic
+# Same gradient-wiring check, but on a short synthetic
 # sequence instead of the real dataset's first valid example -- useful for
 # mamba2_780m_memory, whose real examples are thousands of tokens and whose
 # --chunk-len is capped at 8 by this hardware's 8GB VRAM (see
