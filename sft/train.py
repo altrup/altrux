@@ -530,13 +530,7 @@ def run_training(
                 if on_step_fn is not None:
                     on_step_fn(model, total_tokens)
 
-                active_examples = [s.example_idx for s in slots if s is not None]
-                ex_range = (
-                    f"{min(active_examples)}-{max(active_examples)}/{n}"
-                    if active_examples
-                    else f"?/{n}"
-                )
-                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {ex_range}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
+                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
                 if extra_log_fn is not None:
                     line = extra_log_fn(model)
                     if line is not None:
