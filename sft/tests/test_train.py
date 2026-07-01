@@ -239,13 +239,90 @@ def test_checkpoint_state_round_trips_chunk_pos_and_token_counters(monkeypatch, 
 
 
 # ---------------------------------------------------------------------------
+# save_checkpoint / rotate_full_state -- optional full internal state
+# ---------------------------------------------------------------------------
+
+def test_save_checkpoint_writes_mem_state_when_batched_state_given(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 3, _ids(5), None)]
+    slots[0].pos = 2
+
+    path = train.save_checkpoint(
+        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
+        total_tokens=10.0, last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+        batched_state=torch.tensor([1.0, 2.0]),
+    )
+
+    assert (path / "mem_state.pt").exists()
+    state = torch.load(path / "state.pt", weights_only=True)
+    assert state["state_batch_size"] == 1
+
+
+def test_save_checkpoint_omits_mem_state_when_batched_state_is_none(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 3, _ids(5), None)]
+
+    path = train.save_checkpoint(
+        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
+        total_tokens=10.0, last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+    )
+
+    assert not (path / "mem_state.pt").exists()
+    state = torch.load(path / "state.pt", weights_only=True)
+    assert "state_batch_size" not in state
+
+
+def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 0, _ids(5), None)]
+    paths = [
+        train.save_checkpoint(
+            model, optimizer, step=step, epoch=0, slots=slots, next_ptr=1,
+            total_tokens=float(step), last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+            batched_state=torch.tensor([1.0]),
+        )
+        for step in (1, 2, 3)
+    ]
+
+    train.rotate_full_state(keep=2)
+
+    assert not (paths[0] / "mem_state.pt").exists()
+    assert (paths[1] / "mem_state.pt").exists()
+    assert (paths[2] / "mem_state.pt").exists()
+    # the rest of the checkpoint (trainable.pt, etc.) is untouched by pruning.
+    assert (paths[0] / "trainable.pt").exists()
+
+
+def test_rotate_full_state_zero_removes_all(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 0, _ids(5), None)]
+    path = train.save_checkpoint(
+        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
+        total_tokens=1.0, last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+        batched_state=torch.tensor([1.0]),
+    )
+
+    train.rotate_full_state(keep=0)
+
+    assert not (path / "mem_state.pt").exists()
+
+
+# ---------------------------------------------------------------------------
 # main training loop: token-based checkpoint cadence, mid-example resume
 # ---------------------------------------------------------------------------
 
 def _make_args(**overrides):
     defaults = dict(
         epochs=1, eos_weight=1.0, accum_steps=1, chunk_len=4,
-        ckpt_every_tokens=8, keep_ckpts=5, lora_rank=4, lora_alpha=8.0,
+        ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
         max_len=float("inf"),
     )
     defaults.update(overrides)

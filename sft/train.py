@@ -128,6 +128,22 @@ def rotate_checkpoints(keep: int, epoch: int) -> None:
         shutil.rmtree(epoch_dir / f"step-{step}")
 
 
+def rotate_full_state(keep: int) -> None:
+    """Delete mem_state.pt (the saved full internal state -- see
+    save_checkpoint) from every checkpoint except the newest `keep`,
+    globally across epochs, since resume only ever reads it from
+    latest_checkpoint(). The rest of the checkpoint (trainable.pt,
+    optimizer.pt, state.pt) is untouched -- those checkpoints stay fully
+    resumable, just via replay_state instead of a direct load. keep <= 0
+    means: don't keep mem_state.pt anywhere."""
+    ckpts = sorted(iter_checkpoints())
+    stale = ckpts if keep <= 0 else ckpts[:-keep]
+    for _, path in stale:
+        p = path / "mem_state.pt"
+        if p.exists():
+            p.unlink()
+
+
 def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -139,12 +155,20 @@ def save_checkpoint(
     last_ckpt_tokens: float,
     lora_rank: int,
     lora_alpha: float,
+    batched_state=None,
 ) -> Path:
     """Saves every trainable parameter -- not just LoRA adapters, since a
     model like mamba2_2_7b_memory has an additional full-gradient subsystem
     that a LoRA-only save would silently drop. slot_states records each
     slot's (example_idx, pos) for resume; next_ptr is the next example to
-    assign from the epoch's ordered list."""
+    assign from the epoch's ordered list.
+
+    If batched_state is given (only for models that carry state across
+    chunks, and only when the caller wants this checkpoint to keep it --
+    see rotate_full_state), it's saved as mem_state.pt so resume can load
+    it directly instead of regenerating it via replay_state. Cheap to omit:
+    a checkpoint without mem_state.pt is still fully resumable, just via
+    replay -- see main()'s resume path."""
     path = CKPT_DIR / f"epoch-{epoch + 1}" / f"step-{step}"
     path.mkdir(parents=True, exist_ok=True)
     state = {n: p.detach().cpu() for n, p in model.named_parameters() if p.requires_grad}
@@ -155,16 +179,17 @@ def save_checkpoint(
         (s.example_idx, s.pos) if s is not None else None
         for s in slots
     ]
-    torch.save(
-        {
-            "epoch": epoch,
-            "slot_states": slot_states,
-            "next_ptr": next_ptr,
-            "total_tokens": total_tokens,
-            "last_ckpt_tokens": last_ckpt_tokens,
-        },
-        path / "state.pt",
-    )
+    state_dict = {
+        "epoch": epoch,
+        "slot_states": slot_states,
+        "next_ptr": next_ptr,
+        "total_tokens": total_tokens,
+        "last_ckpt_tokens": last_ckpt_tokens,
+    }
+    if batched_state is not None:
+        state_dict["state_batch_size"] = len(slots)
+        torch.save(batched_state, path / "mem_state.pt")
+    torch.save(state_dict, path / "state.pt")
     return path
 
 
@@ -331,6 +356,7 @@ def run_training(
     start_step: int,
     start_total_tokens: float,
     start_last_ckpt_tokens: float,
+    start_full_state=None,
 ) -> None:
     """Owns the entire training loop: slot-based batching, shuffling, chunk
     iteration, gradient-accumulation counting, checkpoint cadence/rotation
@@ -342,8 +368,15 @@ def run_training(
     forward+backward per chunk step.
 
     `args` needs: epochs, eos_weight, accum_steps, chunk_len,
-    ckpt_every_tokens, keep_ckpts, lora_rank, lora_alpha, max_len, batch_size
-    (already resolved to numbers, not raw CLI None defaults)."""
+    ckpt_every_tokens, keep_ckpts, keep_full_state, lora_rank, lora_alpha,
+    max_len, batch_size (already resolved to numbers, not raw CLI None
+    defaults).
+
+    start_full_state, if given (loaded by main() from a checkpoint's
+    mem_state.pt when its recorded batch size matches args.batch_size), is
+    used as-is for the resumed epoch's batched_state, skipping replay_state
+    entirely for every slot -- see rotate_full_state for how checkpoints
+    keep this file only for the most recent few."""
     chunk_len = args.chunk_len or hooks.DEFAULT_CHUNK_LEN
     batch_size = args.batch_size
     extra_log_fn = getattr(hooks, "extra_log", None)
@@ -404,19 +437,14 @@ def run_training(
         else:
             batched_state = None  # model initializes it on first chunk_loss call
 
-        # On resume: restore each slot's position and replay its state.
+        # On resume: restore each slot's example/position from the checkpoint
+        # first -- needed regardless of how (or whether) internal state is
+        # recovered below.
         if epoch == start_epoch and start_slot_states is not None:
-            replay_prev_n_lines = 0
-            n_to_replay = sum(
-                1 for b, saved in enumerate(start_slot_states)
-                if saved is not None and b < len(slots) and slots[b] is not None and saved[1] > 0
-            )
-            replayed = 0
             for b, saved in enumerate(start_slot_states):
                 if saved is None or b >= len(slots) or slots[b] is None:
                     continue
                 example_idx, pos = saved
-                # Override the slot's example and position from the checkpoint.
                 idx_in_order = next((i for i, v in enumerate(valid_order) if v == example_idx), None)
                 if idx_in_order is None:
                     continue  # example was filtered out -- start slot fresh
@@ -425,18 +453,31 @@ def run_training(
                 slots[b] = _Slot(b, example_idx, ids, mask)
                 slots[b].pos = pos
 
-                if pos > 0 and set_slot_fn is not None and batched_state is not None:
-                    replayed += 1
-                    slot_label = f"slot {b} ({replayed}/{n_to_replay})"
+            if start_full_state is not None:
+                # Fast path: the checkpoint saved the full batched internal
+                # state (see rotate_full_state) -- use it as-is, no replay.
+                batched_state = start_full_state
+                print("loaded saved internal state for resume -- skipping replay")
+            elif set_slot_fn is not None and batched_state is not None:
+                # Slow path: no saved state for this checkpoint (older
+                # checkpoint, pruned past --keep-full-state, or a batch-size
+                # mismatch -- see main()) -- regenerate each slot's state by
+                # replaying its already-seen prefix (forward-only).
+                replay_prev_n_lines = 0
+                to_replay = [b for b, slot in enumerate(slots) if slot is not None and slot.pos > 0]
+                for i, b in enumerate(to_replay):
+                    slot = slots[b]
+                    slot_label = f"slot {b} ({i + 1}/{len(to_replay)})"
                     single_state, replay_prev_n_lines = replay_state(
-                        hooks, model, train_ids[example_idx], train_masks[example_idx], chunk_len, pos, device,
+                        hooks, model, slot.ids, slot.mask, chunk_len, slot.pos, device,
                         chunk_extra_log_fn=chunk_extra_log_fn, slot_label=slot_label, prev_n_lines=replay_prev_n_lines,
                     )
                     if single_state is not None:
                         set_slot_fn(model, batched_state, b, single_state)
-            if replay_prev_n_lines:
-                _clear_live(replay_prev_n_lines)
-                print(f"replayed state for {n_to_replay} slot(s)")
+                if replay_prev_n_lines:
+                    _clear_live(replay_prev_n_lines)
+                if to_replay:
+                    print(f"replayed state for {len(to_replay)} slot(s)")
 
         accum_count = 0
         window_loss_sum = 0.0
@@ -562,9 +603,11 @@ def run_training(
                     path = save_checkpoint(
                         model, optimizer, global_step, epoch, slots, next_ptr,
                         total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
+                        batched_state=batched_state if args.keep_full_state > 0 else None,
                     )
                     last_ckpt_tokens = total_tokens
                     rotate_checkpoints(args.keep_ckpts, epoch)
+                    rotate_full_state(args.keep_full_state)
                     ts = datetime.now().strftime("%H:%M:%S")
                     print(f"[{ts}]  saved {path}")
 
@@ -589,8 +632,10 @@ def run_training(
     path = save_checkpoint(
         model, optimizer, global_step, epoch, slots, next_ptr,
         total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
+        batched_state=batched_state if args.keep_full_state > 0 else None,
     )
     rotate_checkpoints(args.keep_ckpts, epoch)
+    rotate_full_state(args.keep_full_state)
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}]  done. final checkpoint: {path}")
 
@@ -608,6 +653,7 @@ def main() -> None:
     parser.add_argument("--accum-steps", type=int, default=32, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training")
     parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")
+    parser.add_argument("--keep-full-state", type=int, default=5, help="Number of most-recent checkpoints to also save full internal model state for (mem_state.pt) -- lets resume skip replay_state entirely for those. 0 to disable. Only applies to models whose train_hooks define init_state/set_slot_state (e.g. mamba2_2_7b_memory); no-op otherwise.")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
@@ -634,6 +680,7 @@ def main() -> None:
     start_next_ptr = 0
     start_total_tokens = 0.0
     start_last_ckpt_tokens = 0.0
+    start_full_state = None
     if args.resume:
         ckpt = latest_checkpoint()
         if ckpt is not None:
@@ -646,6 +693,7 @@ def main() -> None:
                 )
             start_step = int(ckpt.name.split("-")[1])
             state_path = ckpt / "state.pt"
+            state_batch_size = None
             if state_path.exists():
                 state = torch.load(state_path, weights_only=True)
                 start_epoch = state["epoch"]
@@ -653,6 +701,7 @@ def main() -> None:
                 start_next_ptr = state.get("next_ptr", 0)
                 start_total_tokens = state.get("total_tokens", 0.0)
                 start_last_ckpt_tokens = state.get("last_ckpt_tokens", 0.0)
+                state_batch_size = state.get("state_batch_size")
                 # Legacy checkpoint format (single-example, no slot_states):
                 # map old example_idx/chunk_pos to a single-slot slot_states.
                 if start_slot_states is None:
@@ -660,6 +709,20 @@ def main() -> None:
                     chunk_pos = state.get("chunk_pos", 0)
                     start_slot_states = [(example_idx, chunk_pos)]
                     start_next_ptr = example_idx + (0 if chunk_pos > 0 else 1)
+            # mem_state.pt (the saved full internal state -- see
+            # save_checkpoint/rotate_full_state) only exists on recent
+            # checkpoints and only when its batch size still matches this
+            # run's --batch-size; missing or mismatched just means slower
+            # (replay-based) resume, not a broken one.
+            mem_state_path = ckpt / "mem_state.pt"
+            if mem_state_path.exists():
+                if state_batch_size == args.batch_size:
+                    start_full_state = torch.load(mem_state_path, map_location=device, weights_only=False)
+                else:
+                    print(
+                        f"mem_state.pt batch size ({state_batch_size}) doesn't match "
+                        f"--batch-size ({args.batch_size}) -- ignoring it, resuming via replay"
+                    )
             print(f"resumed at step {start_step}, epoch {start_epoch + 1}, next_ptr {start_next_ptr}")
         else:
             print("no checkpoint found, starting fresh")
@@ -675,6 +738,7 @@ def main() -> None:
     run_training(
         hooks, model, optimizer, trainable_params, train_ids, train_masks, device, args,
         start_epoch, start_slot_states, start_next_ptr, start_step, start_total_tokens, start_last_ckpt_tokens,
+        start_full_state,
     )
 
 
