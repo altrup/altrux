@@ -191,16 +191,33 @@ def _chunks(ids: torch.Tensor, mask: torch.Tensor | None, chunk_len: int, start_
         yield start, end, input_ids, target_ids, mask_slice
 
 
-def replay_state(hooks, model, ids: torch.Tensor, mask: torch.Tensor | None, chunk_len: int, chunk_pos: int, device):
+def replay_state(
+    hooks,
+    model,
+    ids: torch.Tensor,
+    mask: torch.Tensor | None,
+    chunk_len: int,
+    chunk_pos: int,
+    device,
+    chunk_extra_log_fn=None,
+    slot_label: str = "",
+    prev_n_lines: int = 0,
+):
     """Forward-only (no backward) regeneration of the carried model state up
     to chunk_pos, for resuming a checkpoint that landed mid-example.
 
     If the hook defines replay_context (e.g. mamba2_2_7b_memory), it is
     entered here to disable create_graph in the neural memory write --
     the forward arithmetic is identical but without the backward graph,
-    making replay materially faster."""
+    making replay materially faster.
+
+    Prints the same in-place live progress display as normal training
+    (chunk_extra_log_fn, if the model hook defines it) so a slow replay
+    isn't silent. Returns (state, prev_n_lines) -- prev_n_lines threads
+    through consecutive calls (one per resumed slot) so each overwrites the
+    last rather than stacking new lines."""
     if chunk_pos == 0:
-        return None
+        return None, prev_n_lines
     ids = ids.to(device)
     mask = mask.to(device) if mask is not None else None
     state = None
@@ -214,7 +231,17 @@ def replay_state(hooks, model, ids: torch.Tensor, mask: torch.Tensor | None, chu
                 break
             _, _, state = hooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=1.0)
             state = state.detach() if state is not None else None
-    return state
+
+            ts = datetime.now().strftime("%H:%M:%S")
+            line = f"[{ts}]  resuming {slot_label}  token {end:>6}/{chunk_pos:<6}"
+            if chunk_extra_log_fn is not None:
+                extra = chunk_extra_log_fn(model)
+                if extra is not None:
+                    extra_str = extra[0] if isinstance(extra, list) else str(extra)
+                    if extra_str:
+                        line += f"  {extra_str}"
+            prev_n_lines = _print_live([line], prev_n_lines)
+    return state, prev_n_lines
 
 
 
@@ -379,6 +406,12 @@ def run_training(
 
         # On resume: restore each slot's position and replay its state.
         if epoch == start_epoch and start_slot_states is not None:
+            replay_prev_n_lines = 0
+            n_to_replay = sum(
+                1 for b, saved in enumerate(start_slot_states)
+                if saved is not None and b < len(slots) and slots[b] is not None and saved[1] > 0
+            )
+            replayed = 0
             for b, saved in enumerate(start_slot_states):
                 if saved is None or b >= len(slots) or slots[b] is None:
                     continue
@@ -393,9 +426,17 @@ def run_training(
                 slots[b].pos = pos
 
                 if pos > 0 and set_slot_fn is not None and batched_state is not None:
-                    single_state = replay_state(hooks, model, train_ids[example_idx], train_masks[example_idx], chunk_len, pos, device)
+                    replayed += 1
+                    slot_label = f"slot {b} ({replayed}/{n_to_replay})"
+                    single_state, replay_prev_n_lines = replay_state(
+                        hooks, model, train_ids[example_idx], train_masks[example_idx], chunk_len, pos, device,
+                        chunk_extra_log_fn=chunk_extra_log_fn, slot_label=slot_label, prev_n_lines=replay_prev_n_lines,
+                    )
                     if single_state is not None:
                         set_slot_fn(model, batched_state, b, single_state)
+            if replay_prev_n_lines:
+                _clear_live(replay_prev_n_lines)
+                print(f"replayed state for {n_to_replay} slot(s)")
 
         accum_count = 0
         window_loss_sum = 0.0

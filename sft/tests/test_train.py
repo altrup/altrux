@@ -187,9 +187,10 @@ def test_replay_state_returns_none_at_chunk_pos_zero():
     model = FakeStatefulModel()
     ids = _ids(13)
 
-    state = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=0, device="cpu")
+    state, prev_n_lines = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=0, device="cpu")
 
     assert state is None
+    assert prev_n_lines == 0
 
 
 def test_replay_state_reconstructs_state_identical_to_uninterrupted_run():
@@ -205,7 +206,7 @@ def test_replay_state_reconstructs_state_identical_to_uninterrupted_run():
         state = state.detach()
     expected = state
 
-    replayed = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=8, device="cpu")
+    replayed, _ = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=8, device="cpu")
 
     assert torch.equal(replayed, expected)
 
@@ -214,7 +215,7 @@ def test_replay_state_does_not_require_grad():
     model = FakeStatefulModel()
     ids = _ids(13)
 
-    state = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=8, device="cpu")
+    state, _ = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=8, device="cpu")
 
     assert not state.requires_grad
 
