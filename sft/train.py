@@ -4,7 +4,7 @@ optionally extra_log/chunk_extra_log/on_step/reset_slot/set_slot_state/
 init_state/replay_context. This script owns everything that's the same across
 models -- shuffling, chunk iteration, gradient-accumulation counting,
 checkpoint cadence/rotation (including mid-example resume),
-preflight, and non-finite checks -- and delegates the irreducibly
+and non-finite checks -- and delegates the irreducibly
 model-specific part (how to load the model for training, and how to compute
 loss for one chunk) to those hooks. See models/mamba2_780m/train_hooks.py
 for the simple case and models/mamba2_2_7b_memory/train_hooks.py for the

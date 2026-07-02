@@ -65,8 +65,7 @@ resume:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
-# Same gradient-wiring check, but on a short synthetic
-# sequence instead of the real dataset's first valid example -- useful for
+# Gradient-wiring check on a short synthetic sequence -- useful for
 # mamba2_780m_memory, whose real examples are thousands of tokens and whose
 # --chunk-len is capped at 8 by this hardware's 8GB VRAM (see
 # smoke_test.py). Still pays for loading the real model. --length defaults
