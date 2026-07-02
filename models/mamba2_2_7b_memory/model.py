@@ -446,10 +446,6 @@ class Model(nn.Module):
         # signals, for live per-slot logging (overwritten every token).
         # List of dicts, one per batch element -- see last_token_log().
         self._last_token_logs: list[dict] = []
-        # Set to True during state replay to skip create_graph in the
-        # neural memory write (replay doesn't need the backward graph
-        # through k/v projections, only the correct updated weights).
-        self._in_replay: bool = False
 
     def _init_state(self, batch_size: int, device, dtype) -> MemoryState:
         conv_states, ssm_states = [], []
@@ -614,9 +610,7 @@ class Model(nn.Module):
                 state.ssm_states[i] = ssm_state
 
                 if i == READ_LAYER:
-                    o_t, surprise = self.front_end.step(
-                        residual, state.neural_memory, create_graph=not self._in_replay
-                    )
+                    o_t, surprise = self.front_end.step(residual, state.neural_memory)
                     state.last_o_t = o_t
                     state.last_surprise = surprise
                     last_surprise_per_slot = surprise.detach()          # (B,)

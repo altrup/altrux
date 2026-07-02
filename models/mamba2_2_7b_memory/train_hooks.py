@@ -18,7 +18,6 @@ does NOT restrict loss to assistant turns.
 """
 
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 
 import torch
@@ -90,19 +89,6 @@ def reset_slot(model, state, slot_idx: int) -> None:
     """Reset slot slot_idx's MemoryState to fresh random init, leaving all
     other slots unchanged. Call only on a detached state."""
     model.reset_slot(state, slot_idx)
-
-
-@contextmanager
-def replay_context(model):
-    """Context manager that disables create_graph in the neural memory write
-    during state replay -- the replay only needs the correct updated weights,
-    not a backward graph through k/v projections, so skipping create_graph
-    makes replay materially faster without affecting the reproduced state."""
-    model._in_replay = True
-    try:
-        yield
-    finally:
-        model._in_replay = False
 
 
 def on_step(model, total_tokens: float) -> None:

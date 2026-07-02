@@ -65,105 +65,6 @@ def _ids(n, seed=0):
 
 
 # ---------------------------------------------------------------------------
-# _chunks
-# ---------------------------------------------------------------------------
-
-def test_chunks_splits_into_chunk_len_pieces():
-    ids = _ids(13)  # seqlen-1 = 12 -> 3 chunks of 4
-    chunks = list(train._chunks(ids, None, chunk_len=4))
-
-    assert [c[0] for c in chunks] == [0, 4, 8]
-    assert [c[1] for c in chunks] == [4, 8, 12]
-
-
-def test_chunks_input_target_are_shifted_by_one():
-    ids = _ids(6)
-    start, end, input_ids, target_ids, _ = next(train._chunks(ids, None, chunk_len=4))
-
-    assert torch.equal(input_ids.squeeze(0), ids[0:4])
-    assert torch.equal(target_ids.squeeze(0), ids[1:5])
-
-
-def test_chunks_slices_mask_to_match_targets():
-    ids = _ids(6)
-    mask = torch.tensor([1, 0, 1, 0, 1, 0], dtype=torch.bool)
-    _, _, _, _, mask_slice = next(train._chunks(ids, mask, chunk_len=4))
-
-    assert torch.equal(mask_slice, mask[1:5])
-
-
-def test_chunks_resumes_from_start_pos():
-    ids = _ids(13)
-    chunks = list(train._chunks(ids, None, chunk_len=4, start_pos=4))
-
-    assert [c[0] for c in chunks] == [4, 8]
-
-
-# ---------------------------------------------------------------------------
-# _replay_batch
-# ---------------------------------------------------------------------------
-
-def test_replay_batch_returns_state_unchanged_when_no_slot_needs_replay():
-    model = FakeStatefulModel()
-    slots = [train._Slot(0, 0, _ids(13), None)]  # pos stays 0 -- fresh, no replay needed
-    batched_state = torch.tensor([42.0])
-
-    state = train._replay_batch(FakeHooks, model, slots, batched_state, chunk_len=4, device="cpu")
-
-    assert torch.equal(state, batched_state)
-
-
-def test_replay_batch_reconstructs_state_identical_to_uninterrupted_run():
-    model = FakeStatefulModel()
-    ids = _ids(13)  # 3 chunks: [0:4] [4:8] [8:12]
-
-    # Uninterrupted: thread state through the first two chunks only.
-    state = None
-    for start, end, input_ids, target_ids, mask_slice in train._chunks(ids, None, chunk_len=4):
-        if start >= 8:
-            break
-        _, _, state = FakeHooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=1.0)
-        state = state.detach()
-    expected = state  # shape (1,): 8 real tokens replayed
-
-    slot = train._Slot(0, 0, ids, None)
-    slot.pos = 8
-    replayed = train._replay_batch(FakeHooks, model, [slot], None, chunk_len=4, device="cpu")
-
-    assert torch.equal(replayed, expected)
-    assert not replayed.requires_grad
-
-
-def test_replay_batch_handles_slots_with_different_replay_lengths_independently():
-    """Regression: slot 1 finishes replay (1 chunk) before slot 0 (2 chunks)
-    -- if a finished slot's state weren't frozen, the extra step run for
-    slot 0 would keep feeding slot 1 zero-padding and inflate its count."""
-    model = FakeStatefulModel()
-    slot0 = train._Slot(0, 0, _ids(13, seed=1), None)
-    slot0.pos = 8
-    slot1 = train._Slot(1, 1, _ids(13, seed=2), None)
-    slot1.pos = 4
-
-    state = train._replay_batch(FakeHooks, model, [slot0, slot1], None, chunk_len=4, device="cpu")
-
-    assert torch.equal(state, torch.tensor([8.0, 4.0]))
-
-
-def test_replay_batch_freezes_slots_needing_no_replay():
-    """Regression: a slot with pos == 0 (no replay needed) must not be
-    perturbed by the dummy zero-padding fed for its position while other
-    slots are still replaying."""
-    model = FakeStatefulModel()
-    slot0 = train._Slot(0, 0, _ids(13, seed=1), None)
-    slot0.pos = 4
-    batched_state = torch.tensor([0.0, 99.0])  # slot 1 pre-seeded with a marker
-
-    state = train._replay_batch(FakeHooks, model, [slot0, None], batched_state, chunk_len=4, device="cpu")
-
-    assert torch.equal(state, torch.tensor([4.0, 99.0]))
-
-
-# ---------------------------------------------------------------------------
 # save_checkpoint / load_checkpoint round trip with slot_states + token counters
 # ---------------------------------------------------------------------------
 
@@ -341,6 +242,37 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     final_ckpt = train.latest_checkpoint()
     final_state = torch.load(final_ckpt / "state.pt", weights_only=True)
     assert final_state["total_tokens"] >= 27  # whole 28-token example (27 targets) eventually trained on
+
+
+def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_zero(monkeypatch, tmp_path):
+    """Regression: with no saved internal state (start_full_state=None), a
+    slot that was mid-example at checkpoint time must restart that example
+    from position 0 rather than continuing from its saved position --
+    reconstructing the carried state by replaying the prefix was tried and
+    dropped (see run_training's resume comment)."""
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+
+    train_ids = [_ids(28, seed=7)]  # 27 targets, chunk_len=4
+    train_masks = [None]
+    # ckpt_every_tokens=4 checkpoints every chunk (7 total) -- keep_ckpts
+    # must exceed that so rotate_checkpoints doesn't prune away the first
+    # one before we can inspect it.
+    args = _make_args(ckpt_every_tokens=4, keep_ckpts=99)
+
+    train.run_training(
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, "cpu", args,
+        start_epoch=0, start_slot_states=[(0, 12)], start_next_ptr=0, start_step=0,
+        start_total_tokens=12.0, start_last_ckpt_tokens=12.0,
+    )
+
+    ckpts = sorted(train.iter_checkpoints())
+    _, first_ckpt_path = ckpts[0]
+    state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
+    example_idx, pos = state["slot_states"][0]
+    assert example_idx == 0
+    assert pos == 4, "should restart from 0 (then advance one chunk), not continue from the saved pos 12"
 
 
 def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monkeypatch, tmp_path):
