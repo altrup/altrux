@@ -81,14 +81,14 @@ MEM_HIDDEN = 4 * D_MODEL
 # output o_t was still tiny, i.e. the gate was open but there was nothing
 # substantial to inject), so this measures the actual effect on ssm_state
 # directly rather than trusting the gate value as a proxy for it. Below
-# this threshold counts as "active"; arccos(0.99) ~= 8 degrees of rotation
-# in ssm_state's (nheads*headdim*d_state)-dim space, picked as a starting
-# guess for "a real, not negligible, shift" -- unverified against real
-# training telemetry, watch active_layers/n_layers in the live logs and
-# retune if it's saturating at 0 or n_layers either way. Diagnostic only --
-# the gated-delta merge in _mixer_step always uses the raw, continuous
-# beta/retain values regardless of this threshold.
-ACTIVE_COS_SIM_THRESHOLD = 0.99
+# this threshold counts as "active"; arccos(0.995) ~= 5.7 degrees of
+# rotation in ssm_state's (nheads*headdim*d_state)-dim space, picked as a
+# starting guess for "a real, not negligible, shift" -- unverified against
+# real training telemetry, watch active_layers/n_layers in the live logs
+# and retune if it's saturating at 0 or n_layers either way. Diagnostic
+# only -- the gated-delta merge in _mixer_step always uses the raw,
+# continuous beta/retain values regardless of this threshold.
+ACTIVE_COS_SIM_THRESHOLD = 0.995
 
 # beta's startup suppression (see _GatedDeltaInjection) is a fixed additive
 # offset on the gate logit, linearly annealed from BETA_BIAS_ANNEAL_START to
