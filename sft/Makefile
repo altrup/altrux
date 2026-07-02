@@ -65,13 +65,16 @@ resume:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
-# Gradient-wiring check on a short synthetic sequence -- useful for
-# mamba2_780m_memory, whose real examples are thousands of tokens and whose
-# --chunk-len is capped at 8 by this hardware's 8GB VRAM (see
-# smoke_test.py). Still pays for loading the real model. --length defaults
-# to 5x the resolved chunk_len (exercises several consecutive chunks, not
-# one isolated chunk -- see smoke_test.py's docstring for why that matters);
-# pass --length to override.
+# Gradient-wiring check on a synthetic dataset, driven through train.py's
+# real run_training loop with the same --batch-size/--accum-steps defaults
+# as `make train` -- useful for mamba2_780m_memory, whose real examples are
+# thousands of tokens and whose --chunk-len is capped at 8 by this
+# hardware's 8GB VRAM (see smoke_test.py). Still pays for loading the real
+# model. Checkpoints from the run go to a throwaway temp dir, not the real
+# checkpoints/ tree. --length defaults to accum_steps * chunk_len + 1 tokens
+# per example (exercises a full accumulation window, not one isolated
+# chunk -- see smoke_test.py's docstring for why that matters); pass
+# --length to override.
 smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u smoke_test.py $(ARGS)
