@@ -393,8 +393,23 @@ def run_training(
         if all(s is None for s in slots):
             continue
 
+        # Whether this epoch will resume from an exactly-saved internal
+        # state (mem_state.pt) -- if so, initializing a fresh batched state
+        # below would just be immediately discarded in favor of it, and for
+        # a model with a sizeable per-layer/per-slot state (e.g.
+        # mamba2_2_7b_memory's neural memory weights) that fresh allocation
+        # briefly coexists with the just-loaded saved state right when VRAM
+        # is already tightest (model + optimizer + mem_state.pt have all
+        # just landed on the GPU) -- exactly the moment this project's dev
+        # GPU has been observed to OOM. Skip it entirely on this path.
+        use_full_state = (
+            epoch == start_epoch and start_slot_states is not None and start_full_state is not None
+        )
+
         # Initialize batched model state (batch_size slots).
-        if init_state_fn is not None:
+        if use_full_state:
+            batched_state = start_full_state
+        elif init_state_fn is not None:
             batched_state = init_state_fn(model, batch_size, device)
         else:
             batched_state = None  # model initializes it on first chunk_loss call
@@ -415,11 +430,10 @@ def run_training(
                 slots[b] = _Slot(b, example_idx, ids, mask)
                 slots[b].pos = pos
 
-            if start_full_state is not None:
+            if use_full_state:
                 # Exact resume: the checkpoint saved the full batched
                 # internal state (see rotate_full_state) -- use it as-is,
                 # continuing each slot from its saved position.
-                batched_state = start_full_state
                 print("loaded saved internal state for resume")
             else:
                 # No exact state available for this checkpoint (older
