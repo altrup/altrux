@@ -174,7 +174,10 @@ def test_rotate_full_state_zero_removes_all(monkeypatch, tmp_path):
 
 def _make_args(**overrides):
     defaults = dict(
-        epochs=1, eos_weight=1.0, accum_steps=1, chunk_len=4,
+        # accum_tokens=4 with chunk_len=4 derives to accum_steps=1 (see
+        # run_training's accum_tokens -> accum_steps derivation), matching
+        # the old accum_steps=1 default these tests were written against.
+        epochs=1, eos_weight=1.0, accum_tokens=4, chunk_len=4,
         ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
         max_len=float("inf"), batch_size=1,
     )

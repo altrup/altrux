@@ -339,7 +339,7 @@ def run_training(
     loading the next. All B slots are processed in one batched
     forward+backward per chunk step.
 
-    `args` needs: epochs, eos_weight, accum_steps, chunk_len,
+    `args` needs: epochs, eos_weight, accum_tokens, chunk_len,
     ckpt_every_tokens, keep_ckpts, keep_full_state, lora_rank, lora_alpha,
     max_len, batch_size (already resolved to numbers, not raw CLI None
     defaults).
@@ -358,6 +358,16 @@ def run_training(
     only for the most recent few."""
     chunk_len = args.chunk_len or hooks.DEFAULT_CHUNK_LEN
     batch_size = args.batch_size
+    # accum_steps (how many chunks to accumulate before an optimizer step)
+    # is derived from accum_tokens (how many real tokens per slot that
+    # should represent), not taken directly from the CLI -- a raw step
+    # count would silently mean a different amount of real training every
+    # time --chunk-len changes (same reasoning as --ckpt-every-tokens being
+    # token-based rather than step-based: see this module's docstring).
+    # chunk_len is fixed for the whole run, so this only needs computing
+    # once. Total tokens per optimizer step end up ~accum_tokens * batch_size
+    # (each slot contributes accum_tokens, not accum_tokens / batch_size).
+    accum_steps = max(1, round(args.accum_tokens / chunk_len))
     extra_log_fn = getattr(hooks, "extra_log", None)
     chunk_extra_log_fn = getattr(hooks, "chunk_extra_log", None)
     on_step_fn = getattr(hooks, "on_step", None)
@@ -600,7 +610,7 @@ def run_training(
                             reset_slot_fn(model, batched_state, b)
 
             # Gradient accumulation step.
-            if accum_count >= args.accum_steps:
+            if accum_count >= accum_steps:
                 if chunk_extra_log_fn is not None:
                     _clear_live(prev_n_lines)
                     prev_n_lines = 0
@@ -688,7 +698,7 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN")
     parser.add_argument("--batch-size", type=int, default=6, help="Number of examples to train in parallel (slot-based batching)")
-    parser.add_argument("--accum-steps", type=int, default=32, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
+    parser.add_argument("--accum-tokens", type=int, default=256, help="Target real tokens per slot to accumulate before each optimizer step -- converted internally to a chunk count (accum_tokens / chunk_len), so it means the same amount of real training regardless of --chunk-len. Total tokens per optimizer step end up ~accum_tokens * batch_size.")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training")
     parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")
     parser.add_argument("--keep-full-state", type=int, default=2, help="Number of most-recent checkpoints to also save full internal model state for (mem_state.pt) -- lets resume continue mid-example slots exactly instead of restarting them from the beginning. 0 to disable. Only applies to models whose train_hooks define init_state (e.g. mamba2_2_7b_memory); no-op otherwise (falls back to always restarting mid-example slots).")
