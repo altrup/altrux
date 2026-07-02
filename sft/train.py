@@ -42,6 +42,7 @@ whose per-token step prevents parallel-scan kernel exploitation.
 """
 
 import argparse
+import gc
 import importlib
 import json
 import math
@@ -488,12 +489,14 @@ def run_training(
                 model, input_ids, target_ids, weight_mask, batched_state, args.eos_weight
             )
 
-            if not torch.isfinite(loss_sum):
+            chunk_was_non_finite = not torch.isfinite(loss_sum)
+            if chunk_was_non_finite:
                 # Skip only this chunk's contribution -- no backward() was
                 # called, so there's nothing of this chunk's to undo. Leave
                 # any gradients already accumulated from other chunks earlier
                 # in this window alone rather than discarding them too.
                 print(f"  warning: non-finite loss, skipping chunk")
+                del loss_sum
             elif weight_sum > 0:
                 (loss_sum / weight_sum).backward()
                 window_loss_sum += loss_sum.item()
@@ -506,6 +509,27 @@ def run_training(
                 )
 
             batched_state = batched_state.detach() if batched_state is not None else None
+
+            if chunk_was_non_finite:
+                # The forward graph for a skipped chunk is never walked by
+                # backward(), so it's never freed the way a normal chunk's
+                # graph is. Some models' hooks (e.g. mamba2_780m_memory's
+                # _NeuralMemory.write, which calls torch.autograd.grad(...,
+                # create_graph=True) every token) build graphs that contain
+                # genuine Python-level reference cycles for that reason --
+                # ordinary CPython refcounting can't reclaim a cycle at all,
+                # only the generational cyclic collector can, and that runs
+                # on its own schedule rather than immediately when the last
+                # external reference (loss_sum, the pre-detach state above)
+                # is dropped. Left alone, a run of consecutive non-finite
+                # chunks can pile up several uncollected graphs before the
+                # collector catches up. Both locals' external references are
+                # already dropped by this point, so an explicit collection
+                # here reclaims the cycle right away instead of leaving it
+                # for whenever gc's thresholds next trigger.
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
             # A chunk with non-finite loss can leave the carried recurrent
             # state (batched_state) itself non-finite too -- if so, don't let
