@@ -1,7 +1,7 @@
 """Generic SFT loop for any model in models/ that exports a train_hooks
 module (models/{name}/train_hooks.py): setup_training, chunk_loss, and
-optionally extra_log/chunk_extra_log/on_step/reset_slot/set_slot_state/
-init_state/replay_context. This script owns everything that's the same across
+optionally extra_log/chunk_extra_log/on_step/reset_slot/init_state/
+replay_context. This script owns everything that's the same across
 models -- shuffling, chunk iteration, gradient-accumulation counting,
 checkpoint cadence/rotation (including mid-example resume),
 and non-finite checks -- and delegates the irreducibly
@@ -240,57 +240,123 @@ def _chunks(ids: torch.Tensor, mask: torch.Tensor | None, chunk_len: int, start_
         yield start, end, input_ids, target_ids, mask_slice
 
 
-def replay_state(
-    hooks,
-    model,
-    ids: torch.Tensor,
-    mask: torch.Tensor | None,
-    chunk_len: int,
-    chunk_pos: int,
-    device,
-    chunk_extra_log_fn=None,
-    slot_label: str = "",
-    prev_n_lines: int = 0,
-):
-    """Forward-only (no backward) regeneration of the carried model state up
-    to chunk_pos, for resuming a checkpoint that landed mid-example.
+def _replay_batch(hooks, model, slots: list, batched_state, chunk_len: int, device, chunk_extra_log_fn=None):
+    """Forward-only (no backward) regeneration of every to-be-resumed slot's
+    carried state, up to each slot's own saved position, as ONE batched
+    forward pass per chunk step across every slot that needs replay
+    together -- not one independent single-example forward per slot -- so a
+    resume with --batch-size B gets the same GPU-saturation benefit real
+    training does (see the module docstring).
+
+    Slots need different amounts of prefix replayed and so finish at
+    different steps, but the model's forward always recomputes every
+    physical batch position on every call (there's no way to "skip" a row
+    generically). So each slot -- including ones needing no replay at all
+    (pos == 0), which are just as vulnerable -- is snapshotted the moment
+    its state is known-correct, and re-spliced back in after every later
+    step to undo whatever the zero-padding fed for its position computed in
+    the meantime. This also means no per-model hook is needed here beyond
+    chunk_loss/replay_context: splicing is done via raw tensor indexing over
+    whatever tensors _slot_state_finite already knows how to find.
 
     If the hook defines replay_context (e.g. mamba2_2_7b_memory), it is
-    entered here to disable create_graph in the neural memory write --
-    the forward arithmetic is identical but without the backward graph,
-    making replay materially faster.
+    entered here to disable create_graph in the neural memory write -- the
+    forward arithmetic is identical but without the backward graph, making
+    replay materially faster.
 
-    Prints the same in-place live progress display as normal training
-    (chunk_extra_log_fn, if the model hook defines it) so a slow replay
-    isn't silent. Returns (state, prev_n_lines) -- prev_n_lines threads
-    through consecutive calls (one per resumed slot) so each overwrites the
-    last rather than stacking new lines."""
-    if chunk_pos == 0:
-        return None, prev_n_lines
-    ids = ids.to(device)
-    mask = mask.to(device) if mask is not None else None
-    state = None
+    Mutates and returns batched_state."""
+    targets = [(slot.pos if slot is not None else 0) for slot in slots]
+    to_replay = [b for b, t in enumerate(targets) if t > 0]
+    if not to_replay:
+        return batched_state
+
+    replay_pos = {b: 0 for b in to_replay}
+    finished_snapshots: dict[int, list[torch.Tensor]] = {}
+    if batched_state is not None:
+        # Slots needing no replay already have a correct value (e.g. from
+        # init_state_fn) -- freeze it now, before step 1's forward (which
+        # touches every row regardless) can perturb it.
+        tensors0 = list(_collect_tensors(batched_state))
+        for b in range(len(slots)):
+            if b not in to_replay:
+                finished_snapshots[b] = [t[b].clone() for t in tensors0]
+
+    prev_n_lines = 0
     replay_ctx_fn = getattr(hooks, "replay_context", None)
     with contextlib.ExitStack() as stack:
         stack.enter_context(torch.no_grad())
         if replay_ctx_fn:
             stack.enter_context(replay_ctx_fn(model))
-        for start, end, input_ids, target_ids, mask_slice in _chunks(ids, mask, chunk_len, start_pos=0):
-            if start >= chunk_pos:
-                break
-            _, _, state = hooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=1.0)
-            state = state.detach() if state is not None else None
+
+        while any(replay_pos[b] < targets[b] for b in to_replay):
+            batch_inputs, batch_targets, batch_weights, chunk_actual_lens = [], [], [], []
+            for b, slot in enumerate(slots):
+                active = b in to_replay and replay_pos[b] < targets[b]
+                if not active:
+                    batch_inputs.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
+                    batch_targets.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
+                    batch_weights.append(torch.zeros(chunk_len, dtype=torch.bool, device=device))
+                    chunk_actual_lens.append(0)
+                    continue
+                pos, target = replay_pos[b], targets[b]
+                end = min(pos + chunk_len, target)
+                actual = end - pos
+                inp = slot.ids[pos:end]
+                tgt = slot.ids[pos + 1:end + 1]
+                if actual < chunk_len:
+                    pad = chunk_len - actual
+                    inp = F.pad(inp, (0, pad))
+                    tgt = F.pad(tgt, (0, pad))
+                batch_inputs.append(inp)
+                batch_targets.append(tgt)
+                batch_weights.append(torch.zeros(chunk_len, dtype=torch.bool, device=device))
+                chunk_actual_lens.append(actual)
+
+            input_ids = torch.stack(batch_inputs)
+            target_ids = torch.stack(batch_targets)
+            weight_mask = torch.stack(batch_weights)
+
+            _, _, batched_state = hooks.chunk_loss(model, input_ids, target_ids, weight_mask, batched_state, eos_weight=1.0)
+            batched_state = batched_state.detach() if batched_state is not None else None
+
+            tensors = list(_collect_tensors(batched_state))
+            for b, snap in finished_snapshots.items():
+                for t, s in zip(tensors, snap):
+                    t[b] = s
+
+            # First step where batched_state exists (either it already did,
+            # or state=None just triggered the model's own fresh self-init
+            # for the whole physical batch) is also the first correct
+            # moment to freeze slots that need no replay, if not already
+            # frozen above.
+            for b in range(len(slots)):
+                if b not in to_replay and b not in finished_snapshots:
+                    finished_snapshots[b] = [t[b].clone() for t in tensors]
+
+            for b in to_replay:
+                if replay_pos[b] < targets[b]:
+                    replay_pos[b] += chunk_actual_lens[b]
+                    if replay_pos[b] >= targets[b]:
+                        finished_snapshots[b] = [t[b].clone() for t in tensors]
 
             ts = datetime.now().strftime("%H:%M:%S")
-            line = f"[{ts}]  resuming {slot_label}  token {end:>6}/{chunk_pos:<6}"
+            per_slot_strs = None
             if chunk_extra_log_fn is not None:
                 extra = chunk_extra_log_fn(model)
                 if extra is not None:
-                    extra_str = extra[0] if isinstance(extra, list) else str(extra)
-                    if extra_str:
-                        line += f"  {extra_str}"
-            prev_n_lines = _print_live([line], prev_n_lines)
-    return state, prev_n_lines
+                    per_slot_strs = extra if isinstance(extra, list) else [str(extra)]
+            lines = [f"[{ts}]  resuming batch"]
+            for b in to_replay:
+                line = f"  slot {b}  token {min(replay_pos[b], targets[b]):>6}/{targets[b]:<6}"
+                if per_slot_strs and b < len(per_slot_strs) and per_slot_strs[b]:
+                    line += f"  {per_slot_strs[b]}"
+                lines.append(line)
+            prev_n_lines = _print_live(lines, prev_n_lines)
+
+    if prev_n_lines:
+        _clear_live(prev_n_lines)
+    print(f"replayed state for {len(to_replay)} slot(s)")
+    return batched_state
 
 
 
@@ -407,7 +473,6 @@ def run_training(
     chunk_extra_log_fn = getattr(hooks, "chunk_extra_log", None)
     on_step_fn = getattr(hooks, "on_step", None)
     reset_slot_fn = getattr(hooks, "reset_slot", None)
-    set_slot_fn = getattr(hooks, "set_slot_state", None)
     init_state_fn = getattr(hooks, "init_state", None)
     replay_ctx_fn = getattr(hooks, "replay_context", None)
 
@@ -482,26 +547,16 @@ def run_training(
                 # state (see rotate_full_state) -- use it as-is, no replay.
                 batched_state = start_full_state
                 print("loaded saved internal state for resume -- skipping replay")
-            elif set_slot_fn is not None and batched_state is not None:
+            else:
                 # Slow path: no saved state for this checkpoint (older
                 # checkpoint, pruned past --keep-full-state, or a batch-size
-                # mismatch -- see main()) -- regenerate each slot's state by
-                # replaying its already-seen prefix (forward-only).
-                replay_prev_n_lines = 0
-                to_replay = [b for b, slot in enumerate(slots) if slot is not None and slot.pos > 0]
-                for i, b in enumerate(to_replay):
-                    slot = slots[b]
-                    slot_label = f"slot {b} ({i + 1}/{len(to_replay)})"
-                    single_state, replay_prev_n_lines = replay_state(
-                        hooks, model, slot.ids, slot.mask, chunk_len, slot.pos, device,
-                        chunk_extra_log_fn=chunk_extra_log_fn, slot_label=slot_label, prev_n_lines=replay_prev_n_lines,
-                    )
-                    if single_state is not None:
-                        set_slot_fn(model, batched_state, b, single_state)
-                if replay_prev_n_lines:
-                    _clear_live(replay_prev_n_lines)
-                if to_replay:
-                    print(f"replayed state for {len(to_replay)} slot(s)")
+                # mismatch -- see main()) -- regenerate every slot's state
+                # together, in one batched forward pass per chunk step
+                # rather than one independent pass per slot.
+                batched_state = _replay_batch(
+                    hooks, model, slots, batched_state, chunk_len, device,
+                    chunk_extra_log_fn=chunk_extra_log_fn,
+                )
 
         accum_count = 0
         window_loss_sum = 0.0
@@ -691,7 +746,7 @@ def main() -> None:
     parser.add_argument("--accum-steps", type=int, default=32, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training")
     parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")
-    parser.add_argument("--keep-full-state", type=int, default=5, help="Number of most-recent checkpoints to also save full internal model state for (mem_state.pt) -- lets resume skip replay_state entirely for those. 0 to disable. Only applies to models whose train_hooks define init_state/set_slot_state (e.g. mamba2_2_7b_memory); no-op otherwise.")
+    parser.add_argument("--keep-full-state", type=int, default=5, help="Number of most-recent checkpoints to also save full internal model state for (mem_state.pt) -- lets resume skip replay entirely for those. 0 to disable. Only applies to models whose train_hooks define init_state (e.g. mamba2_2_7b_memory); no-op otherwise (falls back to always replaying).")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)

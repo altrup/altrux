@@ -92,12 +92,6 @@ def reset_slot(model, state, slot_idx: int) -> None:
     model.reset_slot(state, slot_idx)
 
 
-def set_slot_state(model, batched_state, slot_idx: int, single_state) -> None:
-    """Copy single_state (batch_size=1) into slot slot_idx of batched_state.
-    Used to restore a per-slot state after per-slot replay on resume."""
-    model.set_slot_state(batched_state, slot_idx, single_state)
-
-
 @contextmanager
 def replay_context(model):
     """Context manager that disables create_graph in the neural memory write

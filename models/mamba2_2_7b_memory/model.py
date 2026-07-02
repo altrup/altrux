@@ -692,23 +692,6 @@ class Model(nn.Module):
         state.last_o_t[slot_idx].zero_()
         state.last_surprise[slot_idx].zero_()
 
-    def set_slot_state(self, batched_state: "MemoryState", slot_idx: int, single_state: "MemoryState") -> None:
-        """Copy single_state (batch_size=1) into slot slot_idx of batched_state.
-        Used to restore a per-slot state after replay on resume."""
-        for i in range(len(self.layers)):
-            batched_state.conv_states[i][slot_idx].copy_(single_state.conv_states[i][0])
-            batched_state.ssm_states[i][slot_idx].copy_(single_state.ssm_states[i][0])
-        nm = batched_state.neural_memory
-        snm = single_state.neural_memory
-        nm.w1[slot_idx].copy_(snm.w1[0])
-        nm.b1[slot_idx].copy_(snm.b1[0])
-        nm.w2[slot_idx].copy_(snm.w2[0])
-        nm.b2[slot_idx].copy_(snm.b2[0])
-        for j in range(len(nm.momentum)):
-            nm.momentum[j][slot_idx].copy_(snm.momentum[j][0])
-        batched_state.last_o_t[slot_idx].copy_(single_state.last_o_t[0])
-        batched_state.last_surprise[slot_idx].copy_(single_state.last_surprise[0])
-
     def pop_memory_stats(self) -> dict[str, float] | None:
         """Returns averages since the last call (None if forward hasn't run
         since then) and resets the running sums. `beta`/`retain` are the most

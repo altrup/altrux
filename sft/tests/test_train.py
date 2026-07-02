@@ -24,10 +24,15 @@ VOCAB = 8
 
 class FakeStatefulModel(torch.nn.Module):
     """forward(input_ids, state=None) -> (logits, state), mirroring the real
-    chunked models' signature. `state` is just a running count of tokens
-    consumed so far in the current example -- enough to verify state is
-    threaded/detached correctly and that replay reconstructs it exactly,
-    without needing a real recurrent architecture."""
+    chunked models' signature. `state` is a per-row (shape (B,)) running
+    count of tokens consumed so far in each slot's current example -- enough
+    to verify state is threaded/detached/batched correctly, and (critically)
+    that a slot's count doesn't drift from continuing to be fed dummy
+    zero-padding after it's done, without needing a real recurrent
+    architecture. Always adds a full chunk's width regardless of masking,
+    same as a real model's forward would touch every physical batch
+    position every call -- callers should only assert on rows they expect
+    to have been fed real (unpadded) chunks throughout."""
 
     def __init__(self):
         super().__init__()
@@ -37,8 +42,9 @@ class FakeStatefulModel(torch.nn.Module):
     def forward(self, input_ids, state=None):
         x = self.embed(input_ids)
         logits = self.head(x)
-        prior = state if state is not None else torch.tensor(0.0)
-        new_state = prior + input_ids.numel()
+        batch_size = input_ids.shape[0]
+        prior = state if state is not None else torch.zeros(batch_size)
+        new_state = prior + input_ids.shape[1]
         return logits, new_state
 
 
@@ -49,7 +55,7 @@ class FakeHooks:
     def chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight):
         logits, state = model(input_ids, state=state)
         loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
-        weight = mask_slice.float() if mask_slice is not None else torch.ones_like(loss)
+        weight = mask_slice.reshape(-1).float() if mask_slice is not None else torch.ones_like(loss)
         return (loss * weight).sum(), weight.sum(), state
 
 
@@ -94,44 +100,67 @@ def test_chunks_resumes_from_start_pos():
 
 
 # ---------------------------------------------------------------------------
-# replay_state
+# _replay_batch
 # ---------------------------------------------------------------------------
 
-def test_replay_state_returns_none_at_chunk_pos_zero():
+def test_replay_batch_returns_state_unchanged_when_no_slot_needs_replay():
     model = FakeStatefulModel()
-    ids = _ids(13)
+    slots = [train._Slot(0, 0, _ids(13), None)]  # pos stays 0 -- fresh, no replay needed
+    batched_state = torch.tensor([42.0])
 
-    state, prev_n_lines = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=0, device="cpu")
+    state = train._replay_batch(FakeHooks, model, slots, batched_state, chunk_len=4, device="cpu")
 
-    assert state is None
-    assert prev_n_lines == 0
+    assert torch.equal(state, batched_state)
 
 
-def test_replay_state_reconstructs_state_identical_to_uninterrupted_run():
+def test_replay_batch_reconstructs_state_identical_to_uninterrupted_run():
     model = FakeStatefulModel()
     ids = _ids(13)  # 3 chunks: [0:4] [4:8] [8:12]
 
-    # Uninterrupted: thread state through all chunks up to (not including) the third.
+    # Uninterrupted: thread state through the first two chunks only.
     state = None
     for start, end, input_ids, target_ids, mask_slice in train._chunks(ids, None, chunk_len=4):
         if start >= 8:
             break
         _, _, state = FakeHooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=1.0)
         state = state.detach()
-    expected = state
+    expected = state  # shape (1,): 8 real tokens replayed
 
-    replayed, _ = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=8, device="cpu")
+    slot = train._Slot(0, 0, ids, None)
+    slot.pos = 8
+    replayed = train._replay_batch(FakeHooks, model, [slot], None, chunk_len=4, device="cpu")
 
     assert torch.equal(replayed, expected)
+    assert not replayed.requires_grad
 
 
-def test_replay_state_does_not_require_grad():
+def test_replay_batch_handles_slots_with_different_replay_lengths_independently():
+    """Regression: slot 1 finishes replay (1 chunk) before slot 0 (2 chunks)
+    -- if a finished slot's state weren't frozen, the extra step run for
+    slot 0 would keep feeding slot 1 zero-padding and inflate its count."""
     model = FakeStatefulModel()
-    ids = _ids(13)
+    slot0 = train._Slot(0, 0, _ids(13, seed=1), None)
+    slot0.pos = 8
+    slot1 = train._Slot(1, 1, _ids(13, seed=2), None)
+    slot1.pos = 4
 
-    state, _ = train.replay_state(FakeHooks, model, ids, None, chunk_len=4, chunk_pos=8, device="cpu")
+    state = train._replay_batch(FakeHooks, model, [slot0, slot1], None, chunk_len=4, device="cpu")
 
-    assert not state.requires_grad
+    assert torch.equal(state, torch.tensor([8.0, 4.0]))
+
+
+def test_replay_batch_freezes_slots_needing_no_replay():
+    """Regression: a slot with pos == 0 (no replay needed) must not be
+    perturbed by the dummy zero-padding fed for its position while other
+    slots are still replaying."""
+    model = FakeStatefulModel()
+    slot0 = train._Slot(0, 0, _ids(13, seed=1), None)
+    slot0.pos = 4
+    batched_state = torch.tensor([0.0, 99.0])  # slot 1 pre-seeded with a marker
+
+    state = train._replay_batch(FakeHooks, model, [slot0, None], batched_state, chunk_len=4, device="cpu")
+
+    assert torch.equal(state, torch.tensor([4.0, 99.0]))
 
 
 # ---------------------------------------------------------------------------
