@@ -95,6 +95,30 @@ class _Slot:
         return self.pos >= self.seqlen - 1
 
 
+def _collect_tensors(obj):
+    """Recursively yield every tensor reachable from obj (attributes, dict
+    values, list/tuple items). Used to inspect a model's carried state
+    (MixerState/MemoryState) generically, without each model needing to
+    hand-write its own finiteness check -- every such state stores the batch
+    dimension as dim 0 of each leaf tensor, so a generic walk is enough."""
+    if isinstance(obj, torch.Tensor):
+        yield obj
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            yield from _collect_tensors(item)
+    elif isinstance(obj, dict):
+        for item in obj.values():
+            yield from _collect_tensors(item)
+    elif hasattr(obj, "__dict__"):
+        for item in vars(obj).values():
+            yield from _collect_tensors(item)
+
+
+def _slot_state_finite(state, slot_idx: int) -> bool:
+    """True if every tensor in state is finite at batch index slot_idx."""
+    return all(torch.isfinite(t[slot_idx]).all() for t in _collect_tensors(state))
+
+
 def iter_checkpoints():
     """Yield (step, path) for every models/{MODEL_NAME}/checkpoints/epoch-*/step-* directory.
     Step numbers are globally monotonic, so they order checkpoints across epochs."""
@@ -525,10 +549,11 @@ def run_training(
             )
 
             if not torch.isfinite(loss_sum):
+                # Skip only this chunk's contribution -- no backward() was
+                # called, so there's nothing of this chunk's to undo. Leave
+                # any gradients already accumulated from other chunks earlier
+                # in this window alone rather than discarding them too.
                 print(f"  warning: non-finite loss, skipping chunk")
-                optimizer.zero_grad()
-                accum_count = 0
-                window_loss_sum = window_tokens = 0.0
             elif weight_sum > 0:
                 (loss_sum / weight_sum).backward()
                 window_loss_sum += loss_sum.item()
@@ -541,6 +566,19 @@ def run_training(
                 )
 
             batched_state = batched_state.detach() if batched_state is not None else None
+
+            # A chunk with non-finite loss can leave the carried recurrent
+            # state (batched_state) itself non-finite too -- if so, don't let
+            # it keep propagating into that slot's future chunks (or a later
+            # example that inherits the slot). Force the slot to look
+            # "finished" so the assign-next-example logic below runs, which
+            # already resets that slot's state via reset_slot_fn. Only
+            # possible for models that expose per-slot state repair.
+            if reset_slot_fn is not None and batched_state is not None:
+                for b, slot in enumerate(slots):
+                    if slot is not None and not _slot_state_finite(batched_state, b):
+                        print(f"  warning: non-finite internal state in slot {b}, abandoning example and resetting state")
+                        slot.pos = slot.seqlen
 
             # Advance slot positions; assign next example to any that finished.
             for b, slot in enumerate(slots):
