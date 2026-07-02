@@ -182,7 +182,6 @@ def save_checkpoint(
     slots: list,
     next_ptr: int,
     total_tokens: float,
-    last_ckpt_tokens: float,
     lora_rank: int,
     lora_alpha: float,
     batched_state=None,
@@ -192,6 +191,16 @@ def save_checkpoint(
     that a LoRA-only save would silently drop. slot_states records each
     slot's (example_idx, pos) for resume; next_ptr is the next example to
     assign from the epoch's ordered list.
+
+    The saved "last_ckpt_tokens" is this checkpoint's own total_tokens, not
+    whatever the caller's cadence baseline was before this save -- it's the
+    anchor a future resume needs for --ckpt-every-tokens to count from the
+    point actually captured on disk. Saving the caller's pre-save baseline
+    here instead was a real bug: resuming from a checkpoint would reset the
+    cadence countdown back to the *previous* checkpoint's token count,
+    making saves after a resume arrive earlier than --ckpt-every-tokens
+    specifies (confirmed from two real checkpoints' recorded fields both
+    showing the same stale baseline instead of advancing).
 
     If batched_state is given (only for models that carry state across
     chunks, and only when the caller wants this checkpoint to keep it --
@@ -214,7 +223,7 @@ def save_checkpoint(
         "slot_states": slot_states,
         "next_ptr": next_ptr,
         "total_tokens": total_tokens,
-        "last_ckpt_tokens": last_ckpt_tokens,
+        "last_ckpt_tokens": total_tokens,
     }
     if batched_state is not None:
         state_dict["state_batch_size"] = len(slots)
@@ -631,7 +640,7 @@ def run_training(
                 if total_tokens - last_ckpt_tokens >= args.ckpt_every_tokens:
                     path = save_checkpoint(
                         model, optimizer, global_step, epoch, slots, next_ptr,
-                        total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
+                        total_tokens, args.lora_rank, args.lora_alpha,
                         batched_state=batched_state if args.keep_full_state > 0 else None,
                     )
                     last_ckpt_tokens = total_tokens
@@ -660,7 +669,7 @@ def run_training(
 
     path = save_checkpoint(
         model, optimizer, global_step, epoch, slots, next_ptr,
-        total_tokens, last_ckpt_tokens, args.lora_rank, args.lora_alpha,
+        total_tokens, args.lora_rank, args.lora_alpha,
         batched_state=batched_state if args.keep_full_state > 0 else None,
     )
     rotate_checkpoints(args.keep_ckpts, epoch)

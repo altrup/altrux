@@ -77,13 +77,17 @@ def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch
 
     path = train.save_checkpoint(
         model, optimizer, step=5, epoch=0, slots=slots, next_ptr=13,
-        total_tokens=123.0, last_ckpt_tokens=100.0, lora_rank=4, lora_alpha=8.0,
+        total_tokens=123.0, lora_rank=4, lora_alpha=8.0,
     )
 
     state = torch.load(path / "state.pt", weights_only=True)
+    # last_ckpt_tokens always equals this checkpoint's own total_tokens --
+    # it's the anchor a future resume counts --ckpt-every-tokens from, not
+    # a record of whatever the caller's baseline was before this save (see
+    # save_checkpoint's docstring for why that distinction matters).
     assert state == {
         "epoch": 0, "slot_states": [(12, 8)], "next_ptr": 13,
-        "total_tokens": 123.0, "last_ckpt_tokens": 100.0,
+        "total_tokens": 123.0, "last_ckpt_tokens": 123.0,
     }
 
 
@@ -100,7 +104,7 @@ def test_save_checkpoint_writes_mem_state_when_batched_state_given(monkeypatch, 
 
     path = train.save_checkpoint(
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=10.0, last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+        total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
         batched_state=torch.tensor([1.0, 2.0]),
     )
 
@@ -117,7 +121,7 @@ def test_save_checkpoint_omits_mem_state_when_batched_state_is_none(monkeypatch,
 
     path = train.save_checkpoint(
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=10.0, last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+        total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
     )
 
     assert not (path / "mem_state.pt").exists()
@@ -133,7 +137,7 @@ def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_pat
     paths = [
         train.save_checkpoint(
             model, optimizer, step=step, epoch=0, slots=slots, next_ptr=1,
-            total_tokens=float(step), last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+            total_tokens=float(step), lora_rank=4, lora_alpha=8.0,
             batched_state=torch.tensor([1.0]),
         )
         for step in (1, 2, 3)
@@ -155,7 +159,7 @@ def test_rotate_full_state_zero_removes_all(monkeypatch, tmp_path):
     slots = [train._Slot(0, 0, _ids(5), None)]
     path = train.save_checkpoint(
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=1.0, last_ckpt_tokens=0.0, lora_rank=4, lora_alpha=8.0,
+        total_tokens=1.0, lora_rank=4, lora_alpha=8.0,
         batched_state=torch.tensor([1.0]),
     )
 
