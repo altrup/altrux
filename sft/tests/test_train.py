@@ -1,9 +1,9 @@
 """Fast (CPU, seconds) tests for sft/train.py's generic, model-agnostic
-training machinery: the chunk slicer, evaluate()/preflight(), mid-example
-state replay on resume, and the token-based checkpoint trigger. Exercised
-against a tiny fake stateful model + fake hooks module instead of a real
-Mamba2 model, since none of this logic is specific to any one model -- that's
-the whole point of it living here rather than in a model's train_hooks.py.
+training machinery: the chunk slicer, mid-example state replay on resume,
+and the token-based checkpoint trigger. Exercised against a tiny fake
+stateful model + fake hooks module instead of a real Mamba2 model, since
+none of this logic is specific to any one model -- that's the whole point of
+it living here rather than in a model's train_hooks.py.
 """
 
 import sys
@@ -94,92 +94,6 @@ def test_chunks_resumes_from_start_pos():
 
 
 # ---------------------------------------------------------------------------
-# evaluate
-# ---------------------------------------------------------------------------
-
-def test_evaluate_returns_finite_loss_and_does_not_change_params():
-    model = FakeStatefulModel()
-    before = {n: p.clone() for n, p in model.named_parameters()}
-    eval_ids = [_ids(9, seed=1), _ids(5, seed=2)]
-    eval_masks = [None, None]
-
-    loss = train.evaluate(FakeHooks, model, eval_ids, eval_masks, "cpu", max_len=100, chunk_len=4)
-
-    assert torch.isfinite(torch.tensor(loss))
-    for n, p in model.named_parameters():
-        assert torch.equal(p, before[n])
-
-
-def test_evaluate_skips_examples_with_an_all_false_mask():
-    model = FakeStatefulModel()
-    eval_ids = [_ids(9, seed=1)]
-    eval_masks = [torch.zeros(9, dtype=torch.bool)]
-
-    loss = train.evaluate(FakeHooks, model, eval_ids, eval_masks, "cpu", max_len=100, chunk_len=4)
-
-    assert loss != loss  # nan: nothing contributed
-
-
-# ---------------------------------------------------------------------------
-# preflight
-# ---------------------------------------------------------------------------
-
-def test_preflight_passes_when_gradients_reach_trainable_params():
-    model = FakeStatefulModel()
-    trainable_params = list(model.parameters())
-    all_ids = [_ids(9, seed=1)]
-    all_masks = [None]
-
-    train.preflight(FakeHooks, model, trainable_params, all_ids, all_masks, "cpu", max_len=100, eos_weight=1.0, chunk_len=4)
-    # preflight zeroes grads itself when done; reaching here without an
-    # AssertionError is the pass condition.
-
-
-def test_preflight_shows_live_progress_when_hooks_define_chunk_extra_log(monkeypatch):
-    """Regression: preflight used to go through process_example, which had
-    its own live per-chunk progress display for slow models -- that display
-    must not be lost now that preflight no longer calls process_example."""
-    calls = []
-    monkeypatch.setattr(train, "_print_live", lambda lines, prev_n_lines: calls.append(lines) or len(lines))
-
-    class HooksWithChunkExtraLog(FakeHooks):
-        @staticmethod
-        def chunk_extra_log(model):
-            return "extra status"
-
-    model = FakeStatefulModel()
-    all_ids = [_ids(9, seed=1)]  # seqlen-1=8, chunk_len=4 -> 2 chunks
-    all_masks = [None]
-
-    train.preflight(HooksWithChunkExtraLog, model, list(model.parameters()), all_ids, all_masks, "cpu", max_len=100, eos_weight=1.0, chunk_len=4)
-
-    assert len(calls) == 2
-    assert "extra status" in calls[0][1]
-
-
-def test_preflight_shows_no_live_progress_when_hooks_lack_chunk_extra_log(monkeypatch):
-    calls = []
-    monkeypatch.setattr(train, "_print_live", lambda lines, prev_n_lines: calls.append(lines) or len(lines))
-
-    model = FakeStatefulModel()
-    all_ids = [_ids(9, seed=1)]
-    all_masks = [None]
-
-    train.preflight(FakeHooks, model, list(model.parameters()), all_ids, all_masks, "cpu", max_len=100, eos_weight=1.0, chunk_len=4)
-
-    assert calls == []
-
-
-def test_preflight_raises_when_no_example_fits_max_len():
-    model = FakeStatefulModel()
-    all_ids = [_ids(9, seed=1)]
-    all_masks = [None]
-
-    with pytest.raises(AssertionError):
-        train.preflight(FakeHooks, model, list(model.parameters()), all_ids, all_masks, "cpu", max_len=2, eos_weight=1.0, chunk_len=4)
-
-
-# ---------------------------------------------------------------------------
 # replay_state
 # ---------------------------------------------------------------------------
 
@@ -221,21 +135,26 @@ def test_replay_state_does_not_require_grad():
 
 
 # ---------------------------------------------------------------------------
-# save_checkpoint / load_checkpoint round trip with chunk_pos + token counters
+# save_checkpoint / load_checkpoint round trip with slot_states + token counters
 # ---------------------------------------------------------------------------
 
-def test_checkpoint_state_round_trips_chunk_pos_and_token_counters(monkeypatch, tmp_path):
+def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch, tmp_path):
     monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 12, _ids(5), None)]
+    slots[0].pos = 8
 
     path = train.save_checkpoint(
-        model, optimizer, step=5, epoch=0, example_idx=12, chunk_pos=8,
+        model, optimizer, step=5, epoch=0, slots=slots, next_ptr=13,
         total_tokens=123.0, last_ckpt_tokens=100.0, lora_rank=4, lora_alpha=8.0,
     )
 
     state = torch.load(path / "state.pt", weights_only=True)
-    assert state == {"epoch": 0, "example_idx": 12, "chunk_pos": 8, "total_tokens": 123.0, "last_ckpt_tokens": 100.0}
+    assert state == {
+        "epoch": 0, "slot_states": [(12, 8)], "next_ptr": 13,
+        "total_tokens": 123.0, "last_ckpt_tokens": 100.0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +242,7 @@ def _make_args(**overrides):
     defaults = dict(
         epochs=1, eos_weight=1.0, accum_steps=1, chunk_len=4,
         ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
-        max_len=float("inf"),
+        max_len=float("inf"), batch_size=1,
     )
     defaults.update(overrides)
     from types import SimpleNamespace
@@ -341,20 +260,21 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     # token threshold forces a checkpoint to land mid-example.
     train_ids = [_ids(28, seed=7)]
     train_masks = [None]
-    eval_ids, eval_masks = [], []
     args = _make_args(ckpt_every_tokens=8)  # 8 tokens = 2 chunks in
 
     train.run_training(
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, eval_ids, eval_masks, "cpu", args,
-        start_epoch=0, start_example=0, start_step=0, start_chunk_pos=0, start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, "cpu", args,
+        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
 
     ckpts = sorted(train.iter_checkpoints())
     assert len(ckpts) > 0
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
-    assert state["chunk_pos"] > 0, "first checkpoint should land mid-example given the small token threshold"
-    assert state["example_idx"] == 0
+    example_idx, pos = state["slot_states"][0]
+    assert pos > 0, "first checkpoint should land mid-example given the small token threshold"
+    assert example_idx == 0
 
 
 def test_run_training_resume_from_mid_example_checkpoint_continues_without_crashing(monkeypatch, tmp_path):
@@ -369,8 +289,9 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     args = _make_args(ckpt_every_tokens=8)
 
     train.run_training(
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [], [], "cpu", args,
-        start_epoch=0, start_example=0, start_step=0, start_chunk_pos=0, start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, "cpu", args,
+        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
     ckpt = train.latest_checkpoint()
     saved_state = torch.load(ckpt / "state.pt", weights_only=True)
@@ -381,9 +302,10 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     optimizer2 = torch.optim.AdamW(model2.parameters(), lr=1e-3)
 
     train.run_training(
-        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, [], [], "cpu", args,
-        start_epoch=saved_state["epoch"], start_example=saved_state["example_idx"], start_step=0,
-        start_chunk_pos=saved_state["chunk_pos"], start_total_tokens=saved_state["total_tokens"],
+        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, "cpu", args,
+        start_epoch=saved_state["epoch"], start_slot_states=saved_state["slot_states"],
+        start_next_ptr=saved_state["next_ptr"], start_step=0,
+        start_total_tokens=saved_state["total_tokens"],
         start_last_ckpt_tokens=saved_state["last_ckpt_tokens"],
     )
 
@@ -399,14 +321,23 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
 
     train_ids = [_ids(13, seed=1), _ids(9, seed=2)]
     train_masks = [None, None]
-    args = _make_args(ckpt_every_tokens=1000)  # never triggers mid-run -- only the final forced save
+    # First example (13 tokens -> 12 targets -> 3 chunks of 4) finishes
+    # exactly at 12 tokens; a checkpoint threshold of 12 lands right as the
+    # slot rolls over to the second example, still at pos 0 -- the final
+    # (only) forced save would instead land after BOTH examples finish, with
+    # the slot back to None, which isn't the boundary this test is about.
+    args = _make_args(ckpt_every_tokens=12)
 
     train.run_training(
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [], [], "cpu", args,
-        start_epoch=0, start_example=0, start_step=0, start_chunk_pos=0, start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, "cpu", args,
+        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
 
-    ckpt = train.latest_checkpoint()
-    state = torch.load(ckpt / "state.pt", weights_only=True)
-    assert state["chunk_pos"] == 0
-    assert state["example_idx"] == 1
+    ckpts = sorted(train.iter_checkpoints())
+    assert len(ckpts) > 0
+    _, first_ckpt_path = ckpts[0]
+    state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
+    example_idx, pos = state["slot_states"][0]
+    assert pos == 0
+    assert example_idx == 1
