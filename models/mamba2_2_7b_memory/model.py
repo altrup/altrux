@@ -488,14 +488,20 @@ class Model(nn.Module):
 
         self.front_end = _TitansFrontEnd()
         self.injections = nn.ModuleDict({str(i): _GatedDeltaInjection() for i in INJECTED_LAYERS})
-        # Running sums for pop_memory_stats() -- plain floats, not tensors, so
-        # they never hold a reference into any autograd graph. beta/retain are
-        # accumulated once per injected layer per token; surprise/o_t_norm
-        # once per token (at READ_LAYER only). See pop_memory_stats for why
-        # these matter: beta/retain start near 0/1 (no-op init, see
-        # _GatedDeltaInjection.__init__) and are the only direct signal of
-        # whether the memory subsystem is actually being used or still
-        # sitting at its identity init.
+        # Running sums for pop_memory_stats() -- accumulated as detached
+        # tensors (all inputs are already .detach()'d at the accumulation
+        # sites, so this never holds a reference into any autograd graph)
+        # and only converted to Python floats once, in pop_memory_stats
+        # itself. Calling .item() at every accumulation instead (the
+        # original approach) forces a blocking GPU sync per injected layer
+        # per token, which serializes the whole per-token training loop --
+        # far more costly than the sync-free tensor accumulation here.
+        # beta/retain are accumulated once per injected layer per token;
+        # surprise/o_t_norm once per token (at READ_LAYER only). See
+        # pop_memory_stats for why these matter: beta/retain start near 0/1
+        # (no-op init, see _GatedDeltaInjection.__init__) and are the only
+        # direct signal of whether the memory subsystem is actually being
+        # used or still sitting at its identity init.
         self._mem_stat_sums = {"beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0}
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
@@ -671,8 +677,8 @@ class Model(nn.Module):
                     beta, retain = gated_delta[2], gated_delta[3]
                     beta_per_slot = beta[:, 0, 0, 0].detach()    # (B,)
                     retain_per_slot = retain[:, 0, 0, 0].detach()  # (B,)
-                    self._mem_stat_sums["beta"] += beta_per_slot.mean().item()
-                    self._mem_stat_sums["retain"] += retain_per_slot.mean().item()
+                    self._mem_stat_sums["beta"] += beta_per_slot.mean()
+                    self._mem_stat_sums["retain"] += retain_per_slot.mean()
                     self._mem_stat_inj_count += 1
                     token_betas.append(beta_per_slot)
                     token_retains.append(retain_per_slot)
@@ -691,12 +697,18 @@ class Model(nn.Module):
                     last_surprise_per_slot = surprise.detach()          # (B,)
                     last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)  # (B,)
                     last_grad_norm_per_slot = grad_norm.detach()        # (B,)
-                    self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean().item()
-                    self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean().item()
-                    self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean().item()
+                    self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean()
+                    self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean()
+                    self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
                     self._mem_stat_tok_count += 1
 
-            if token_betas:
+            # Only materialize the per-slot log dict (hundreds of blocking
+            # .item() syncs, one per injected layer per batch slot) on the
+            # last token of this chunk -- _last_token_logs is overwritten
+            # every token and only the final write is ever read (see
+            # last_token_log()), so doing this on every token was paying
+            # a full host sync ~seqlen times over for one that's read once.
+            if token_betas and t == seqlen - 1:
                 logs = []
                 for b in range(batch_size):
                     betas_b = [tb[b].item() for tb in token_betas]
@@ -785,12 +797,14 @@ class Model(nn.Module):
         params receive in preflight."""
         if self._mem_stat_tok_count == 0:
             return None
+        # Single sync here for the whole accumulation window, instead of one
+        # per injected layer per token (see the accumulation sites above).
         stats = {
-            "beta": self._mem_stat_sums["beta"] / max(self._mem_stat_inj_count, 1),
-            "retain": self._mem_stat_sums["retain"] / max(self._mem_stat_inj_count, 1),
-            "surprise": self._mem_stat_sums["surprise"] / self._mem_stat_tok_count,
-            "o_t_norm": self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count,
-            "grad_norm": self._mem_stat_sums["grad_norm"] / self._mem_stat_tok_count,
+            "beta": (self._mem_stat_sums["beta"] / max(self._mem_stat_inj_count, 1)).item(),
+            "retain": (self._mem_stat_sums["retain"] / max(self._mem_stat_inj_count, 1)).item(),
+            "surprise": (self._mem_stat_sums["surprise"] / self._mem_stat_tok_count).item(),
+            "o_t_norm": (self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count).item(),
+            "grad_norm": (self._mem_stat_sums["grad_norm"] / self._mem_stat_tok_count).item(),
         }
         self._mem_stat_sums = {k: 0.0 for k in self._mem_stat_sums}
         self._mem_stat_inj_count = 0
