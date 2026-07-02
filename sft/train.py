@@ -691,7 +691,7 @@ def main() -> None:
     parser.add_argument("--accum-steps", type=int, default=32, help="Gradient accumulation steps before each optimizer step (each step covers batch_size * chunk_len tokens)")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training")
     parser.add_argument("--keep-ckpts", type=int, default=50, help="Number of checkpoints to retain")
-    parser.add_argument("--keep-full-state", type=int, default=5, help="Number of most-recent checkpoints to also save full internal model state for (mem_state.pt) -- lets resume continue mid-example slots exactly instead of restarting them from the beginning. 0 to disable. Only applies to models whose train_hooks define init_state (e.g. mamba2_2_7b_memory); no-op otherwise (falls back to always restarting mid-example slots).")
+    parser.add_argument("--keep-full-state", type=int, default=2, help="Number of most-recent checkpoints to also save full internal model state for (mem_state.pt) -- lets resume continue mid-example slots exactly instead of restarting them from the beginning. 0 to disable. Only applies to models whose train_hooks define init_state (e.g. mamba2_2_7b_memory); no-op otherwise (falls back to always restarting mid-example slots).")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
