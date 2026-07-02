@@ -72,13 +72,23 @@ BOTTLENECK_R = 128
 MEM_DIM = D_MODEL
 MEM_HIDDEN = 4 * D_MODEL
 # Diagnostic-only threshold for counting an injected layer as "actively"
-# writing into ssm_state this token (see Model.last_token_log) -- beta > 0.2
-# means that layer's gated-delta merge is meaningfully overwriting its
-# forgotten state with the memory's content, vs. its near-0 no-op init.
-# Used only to report active_layers for live logging; the actual gated-delta
-# merge in _mixer_step always uses the raw, continuous beta value -- this
-# threshold has no effect on the forward pass or training.
-ACTIVE_BETA_THRESHOLD = 0.2
+# writing into ssm_state this token (see Model.last_token_log). Measured as
+# cosine similarity between ssm_state right before vs. right after the
+# gated-delta merge (_mixer_step) -- a high beta gate alone doesn't mean the
+# merge actually moved the state (see mamba2_780m_memory/model.py's
+# ACTIVE_COS_SIM_THRESHOLD for the real-run observation that motivated
+# this: beta staying near a fixed non-trivial value while the memory's own
+# output o_t was still tiny, i.e. the gate was open but there was nothing
+# substantial to inject), so this measures the actual effect on ssm_state
+# directly rather than trusting the gate value as a proxy for it. Below
+# this threshold counts as "active"; arccos(0.99) ~= 8 degrees of rotation
+# in ssm_state's (nheads*headdim*d_state)-dim space, picked as a starting
+# guess for "a real, not negligible, shift" -- unverified against real
+# training telemetry, watch active_layers/n_layers in the live logs and
+# retune if it's saturating at 0 or n_layers either way. Diagnostic only --
+# the gated-delta merge in _mixer_step always uses the raw, continuous
+# beta/retain values regardless of this threshold.
+ACTIVE_COS_SIM_THRESHOLD = 0.99
 
 # beta's startup suppression (see _GatedDeltaInjection) is a fixed additive
 # offset on the gate logit, linearly annealed from BETA_BIAS_ANNEAL_START to
@@ -548,6 +558,12 @@ class Model(nn.Module):
         in place (unlike the library's decode cache): it's rebound to a
         fresh tensor each call so gradients flow through the whole sequence
         during training.
+
+        Returns (out, conv_state, ssm_state, injection_cos_sim) --
+        injection_cos_sim is None when gated_delta is None, else a (batch,)
+        tensor: cosine similarity between ssm_state right before and right
+        after the gated-delta merge, for live diagnostics only (see
+        ACTIVE_COS_SIM_THRESHOLD).
         """
         dtype = hidden_states.dtype
         zxbcdt = mixer.in_proj(hidden_states)
@@ -577,6 +593,7 @@ class Model(nn.Module):
         dBx = torch.einsum("bh,bn,bhp->bhpn", dt, B, x_h)
         ssm_state = ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx
 
+        injection_cos_sim = None
         if gated_delta is not None:
             # gated_delta's tensors come from the memory subsystem, which runs
             # at its own (fp32) dtype regardless of the backbone's (see
@@ -584,10 +601,17 @@ class Model(nn.Module):
             # backbone now loads in bf16, see model.py's load_base) so the
             # merge below doesn't hit a dtype mismatch.
             p, key, beta, retain = (t.to(ssm_state.dtype) for t in gated_delta)
+            pre_merge_state = ssm_state
             readback = torch.einsum("bhpn,bn->bhp", ssm_state, key)
             forgotten = ssm_state - beta * torch.einsum("bhp,bn->bhpn", readback, key)
             written = beta * torch.einsum("bhp,bn->bhpn", p, key)
             ssm_state = retain * forgotten + written
+            # Diagnostic only (see ACTIVE_COS_SIM_THRESHOLD/last_token_log) --
+            # detached, no autograd graph, negligible cost next to the merge
+            # itself. (batch,), one value per batch row.
+            injection_cos_sim = F.cosine_similarity(
+                pre_merge_state.detach().flatten(1), ssm_state.detach().flatten(1), dim=1
+            )
 
         y = torch.einsum("bhpn,bn->bhp", ssm_state.to(dtype), C)
         y = y + rearrange(mixer.D.to(dtype), "h -> h 1") * x_h
@@ -599,7 +623,7 @@ class Model(nn.Module):
         if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1)
         out = mixer.out_proj(y)
-        return out, conv_state, ssm_state
+        return out, conv_state, ssm_state, injection_cos_sim
 
     def _apply_norm_f(self, h: torch.Tensor, residual: torch.Tensor | None) -> torch.Tensor:
         if not self.fused_add_norm:
@@ -635,6 +659,7 @@ class Model(nn.Module):
             residual = None
             token_betas: list[torch.Tensor] = []   # (B,) per injected layer
             token_retains: list[torch.Tensor] = []
+            token_cos_sims: list[torch.Tensor] = []
             last_surprise_per_slot: torch.Tensor | None = None
             last_o_t_norm_per_slot: torch.Tensor | None = None
             last_grad_norm_per_slot: torch.Tensor | None = None
@@ -651,11 +676,13 @@ class Model(nn.Module):
                     self._mem_stat_inj_count += 1
                     token_betas.append(beta_per_slot)
                     token_retains.append(retain_per_slot)
-                h, conv_state, ssm_state = self._mixer_step(
+                h, conv_state, ssm_state, injection_cos_sim = self._mixer_step(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i], gated_delta
                 )
                 state.conv_states[i] = conv_state
                 state.ssm_states[i] = ssm_state
+                if injection_cos_sim is not None:
+                    token_cos_sims.append(injection_cos_sim)
 
                 if i == READ_LAYER:
                     o_t, surprise, grad_norm = self.front_end.step(residual, state.neural_memory)
@@ -674,10 +701,11 @@ class Model(nn.Module):
                 for b in range(batch_size):
                     betas_b = [tb[b].item() for tb in token_betas]
                     retains_b = [tr[b].item() for tr in token_retains]
+                    cos_sims_b = [tc[b].item() for tc in token_cos_sims]
                     entry: dict = {
                         "beta": sum(betas_b) / len(betas_b),
                         "retain": sum(retains_b) / len(retains_b),
-                        "active_layers": sum(bv > ACTIVE_BETA_THRESHOLD for bv in betas_b),
+                        "active_layers": sum(cs < ACTIVE_COS_SIM_THRESHOLD for cs in cos_sims_b),
                         "n_layers": len(betas_b),
                     }
                     if last_surprise_per_slot is not None:
@@ -707,10 +735,11 @@ class Model(nn.Module):
     def last_token_log(self) -> list[dict] | None:
         """Per-slot snapshot of the most recently processed token's memory
         signals. Returns a list with one dict per batch element (beta/retain
-        averaged across injected layers, active_layers = count above
-        ACTIVE_BETA_THRESHOLD, surprise/o_t_norm from the front-end read).
-        None until forward() has run at least once. Never resets -- meant
-        for live per-token logging, not a per-step average."""
+        averaged across injected layers, active_layers = count of layers
+        whose ssm_state moved past ACTIVE_COS_SIM_THRESHOLD during the
+        gated-delta merge, surprise/o_t_norm from the front-end read). None
+        until forward() has run at least once. Never resets -- meant for
+        live per-token logging, not a per-step average."""
         return list(self._last_token_logs) if self._last_token_logs else None
 
     def reset_slot(self, state: "MemoryState", slot_idx: int) -> None:
