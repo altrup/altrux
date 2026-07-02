@@ -99,17 +99,21 @@ BETA_BIAS_ANNEAL_TOKENS = 2000
 # _TitansFrontEnd.step) bounds the momentum recurrence *given* a bounded
 # per-token gradient, but doesn't bound the gradient itself, which can spike
 # hard enough (e.g. early in training, before eta/theta are learned) to push
-# the memory non-finite. w1/w2 together are ~9.4M elements, so a healthy,
-# untroubled gradient (~O(1) per element, since k/v are RMS-normalized to
-# unit scale) already has a combined norm around sqrt(9.4M)~=3066 from
-# dimensionality alone -- a clip anywhere near that would constantly
-# saturate on ordinary gradients, not just runaway ones (this is likely why
-# an earlier experiment clipping to 3000 didn't prevent non-finite state:
-# see the note in _TitansFrontEnd.step about eta). This is set with real
-# headroom above that baseline instead. Unverified against real training
-# telemetry -- watch GRAD_NORM in the live logs (see Model.last_token_log)
-# and tighten this if healthy gradients are landing much below it.
-GRAD_SCALE = 15000.0
+# the memory non-finite. A naive dimensionality estimate (treating each of
+# w1/w2's ~9.4M elements as an independent O(1) contribution, giving a
+# combined norm around sqrt(9.4M)~=3066) is wrong: L is a *mean* over
+# MEM_DIM, not a sum, so the gradient is attenuated by that factor too, not
+# just the loss -- a numeric check (dL/dw1, dL/dw2 computed directly at
+# w1/w2's init scale, MEM_DIM=1536, MEM_HIDDEN=6144) gives a combined norm
+# of ~2, not ~3000. The blowup itself is quadratic in how far w2 has
+# drifted from that scale (dL/dw1 chains through r @ w2, so residual and
+# weight scale both grow together) -- by 100x drift the same check gives a
+# combined norm of ~2734, by 300x it's ~24587. This is set to intervene
+# well before that drift compounds too far, while leaving ~150x headroom
+# over the healthy baseline for a genuinely large, real surprise. Still
+# unverified against real training telemetry -- watch GRAD_NORM in the live
+# logs (see Model.last_token_log) and retune from there.
+GRAD_SCALE = 300.0
 
 
 class _NeuralMemory:

@@ -98,18 +98,24 @@ BETA_BIAS_ANNEAL_TOKENS = 2000
 # _TitansFrontEnd.step) bounds the momentum recurrence *given* a bounded
 # per-token gradient, but doesn't bound the gradient itself, which can spike
 # hard enough (e.g. early in training, before eta/theta are learned) to push
-# the memory non-finite. w1/w2 together are ~52M elements, so a healthy,
-# untroubled gradient (~O(1) per element, since k/v are RMS-normalized to
-# unit scale) already has a combined norm around sqrt(52M)~=7211 from
-# dimensionality alone -- a clip anywhere near that would constantly
-# saturate on ordinary gradients, not just runaway ones (see
-# mamba2_780m_memory/model.py's GRAD_SCALE for the sqrt(9.4M)~=3066 case
-# there, and the note in this file's _TitansFrontEnd.step about eta). This
-# is set with real headroom above that baseline instead. Unverified against
-# real training telemetry -- watch GRAD_NORM in the live logs (see
-# Model.last_token_log) and tighten this if healthy gradients are landing
-# much below it.
-GRAD_SCALE = 35000.0
+# the memory non-finite. A naive dimensionality estimate (treating each of
+# w1/w2's ~52M elements as an independent O(1) contribution, giving a
+# combined norm around sqrt(52M)~=7211) is wrong: L is a *mean* over
+# MEM_DIM, not a sum, so the gradient is attenuated by that factor too, not
+# just the loss -- a numeric check (dL/dw1, dL/dw2 computed directly at
+# w1/w2's init scale, MEM_DIM=2560, MEM_HIDDEN=10240) gives a combined norm
+# of ~2, not ~7000, and comes out nearly identical to the 780m model's
+# check despite the larger dims (see mamba2_780m_memory/model.py's
+# GRAD_SCALE for that derivation). The blowup itself is quadratic in how
+# far w2 has drifted from that scale (dL/dw1 chains through r @ w2, so
+# residual and weight scale both grow together) -- by 100x drift the same
+# check gives a combined norm of ~2754, by 300x it's ~24765, both close to
+# the 780m case too. This is set to intervene well before that drift
+# compounds too far, while leaving ~150x headroom over the healthy baseline
+# for a genuinely large, real surprise. Still unverified against real
+# training telemetry -- watch GRAD_NORM in the live logs (see
+# Model.last_token_log) and retune from there.
+GRAD_SCALE = 300.0
 
 
 class _NeuralMemory:
