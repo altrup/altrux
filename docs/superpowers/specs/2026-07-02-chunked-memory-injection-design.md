@@ -4,13 +4,27 @@
 
 - **Done**: memory-window write batching, surprise-weighted-pooled injection
   batching to the window boundary, `--memory-window` CLI flag + checkpoint
-  persistence, hardware-conditional `causal-conv1d` install. Covered by
-  `models/tests/test_mamba2_2_7b_memory_windowing.py` (isolated unit tests
-  against `_NeuralMemory` and the pooling/gating logic directly — the full
-  `Model` can't be exercised end-to-end locally; see "Testing/rollout").
+  persistence, hardware-conditional `causal-conv1d` install, and the
+  fused-kernel backbone dispatch itself (`Model._forward_fused`/
+  `_mixer_span`/`fused_kernel_usable` in `model.py`): the 43 layers never in
+  `INJECTED_LAYERS` run through `mamba_ssm`'s native
+  `mamba_chunk_scan_combined` for a whole chunk in one call; the 21 injected
+  layers run per-window (one fused span over the `window - 1` non-injection
+  tokens, then one manual `_mixer_step` for the window-closing token).
+  Feature-detected via `fused_kernel_usable` (CUDA, not ROCm/HIP,
+  `causal_conv1d` importable) — this repo's local ROCm dev box keeps using
+  the original all-manual `_forward_manual` path unconditionally. Covered by
+  `models/tests/test_mamba2_2_7b_memory_windowing.py`: `_NeuralMemory` and
+  the pooling/gating logic directly, the windowed
+  `read_windowed`/`surprise_windowed` helpers against their per-token
+  equivalents, `fused_kernel_usable`'s feature-detection branches, and the
+  window-span-boundary arithmetic `_forward_fused` uses — the full `Model`
+  (and the fused kernel calls themselves) still can't be exercised
+  end-to-end locally; see "Testing/rollout" below, which is now the
+  load-bearing next step before trusting this for a real paid run.
 - **Not done**: the exact intra-window scan (write still uses the coarser
-  "one averaged step" approximation) and the fused-kernel backbone dispatch
-  — both explicitly deferred, see "Non-goals" below for why.
+  "one averaged step" approximation) — explicitly deferred, see "Non-goals"
+  below for why.
 
 ## Problem
 
@@ -105,21 +119,48 @@ resuming from a batched-mode run, to give the model real per-token training
 signal rather than relying solely on the `b≥1` formulation transferring
 cleanly.
 
-### Fused-kernel dispatch for the un-injected spans
+### Fused-kernel dispatch for the un-injected spans — **implemented**
 
-Between memory-window boundaries, on a CUDA host with `causal-conv1d`
-importable, backbone layers should route through `mamba_ssm`'s native
-fused/chunked forward instead of the manual `_mixer_step` loop. Dispatch is
-by feature detection (device type + successful `causal_conv1d` import/probe
-at model load), not a manual flag — so the ROCm dev box keeps working
-without the caller needing to remember anything. The manual per-token loop
-remains, unconditionally, at the memory-window boundary itself (where the
-injection happens) on every hardware target, since that's the piece that
-still needs per-token state access regardless of GPU.
+`Model._forward_fused` (`model.py`) restructures the backbone loop from
+token-major to layer-major, mirroring `mamba_ssm`'s own full-sequence
+`MixerModel.forward`: for the 43 layers never in `INJECTED_LAYERS`, the
+whole chunk runs through one `_mixer_span` call (wrapping `causal_conv1d_fn`
++ `mamba_chunk_scan_combined`, `mamba_ssm`'s native fused/chunked forward)
+instead of `seqlen` manual `_mixer_step` calls. For the 21 injected layers,
+each memory-window is handled as one `_mixer_span` call over its
+`window - 1` leading tokens, followed by one manual `_mixer_step` call for
+the window-closing token — the only token that still needs per-token,
+pre-readout state access (layer `READ_LAYER`'s own read/write additionally
+needs every token's residual in the window, not just the boundary token's —
+see `_NeuralMemory.read_windowed`/`.surprise_windowed`, which do that
+without a sequential loop).
+
+Dispatch is by feature detection (`fused_kernel_usable`: CUDA device type
+that isn't actually ROCm/HIP, plus a successful `causal_conv1d` import at
+module load), not a manual flag — so the ROCm dev box keeps working without
+the caller needing to remember anything; `Model.forward` routes to
+`_forward_fused` when available and to `_forward_manual` (the original,
+byte-for-byte-unchanged all-manual loop) otherwise.
 
 `sft/pyproject.toml` / `backend/pyproject.toml`'s "causal-conv1d
-deliberately not installed" needs to become hardware-conditional instead of
-blanket, so the H100 environment actually installs it.
+deliberately not installed" is already hardware-conditional (installed only
+when a non-ROCm CUDA GPU is detected — see `backend/Makefile`/
+`sft/Makefile`), so the H100 environment already installs it; this was
+completed in a prior commit, ahead of the dispatch code that actually uses
+it.
+
+**Not independently verified end-to-end**: the kernel calls in
+`_mixer_span` (conv1d state continuity across window/chunk boundaries via
+manual roll-buffer reconstruction, `mamba_chunk_scan_combined`'s
+`initial_states`/`return_final_states` shapes, and the layer-major
+restructuring's numerical equivalence to `_forward_manual`) were built
+against the installed `mamba_ssm` source directly (not guessed from
+memory), matching the call conventions the library's own `Mamba2.forward`
+uses — see `_mixer_span`'s docstring for the specific reasoning at each
+step — but `causal-conv1d` can't be installed or exercised on this repo's
+local ROCm dev box at all (see root CLAUDE.md), so none of this has run.
+**Needs a real smoke test on the H100** (or equivalent CUDA host) before
+being trusted for a paid training run — see "Testing/rollout" below.
 
 ### Checkpoint compatibility
 
@@ -171,13 +212,30 @@ restarting from scratch.
 
 The real model can't be run end-to-end on the local ROCm box (OOMs at
 ~7.5GB base weights alone on an 8GB card) and the fused-kernel path can't be
-exercised locally at all (ROCm `causal-conv1d` confirmed broken). So:
+exercised locally at all (ROCm `causal-conv1d` confirmed broken — on this
+box, `Model.forward` always takes the `_forward_manual` path regardless of
+this feature existing). So:
 
 - Correctness of the windowed accumulate/apply math, checkpoint save/load,
   and legacy-mode (`window=1`) equivalence to today's behavior should be
   validated locally via `smoke_test.py` at reduced scale (small batch,
   low LoRA rank, synthetic data) — this exercises the real code path, just
-  at a size that fits in 8GB.
+  at a size that fits in 8GB. The windowed read/surprise math the fused
+  path's `READ_LAYER` handling depends on (`_NeuralMemory.read_windowed`/
+  `.surprise_windowed`) is covered directly by
+  `models/tests/test_mamba2_2_7b_memory_windowing.py` against their
+  per-token equivalents, independent of any GPU.
+- **Before the first real H100 training run under this feature**: confirm
+  `Model._fused_path_available()` actually returns `True` there (i.e.
+  `causal-conv1d` installed successfully via the conditional `make sync`
+  path), then run `make smoke-test` and diff `_forward_fused`'s logits
+  against `_forward_manual`'s for the same input on a small
+  synthetic/reduced-scale config (temporarily force `_fused_path_available`
+  to `False` for one of the two runs) — they should match to floating-point
+  tolerance. This is the one piece of this design that has not been run at
+  all yet, in any form, and needs that hands-on validation before being
+  trusted for a paid run — do not assume it works from the code review
+  alone.
 - The `memory-window` value itself should be swept cheaply (synthetic data,
   small scale) before committing real H100 hours to a full run — no
   principled reason to prefer one value in the teens/twenties over another

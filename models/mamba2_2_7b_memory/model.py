@@ -9,24 +9,23 @@ is the literal implementation of it.
 Implementation note: because the gated-delta merge at layer i is a
 function of the memory read at READ_LAYER, and that read for token t must be
 available to *later* layers of the *same* token while only being available to
-*earlier* layers on the *next* token, the backbone can't run through Mamba2's
-fused/chunked parallel-scan kernels here -- those process a whole sequence in
-one kernel call and don't expose a per-token, pre-readout hook. Model.forward
-therefore loops over time explicitly, one token at a time, replicating
-Mamba2's own incremental-decode arithmetic (see `_mixer_step`) for every
-layer. This is the same asymptotic cost as autoregressive decoding, just paid
-during training too -- materially slower than the library's native chunked
-training path on hardware where that path actually works (see root
-CLAUDE.md -- this is broken on the local ROCm dev box but not on a proper
-CUDA target like a rented H100). The backbone/injection loop itself is not
-yet restructured to exploit that (still an open item -- see the design spec
-below); what IS implemented is decoupling the memory subsystem's own WRITE
-cadence from the per-token loop (see `set_memory_window` and
-`_NeuralMemory.write`), which is a necessary prerequisite for that backbone
-work and a modest win on its own (fewer, larger gradient-step calls instead
-of one per token). See
+*earlier* layers on the *next* token, per-token injection can't run through
+Mamba2's fused/chunked parallel-scan kernels -- those process a whole
+sequence in one kernel call and don't expose a per-token, pre-readout hook.
+But since injection only fires on a memory-window's closing token (see
+`set_memory_window`), only that one token per window still needs the manual,
+sequential treatment (`_mixer_step`, replicating Mamba2's own incremental-
+decode arithmetic); the `window - 1` other tokens per window never touch the
+memory subsystem at all, so they're free to run through the native fused/
+chunked kernel (`_mixer_span`, wrapping `causal_conv1d_fn` +
+`mamba_chunk_scan_combined`) instead. `Model.forward` dispatches between the
+two on hardware where the fused kernel is available (CUDA, not ROCm, with
+`causal_conv1d` importable -- see `_fused_path_available`); on hardware where
+it isn't (this repo's local ROCm dev box, gfx1102 -- see root CLAUDE.md), it
+falls back to `_forward_manual`, the original all-manual per-token loop,
+unconditionally and unchanged. See
 docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md for the
-full design, including what's deferred and why.
+full design, including what's still deferred and why.
 """
 
 import math
@@ -37,12 +36,18 @@ import torch.nn.functional as F
 from einops import rearrange
 
 try:
-    from causal_conv1d import causal_conv1d_update
+    from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
 except ImportError:
-    causal_conv1d_update = None
+    causal_conv1d_fn, causal_conv1d_update = None, None
 
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
+# Importing this is always safe even where causal_conv1d/Triton are broken
+# (this repo's ROCm dev box, see root CLAUDE.md) -- it only hangs/segfaults
+# if actually *called*, and `_fused_path_available` gates every call site.
+# ssd_combined.py itself guards its own `from causal_conv1d import
+# causal_conv1d_fn` the same try/except way this module does.
+from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
 MODEL_ID = "state-spaces/mamba2-2.7b"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
@@ -265,6 +270,40 @@ class _NeuralMemory:
         window) or the just-updated one (the token whose write() call closed
         the window), depending on call order in Model.forward."""
         return self._apply(q, self.w1, self.b1, self.w2, self.b2)
+
+    def read_windowed(self, q_win: torch.Tensor) -> torch.Tensor:
+        """Same as read(), batched over an extra leading window dim: q_win
+        is (W, batch, dim); returns (W, batch, dim). Always against the
+        SAME window-start weights for every entry (`_apply_windowed`
+        broadcasts w1/w2 across the W dim, same as write()), matching the
+        per-token read()'s "frozen for the window" semantics exactly --
+        used by `Model._forward_fused`'s per-window dispatch in place of W
+        sequential read() calls."""
+        return self._apply_windowed(q_win, self.w1, self.b1, self.w2, self.b2)
+
+    def surprise_windowed(self, k_win: torch.Tensor, v_win: torch.Tensor) -> torch.Tensor:
+        """Same as surprise(), batched over an extra leading window dim:
+        k_win/v_win are (W, batch, dim); returns (W, batch). See
+        read_windowed's docstring."""
+        pred = self._apply_windowed(k_win, self.w1, self.b1, self.w2, self.b2)
+        return ((pred - v_win) ** 2).mean(dim=-1)
+
+
+def fused_kernel_usable(device: torch.device) -> bool:
+    """True when `device` can safely run `Model._mixer_span` (mamba_ssm's
+    native fused/chunked kernel path) instead of the manual per-token loop:
+    `causal_conv1d` imported successfully AND `device` is a real CUDA device
+    that isn't actually a ROCm/HIP build. `torch.cuda.is_available()` also
+    reports True on ROCm, so `torch.version.hip is None` is the piece that
+    actually distinguishes them -- same check `backend/Makefile`/
+    `sft/Makefile` use to decide whether to install `causal-conv1d` at all.
+    Module-level (not a `Model` method) so it's testable without
+    constructing the real 2.7B backbone, which OOMs on this repo's local
+    8GB dev GPU regardless (see models/tests/test_mamba2_2_7b_memory_
+    windowing.py)."""
+    if causal_conv1d_fn is None:
+        return False
+    return device.type == "cuda" and torch.version.hip is None
 
 
 def _rms_normalize(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -683,6 +722,107 @@ class Model(nn.Module):
         out = mixer.out_proj(y)
         return out, conv_state, ssm_state, injection_cos_sim
 
+    def _mixer_span(
+        self,
+        mixer,
+        hidden_states: torch.Tensor,
+        conv_state: torch.Tensor,
+        ssm_state: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Fused-kernel counterpart to `_mixer_step`, for a whole span of L
+        tokens in one call via `mamba_ssm`'s native `causal_conv1d_fn` +
+        `mamba_chunk_scan_combined` instead of a sequential Python loop over
+        L manual steps -- see the module docstring and the design spec's
+        "Fused-kernel dispatch" section. Only ever called on a span where
+        every token gets `gated_delta=None`: it has no parameter for
+        injecting one, by construction. Caller must have already confirmed
+        `_fused_path_available()`.
+
+        `hidden_states`: (batch, L, d_model). `conv_state`/`ssm_state`: the
+        exact same shapes `_mixer_step` uses, carrying history from BEFORE
+        this span (zero-init, mid-chunk, or continued from a previous
+        window/chunk/call) -- same contract as `_mixer_step`'s.
+
+        Returns (out (batch, L, d_model), new_conv_state, new_ssm_state), in
+        the same shapes/dtypes as the corresponding inputs, so a caller can
+        freely interleave this with `_mixer_step` calls (see
+        `_forward_fused`'s injected-layer branch) or persist the result onto
+        `MemoryState` exactly like `_mixer_step`'s output.
+        """
+        dtype = hidden_states.dtype
+        zxbcdt = mixer.in_proj(hidden_states)
+        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        z0, x0, z, xBC, dt = torch.split(
+            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+        )
+
+        xBC_t = rearrange(xBC, "b l d -> b d l")
+        # conv_state holds the last d_conv RAW (pre-conv, pre-activation)
+        # xBC values ending at the token right before this span (see
+        # _mixer_step's own roll-buffer convention) -- causal_conv1d_fn's
+        # `initial_states` wants only the last d_conv-1 of those (the
+        # left-context strictly before this span's first output).
+        conv_history = conv_state[:, :, 1:]
+        xBC_conv = causal_conv1d_fn(
+            x=xBC_t,
+            weight=rearrange(mixer.conv1d.weight, "d 1 w -> d w"),
+            bias=mixer.conv1d.bias,
+            initial_states=conv_history,
+            activation=mixer.activation,
+        )
+        # Reconstructed directly from this span's own raw (pre-conv) values
+        # plus the pre-span history -- deliberately NOT causal_conv1d_fn's
+        # own `return_final_states` option, whose exact output shape/
+        # convention isn't independently verified in this environment
+        # (causal-conv1d can't be installed/exercised on this repo's local
+        # ROCm dev box, see root CLAUDE.md); concatenating and slicing the
+        # last d_conv columns reproduces _mixer_step's roll-buffer exactly,
+        # using only documented, already-verified shapes.
+        new_conv_state = torch.cat([conv_history, xBC_t], dim=-1)[..., -conv_state.shape[-1]:]
+        xBC = rearrange(xBC_conv, "b d l -> b l d").to(dtype=dtype)
+
+        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        A = -torch.exp(mixer.A_log.float())
+        x_h = rearrange(x, "b l (h p) -> b l h p", p=mixer.headdim)
+        B = rearrange(B, "b l (g n) -> b l g n", g=mixer.ngroups)
+        C = rearrange(C, "b l (g n) -> b l g n", g=mixer.ngroups)
+
+        y, final_state = mamba_chunk_scan_combined(
+            x_h,
+            dt,
+            A,
+            B,
+            C,
+            chunk_size=mixer.chunk_size,
+            D=mixer.D,
+            z=None,
+            dt_bias=mixer.dt_bias,
+            initial_states=ssm_state,
+            dt_softplus=True,
+            return_final_states=True,
+        )
+        new_ssm_state = final_state.to(dtype=ssm_state.dtype)
+
+        y = rearrange(y, "b l h p -> b l (h p)")
+        if not mixer.rmsnorm:
+            y = y * mixer.act(z)
+        else:
+            y = mixer.norm(y, z)
+        if d_mlp > 0:
+            y = torch.cat([F.silu(z0) * x0, y], dim=-1)
+        out = mixer.out_proj(y)
+        return out, new_conv_state, new_ssm_state
+
+    def _fused_path_available(self) -> bool:
+        """True when this process can safely dispatch through `_mixer_span`
+        instead of the all-manual `_forward_manual` loop -- see
+        `fused_kernel_usable`'s docstring for the actual check. Purely
+        feature-detected, not a manual flag -- this repo's local ROCm dev
+        box (gfx1102, confirmed broken -- see root CLAUDE.md) transparently
+        keeps using `_forward_manual` with nothing for a caller to
+        remember."""
+        return fused_kernel_usable(self.embedding.weight.device)
+
     def _apply_norm_f(self, h: torch.Tensor, residual: torch.Tensor | None) -> torch.Tensor:
         if not self.fused_add_norm:
             combined = (h + residual) if residual is not None else h
@@ -701,13 +841,9 @@ class Model(nn.Module):
     def forward(self, input_ids: torch.Tensor, state: MemoryState | None = None) -> tuple[torch.Tensor, MemoryState]:
         """Returns (logits (B, T, vocab_size), updated MemoryState).
 
-        Processes `input_ids` one token at a time regardless of T (see the
-        module docstring for why) -- correct for both a many-token prefill
-        and a single incremental decode step, just not parallelized across T.
-
         Both the memory subsystem's WRITE (`_NeuralMemory.write`) and its
         INJECTION into `ssm_state` (the gated-delta merge, `_mixer_step`) are
-        now consolidated every `self.memory_window` tokens instead of every
+        consolidated every `self.memory_window` tokens instead of every
         token -- see set_memory_window and the design spec at
         docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md.
         The READ (`_NeuralMemory.read`/`.surprise`) still happens every
@@ -718,20 +854,30 @@ class Model(nn.Module):
         window, not just that one token's own. For the other
         `memory_window - 1` tokens, every injected layer gets `gated_delta =
         None`, i.e. `ssm_state` evolves purely under Mamba2's own
-        unmodified dynamics -- the prerequisite for eventually letting
-        those spans run through a fused kernel (not yet done; see the
-        design spec's "Non-goals").
+        unmodified dynamics.
+
+        This is the dispatcher: it validates `input_ids`/`state` once, then
+        hands off to `_forward_fused` (the `window - 1` non-injection tokens
+        per window run through `mamba_ssm`'s native fused/chunked kernel,
+        `_mixer_span`; only the window-closing token still runs the manual
+        per-token `_mixer_step`) when `_fused_path_available()`, else
+        `_forward_manual` (the original all-manual per-token loop, byte-for-
+        byte unchanged -- this repo's local ROCm dev box, gfx1102, always
+        takes this path, see root CLAUDE.md). Both produce identical results
+        by construction (same math, same call sequence into `_mixer_step`/
+        `_NeuralMemory`, just batched differently across time where nothing
+        depends on per-token ordering) -- this is feature-detected per call,
+        not a flag a caller needs to set or remember.
 
         `seqlen` must be an exact multiple of `self.memory_window`: a window
-        is buffered purely locally within this call (`pending_*` below,
-        never stored on `state`) and must fully flush before this call
-        returns, so it can never span across two forward() calls (which may
-        be separated by a detach() at a chunk boundary during chunked
-        training -- see MemoryState.detach). sft/train.py enforces
-        `chunk_len % memory_window == 0` for training; inference always
-        keeps memory_window=1, which divides any seqlen and reproduces
-        today's exact per-token injection as a special case, not a separate
-        code path.
+        is buffered purely locally within one call and must fully flush
+        before that call returns, so it can never span across two forward()
+        calls (which may be separated by a detach() at a chunk boundary
+        during chunked training -- see MemoryState.detach). sft/train.py
+        enforces `chunk_len % memory_window == 0` for training; inference
+        always keeps memory_window=1, which divides any seqlen and
+        reproduces today's exact per-token injection as a special case, not
+        a separate code path.
         """
         batch_size, seqlen = input_ids.shape
         if seqlen % self.memory_window != 0:
@@ -744,6 +890,22 @@ class Model(nn.Module):
         if state is None:
             state = self._init_state(batch_size, device, dtype)
 
+        if self._fused_path_available():
+            return self._forward_fused(input_ids, state)
+        return self._forward_manual(input_ids, state)
+
+    def _forward_manual(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
+        """All-manual per-token fallback: processes `input_ids` one token at
+        a time regardless of T (see the module docstring for why) --
+        correct for both a many-token prefill and a single incremental
+        decode step, just not parallelized across T. The only dispatch path
+        on hardware without a working fused kernel (this repo's local ROCm
+        dev box, see `_fused_path_available`); also always correct
+        everywhere else, just slower than `_forward_fused` there. See
+        `forward()`'s docstring for the windowed memory-write/injection
+        semantics, unchanged here from before the fused dispatch existed.
+        """
+        batch_size, seqlen = input_ids.shape
         all_logits = []
         # Buffered per-token write inputs for the memory subsystem's current
         # (not-yet-closed) window -- purely local to this call, flushed via
@@ -889,6 +1051,182 @@ class Model(nn.Module):
             all_logits.append(self.lm_head(h))
 
         return torch.stack(all_logits, dim=1), state
+
+    def _forward_fused(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
+        """Fused-kernel dispatch: processes the WHOLE chunk layer-by-layer
+        (like `mamba_ssm`'s own full-sequence backbone forward) instead of
+        token-by-token. For the 43 layers never in `INJECTED_LAYERS`, one
+        `_mixer_span` call covers the entire chunk -- no per-token
+        dependency ever exists for them. For the 21 injected layers
+        (`INJECTED_LAYERS`, including `READ_LAYER`), each memory-window
+        within the chunk is handled as one `_mixer_span` call over its
+        `window - 1` leading tokens (skipped entirely at `window == 1`),
+        followed by one `_mixer_step` call for the window-closing token --
+        the only token that still needs per-token, pre-readout state access
+        (see the module docstring). Windows are still processed in
+        sequence (a Python loop), since `state.last_o_t`/`last_surprise`
+        thread across them exactly as they do across tokens in
+        `_forward_manual` -- only removes the O(seqlen) manual loop within
+        each window's non-injection span, not the O(n_windows) loop itself
+        (n_windows = seqlen // memory_window is small by construction, see
+        the design spec's memory-window rationale).
+
+        `_prenorm` runs once per layer over the FULL (batch, seqlen,
+        d_model) hidden/residual stream rather than once per token --
+        mathematically identical either way (RMSNorm/residual-add have no
+        cross-token coupling; `layer_norm_fn` is already used this way in
+        `mamba_ssm`'s own full-sequence `MixerModel.forward`), just computed
+        in one batched call instead of `seqlen` sequential ones.
+
+        At `READ_LAYER`, `observe()`/`_NeuralMemory.read_windowed`/
+        `.surprise_windowed` replace the per-token `observe()`/`read()`/
+        `.surprise()` calls, computed once per window over the residual
+        entering `READ_LAYER` for every token in that window (available
+        directly from `_prenorm`'s already-computed full-chunk `residual`,
+        since injected/non-injected status doesn't change what `_prenorm`
+        computes) -- not just the window-closing token's, preserving the
+        surprise-weighted pooling semantics exactly. `_NeuralMemory.write`
+        still consolidates once per window, same as `_forward_manual`. The
+        ordering subtlety at `READ_LAYER` (this window's gated-delta merge
+        uses the PREVIOUS window's pooled `state.last_o_t`/`last_surprise`,
+        which only gets overwritten by THIS window's pooled values after
+        that merge -- see the README's "layer 42 subtlety" and the module
+        docstring) is preserved by computing `gated_delta` before calling
+        `_mixer_step`, then updating `state.last_o_t`/`last_surprise`
+        afterward, exactly the same order `_forward_manual` uses.
+        """
+        batch_size, seqlen = input_ids.shape
+        window = self.memory_window
+        n_windows = seqlen // window
+
+        h = self.embedding(input_ids)
+        residual: torch.Tensor | None = None
+
+        # Diagnostics are only ever materialized for the chunk's LAST
+        # window's closing token (== the chunk's last token, since
+        # seqlen % memory_window == 0) -- same "only the last token of the
+        # chunk" restriction `_forward_manual` applies, for the same reason
+        # (avoid a per-injected-layer-per-window blocking .item() sync; see
+        # its comment).
+        token_betas: list[torch.Tensor] = []
+        token_retains: list[torch.Tensor] = []
+        token_cos_sims: list[torch.Tensor] = []
+        last_surprise_per_slot: torch.Tensor | None = None
+        last_o_t_norm_per_slot: torch.Tensor | None = None
+        last_grad_norm_per_slot: torch.Tensor | None = None
+
+        for i, layer in enumerate(self.layers):
+            h, residual = self._prenorm(layer, h, residual)
+
+            if i not in INJECTED_LAYERS:
+                h, conv_state, ssm_state = self._mixer_span(
+                    layer.mixer, h, state.conv_states[i], state.ssm_states[i]
+                )
+                state.conv_states[i] = conv_state
+                state.ssm_states[i] = ssm_state
+                continue
+
+            conv_state, ssm_state = state.conv_states[i], state.ssm_states[i]
+            out_parts: list[torch.Tensor] = []
+            for w in range(n_windows):
+                start, boundary = w * window, w * window + window - 1
+                is_last_window = w == n_windows - 1
+
+                if window > 1:
+                    span_out, conv_state, ssm_state = self._mixer_span(
+                        layer.mixer, h[:, start:boundary, :], conv_state, ssm_state
+                    )
+                    out_parts.append(span_out)
+
+                # Uses state.last_o_t/last_surprise as they stand from the
+                # PREVIOUS window (or the previous forward() call's final
+                # window, or zero-init) -- this window's own pooled values
+                # (computed below, at i == READ_LAYER) aren't visible to
+                # this merge, same ordering _forward_manual uses.
+                gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
+                beta, retain = gated_delta[2], gated_delta[3]
+                beta_per_slot = beta[:, 0, 0, 0].detach()
+                retain_per_slot = retain[:, 0, 0, 0].detach()
+                self._mem_stat_sums["beta"] += beta_per_slot.mean()
+                self._mem_stat_sums["retain"] += retain_per_slot.mean()
+                self._mem_stat_inj_count += 1
+                if is_last_window:
+                    token_betas.append(beta_per_slot)
+                    token_retains.append(retain_per_slot)
+
+                boundary_out, conv_state, ssm_state, injection_cos_sim = self._mixer_step(
+                    layer.mixer, h[:, boundary, :], conv_state, ssm_state, gated_delta
+                )
+                out_parts.append(boundary_out.unsqueeze(1))
+                if is_last_window:
+                    token_cos_sims.append(injection_cos_sim)
+
+                if i == READ_LAYER:
+                    with torch.enable_grad():
+                        win_residual = residual[:, start : start + window, :]  # (B, W, d_model)
+                        q, k, v, eta, theta, alpha = self.front_end.observe(win_residual)
+                        # (B, W, ...) -> (W, B, ...): _apply_windowed's
+                        # expected layout (see write()/read_windowed).
+                        q_w, k_w, v_w = q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
+                        eta_w = eta.transpose(0, 1)
+                        theta_w = theta.transpose(0, 1)
+                        alpha_w = alpha.transpose(0, 1)
+
+                        # Against the window-START M (frozen for the whole
+                        # window), same as _forward_manual's per-token
+                        # read()/surprise() calls -- write() (below) hasn't
+                        # run yet for this window.
+                        o_win = state.neural_memory.read_windowed(q_w)              # (W, B, mem_dim)
+                        surprise_win = state.neural_memory.surprise_windowed(k_w, v_w)  # (W, B)
+                        for wt in range(window):
+                            self._mem_stat_sums["surprise"] += surprise_win[wt].detach().mean()
+                            self._mem_stat_sums["o_t_norm"] += o_win[wt].detach().norm(dim=-1).mean()
+                            self._mem_stat_tok_count += 1
+
+                        _, grad_norm = state.neural_memory.write(k_w, v_w, eta_w, theta_w, alpha_w)
+                        last_grad_norm_per_slot = grad_norm.detach()
+                        self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
+                        self._mem_stat_write_count += 1
+
+                        # Surprise-weighted pooling -- see forward()'s
+                        # docstring; identical formula to _forward_manual's.
+                        pool_weights = torch.softmax(surprise_win, dim=0)  # (W, B)
+                        state.last_o_t = (pool_weights.unsqueeze(-1) * o_win).sum(dim=0)
+                        state.last_surprise = (pool_weights * surprise_win).sum(dim=0)
+
+                        if is_last_window:
+                            last_surprise_per_slot = surprise_win[-1].detach()
+                            last_o_t_norm_per_slot = o_win[-1].detach().norm(dim=-1)
+
+            state.conv_states[i] = conv_state
+            state.ssm_states[i] = ssm_state
+            h = torch.cat(out_parts, dim=1)
+
+        if token_betas:
+            logs = []
+            for b in range(batch_size):
+                betas_b = [tb[b].item() for tb in token_betas]
+                retains_b = [tr[b].item() for tr in token_retains]
+                cos_sims_b = [tc[b].item() for tc in token_cos_sims]
+                entry: dict = {
+                    "beta": sum(betas_b) / len(betas_b),
+                    "retain": sum(retains_b) / len(retains_b),
+                    "active_layers": sum(cs < ACTIVE_COS_SIM_THRESHOLD for cs in cos_sims_b),
+                    "n_layers": len(betas_b),
+                    "min_cos_sim": min(cos_sims_b),
+                }
+                if last_surprise_per_slot is not None:
+                    entry["surprise"] = last_surprise_per_slot[b].item()
+                    entry["o_t_norm"] = last_o_t_norm_per_slot[b].item()
+                    entry["grad_norm"] = (
+                        last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                    )
+                logs.append(entry)
+            self._last_token_logs = logs
+
+        h = self._apply_norm_f(h, residual)
+        logits = self.lm_head(h)
+        return logits, state
 
     def set_memory_window(self, window: int) -> None:
         """Sets how many tokens' worth of write inputs `_NeuralMemory.write`

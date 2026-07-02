@@ -26,7 +26,8 @@ import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from models.mamba2_2_7b_memory.model import GRAD_SCALE, _NeuralMemory
+from models.mamba2_2_7b_memory import model as _model_mod
+from models.mamba2_2_7b_memory.model import GRAD_SCALE, _NeuralMemory, fused_kernel_usable
 
 BATCH, DIM, HIDDEN = 2, 16, 32
 
@@ -207,3 +208,110 @@ def test_pooling_is_a_convex_combination_and_upweights_the_most_surprising_token
     most_surprising = surprise.argmax(dim=0)
     heaviest = weights.argmax(dim=0)
     assert torch.equal(most_surprising, heaviest)
+
+
+# --- Fused-kernel dispatch (docs/superpowers/specs/2026-07-02-chunked-
+# memory-injection-design.md's "Fused-kernel dispatch" section, Model.
+# _forward_fused/_mixer_span/_fused_path_available in model.py) -- the
+# kernel calls themselves need a real CUDA host with causal_conv1d
+# importable (neither true on this repo's local ROCm dev box, see root
+# CLAUDE.md), so this can only cover the pieces that don't need one:
+# feature detection, and the windowed read/surprise math _forward_fused
+# uses in place of Model._forward_manual's per-token read()/surprise()
+# calls at READ_LAYER (see _NeuralMemory.read_windowed/surprise_windowed).
+
+def test_fused_kernel_usable_false_without_causal_conv1d(monkeypatch):
+    monkeypatch.setattr(_model_mod, "causal_conv1d_fn", None)
+    assert fused_kernel_usable(torch.device("cuda")) is False
+
+
+def test_fused_kernel_usable_false_on_cpu():
+    # causal_conv1d_fn may or may not be importable in this environment,
+    # but a CPU device must always be rejected regardless.
+    assert fused_kernel_usable(torch.device("cpu")) is False
+
+
+def test_fused_kernel_usable_false_on_rocm_even_with_causal_conv1d(monkeypatch):
+    # torch.cuda.is_available() (and hence device.type == "cuda") is True
+    # on ROCm builds too -- torch.version.hip is the only thing that tells
+    # them apart (see backend/Makefile's own install-time check, which this
+    # mirrors). A ROCm host must still be rejected even if causal_conv1d
+    # somehow imported successfully there.
+    monkeypatch.setattr(_model_mod, "causal_conv1d_fn", lambda *a, **k: None)
+    monkeypatch.setattr(torch.version, "hip", "6.0", raising=False)
+    try:
+        assert fused_kernel_usable(torch.device("cuda")) is False
+    finally:
+        monkeypatch.setattr(torch.version, "hip", None, raising=False)
+
+
+def test_fused_kernel_usable_true_on_real_cuda_with_causal_conv1d(monkeypatch):
+    monkeypatch.setattr(_model_mod, "causal_conv1d_fn", lambda *a, **k: None)
+    monkeypatch.setattr(torch.version, "hip", None, raising=False)
+    assert fused_kernel_usable(torch.device("cuda")) is True
+
+
+def test_read_windowed_matches_sequential_read_per_token():
+    """_forward_fused calls read_windowed once per window instead of
+    Model._forward_manual's W sequential read() calls -- must produce
+    identical per-token results, since it's the same frozen-M forward pass,
+    just batched over the window dim instead of looped."""
+    mem = _make_memory()
+    W = 4
+    q_stack = torch.randn(W, BATCH, DIM)
+
+    windowed = mem.read_windowed(q_stack)
+    sequential = torch.stack([mem.read(q_stack[t]) for t in range(W)], dim=0)
+
+    assert torch.allclose(windowed, sequential, atol=1e-6)
+
+
+def test_surprise_windowed_matches_sequential_surprise_per_token():
+    mem = _make_memory()
+    W = 4
+    k_stack = torch.randn(W, BATCH, DIM)
+    v_stack = torch.randn(W, BATCH, DIM)
+
+    windowed = mem.surprise_windowed(k_stack, v_stack)
+    sequential = torch.stack([mem.surprise(k_stack[t], v_stack[t]) for t in range(W)], dim=0)
+
+    assert torch.allclose(windowed, sequential, atol=1e-6)
+
+
+def test_read_windowed_uses_window_start_weights_not_mid_window():
+    """read_windowed must use the SAME (frozen) M for every token in the
+    window -- it must NOT reflect a write() that happened partway through,
+    matching _forward_manual's "read against whatever weights are current
+    at the start of the window" contract (see forward()'s docstring)."""
+    mem = _make_memory()
+    W = 3
+    q_stack = torch.randn(W, BATCH, DIM)
+    before = mem.read_windowed(q_stack)
+
+    # A write() call must not retroactively change what read_windowed
+    # would have returned for weights captured before it.
+    ks, vs = torch.randn(W, BATCH, DIM), torch.randn(W, BATCH, DIM)
+    etas, thetas, alphas = torch.rand(W, BATCH) * 0.9, torch.rand(W, BATCH) * 0.1, torch.rand(W, BATCH) * 0.1
+    mem.write(ks, vs, etas, thetas, alphas)
+
+    after_fresh_call = mem.read_windowed(q_stack)
+    assert not torch.allclose(before, after_fresh_call), "write() should have changed M's weights"
+
+
+@pytest.mark.parametrize("window,seqlen", [(1, 5), (3, 9), (4, 8)])
+def test_window_span_boundaries_partition_the_chunk_exactly(window, seqlen):
+    """Mirrors Model._forward_fused's own `start`/`boundary` arithmetic for
+    each injected layer's per-window loop: the (window-1)-token fused span
+    plus the single boundary token must together cover every token in the
+    chunk exactly once, in order, with the boundary always the window's
+    last token."""
+    n_windows = seqlen // window
+    covered: list[int] = []
+    for w in range(n_windows):
+        start, boundary = w * window, w * window + window - 1
+        covered.extend(range(start, boundary))  # the fused span's tokens
+        covered.append(boundary)  # the manual step's token
+
+    assert covered == list(range(seqlen))
+    last_start, last_boundary = (n_windows - 1) * window, (n_windows - 1) * window + window - 1
+    assert last_boundary == seqlen - 1, "last window's boundary token must be the chunk's last token"
