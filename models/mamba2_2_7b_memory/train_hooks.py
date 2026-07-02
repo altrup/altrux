@@ -118,7 +118,7 @@ def extra_log(model) -> str | None:
     return (
         f"memory  beta {stats['beta']:.4f}  retain {stats['retain']:.4f}"
         f"  surprise {stats['surprise']:.4f}  o_t_norm {stats['o_t_norm']:.4f}"
-        f"  grad_norm {stats['grad_norm']:.1f}"
+        f"  grad_norm {stats['grad_norm']:.4g}"
     )
 
 
@@ -134,6 +134,6 @@ def chunk_extra_log(model) -> list[str] | None:
         f"beta {log['beta']:.4f}  retain {log['retain']:.4f}"
         f"  active {log['active_layers']:>2}/{log['n_layers']}"
         f"  surprise {log['surprise']:.4f}  o_t_norm {log['o_t_norm']:.4f}"
-        f"  grad_norm {log['grad_norm']:.1f}"
+        f"  grad_norm {log['grad_norm']:.4g}"
         for log in logs
     ]
