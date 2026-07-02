@@ -707,6 +707,11 @@ class Model(nn.Module):
                         "retain": sum(retains_b) / len(retains_b),
                         "active_layers": sum(cs < ACTIVE_COS_SIM_THRESHOLD for cs in cos_sims_b),
                         "n_layers": len(betas_b),
+                        # Lowest (i.e. most-changed) per-layer cosine
+                        # similarity this token for this slot -- the single
+                        # most active layer's actual shift, a finer-grained
+                        # companion to the active_layers/n_layers count.
+                        "min_cos_sim": min(cos_sims_b),
                     }
                     if last_surprise_per_slot is not None:
                         entry["surprise"] = last_surprise_per_slot[b].item()
@@ -737,9 +742,10 @@ class Model(nn.Module):
         signals. Returns a list with one dict per batch element (beta/retain
         averaged across injected layers, active_layers = count of layers
         whose ssm_state moved past ACTIVE_COS_SIM_THRESHOLD during the
-        gated-delta merge, surprise/o_t_norm from the front-end read). None
-        until forward() has run at least once. Never resets -- meant for
-        live per-token logging, not a per-step average."""
+        gated-delta merge, min_cos_sim = that slot's single most-changed
+        layer's actual similarity, surprise/o_t_norm from the front-end
+        read). None until forward() has run at least once. Never resets --
+        meant for live per-token logging, not a per-step average."""
         return list(self._last_token_logs) if self._last_token_logs else None
 
     def reset_slot(self, state: "MemoryState", slot_idx: int) -> None:

@@ -132,7 +132,7 @@ def chunk_extra_log(model) -> list[str] | None:
         return None
     return [
         f"beta {log['beta']:.4f}  retain {log['retain']:.4f}"
-        f"  active {log['active_layers']:>2}/{log['n_layers']}"
+        f"  active {log['active_layers']:>2}/{log['n_layers']}  min_cos_sim {log['min_cos_sim']:.4f}"
         f"  surprise {log['surprise']:.4f}  o_t_norm {log['o_t_norm']:.4f}"
         f"  grad_norm {log['grad_norm']:.4g}"
         for log in logs

@@ -699,6 +699,10 @@ class Model(nn.Module):
                 self._last_token_log["clear"] = sum(token_clears) / len(token_clears)
                 self._last_token_log["active_layers"] = sum(cs < ACTIVE_COS_SIM_THRESHOLD for cs in token_cos_sims)
                 self._last_token_log["n_layers"] = len(token_betas)
+                # Lowest (i.e. most-changed) per-layer cosine similarity this
+                # token -- the single most active layer's actual shift, a
+                # finer-grained companion to the active_layers/n_layers count.
+                self._last_token_log["min_cos_sim"] = min(token_cos_sims)
 
             h = self._apply_norm_f(h, residual)
             all_logits.append(self.lm_head(h))
@@ -720,7 +724,8 @@ class Model(nn.Module):
     def last_token_log(self) -> dict | None:
         """Snapshot of the most recently processed token's memory-usage
         signals (beta/clear averaged across injected layers, active_layers =
-        how many of them moved ssm_state past ACTIVE_COS_SIM_THRESHOLD --
+        how many of them moved ssm_state past ACTIVE_COS_SIM_THRESHOLD,
+        min_cos_sim = the single most-changed layer's actual similarity --
         diagnostic only, doesn't affect the merge itself; surprise/o_t_norm
         from the front-end's last read). None until forward() has run at
         least once. Unlike pop_memory_stats, this never resets -- it's meant
