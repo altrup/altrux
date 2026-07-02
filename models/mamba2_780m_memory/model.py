@@ -94,6 +94,23 @@ ACTIVE_BETA_THRESHOLD = 0.2
 BETA_BIAS_ANNEAL_START = -3.0
 BETA_BIAS_ANNEAL_TOKENS = 2000
 
+# Soft ceiling (see _NeuralMemory.write) for the raw per-token gradient norm
+# that drives the memory's test-time write -- capping eta below 1 (see
+# _TitansFrontEnd.step) bounds the momentum recurrence *given* a bounded
+# per-token gradient, but doesn't bound the gradient itself, which can spike
+# hard enough (e.g. early in training, before eta/theta are learned) to push
+# the memory non-finite. w1/w2 together are ~9.4M elements, so a healthy,
+# untroubled gradient (~O(1) per element, since k/v are RMS-normalized to
+# unit scale) already has a combined norm around sqrt(9.4M)~=3066 from
+# dimensionality alone -- a clip anywhere near that would constantly
+# saturate on ordinary gradients, not just runaway ones (this is likely why
+# an earlier experiment clipping to 3000 didn't prevent non-finite state:
+# see the note in _TitansFrontEnd.step about eta). This is set with real
+# headroom above that baseline instead. Unverified against real training
+# telemetry -- watch GRAD_NORM in the live logs (see Model.last_token_log)
+# and tighten this if healthy gradients are landing much below it.
+GRAD_SCALE = 15000.0
+
 
 class _NeuralMemory:
     """Titans-style fast-weight MLP: a 2-layer MLP whose *weights* are the
@@ -147,8 +164,11 @@ class _NeuralMemory:
         leaf tensors with requires_grad=False (see __init__), and
         torch.autograd.grad requires `inputs` to require grad.
 
-        Returns the loss magnitude per batch element ("surprise"), exported
-        for Stage 2's write-strength gate.
+        Returns (surprise, grad_norm): surprise is the loss magnitude per
+        batch element, exported for Stage 2's write-strength gate; grad_norm
+        is the raw (pre-soft-clip) combined gradient norm per batch element,
+        exported purely for live diagnostics (see Model.last_token_log) --
+        it plays no role in the write itself.
         """
         params = [p.detach().requires_grad_(True) for p in (self.w1, self.b1, self.w2, self.b2)]
         momentum = [s.detach() for s in self.momentum]
@@ -165,6 +185,25 @@ class _NeuralMemory:
         # differentiating g w.r.t. it can't chain past this single token.
         grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=True)
 
+        # Soft-clip: treat (w1,b1,w2,b2)'s gradients as one combined vector
+        # per batch row (same convention as torch.nn.utils.clip_grad_norm_)
+        # and rescale that vector so its norm smoothly saturates toward
+        # GRAD_SCALE instead of being left unbounded -- tanh(x)~=x near 0,
+        # so a normal, healthy gradient passes through essentially
+        # unchanged; only a gradient large enough to threaten non-finite
+        # state gets pulled down, and direction is always preserved exactly
+        # (the whole vector is scaled by one factor, not clipped
+        # element-by-element). The factor is computed from a *detached* copy
+        # of the gradient -- deliberately not differentiated through, same
+        # as ordinary gradient clipping -- so it doesn't add a second-order
+        # term to the k_proj/v_proj gradient create_graph=True exists for.
+        grad_norm = torch.zeros(k.shape[0], device=k.device, dtype=k.dtype)
+        for g in grads:
+            grad_norm = grad_norm + g.detach().pow(2).flatten(1).sum(dim=1)
+        grad_norm = grad_norm.sqrt()
+        clip_factor = (GRAD_SCALE * torch.tanh(grad_norm / GRAD_SCALE)) / (grad_norm + 1e-12)
+        grads = [g * clip_factor.view((-1,) + (1,) * (g.dim() - 1)) for g in grads]
+
         new_params = []
         new_momentum = []
         for p, g, s in zip(params, grads, momentum):
@@ -175,7 +214,7 @@ class _NeuralMemory:
             new_momentum.append(s_new)
         self.momentum = new_momentum
         self.w1, self.b1, self.w2, self.b2 = new_params
-        return per_example_loss.detach()
+        return per_example_loss.detach(), grad_norm.detach()
 
     def read(self, q: torch.Tensor) -> torch.Tensor:
         """o_t = M_t(q_t), called after write() so the read uses the
@@ -209,10 +248,11 @@ class _TitansFrontEnd(nn.Module):
     def init_memory(self, batch_size: int, device, dtype) -> _NeuralMemory:
         return _NeuralMemory(batch_size, self.mem_dim, self.mem_hidden, device, dtype)
 
-    def step(self, residual: torch.Tensor, memory: _NeuralMemory) -> tuple[torch.Tensor, torch.Tensor]:
+    def step(self, residual: torch.Tensor, memory: _NeuralMemory) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """residual: (batch, d_model) residual stream entering READ_LAYER.
 
-        Returns (o_t, surprise) -- o_t is (batch, mem_dim), surprise is (batch,).
+        Returns (o_t, surprise, grad_norm) -- o_t is (batch, mem_dim),
+        surprise and grad_norm are both (batch,).
 
         The write is a genuine gradient step (autograd.grad inside
         _NeuralMemory.write), which needs grad tracking enabled regardless of
@@ -249,9 +289,9 @@ class _TitansFrontEnd(nn.Module):
             # still going non-finite even with grads clipped to a generous
             # 3000. Capping below 1 guarantees at least 10% decay per token.
             eta, theta, alpha = knobs[..., 0] * 0.9, knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
-            surprise = memory.write(k, v, eta, theta, alpha)
+            surprise, grad_norm = memory.write(k, v, eta, theta, alpha)
             o_t = memory.read(q)
-        return o_t, surprise
+        return o_t, surprise, grad_norm
 
 
 class _GatedDeltaInjection(nn.Module):
@@ -440,7 +480,7 @@ class Model(nn.Module):
         # _GatedDeltaInjection.__init__) and are the only direct signal of
         # whether the memory subsystem is actually being used or still
         # sitting at its identity init.
-        self._mem_stat_sums = {"beta": 0.0, "clear": 0.0, "surprise": 0.0, "o_t_norm": 0.0}
+        self._mem_stat_sums = {"beta": 0.0, "clear": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0}
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
         # Snapshot of the single most-recently-processed token, for live
@@ -610,16 +650,19 @@ class Model(nn.Module):
                 state.ssm_states[i] = ssm_state
 
                 if i == READ_LAYER:
-                    o_t, surprise = self.front_end.step(residual, state.neural_memory)
+                    o_t, surprise, grad_norm = self.front_end.step(residual, state.neural_memory)
                     state.last_o_t = o_t
                     state.last_surprise = surprise
                     surprise_val = surprise.detach().mean().item()
                     o_t_norm_val = o_t.detach().norm(dim=-1).mean().item()
+                    grad_norm_val = grad_norm.detach().mean().item()
                     self._mem_stat_sums["surprise"] += surprise_val
                     self._mem_stat_sums["o_t_norm"] += o_t_norm_val
+                    self._mem_stat_sums["grad_norm"] += grad_norm_val
                     self._mem_stat_tok_count += 1
                     self._last_token_log["surprise"] = surprise_val
                     self._last_token_log["o_t_norm"] = o_t_norm_val
+                    self._last_token_log["grad_norm"] = grad_norm_val
 
             if token_betas:
                 self._last_token_log["beta"] = sum(token_betas) / len(token_betas)
@@ -672,6 +715,7 @@ class Model(nn.Module):
             "clear": self._mem_stat_sums["clear"] / max(self._mem_stat_inj_count, 1),
             "surprise": self._mem_stat_sums["surprise"] / self._mem_stat_tok_count,
             "o_t_norm": self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count,
+            "grad_norm": self._mem_stat_sums["grad_norm"] / self._mem_stat_tok_count,
         }
         self._mem_stat_sums = {k: 0.0 for k in self._mem_stat_sums}
         self._mem_stat_inj_count = 0

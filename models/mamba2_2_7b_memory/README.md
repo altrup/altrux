@@ -83,7 +83,9 @@ S_t = η_t·S_{t-1} - θ_t·∇L
 M_t = (1 - α_t)·M_{t-1} + S_t
 ```
 
-with `η`/`θ`/`α` produced by small data-dependent sigmoid projections. Reading is a pure forward pass, `o_t = M_t(q_t)` (a 2560-dim vector), with no weight update. The gradient magnitude from the write step ("surprise") is exported downstream to modulate Stage 2's write strength.
+with `η`/`θ`/`α` produced by small data-dependent sigmoid projections (`η` capped at 0.9, `θ`/`α` at 0.1). Reading is a pure forward pass, `o_t = M_t(q_t)` (a 2560-dim vector), with no weight update. The gradient magnitude from the write step ("surprise") is exported downstream to modulate Stage 2's write strength.
+
+Before entering the `S_t` update, `∇L` is soft-clipped by norm: `g_soft = GRAD_SCALE · tanh(‖∇L‖ / GRAD_SCALE) · (∇L / ‖∇L‖)`, i.e. direction preserved exactly, magnitude left untouched for typical gradients (`tanh(x) ≈ x` near 0) but smoothly bounded below `GRAD_SCALE` (`model.py`, currently `35000` -- set with headroom above the ~7211 combined-norm scale `w1`/`w2`'s ~52M elements would produce from dimensionality alone at a healthy O(1)-per-element gradient) no matter how large the raw gradient spikes. Capping `η` below 1 alone bounds the momentum recurrence only *given* a bounded per-token gradient -- this clip is what actually bounds the gradient itself, since a spike (most likely early in training, before `η`/`θ` are learned) can otherwise push the memory non-finite in one step regardless of `η`. The pre-clip norm is logged live (`grad_norm` in `extra_log`/`chunk_extra_log`) so this ceiling can be retuned from real training telemetry rather than the dimensional-analysis estimate it started from.
 
 ### Stage 2 — gated-delta merge directly into Mamba2's own SSM state (one signal-generator per injected layer)
 
