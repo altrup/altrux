@@ -1,5 +1,17 @@
 # Chunked memory injection for mamba2_2_7b_memory
 
+## Implementation status
+
+- **Done**: memory-window write batching, surprise-weighted-pooled injection
+  batching to the window boundary, `--memory-window` CLI flag + checkpoint
+  persistence, hardware-conditional `causal-conv1d` install. Covered by
+  `models/tests/test_mamba2_2_7b_memory_windowing.py` (isolated unit tests
+  against `_NeuralMemory` and the pooling/gating logic directly — the full
+  `Model` can't be exercised end-to-end locally; see "Testing/rollout").
+- **Not done**: the exact intra-window scan (write still uses the coarser
+  "one averaged step" approximation) and the fused-kernel backbone dispatch
+  — both explicitly deferred, see "Non-goals" below for why.
+
 ## Problem
 
 `mamba2_2_7b_memory` trains via a manual per-token Python loop over all 64
@@ -54,17 +66,23 @@ path.
   duration). This is a batched forward pass through a fixed-weight MLP —
   free relative to a sequential loop. `surprise_t` likewise per-token.
 - **Write (apply), consolidated once per window boundary**:
-  1. `M`'s actual weight update — solved via the closed-form/associative-scan
-     form of the momentum recurrence (`S_t = η·S_{t-1} - θ·∇L_t`,
-     `M_t = (1-α)·M_{t-1} + S_t`), since it's linear given the per-token
-     `η`/`θ` gates. The only approximation in the whole scheme is here:
-     `∇L_t` for every token in the window is computed against the
-     window-start `M`, not a continuously-updated one.
+  1. `M`'s actual weight update. **Implemented as**: every token's loss
+     (against the window-start `M`) is summed and differentiated in one
+     `autograd.grad` call, then one momentum step is applied using the
+     window's *averaged* `η`/`θ`/`α` — window=1 is exact by construction
+     (see `_NeuralMemory.write`'s docstring). This is a coarser
+     approximation than Titans' own exact approach (see "Non-goals" below
+     for why the exact version is deferred, not just a smaller patch).
   2. Injection into `ssm_state` — one consolidated write per window,
      content-derived from a **surprise-weighted aggregation of every
      token's `o_t`/`surprise_t` in the window** (not just the last token's),
      since those per-token values are already available for free from the
-     parallel read step above.
+     parallel read step above. **Implemented** as a softmax-over-surprise
+     weighting (`Model.forward`'s pooling block); window=1 reduces to a
+     softmax over one element (weight 1.0), reproducing the original
+     per-token injection exactly. For the `window - 1` non-closing tokens in
+     each window, every injected layer gets `gated_delta = None` — `ssm_state`
+     evolves under Mamba2's own unmodified dynamics for those tokens.
 
 ### `accumulate_and_apply(window)` — one function, two call sites
 
@@ -117,12 +135,33 @@ restarting from scratch.
 ## Non-goals / explicitly deferred
 
 - **Exact per-token injection via a DeltaNet-style chunked/WY-representation
-  formulation** (computing all 24 individual `ssm_state` merges exactly, in
-  parallel, rather than one aggregated write per window) — a real technique
-  that exists in the linear-attention literature, but real custom-kernel
-  engineering, the same scope of work already set aside earlier in this
-  project for cost reasons. Flagged as a future upgrade if 24-token
-  resolution turns out to hurt quality in practice, not part of this design.
+  formulation** (computing all `window` individual `ssm_state` merges
+  exactly, in parallel, rather than one aggregated write per window) — a
+  real technique that exists in the linear-attention literature, but real
+  custom-kernel engineering, the same scope of work already set aside
+  earlier in this project for cost reasons. Naively buffering each token's
+  read and "applying them all at the window boundary" is NOT equivalent to
+  this and was considered and rejected: the gated-delta merge interacts with
+  Mamba2's own decay/write between tokens, so firing `window` merges
+  back-to-back with no natural dynamics in between them isn't a deferred
+  version of the same computation, it's a different (and likely degenerate)
+  one. Flagged as a future upgrade if the current window-boundary-only
+  injection turns out to hurt quality in practice, not part of this design.
+- **Exact intra-window scan for the memory write** (reconstructing the true
+  per-token `S_t`/`M_t` trajectory via a parallel associative scan, matching
+  Titans arXiv:2501.00663 §3.2 exactly, instead of the coarser "sum losses,
+  one averaged step" actually implemented). Initially estimated as a small
+  addition; turned out not to be, once `MEM_HIDDEN = 4×D_MODEL = 10240` is
+  accounted for — naively storing a per-token trajectory of `M`-shaped
+  tensors (`(batch, hidden, dim)`) across a window is tens of GB, not
+  viable. A memory-efficient version is possible by exploiting that a linear
+  layer's per-example gradient is always a rank-1 outer product (the same
+  trick DeltaNet-style linear attention uses to stay matrix-free), but that
+  makes this comparable in difficulty/risk to the DeltaNet-style injection
+  work above, not a quick PyTorch upgrade. Deferred; needs its own proper
+  scoping (and validation at small `MEM_HIDDEN` before trusting it at the
+  real size) rather than being rushed in alongside the window-boundary
+  injection work.
 - Fully dynamic (non-windowed) injection timing — incompatible with the
   parallelism goal by construction (see discussion in prior conversation);
   surprise-weighted pooling within a fixed window is the chosen middle

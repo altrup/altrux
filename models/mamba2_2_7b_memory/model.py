@@ -705,13 +705,23 @@ class Model(nn.Module):
         module docstring for why) -- correct for both a many-token prefill
         and a single incremental decode step, just not parallelized across T.
 
-        The memory subsystem's WRITE is consolidated every
-        `self.memory_window` tokens rather than every token (see
-        set_memory_window, `_NeuralMemory.write`, and the design spec at
-        docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md)
-        -- the READ (`_NeuralMemory.read`/`.surprise`) still happens every
-        token regardless, since those are cheap forward passes against
-        whatever weights are currently active, not a sequential recurrence.
+        Both the memory subsystem's WRITE (`_NeuralMemory.write`) and its
+        INJECTION into `ssm_state` (the gated-delta merge, `_mixer_step`) are
+        now consolidated every `self.memory_window` tokens instead of every
+        token -- see set_memory_window and the design spec at
+        docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md.
+        The READ (`_NeuralMemory.read`/`.surprise`) still happens every
+        token regardless (cheap forward passes against whatever weights are
+        currently active, not a sequential recurrence) -- what changes is
+        that only the window-closing token's injection actually uses a
+        signal: a surprise-weighted pooling of every token's read in the
+        window, not just that one token's own. For the other
+        `memory_window - 1` tokens, every injected layer gets `gated_delta =
+        None`, i.e. `ssm_state` evolves purely under Mamba2's own
+        unmodified dynamics -- the prerequisite for eventually letting
+        those spans run through a fused kernel (not yet done; see the
+        design spec's "Non-goals").
+
         `seqlen` must be an exact multiple of `self.memory_window`: a window
         is buffered purely locally within this call (`pending_*` below,
         never stored on `state`) and must fully flush before this call
@@ -719,7 +729,9 @@ class Model(nn.Module):
         be separated by a detach() at a chunk boundary during chunked
         training -- see MemoryState.detach). sft/train.py enforces
         `chunk_len % memory_window == 0` for training; inference always
-        keeps memory_window=1, which divides any seqlen.
+        keeps memory_window=1, which divides any seqlen and reproduces
+        today's exact per-token injection as a special case, not a separate
+        code path.
         """
         batch_size, seqlen = input_ids.shape
         if seqlen % self.memory_window != 0:
@@ -743,6 +755,12 @@ class Model(nn.Module):
         pending_eta: list[torch.Tensor] = []
         pending_theta: list[torch.Tensor] = []
         pending_alpha: list[torch.Tensor] = []
+        # Every token's read, buffered the same way as the write inputs
+        # above -- pooled (surprise-weighted) into the one signal the
+        # window-closing token's injection actually uses. See the pooling
+        # block below and the forward() docstring.
+        pending_o: list[torch.Tensor] = []
+        pending_surprise: list[torch.Tensor] = []
         # Carries the most recent window's grad_norm forward across tokens
         # within this call (unlike surprise/o_t_norm, grad_norm only has a
         # fresh value on the token that closes a window) so the last-token
@@ -752,6 +770,11 @@ class Model(nn.Module):
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])
             residual = None
+            # True on exactly one token per window -- the one that closes
+            # it, per set_memory_window's contract. Both the write and the
+            # injection are gated on this, not on "every token" (see
+            # forward()'s docstring).
+            is_window_close = (t % self.memory_window) == (self.memory_window - 1)
             token_betas: list[torch.Tensor] = []   # (B,) per injected layer
             token_retains: list[torch.Tensor] = []
             token_cos_sims: list[torch.Tensor] = []
@@ -760,7 +783,7 @@ class Model(nn.Module):
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
-                if i in INJECTED_LAYERS:
+                if i in INJECTED_LAYERS and is_window_close:
                     gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
                     beta, retain = gated_delta[2], gated_delta[3]
                     beta_per_slot = beta[:, 0, 0, 0].detach()    # (B,)
@@ -783,12 +806,25 @@ class Model(nn.Module):
                         q, k, v, eta, theta, alpha = self.front_end.observe(residual)
                         o_t = state.neural_memory.read(q)
                         surprise = state.neural_memory.surprise(k, v)
+                        # Per-token diagnostics (surprise/o_t_norm stats,
+                        # below) always reflect this token's own raw read,
+                        # regardless of window size -- separate from the
+                        # pooled signal injection actually uses, computed
+                        # only at window close, below.
+                        last_surprise_per_slot = surprise.detach()          # (B,)
+                        last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)  # (B,)
+                        self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean()
+                        self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean()
+                        self._mem_stat_tok_count += 1
+
                         pending_k.append(k)
                         pending_v.append(v)
                         pending_eta.append(eta)
                         pending_theta.append(theta)
                         pending_alpha.append(alpha)
-                        if len(pending_k) == self.memory_window:
+                        pending_o.append(o_t)
+                        pending_surprise.append(surprise)
+                        if is_window_close:
                             ks = torch.stack(pending_k, dim=0)
                             vs = torch.stack(pending_v, dim=0)
                             etas = torch.stack(pending_eta, dim=0)
@@ -799,13 +835,23 @@ class Model(nn.Module):
                             self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
                             self._mem_stat_write_count += 1
                             pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
-                    state.last_o_t = o_t
-                    state.last_surprise = surprise
-                    last_surprise_per_slot = surprise.detach()          # (B,)
-                    last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)  # (B,)
-                    self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean()
-                    self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean()
-                    self._mem_stat_tok_count += 1
+
+                            # Surprise-weighted pooling of every token's read
+                            # in the window that's about to close -- this,
+                            # not any single token's raw o_t/surprise, is
+                            # what the injections computed above (and the
+                            # next window's layers 22-40, which read
+                            # state.last_o_t/last_surprise before this
+                            # token's own layer-42 update) actually use. A
+                            # window of 1 makes this a softmax over a single
+                            # entry (i.e. weight 1.0), reproducing the
+                            # original per-token o_t/surprise exactly.
+                            o_stack = torch.stack(pending_o, dim=0)                  # (W, B, mem_dim)
+                            surprise_stack = torch.stack(pending_surprise, dim=0)    # (W, B)
+                            pool_weights = torch.softmax(surprise_stack, dim=0)      # (W, B)
+                            state.last_o_t = (pool_weights.unsqueeze(-1) * o_stack).sum(dim=0)
+                            state.last_surprise = (pool_weights * surprise_stack).sum(dim=0)
+                            pending_o, pending_surprise = [], []
 
             # Only materialize the per-slot log dict (hundreds of blocking
             # .item() syncs, one per injected layer per batch slot) on the

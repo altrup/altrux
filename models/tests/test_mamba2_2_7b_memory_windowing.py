@@ -145,3 +145,65 @@ def test_various_window_sizes_produce_finite_weights(window):
     etas, thetas, alphas = torch.rand(window, BATCH) * 0.9, torch.rand(window, BATCH) * 0.1, torch.rand(window, BATCH) * 0.1
     mem.write(ks, vs, etas, thetas, alphas)
     assert torch.isfinite(mem.w1).all() and torch.isfinite(mem.w2).all() and torch.isfinite(mem.b1).all() and torch.isfinite(mem.b2).all()
+
+
+# --- Injection batching (Model.forward's is_window_close gate + the
+# surprise-weighted pooling that produces the one signal each window's
+# closing token's injection actually uses) -- these two pieces are simple
+# enough to test standalone without the full Model, which is hardcoded to
+# the real backbone's exact dims (nheads=80, headdim=64, d_state=128,
+# d_model=2560 -- see _TitansFrontEnd()/_GatedDeltaInjection() being
+# constructed with no args in Model.__init__, binding those as defaults) and
+# so can't be wrapped around a small synthetic backbone for a cheap local
+# integration test.
+
+def _is_window_close(t: int, window: int) -> bool:
+    """Mirrors Model.forward's own `is_window_close` expression exactly."""
+    return (t % window) == (window - 1)
+
+
+def _pool(o_stack: torch.Tensor, surprise_stack: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mirrors Model.forward's pooling block exactly: o_stack/surprise_stack
+    are (W, B, ...), returns the (B, ...) pooled o_t/surprise a window's
+    closing token's injection uses."""
+    weights = torch.softmax(surprise_stack, dim=0)
+    pooled_o = (weights.unsqueeze(-1) * o_stack).sum(dim=0)
+    pooled_surprise = (weights * surprise_stack).sum(dim=0)
+    return pooled_o, pooled_surprise
+
+
+@pytest.mark.parametrize("window,seqlen", [(1, 5), (3, 9), (4, 8)])
+def test_is_window_close_fires_exactly_once_per_window(window, seqlen):
+    closes = [t for t in range(seqlen) if _is_window_close(t, window)]
+    assert len(closes) == seqlen // window
+    # Evenly spaced, window tokens apart, last one at the final token --
+    # matches forward()'s own `seqlen % memory_window == 0` requirement.
+    assert closes[-1] == seqlen - 1
+    assert all(b - a == window for a, b in zip(closes, closes[1:]))
+
+
+def test_pooling_at_window1_reproduces_the_single_token_exactly():
+    o = torch.randn(1, BATCH, DIM)
+    surprise = torch.randn(1, BATCH)
+    pooled_o, pooled_surprise = _pool(o, surprise)
+    assert torch.allclose(pooled_o, o[0], atol=1e-6)
+    assert torch.allclose(pooled_surprise, surprise[0], atol=1e-6)
+
+
+def test_pooling_is_a_convex_combination_and_upweights_the_most_surprising_token():
+    W = 5
+    o = torch.randn(W, BATCH, DIM)
+    surprise = torch.randn(W, BATCH)
+    pooled_o, pooled_surprise = _pool(o, surprise)
+    assert pooled_o.shape == (BATCH, DIM)
+    assert pooled_surprise.shape == (BATCH,)
+    assert torch.isfinite(pooled_o).all() and torch.isfinite(pooled_surprise).all()
+
+    weights = torch.softmax(surprise, dim=0)
+    assert torch.allclose(weights.sum(dim=0), torch.ones(BATCH), atol=1e-6), "pooling weights must sum to 1"
+
+    # The most-surprising token in the window should get the largest weight
+    # for every batch row, by construction of softmax.
+    most_surprising = surprise.argmax(dim=0)
+    heaviest = weights.argmax(dim=0)
+    assert torch.equal(most_surprising, heaviest)
