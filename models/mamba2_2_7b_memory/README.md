@@ -2,7 +2,7 @@
 
 ## Source
 
-[`state-spaces/mamba2-2.7b`](https://huggingface.co/state-spaces/mamba2-2.7b) — the 2.7B-parameter Mamba2 backbone, wrapped with the same trainable long-term memory subsystem as [`mamba2_780m_memory`](../mamba2_780m_memory/README.md): an addressable associative store updated by the gated delta rule, fed by a Titans-style nonlinear front-end that decides what's worth writing. The memory subsystem (front-end, gate projections) is new and trained from scratch with full gradients. The backbone itself is **not** frozen — it's adapted via LoRA, on the theory that a fully frozen backbone is unlikely to integrate a memory signal injected straight into its SSM state well, since none of its own weights ever get a chance to adjust to that new input.
+[`state-spaces/mamba2-2.7b`](https://huggingface.co/state-spaces/mamba2-2.7b) — the 2.7B-parameter Mamba2 backbone, wrapped with a trainable long-term memory subsystem: an addressable associative store updated by the gated delta rule, fed by a Titans-style nonlinear front-end that decides what's worth writing. The memory subsystem (front-end, gate projections) is new and trained from scratch with full gradients. The backbone itself is **not** frozen — it's adapted via LoRA, on the theory that a fully frozen backbone is unlikely to integrate a memory signal injected straight into its SSM state well, since none of its own weights ever get a chance to adjust to that new input.
 
 Backbone shape: `d_model=2560`, `n_layer=64`, `d_inner=5120` (expand 2), `nheads=80`, `headdim=64`, `d_state=128`, `ngroups=1` (B/C shared across heads). Per head, Mamba2's own SSM state is a 64×128 matrix, written with a rank-1 outer product and read via the C projection. At injected layers (see below), the memory subsystem's gated-delta rule is merged directly into this same state tensor — not a side accumulator added on top — so memory shares both the *form* (rank-1/low-rank associative writes, projection-based reads) and the actual storage with Mamba2's own state.
 
@@ -68,7 +68,13 @@ Note the subtlety at layer 42: the merge at layer 42 (using signals derived from
 
 ### Sequential, per-token execution (not chunked)
 
-Because the gated-delta accumulator at layer *i* depends on the memory read at `READ_LAYER`, and that read for token *t* must be visible to *later* layers of the *same* token while only being available to *earlier* layers on the *next* token, the backbone can't run through Mamba2's fused/chunked parallel-scan kernels — those process a whole sequence in one kernel call and don't expose a per-token, pre-readout hook. `Model.forward` therefore loops over time explicitly, replicating Mamba2's own incremental-decode arithmetic (`_mixer_step`) for every layer, every token — the same asymptotic cost as autoregressive decoding, just paid during training too. This is materially slower than the library's native chunked training path; revisit if it becomes a bottleneck (e.g. a custom chunked kernel that exposes the pre-readout state).
+Because the gated-delta accumulator at layer *i* depends on the memory read at `READ_LAYER`, and that read for token *t* must be visible to *later* layers of the *same* token while only being available to *earlier* layers on the *next* token, the backbone can't run through Mamba2's fused/chunked parallel-scan kernels — those process a whole sequence in one kernel call and don't expose a per-token, pre-readout hook. `Model.forward` therefore loops over time explicitly, replicating Mamba2's own incremental-decode arithmetic (`_mixer_step`) for every layer, every token — the same asymptotic cost as autoregressive decoding, just paid during training too. This is materially slower than the library's native chunked training path on hardware where that path works at all (broken on this project's local ROCm dev box, not on a proper CUDA target — see root `CLAUDE.md`); restructuring the backbone loop itself to exploit a working fused path is an open item, not yet done (see the "Memory-window batching" section below for what *is* done).
+
+### Memory-window batching
+
+The Titans front-end's *write* (`_NeuralMemory.write`) is decoupled from the per-token loop above via `Model.set_memory_window(w)` / `sft/train.py`'s `--memory-window` flag: instead of taking one test-time gradient step every token, it buffers `w` tokens' worth of key/value/knob signals and takes one consolidated step per window, following the Titans paper's own chunk-size-`b` formulation (`b ≥ 1`, arXiv:2501.00663 §3.2) — `w=1` (the default) reproduces the original exact per-token update, not a separate code path, which is what keeps a training run (any `w`) and inference (always `w=1`, called every generated token) mathematically consistent with each other rather than exposing inference to behavior training never produced. The *read* (`_NeuralMemory.read`/`.surprise`) stays per-token regardless of `w`, since those are just forward passes against whatever weights are currently active, not a sequential recurrence.
+
+This is a prerequisite for eventually letting the backbone use a fused kernel between window boundaries (see the "Sequential, per-token execution" note above), and a modest win even without that (fewer, larger gradient-step calls instead of one per token) — but on its own, at the manual per-token backbone loop that's still in place, it does not yet unlock the large training-cost reduction that motivated it. See `docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md` for the full design, what's deferred, and why. `w` must evenly divide `--chunk-len` (a window can't span the chunk boundary where BPTT gets truncated) and has no principled default above 1 yet — sweep small values cheaply (e.g. via `make smoke-test`) before committing real training hours to one.
 
 ### Read location
 
@@ -107,7 +113,7 @@ Only a subset of layers carry a merge point — every even layer from 22 to 62 i
 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62
 ```
 
-`READ_LAYER` (42) falls inside this range, so layer 42 both merges memory into its own state *and* is read by Stage 1 — see the diagram note above for why that doesn't create a same-token cycle. The injected-layer set follows the same depth/coverage proportions as `mamba2_780m_memory`: ~1/3 depth start (layer 22 of 64 = 34%), ~2/3 depth for `READ_LAYER` (42/64 = 66%).
+`READ_LAYER` (42) falls inside this range, so layer 42 both merges memory into its own state *and* is read by Stage 1 — see the diagram note above for why that doesn't create a same-token cycle. The injected-layer set follows a ~1/3 depth start (layer 22 of 64 = 34%), ~2/3 depth for `READ_LAYER` (42/64 = 66%).
 
 ### Parameter budget
 
@@ -115,12 +121,16 @@ Only a subset of layers carry a merge point — every even layer from 22 to 62 i
 
 ### Open architectural question
 
-Same as `mamba2_780m_memory`: the Titans front-end and the gated-delta accumulator are both gradient-based associative memories (the delta rule is one step of gradient descent on the same associative objective), so they may be partially redundant. Before committing to the full two-stage stack, the plan is to ablate a gated-delta-only variant against the full stack, and keep Stage 1 only if it earns its cost in long-context recall.
+The Titans front-end and the gated-delta accumulator are both gradient-based associative memories (the delta rule is one step of gradient descent on the same associative objective), so they may be partially redundant. Before committing to the full two-stage stack, the plan is to ablate a gated-delta-only variant against the full stack, and keep Stage 1 only if it earns its cost in long-context recall.
 
 ## Training data
 
-Same long-context datasets as `mamba2_780m_memory` — see [`sft/README.md`](../../sft/README.md#long-context-data-mamba2_780m_memory): a mix of real long conversations ([`THUDM/LongAlign-10k`](https://huggingface.co/datasets/THUDM/LongAlign-10k)) and synthetic needle-in-haystack recall QA ([`RMT-team/babilong`](https://huggingface.co/datasets/RMT-team/babilong)).
+Long-context datasets — see [`sft/README.md`](../../sft/README.md#long-context-data-mamba2_2_7b_memory): a mix of real long conversations ([`THUDM/LongAlign-10k`](https://huggingface.co/datasets/THUDM/LongAlign-10k)) and synthetic needle-in-haystack recall QA ([`RMT-team/babilong`](https://huggingface.co/datasets/RMT-team/babilong)).
 
 ## Chunk length
 
-`DEFAULT_CHUNK_LEN = 128` — a conservative starting point for a cloud A100/H100 (80 GB). The fast-weight MLP snapshots (`w1`/`w2`) held in the backward graph scale with `MEM_HIDDEN` (10240 here vs 6144 for the 780m variant), so each token in a chunk costs ~210 MB vs ~75 MB; infinity-length chunks are not practical for 1k+ token training sequences. Benchmark with `make smoke-test --chunk-len N` across 10+ consecutive chunks to find the comfortable ceiling on your specific GPU.
+`DEFAULT_CHUNK_LEN = 7` — the fast-weight MLP snapshots (`w1`/`w2`) held in the backward graph scale with `MEM_HIDDEN` (10240 here vs 6144 for the 780m variant), so each token in a chunk costs ~210 MB; infinity-length chunks are not practical for 1k+ token training sequences. Tuned for `--batch-size 4` on a cloud H100 (80 GB) — see `sft/README.md`'s "Training mamba2_2_7b_memory" section for real run settings, which have used both this default and smaller explicit `--chunk-len` values. Benchmark with `make smoke-test --chunk-len N` across 10+ consecutive chunks to find the comfortable ceiling on your specific GPU — a single isolated chunk's peak VRAM is not representative of real multi-chunk training.
+
+## Memory window
+
+`DEFAULT_MEMORY_WINDOW = 1` (must evenly divide whatever `--chunk-len` is in use) — see the "Memory-window batching" section above and `sft/README.md`'s `--memory-window` entry.

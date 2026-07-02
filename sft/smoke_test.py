@@ -5,7 +5,7 @@ load/quantize cost) and drives it through train.py's real run_training loop
 sized to complete exactly one optimizer step, then asserts gradients actually
 reached the trainable parameters. This is what catches a model whose forward
 silently fails to connect some part of itself to the loss (see
-models/mamba2_780m_memory/train_hooks.py's history for why this check
+models/mamba2_2_7b_memory/train_hooks.py's history for why this check
 matters), including bugs that only show up under real batching/accumulation
 (e.g. a per-slot state reset that only breaks slot > 0). LoRA params and any
 other trainable params (e.g. a model's own full-gradient subsystem) are
@@ -17,7 +17,7 @@ directory (train.CKPT_DIR is monkeypatched for the duration) so this never
 touches the real models/{name}/checkpoints/ tree.
 
 Using a synthetic dataset instead of the real one avoids paying for real
-example length -- for mamba2_780m_memory, real examples can be tens of
+example length -- for mamba2_2_7b_memory, real examples can be tens of
 thousands of tokens, which at this model's --chunk-len would be thousands of
 slow chunks before the check tells you anything. This script does NOT
 confirm the real dataset is actually usable end-to-end (tokenization,
@@ -50,6 +50,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=f"Fast real-model gradient-wiring smoke test for {train.MODEL_NAME}")
     parser.add_argument("--length", type=int, default=None, help="Per-example synthetic sequence length in tokens -- defaults to accum_steps * chunk_len + 1 (accum_steps derived from --accum-tokens), so batch_size slots finish together after exactly one optimizer step")
     parser.add_argument("--chunk-len", type=int, default=None, help="Defaults to the model's own DEFAULT_CHUNK_LEN")
+    parser.add_argument("--memory-window", type=int, default=None, help="Same meaning as train.py's --memory-window -- no-op for models without set_memory_window")
     parser.add_argument("--batch-size", type=int, default=6, help="Same meaning as train.py's --batch-size")
     parser.add_argument("--accum-tokens", type=int, default=256, help="Same meaning as train.py's --accum-tokens")
     parser.add_argument("--lr", type=float, default=2e-4)
@@ -103,6 +104,7 @@ def main() -> None:
         handles.append(p.register_hook(_record))
 
     run_args = argparse.Namespace(
+        data="<synthetic>",
         epochs=1,
         eos_weight=args.eos_weight,
         accum_tokens=args.accum_tokens,
@@ -114,6 +116,7 @@ def main() -> None:
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
         max_len=math.inf,
+        memory_window=args.memory_window,
     )
 
     original_ckpt_dir = train.CKPT_DIR

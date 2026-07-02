@@ -1,10 +1,10 @@
 """Mamba2-2.7B backbone (frozen) + a trainable long-term memory subsystem.
 
-The memory is a single Titans-style fast-weight MLP that is test-time-trained
-token by token, feeding a per-layer gated-delta rule that's merged directly
-into a sparse subset of the backbone's own SSM states (not a separate
-accumulator -- see `Model._mixer_step`). See README.md for the full design
-write-up; this module is the literal implementation of it.
+The memory is a single Titans-style fast-weight MLP that is test-time-trained,
+feeding a per-layer gated-delta rule that's merged directly into a sparse
+subset of the backbone's own SSM states (not a separate accumulator -- see
+`Model._mixer_step`). See README.md for the full design write-up; this module
+is the literal implementation of it.
 
 Implementation note: because the gated-delta merge at layer i is a
 function of the memory read at READ_LAYER, and that read for token t must be
@@ -16,8 +16,17 @@ therefore loops over time explicitly, one token at a time, replicating
 Mamba2's own incremental-decode arithmetic (see `_mixer_step`) for every
 layer. This is the same asymptotic cost as autoregressive decoding, just paid
 during training too -- materially slower than the library's native chunked
-training path. Revisit if this becomes a bottleneck (e.g. a custom chunked
-kernel that exposes the pre-readout state).
+training path on hardware where that path actually works (see root
+CLAUDE.md -- this is broken on the local ROCm dev box but not on a proper
+CUDA target like a rented H100). The backbone/injection loop itself is not
+yet restructured to exploit that (still an open item -- see the design spec
+below); what IS implemented is decoupling the memory subsystem's own WRITE
+cadence from the per-token loop (see `set_memory_window` and
+`_NeuralMemory.write`), which is a necessary prerequisite for that backbone
+work and a modest win on its own (fewer, larger gradient-step calls instead
+of one per token). See
+docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md for the
+full design, including what's deferred and why.
 """
 
 import math
@@ -75,9 +84,8 @@ MEM_HIDDEN = 4 * D_MODEL
 # writing into ssm_state this token (see Model.last_token_log). Measured as
 # cosine similarity between ssm_state right before vs. right after the
 # gated-delta merge (_mixer_step) -- a high beta gate alone doesn't mean the
-# merge actually moved the state (see mamba2_780m_memory/model.py's
-# ACTIVE_COS_SIM_THRESHOLD for the real-run observation that motivated
-# this: beta staying near a fixed non-trivial value while the memory's own
+# merge actually moved the state (motivated by a real-run observation:
+# beta staying near a fixed non-trivial value while the memory's own
 # output o_t was still tiny, i.e. the gate was open but there was nothing
 # substantial to inject), so this measures the actual effect on ssm_state
 # directly rather than trusting the gate value as a proxy for it. Below
@@ -114,14 +122,12 @@ BETA_BIAS_ANNEAL_TOKENS = 2000
 # MEM_DIM, not a sum, so the gradient is attenuated by that factor too, not
 # just the loss -- a numeric check (dL/dw1, dL/dw2 computed directly at
 # w1/w2's init scale, MEM_DIM=2560, MEM_HIDDEN=10240) gives a combined norm
-# of ~2, not ~7000, and comes out nearly identical to the 780m model's
-# check despite the larger dims (see mamba2_780m_memory/model.py's
-# GRAD_SCALE for that derivation). The blowup itself is quadratic in how
+# of ~2, not ~7000. The blowup itself is quadratic in how
 # far w2 has drifted from that scale (dL/dw1 chains through r @ w2, so
 # residual and weight scale both grow together) -- by 100x drift the same
-# check gives a combined norm of ~2754, by 300x it's ~24765, both close to
-# the 780m case too. This is set to intervene well before that drift
-# compounds too far, while leaving ~150x headroom over the healthy baseline
+# check gives a combined norm of ~2754, by 300x it's ~24765. This is set to
+# intervene well before that drift compounds too far, while leaving ~150x
+# headroom over the healthy baseline
 # for a genuinely large, real surprise. Still unverified against real
 # training telemetry -- watch GRAD_NORM in the live logs (see
 # Model.last_token_log) and retune from there.
@@ -154,71 +160,92 @@ class _NeuralMemory:
         h = torch.tanh(torch.einsum("bhd,bd->bh", w1, x) + b1)
         return torch.einsum("bdh,bh->bd", w2, h) + b2
 
-    def write(self, k: torch.Tensor, v: torch.Tensor, eta: torch.Tensor, theta: torch.Tensor, alpha: torch.Tensor, create_graph: bool = True):
-        """One test-time gradient step on L = mean((M(k) - v)^2) -- mean, not
-        sum, over MEM_DIM dims: since k/v are RMS-normalized to unit scale
-        (see _rms_normalize), a sum over MEM_DIM=2560 dims of O(1) per-dim
-        terms would land in the hundreds-to-thousands by dimensionality
-        alone, before anything is actually wrong with the prediction --
-        inflating both the loss and, via the ~52M-element w1/w2 it
-        backprops through, the resulting gradient norm. Mean reduction keeps
-        L (and `surprise`, the per-injected-layer write gate in
-        _GatedDeltaInjection.signals) at the O(1) per-dim scale its
-        consumers already assume.
+    @staticmethod
+    def _apply_windowed(x_win: torch.Tensor, w1, b1, w2, b2) -> torch.Tensor:
+        """Same computation as _apply, batched over an extra leading window
+        dim: x_win is (W, batch, dim). w1/w2 are still (batch, hidden, dim)/
+        (batch, dim, hidden) -- one M per batch row, shared/broadcast across
+        the window dim (not one M per window position)."""
+        h = torch.tanh(torch.einsum("bhd,wbd->wbh", w1, x_win) + b1)
+        return torch.einsum("bdh,wbh->wbd", w2, h) + b2
 
-        First-order (truncated) approximation: `params`/`momentum` carried in from the
-        previous token are detached and re-leafed here, so M_{t-1} is treated
-        as a constant w.r.t. autograd. THIS is what bounds the graph to O(1)
-        per token instead of O(T) -- each token starts from a fresh leaf, so
-        nothing chains back to token t-1, regardless of the create_graph value
-        below. The outer (SFT) loss still backprops through *this* token's own
-        write (via eta/theta/alpha/k/v, all functions of the front-end's
-        learnable projections), but not through the chain of all earlier
-        tokens' writes -- see git history / README for the exact math this
-        trades away. `.detach().requires_grad_(True)` also happens to be what
-        makes the very first call work at all: fresh `w1/b1/w2/b2` are plain
-        leaf tensors with requires_grad=False (see __init__), and
-        torch.autograd.grad requires `inputs` to require grad.
+    def surprise(self, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Per-token loss ||M(k) - v||^2 (mean over MEM_DIM, see write()'s
+        docstring for why mean not sum) against the CURRENT weights, with no
+        gradient step taken -- this is what lets every token get a fresh
+        surprise/read signal even though the weight update itself only
+        happens once per memory-window (see write() and Model.forward).
+        Deliberately not detached: this feeds Stage 2's beta gate
+        (_GatedDeltaInjection.signals), so gradient needs to flow from the
+        outer loss back through here into self.w1/w2 -- i.e. into whichever
+        window's write() call produced the weights currently in use -- and
+        from there into k_proj/v_proj, same as read()."""
+        pred = self._apply(k, self.w1, self.b1, self.w2, self.b2)
+        return ((pred - v) ** 2).mean(dim=-1)
 
-        Returns (surprise, grad_norm): surprise is the loss magnitude per
-        batch element, exported for Stage 2's write-strength gate; grad_norm
-        is the raw (pre-soft-clip) combined gradient norm per batch element,
-        exported purely for live diagnostics (see Model.last_token_log) --
-        it plays no role in the write itself.
+    def write(self, ks: torch.Tensor, vs: torch.Tensor, etas: torch.Tensor, thetas: torch.Tensor, alphas: torch.Tensor, create_graph: bool = True):
+        """One test-time gradient step, consolidated over a window of W>=1
+        tokens: ks/vs/etas/thetas/alphas are (W, ...) stacks -- one entry per
+        token in the window, all computed against this SAME (frozen-for-the-
+        window) M. This is the Titans paper's own chunk-size-b formulation
+        (b>=1, Section 3.2 of arXiv:2501.00663): W=1 reduces exactly to a
+        plain per-token update, not a separate code path, which is what
+        keeps training (large W, for throughput) and inference (W=1, called
+        every generated token -- see Model.forward) consistent with each
+        other.
+
+        Loss is summed over both the window and the batch before the single
+        autograd.grad call, so W tokens' worth of gradient signal lands in
+        one update instead of W sequential ones -- the approximation this
+        trades away is that every token in the window computes its own loss
+        against the window-START M rather than a continuously-updated one
+        (see the design spec, docs/superpowers/specs/2026-07-02-chunked-
+        memory-injection-design.md, for the full reasoning).
+        eta/theta/alpha are averaged across the window for this one
+        momentum/decay step -- at W=1 this is just that token's own value,
+        identical to the un-windowed case.
+
+        `params`/`momentum` are still fully detached and re-leafed once per
+        *window* (not per token) before the gradient step, bounding the
+        backward graph to O(1) windows of chain depth rather than O(T)
+        tokens -- same reasoning as the single-token version this replaced
+        (see git history), just applied once per window instead of once per
+        token. `create_graph=True` and the GRAD_SCALE soft-clip below are
+        both unchanged in spirit, just operating on the window's combined
+        gradient rather than a single token's.
+
+        Returns (per_token_losses, grad_norm): per_token_losses is (W,
+        batch) -- NOT reduced across the window, kept for diagnostics parity
+        only (surprise() is what actually supplies Stage 2's per-token gate
+        signal, independent of this method). grad_norm is (batch,), the one
+        gradient norm for this window's single step.
         """
         params = [p.detach().requires_grad_(True) for p in (self.w1, self.b1, self.w2, self.b2)]
         momentum = [s.detach() for s in self.momentum]
 
-        pred = self._apply(k, *params)
-        per_example_loss = ((pred - v) ** 2).mean(dim=-1)
-        # create_graph=True: g must stay differentiable w.r.t. k/v (and the
-        # freshly-detached `params` above) so k_proj/v_proj actually receive
-        # gradient -- with create_graph=False, g is a plain non-differentiable
-        # number, severing k_proj/v_proj from the outer loss entirely
-        # (confirmed: this was happening). This does NOT reintroduce the O(T)
-        # blowup -- that came from *not* detaching params/momentum per token,
-        # not from this flag; `params` being a fresh leaf each call means
-        # differentiating g w.r.t. it can't chain past this single token.
-        grads = torch.autograd.grad(per_example_loss.sum(), params, create_graph=create_graph)
+        pred = self._apply_windowed(ks, *params)
+        per_token_loss = ((pred - vs) ** 2).mean(dim=-1)  # (W, batch)
+        # create_graph=True: g must stay differentiable w.r.t. params so
+        # k_proj/v_proj/knob_proj receive gradient from the outer loss --
+        # same reasoning as the per-token version this replaced (see git
+        # history for the full explanation and the confirmed failure mode
+        # without it).
+        grads = torch.autograd.grad(per_token_loss.sum(), params, create_graph=create_graph)
 
-        # Soft-clip: treat (w1,b1,w2,b2)'s gradients as one combined vector
-        # per batch row (same convention as torch.nn.utils.clip_grad_norm_)
-        # and rescale that vector so its norm smoothly saturates toward
-        # GRAD_SCALE instead of being left unbounded -- tanh(x)~=x near 0,
-        # so a normal, healthy gradient passes through essentially
-        # unchanged; only a gradient large enough to threaten non-finite
-        # state gets pulled down, and direction is always preserved exactly
-        # (the whole vector is scaled by one factor, not clipped
-        # element-by-element). The factor is computed from a *detached* copy
-        # of the gradient -- deliberately not differentiated through, same
-        # as ordinary gradient clipping -- so it doesn't add a second-order
-        # term to the k_proj/v_proj gradient create_graph exists for.
-        grad_norm = torch.zeros(k.shape[0], device=k.device, dtype=k.dtype)
+        # Soft-clip: see the per-token write() this replaced (git history)
+        # for the full reasoning -- unchanged here except that grad_norm is
+        # now the combined gradient for the whole window's one step, not a
+        # single token's.
+        grad_norm = torch.zeros(ks.shape[1], device=ks.device, dtype=ks.dtype)
         for g in grads:
             grad_norm = grad_norm + g.detach().pow(2).flatten(1).sum(dim=1)
         grad_norm = grad_norm.sqrt()
         clip_factor = (GRAD_SCALE * torch.tanh(grad_norm / GRAD_SCALE)) / (grad_norm + 1e-12)
         grads = [g * clip_factor.view((-1,) + (1,) * (g.dim() - 1)) for g in grads]
+
+        eta = etas.mean(dim=0)
+        theta = thetas.mean(dim=0)
+        alpha = alphas.mean(dim=0)
 
         new_params = []
         new_momentum = []
@@ -230,11 +257,13 @@ class _NeuralMemory:
             new_momentum.append(s_new)
         self.momentum = new_momentum
         self.w1, self.b1, self.w2, self.b2 = new_params
-        return per_example_loss.detach(), grad_norm.detach()
+        return per_token_loss.detach(), grad_norm.detach()
 
     def read(self, q: torch.Tensor) -> torch.Tensor:
-        """o_t = M_t(q_t), called after write() so the read uses the
-        just-updated weights."""
+        """o_t = M(q_t) against the CURRENT weights -- may be the
+        window-frozen snapshot from before this token (most tokens in a
+        window) or the just-updated one (the token whose write() call closed
+        the window), depending on call order in Model.forward."""
         return self._apply(q, self.w1, self.b1, self.w2, self.b2)
 
 
@@ -247,8 +276,10 @@ def _rms_normalize(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
 
 class _TitansFrontEnd(nn.Module):
     """Shared, single front-end: projects the layer-READ_LAYER residual to
-    q/k/v and to the data-dependent write knobs (eta, theta, alpha), then
-    drives one `_NeuralMemory` write+read per token."""
+    q/k/v and to the data-dependent write knobs (eta, theta, alpha), which
+    Model.forward buffers across a memory-window and feeds to one
+    `_NeuralMemory` write per window, plus a `_NeuralMemory` read/surprise
+    every token (see observe()'s docstring)."""
 
     def __init__(self, d_model: int = D_MODEL, mem_dim: int = MEM_DIM, mem_hidden: int = MEM_HIDDEN):
         super().__init__()
@@ -264,22 +295,30 @@ class _TitansFrontEnd(nn.Module):
     def init_memory(self, batch_size: int, device, dtype) -> _NeuralMemory:
         return _NeuralMemory(batch_size, self.mem_dim, self.mem_hidden, device, dtype)
 
-    def step(self, residual: torch.Tensor, memory: _NeuralMemory, create_graph: bool = True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def observe(self, residual: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """residual: (batch, d_model) residual stream entering READ_LAYER.
 
-        Returns (o_t, surprise, grad_norm) -- o_t is (batch, mem_dim),
-        surprise and grad_norm are both (batch,).
+        Returns (q, k, v, eta, theta, alpha) -- the part of what used to be
+        a single combined step() (see git history) that doesn't touch the
+        memory itself, split out so Model.forward can buffer these across a
+        memory-window before the one consolidated `_NeuralMemory.write` call
+        that closes it (see `_NeuralMemory.write`'s docstring for why),
+        while still reading/scoring every token individually via
+        `_NeuralMemory.read`/`.surprise` against whatever weights are
+        current at that point.
 
-        The write is a genuine gradient step (autograd.grad inside
-        _NeuralMemory.write), which needs grad tracking enabled regardless of
-        whether the *caller* is in a torch.no_grad() block -- this isn't
-        optional training-time machinery, it's the actual write operation, so
-        it has to run even during eval/inference. torch.enable_grad() punches
-        through an enclosing no_grad() for exactly this; it's scoped to just
-        this method, so the rest of the model (the 64-layer backbone, the
-        gated-delta merge, the C readout) stays grad-free and cheap under an
-        outer no_grad() as normal -- only this small MLP's self-contained
-        write pays for gradient tracking.
+        Grad tracking must stay enabled here regardless of whether the
+        *caller* is in a torch.no_grad() block: k/v/knobs need to remain
+        part of the same differentiable chain that `_NeuralMemory.write`
+        eventually backprops through (via create_graph=True) so
+        q_proj/k_proj/v_proj/knob_proj actually receive gradient from the
+        outer loss -- this isn't optional training-time machinery, it has to
+        run even during eval/inference, same reasoning as write() itself.
+        torch.enable_grad() punches through an enclosing no_grad() for
+        exactly this; scoped to just this method (and the read/surprise/
+        write calls around it in Model.forward), so the rest of the model
+        (the 64-layer backbone, the gated-delta merge, the C readout) stays
+        grad-free and cheap under an outer no_grad() as normal.
         """
         with torch.enable_grad():
             # RMS-normalize q/k/v to unit scale before they reach the memory:
@@ -304,9 +343,7 @@ class _TitansFrontEnd(nn.Module):
             # undamped running sum of every token's write. Capping below 1
             # guarantees at least 10% decay per token.
             eta, theta, alpha = knobs[..., 0] * 0.9, knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
-            surprise, grad_norm = memory.write(k, v, eta, theta, alpha, create_graph=create_graph)
-            o_t = memory.read(q)
-        return o_t, surprise, grad_norm
+        return q, k, v, eta, theta, alpha
 
 
 class _GatedDeltaInjection(nn.Module):
@@ -488,6 +525,16 @@ class Model(nn.Module):
 
         self.front_end = _TitansFrontEnd()
         self.injections = nn.ModuleDict({str(i): _GatedDeltaInjection() for i in INJECTED_LAYERS})
+        # Tokens per memory-subsystem write (see set_memory_window and
+        # _NeuralMemory.write) -- 1 reproduces the original exact per-token
+        # behavior and is the default so nothing changes unless a caller
+        # opts in. Deliberately a plain attribute, not a checkpointed
+        # buffer/parameter (same reasoning as beta_anneal_offset): it's a
+        # training-run configuration choice, not model state, and inference
+        # (load_inference) always wants 1 regardless of what a checkpoint
+        # was trained with (see the design spec for why train/inference
+        # windows are intentionally decoupled).
+        self.memory_window = 1
         # Running sums for pop_memory_stats() -- accumulated as detached
         # tensors (all inputs are already .detach()'d at the accumulation
         # sites, so this never holds a reference into any autograd graph)
@@ -497,14 +544,19 @@ class Model(nn.Module):
         # per token, which serializes the whole per-token training loop --
         # far more costly than the sync-free tensor accumulation here.
         # beta/retain are accumulated once per injected layer per token;
-        # surprise/o_t_norm once per token (at READ_LAYER only). See
-        # pop_memory_stats for why these matter: beta/retain start near 0/1
-        # (no-op init, see _GatedDeltaInjection.__init__) and are the only
-        # direct signal of whether the memory subsystem is actually being
-        # used or still sitting at its identity init.
+        # surprise/o_t_norm once per token (at READ_LAYER only); grad_norm
+        # only on tokens that close a memory-window (see set_memory_window),
+        # since that's the only time _NeuralMemory.write actually produces a
+        # fresh one -- hence its own _mem_stat_write_count divisor, separate
+        # from _mem_stat_tok_count. See pop_memory_stats for why these
+        # matter: beta/retain start near 0/1 (no-op init, see
+        # _GatedDeltaInjection.__init__) and are the only direct signal of
+        # whether the memory subsystem is actually being used or still
+        # sitting at its identity init.
         self._mem_stat_sums = {"beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0}
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
+        self._mem_stat_write_count = 0
         # Per-slot snapshot of the most-recently-processed token's memory
         # signals, for live per-slot logging (overwritten every token).
         # List of dicts, one per batch element -- see last_token_log().
@@ -520,7 +572,7 @@ class Model(nn.Module):
         # trained from scratch, independent of whatever dtype the backbone
         # itself loads in (`dtype` here, bf16 -- see load_base) -- its own
         # state must use its own params' dtype, not the backbone's, or
-        # Injection.signals/_TitansFrontEnd.step mismatch dtypes against it.
+        # Injection.signals/_TitansFrontEnd.observe mismatch dtypes against it.
         mem_dtype = self.front_end.q_proj.weight.dtype
         neural_memory = self.front_end.init_memory(batch_size, device, mem_dtype)
         last_o_t = torch.zeros(batch_size, MEM_DIM, device=device, dtype=mem_dtype)
@@ -652,14 +704,51 @@ class Model(nn.Module):
         Processes `input_ids` one token at a time regardless of T (see the
         module docstring for why) -- correct for both a many-token prefill
         and a single incremental decode step, just not parallelized across T.
+
+        The memory subsystem's WRITE is consolidated every
+        `self.memory_window` tokens rather than every token (see
+        set_memory_window, `_NeuralMemory.write`, and the design spec at
+        docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md)
+        -- the READ (`_NeuralMemory.read`/`.surprise`) still happens every
+        token regardless, since those are cheap forward passes against
+        whatever weights are currently active, not a sequential recurrence.
+        `seqlen` must be an exact multiple of `self.memory_window`: a window
+        is buffered purely locally within this call (`pending_*` below,
+        never stored on `state`) and must fully flush before this call
+        returns, so it can never span across two forward() calls (which may
+        be separated by a detach() at a chunk boundary during chunked
+        training -- see MemoryState.detach). sft/train.py enforces
+        `chunk_len % memory_window == 0` for training; inference always
+        keeps memory_window=1, which divides any seqlen.
         """
         batch_size, seqlen = input_ids.shape
+        if seqlen % self.memory_window != 0:
+            raise ValueError(
+                f"seqlen ({seqlen}) must be a multiple of memory_window ({self.memory_window}) "
+                "-- a memory-window can't span across forward() calls"
+            )
         device = input_ids.device
         dtype = self.embedding.weight.dtype
         if state is None:
             state = self._init_state(batch_size, device, dtype)
 
         all_logits = []
+        # Buffered per-token write inputs for the memory subsystem's current
+        # (not-yet-closed) window -- purely local to this call, flushed via
+        # _NeuralMemory.write whenever it reaches self.memory_window entries.
+        # See the forward()/write() docstrings for why this can't persist on
+        # `state` across calls.
+        pending_k: list[torch.Tensor] = []
+        pending_v: list[torch.Tensor] = []
+        pending_eta: list[torch.Tensor] = []
+        pending_theta: list[torch.Tensor] = []
+        pending_alpha: list[torch.Tensor] = []
+        # Carries the most recent window's grad_norm forward across tokens
+        # within this call (unlike surprise/o_t_norm, grad_norm only has a
+        # fresh value on the token that closes a window) so the last-token
+        # log snapshot below always has a value once at least one write has
+        # happened in this call.
+        last_grad_norm_per_slot: torch.Tensor | None = None
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])
             residual = None
@@ -668,7 +757,6 @@ class Model(nn.Module):
             token_cos_sims: list[torch.Tensor] = []
             last_surprise_per_slot: torch.Tensor | None = None
             last_o_t_norm_per_slot: torch.Tensor | None = None
-            last_grad_norm_per_slot: torch.Tensor | None = None
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
@@ -691,15 +779,32 @@ class Model(nn.Module):
                     token_cos_sims.append(injection_cos_sim)
 
                 if i == READ_LAYER:
-                    o_t, surprise, grad_norm = self.front_end.step(residual, state.neural_memory)
+                    with torch.enable_grad():
+                        q, k, v, eta, theta, alpha = self.front_end.observe(residual)
+                        o_t = state.neural_memory.read(q)
+                        surprise = state.neural_memory.surprise(k, v)
+                        pending_k.append(k)
+                        pending_v.append(v)
+                        pending_eta.append(eta)
+                        pending_theta.append(theta)
+                        pending_alpha.append(alpha)
+                        if len(pending_k) == self.memory_window:
+                            ks = torch.stack(pending_k, dim=0)
+                            vs = torch.stack(pending_v, dim=0)
+                            etas = torch.stack(pending_eta, dim=0)
+                            thetas = torch.stack(pending_theta, dim=0)
+                            alphas = torch.stack(pending_alpha, dim=0)
+                            _, grad_norm = state.neural_memory.write(ks, vs, etas, thetas, alphas)
+                            last_grad_norm_per_slot = grad_norm.detach()  # (B,)
+                            self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
+                            self._mem_stat_write_count += 1
+                            pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
                     state.last_o_t = o_t
                     state.last_surprise = surprise
                     last_surprise_per_slot = surprise.detach()          # (B,)
                     last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)  # (B,)
-                    last_grad_norm_per_slot = grad_norm.detach()        # (B,)
                     self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean()
                     self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean()
-                    self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
                     self._mem_stat_tok_count += 1
 
             # Only materialize the per-slot log dict (hundreds of blocking
@@ -728,7 +833,9 @@ class Model(nn.Module):
                     if last_surprise_per_slot is not None:
                         entry["surprise"] = last_surprise_per_slot[b].item()
                         entry["o_t_norm"] = last_o_t_norm_per_slot[b].item()
-                        entry["grad_norm"] = last_grad_norm_per_slot[b].item()
+                        entry["grad_norm"] = (
+                            last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                        )
                     logs.append(entry)
                 self._last_token_logs = logs
 
@@ -736,6 +843,16 @@ class Model(nn.Module):
             all_logits.append(self.lm_head(h))
 
         return torch.stack(all_logits, dim=1), state
+
+    def set_memory_window(self, window: int) -> None:
+        """Sets how many tokens' worth of write inputs `_NeuralMemory.write`
+        consolidates into one gradient step (see forward()'s docstring).
+        Must evenly divide whatever seqlen forward() is called with --
+        sft/train.py validates `chunk_len % memory_window == 0` before
+        calling this. 1 (the default set in __init__) reproduces the
+        original exact per-token behavior."""
+        assert window >= 1, f"memory_window must be >= 1, got {window}"
+        self.memory_window = window
 
     def set_beta_anneal(self, total_tokens: float) -> None:
         """Updates every injected layer's beta_anneal_offset for the given
@@ -804,11 +921,16 @@ class Model(nn.Module):
             "retain": (self._mem_stat_sums["retain"] / max(self._mem_stat_inj_count, 1)).item(),
             "surprise": (self._mem_stat_sums["surprise"] / self._mem_stat_tok_count).item(),
             "o_t_norm": (self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count).item(),
-            "grad_norm": (self._mem_stat_sums["grad_norm"] / self._mem_stat_tok_count).item(),
+            # Divided by _mem_stat_write_count, not _mem_stat_tok_count --
+            # grad_norm only gets a fresh value on tokens that close a
+            # memory-window (see set_memory_window), so at memory_window > 1
+            # there are fewer writes than tokens.
+            "grad_norm": (self._mem_stat_sums["grad_norm"] / max(self._mem_stat_write_count, 1)).item(),
         }
         self._mem_stat_sums = {k: 0.0 for k in self._mem_stat_sums}
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
+        self._mem_stat_write_count = 0
         return stats
 
 

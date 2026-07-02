@@ -46,12 +46,12 @@ Add `"train": false` to an assistant turn to keep it in the context but exclude 
 
 See `python prepare_data.py --help` for all options (`--max-examples`, `--hf-split`, `--max-len`, etc.).
 
-### Long-context data (`mamba2_780m_memory`)
+### Long-context data (`mamba2_2_7b_memory`)
 
-That model's whole point is long-range recall, so its training data needs long sessions, not the short ones above. `make data-memory` (set `MODEL_NAME=mamba2_780m_memory` first) builds and merges two sources:
+That model's whole point is long-range recall, so its training data needs long sessions, not the short ones above. `make data-memory` (set `MODEL_NAME=mamba2_2_7b_memory` first) builds and merges two sources:
 
 ```bash
-MODEL_NAME=mamba2_780m_memory make data-memory
+MODEL_NAME=mamba2_2_7b_memory make data-memory
 # outputs data/train_memory.pt
 ```
 
@@ -60,7 +60,7 @@ MODEL_NAME=mamba2_780m_memory make data-memory
 
 `merge_data.py` concatenates the two tokenized outputs into one `.pt` file, since `train.py` only accepts a single `--data` path.
 
-`--max-len 100000` here is intentionally far above any real example (LongAlign-10k's longest is ~65k tokens) — it only controls what gets written to disk, which is nearly free. A too-tight `--max-len` truncates trailing turns, which can drop a conversation entirely if a long turn precedes the assistant turn (a `--max-len 16384` once dropped roughly half of LongAlign-10k this way). Bounding training-time RAM belongs in chunked/truncated-BPTT training (`Model.forward`'s `state` param — see `models/mamba2_780m_memory/README.md`), not in dropping data at prep time.
+`--max-len 100000` here is intentionally far above any real example (LongAlign-10k's longest is ~65k tokens) — it only controls what gets written to disk, which is nearly free. A too-tight `--max-len` truncates trailing turns, which can drop a conversation entirely if a long turn precedes the assistant turn (a `--max-len 16384` once dropped roughly half of LongAlign-10k this way). Bounding training-time RAM belongs in chunked/truncated-BPTT training (`Model.forward`'s `state` param — see `models/mamba2_2_7b_memory/README.md`), not in dropping data at prep time.
 
 ## Training
 
@@ -99,16 +99,11 @@ See `python train.py --help` for all options (learning rate, rank, accumulation 
 
 `train.py` is generic across every model in `models/` — it dispatches to that model's `train_hooks.py` (`models/{name}/train_hooks.py`) for the only part that genuinely differs: how to load/wrap the model for training, and how to compute loss for one chunk. Everything else — chunk iteration, shuffling, accumulation counting, checkpoint cadence/rotation (including mid-example resume), evaluation, preflight, non-finite checks — is shared, since both models here are chunked, state-threaded ones (just with very different `--chunk-len`s).
 
-### Training `mamba2_780m_memory`
+### Training `mamba2_2_7b_memory`
 
 This model's `train_hooks.py` differs from `mamba2_780m`'s in two ways, both visible in its module docstring: `Model.forward(input_ids, state)` is stateful, so `train.py` processes examples in `--chunk-len`-token chunks with `state` carried (and detached) across chunks of the *same* example — never across different examples — bounding training RAM by chunk length rather than example length (see the "Long-context data" section above for why examples themselves aren't truncated at prep time instead). And loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns.
 
-```bash
-MODEL_NAME=mamba2_780m_memory make train ARGS="--data data/train_memory.pt"
-MODEL_NAME=mamba2_780m_memory make resume ARGS="--data data/train_memory.pt"
-```
-
-For `mamba2_2_7b_memory`, use the same pattern. The default `--batch-size 4` and `--chunk-len 12` are tuned for that model on an H100 (80 GB); the 2.7B model's per-token fast-weight snapshot is ~210 MB, so a single chunk of length 12 with B=4 costs roughly 10 GB of backward graph on top of the 5–6 GB model weight floor. Benchmark with `make preflight` before raising either.
+The default `--batch-size 4` and `--chunk-len 12` are tuned for this model on an H100 (80 GB); the 2.7B model's per-token fast-weight snapshot is ~210 MB, so a single chunk of length 12 with B=4 costs roughly 10 GB of backward graph on top of the 5–6 GB model weight floor. Benchmark with `make preflight` before raising either.
 
 ```bash
 MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
@@ -121,9 +116,11 @@ Settings used for a real H100 run of `mamba2_2_7b_memory`:
 make resume ARGS="--data data/train_memory.pt --eos-weight 32 --batch-size 12 --chunk-len 4 --accum-tokens 1024 --ckpt-every-tokens 24576"
 ```
 
+**`--memory-window`** (default 1, i.e. today's exact per-token behavior): how many tokens' worth of write inputs `mamba2_2_7b_memory`'s memory subsystem consolidates into one gradient step, instead of taking one every single token. Must evenly divide `--chunk-len` — a window can't span across the chunk boundary where BPTT gets truncated. No-op for `mamba2_780m` (or any model without a `set_memory_window` method). See `docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md` for the full design and what's still deferred (the memory-window mechanism alone doesn't yet unlock the backbone's fused-kernel training path — that's a separate, not-yet-implemented piece; see the spec's "Non-goals" section). There's no principled default above 1 yet — sweep small values (e.g. on `mamba2_2_7b_memory`'s synthetic-data `make smoke-test`) before committing real training hours to one.
+
 ## Using the adapter
 
-Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them, and `trainable.pt` with every trainable parameter (LoRA adapters, plus a model's own full-gradient subsystem if it has one — e.g. `mamba2_780m_memory`'s `front_end`/`injections`):
+Each checkpoint directory contains `lora_config.json` with the rank and alpha used during training, so callers don't need to hard-code them, and `trainable.pt` with every trainable parameter (LoRA adapters, plus a model's own full-gradient subsystem if it has one — e.g. `mamba2_2_7b_memory`'s `front_end`/`injections`):
 
 ```python
 import json

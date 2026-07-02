@@ -194,6 +194,7 @@ def save_checkpoint(
     lora_alpha: float,
     batched_state=None,
     dataset_fingerprint: dict | None = None,
+    memory_window: int | None = None,
 ) -> Path:
     """Saves every trainable parameter -- not just LoRA adapters, since a
     model like mamba2_2_7b_memory has an additional full-gradient subsystem
@@ -221,12 +222,24 @@ def save_checkpoint(
     dataset_fingerprint (see the module-level dataset_fingerprint() function)
     is saved alongside slot_states/next_ptr so a future resume can tell
     whether --data still points at the same dataset those indices were
-    recorded against."""
+    recorded against.
+
+    memory_window (models that define set_memory_window only -- see
+    run_training) is recorded here too, in the same small
+    training-hyperparameters JSON as rank/alpha, purely for provenance --
+    unlike rank/alpha it's not needed to reconstruct the model's shape, and
+    the backend never reads it back (inference always runs with
+    memory_window=1 regardless of what a checkpoint was trained with -- see
+    the design spec). Omitted from the JSON entirely when None, so
+    checkpoints for models without this concept are unaffected."""
     path = CKPT_DIR / f"epoch-{epoch + 1}" / f"step-{step}"
     path.mkdir(parents=True, exist_ok=True)
     state = {n: p.detach().cpu() for n, p in model.named_parameters() if p.requires_grad}
     torch.save(state, path / "trainable.pt")
-    (path / "lora_config.json").write_text(json.dumps({"rank": lora_rank, "alpha": lora_alpha}))
+    lora_config = {"rank": lora_rank, "alpha": lora_alpha}
+    if memory_window is not None:
+        lora_config["memory_window"] = memory_window
+    (path / "lora_config.json").write_text(json.dumps(lora_config))
     torch.save(optimizer.state_dict(), path / "optimizer.pt")
     slot_states = [
         (s.example_idx, s.pos) if s is not None else None
@@ -383,6 +396,23 @@ def run_training(
     # once. Total tokens per optimizer step end up ~accum_tokens * batch_size
     # (each slot contributes accum_tokens, not accum_tokens / batch_size).
     accum_steps = max(1, round(args.accum_tokens / chunk_len))
+    # memory_window (models that define set_memory_window only -- currently
+    # just mamba2_2_7b_memory) decouples how often that model's memory
+    # subsystem consolidates a write from chunk_len's own VRAM/BPTT-window
+    # role; see Model.forward's docstring in models/mamba2_2_7b_memory/
+    # model.py and the design spec at docs/superpowers/specs/2026-07-02-
+    # chunked-memory-injection-design.md. A window can't span across
+    # forward() calls (each call is exactly one chunk_len-token chunk), so
+    # chunk_len must be an exact multiple of it -- enforced here rather than
+    # left to fail deep inside forward() with a less obvious error.
+    set_memory_window_fn = getattr(model, "set_memory_window", None)
+    if set_memory_window_fn is not None:
+        memory_window = getattr(args, "memory_window", None) or getattr(hooks, "DEFAULT_MEMORY_WINDOW", 1)
+        if chunk_len % memory_window != 0:
+            raise ValueError(
+                f"--chunk-len ({chunk_len}) must be an exact multiple of --memory-window ({memory_window})"
+            )
+        set_memory_window_fn(memory_window)
     extra_log_fn = getattr(hooks, "extra_log", None)
     chunk_extra_log_fn = getattr(hooks, "chunk_extra_log", None)
     on_step_fn = getattr(hooks, "on_step", None)
@@ -575,7 +605,7 @@ def run_training(
             if chunk_was_non_finite:
                 # The forward graph for a skipped chunk is never walked by
                 # backward(), so it's never freed the way a normal chunk's
-                # graph is. Some models' hooks (e.g. mamba2_780m_memory's
+                # graph is. Some models' hooks (e.g. mamba2_2_7b_memory's
                 # _NeuralMemory.write, which calls torch.autograd.grad(...,
                 # create_graph=True) every token) build graphs that contain
                 # genuine Python-level reference cycles for that reason --
@@ -669,6 +699,7 @@ def run_training(
                         total_tokens, args.lora_rank, args.lora_alpha,
                         batched_state=batched_state if args.keep_full_state > 0 else None,
                         dataset_fingerprint=data_fp,
+                        memory_window=memory_window if set_memory_window_fn is not None else None,
                     )
                     last_ckpt_tokens = total_tokens
                     rotate_checkpoints(args.keep_ckpts, epoch)
@@ -699,6 +730,7 @@ def run_training(
         total_tokens, args.lora_rank, args.lora_alpha,
         batched_state=batched_state if args.keep_full_state > 0 else None,
         dataset_fingerprint=data_fp,
+        memory_window=memory_window if set_memory_window_fn is not None else None,
     )
     rotate_checkpoints(args.keep_ckpts, epoch)
     rotate_full_state(args.keep_full_state)
@@ -715,6 +747,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN")
+    parser.add_argument("--memory-window", type=int, default=None, help="Tokens per memory-subsystem write, for models that define set_memory_window (currently mamba2_2_7b_memory only; no-op otherwise) -- defaults to the model's own DEFAULT_MEMORY_WINDOW (1, i.e. a write every token, unless overridden). Must evenly divide --chunk-len. See docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md.")
     parser.add_argument("--batch-size", type=int, default=6, help="Number of examples to train in parallel (slot-based batching)")
     parser.add_argument("--accum-tokens", type=int, default=256, help="Target real tokens per slot to accumulate before each optimizer step -- converted internally to a chunk count (accum_tokens / chunk_len), so it means the same amount of real training regardless of --chunk-len. Total tokens per optimizer step end up ~accum_tokens * batch_size.")
     parser.add_argument("--ckpt-every-tokens", type=int, default=5000, help="Save checkpoint every N tokens of training")

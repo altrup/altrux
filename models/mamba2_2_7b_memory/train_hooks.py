@@ -39,6 +39,13 @@ EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
 # real multi-chunk training, since the held-over gradient/cache floor from
 # earlier chunks eats into the next chunk's headroom.
 DEFAULT_CHUNK_LEN = 7
+# Tokens per memory-subsystem write (see Model.set_memory_window). 1
+# reproduces the original exact-per-token behavior, so this is a
+# conservative default -- override with --memory-window (must evenly divide
+# --chunk-len) once a good value has been swept empirically; there's no
+# principled reason to prefer one value over another without that. See
+# docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md.
+DEFAULT_MEMORY_WINDOW = 1
 
 
 def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: float):
