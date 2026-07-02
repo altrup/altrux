@@ -18,10 +18,14 @@ mamba-ssm = ["wheel"]
 
 # torch and mamba-ssm are installed by `make sync` via uv pip because they
 # require hardware-specific builds (ROCm torch, CUDA/ROCm kernels) that cannot
-# be locked portably in uv.lock. causal-conv1d is deliberately NOT installed:
-# mamba_ssm's fused causal_conv1d/Triton SSD-scan kernels segfault/hang on
-# this machine's GPU (unsupported gfx1102 arch), so every model here drives
-# Mamba2's mixer manually in plain PyTorch instead -- causal-conv1d is unused.
+# be locked portably in uv.lock. `make sync` also installs causal-conv1d, but
+# only when it detects a non-ROCm CUDA GPU (torch.cuda.is_available() and
+# torch.version.hip is None): mamba_ssm's fused causal_conv1d/Triton SSD-scan
+# kernels segfault/hang on this repo's local ROCm dev box (unsupported
+# gfx1102 arch, re-confirmed 2026-07-02), so every model here drives Mamba2's
+# mixer manually in plain PyTorch as a fallback there (see
+# models/mamba2_2_7b_memory/model.py's _mixer_step, which already uses
+# causal_conv1d_update when it's importable). See root CLAUDE.md.
 #
 # bitsandbytes (used for QLoRA's 4-bit quantization, see models/common.py's
 # quantize_lora_targets) has much less mature ROCm support than CUDA -- only

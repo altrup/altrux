@@ -8,6 +8,12 @@ sync:
 	UV_TORCH_BACKEND=auto uv pip install torch --reinstall
 	uv pip install wheel
 	MAX_JOBS=12 uv pip install mamba-ssm --no-build-isolation
+	@if uv run --no-sync python -c "import torch, sys; sys.exit(0 if (torch.cuda.is_available() and torch.version.hip is None) else 1)"; then \
+		echo "CUDA (non-ROCm) GPU detected -- installing causal-conv1d for the fused kernel path"; \
+		MAX_JOBS=12 uv pip install causal-conv1d --no-build-isolation; \
+	else \
+		echo "No CUDA (non-ROCm) GPU detected -- skipping causal-conv1d (broken on this project's ROCm gfx1102 dev box, see root CLAUDE.md); models fall back to the manual per-token loop"; \
+	fi
 
 test:
 	PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest tests ../models/tests
@@ -18,17 +24,17 @@ data:
 		--hf-dataset HuggingFaceH4/ultrachat_200k \
 		--max-examples 20000
 
-# Long-context training data for mamba2_780m_memory: THUDM/LongAlign-10k
+# Long-context training data for mamba2_2_7b_memory: THUDM/LongAlign-10k
 # (real long multi-turn conversations) mixed with RMT-team/babilong (synthetic
 # needle-in-haystack recall QA, so the memory gates get genuine long-range
-# recall pressure, not just long text -- see models/mamba2_780m_memory/README.md).
+# recall pressure, not just long text -- see models/mamba2_2_7b_memory/README.md).
 #
 # --max-len here is deliberately way above any real example (LongAlign-10k's
 # longest is ~65k tokens) -- this --max-len only controls what gets written to
 # disk, which is nearly free (a few hundred KB per extra 100k tokens), so there
 # is no reason to truncate at prep time. RAM is a *training*-time problem and
 # belongs in chunked/truncated-BPTT training (Model.forward's state param is
-# built for this -- see models/mamba2_780m_memory/README.md), not here.
+# built for this -- see models/mamba2_2_7b_memory/README.md), not here.
 data-memory:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python prepare_babilong.py \
@@ -67,7 +73,7 @@ resume:
 
 # Gradient-wiring check on a synthetic dataset, driven through train.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults
-# as `make train` -- useful for mamba2_780m_memory, whose real examples are
+# as `make train` -- useful for mamba2_2_7b_memory, whose real examples are
 # thousands of tokens and whose --chunk-len is capped at 8 by this
 # hardware's 8GB VRAM (see smoke_test.py). Still pays for loading the real
 # model. Checkpoints from the run go to a throwaway temp dir, not the real
@@ -82,5 +88,5 @@ smoke-test:
 # train.py is generic across every model in models/ -- it dispatches to
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to
 # load the model, how to run forward+backward for one example). For
-# mamba2_780m_memory specifically:
-#   MODEL_NAME=mamba2_780m_memory make train ARGS="--data data/train_memory.pt"
+# mamba2_2_7b_memory specifically:
+#   MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"

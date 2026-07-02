@@ -18,13 +18,17 @@ dev = [
 ]
 
 # torch and mamba-ssm are installed via `make sync` (hardware-specific
-# builds; ROCm auto-detected via UV_TORCH_BACKEND=auto). causal-conv1d is
-# deliberately NOT installed: mamba_ssm's fused causal_conv1d/Triton SSD-scan
-# kernels segfault/hang on this machine's GPU (unsupported gfx1102 arch,
-# confirmed independent of model size, package version, and a from-source
-# rebuild), so every model here drives Mamba2's mixer manually in plain
-# PyTorch instead (see models/mamba2_780m_memory/model.py's _mixer_step and
-# its README for the investigation) -- causal-conv1d is simply unused.
+# builds; ROCm auto-detected via UV_TORCH_BACKEND=auto). `make sync` also
+# installs causal-conv1d, but only when it detects a non-ROCm CUDA GPU
+# (torch.cuda.is_available() and torch.version.hip is None): mamba_ssm's
+# fused causal_conv1d/Triton SSD-scan kernels segfault/hang on this repo's
+# local ROCm dev box (unsupported gfx1102 arch, confirmed independent of
+# model size, package version, and a from-source rebuild -- re-confirmed
+# 2026-07-02), so every model here drives Mamba2's mixer manually in plain
+# PyTorch as a fallback there (see models/mamba2_2_7b_memory/model.py's
+# _mixer_step). That fused path works fine on a proper CUDA target (e.g. a
+# rented H100) though, hence the conditional install rather than skipping it
+# everywhere -- see root CLAUDE.md.
 #
 # bitsandbytes (used for QLoRA's 4-bit quantization, see models/common.py's
 # quantize_lora_targets) has much less mature ROCm support than CUDA -- only
