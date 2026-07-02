@@ -6,7 +6,7 @@ Covers the manual mixer step introduced after mamba_ssm's own fused kernels
 found broken on this project's dev hardware -- see model.py's Model
 docstring. The two things worth pinning down here: gradients actually reach
 the LoRA adapters (a silently-disconnected forward wouldn't necessarily
-crash, per mamba2_780m_memory's history), and chunked processing produces
+crash), and chunked processing produces
 identical results to a single non-chunked forward call (since that's the
 whole point of threading MixerState across calls).
 """

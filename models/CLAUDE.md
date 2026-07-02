@@ -26,6 +26,6 @@ Each model folder also contains a `train_hooks.py`, sibling to `model.py`, expor
 | `extra_log(model) -> str \| None` | Optional. Printed once per optimizer step if defined. |
 | `chunk_extra_log(model) -> str \| list[str] \| None` | Optional. If defined, `sft/train.py`'s generic per-chunk live progress display is shown (in-place, overwritten each chunk). Return a single `str` for single-example models, or a `list[str]` with one entry per batch slot for slot-batched models (e.g. `mamba2_2_7b_memory`). `None` to suppress. |
 
-`mask_slice` exists for interface parity across models even when a given model ignores it (`mamba2_780m_memory` trains on every token, not just assistant turns, so it ignores `mask_slice`). Checkpoint save/load is *not* a per-model hook — it's generic in `sft/train.py` (saves every parameter with `requires_grad=True`), since that criterion is already correct for both a LoRA-only model and one with an additional full-gradient subsystem.
+`mask_slice` exists for interface parity across models even when a given model ignores it (`mamba2_2_7b_memory` trains on every token, not just assistant turns, so it ignores `mask_slice`). Checkpoint save/load is *not* a per-model hook — it's generic in `sft/train.py` (saves every parameter with `requires_grad=True`), since that criterion is already correct for both a LoRA-only model and one with an additional full-gradient subsystem.
 
-See `models/mamba2_780m/train_hooks.py` for the simple case and `models/mamba2_780m_memory/train_hooks.py` for the one that also defines `chunk_extra_log`.
+See `models/mamba2_780m/train_hooks.py` for the simple case and `models/mamba2_2_7b_memory/train_hooks.py` for the one that also defines `chunk_extra_log`.

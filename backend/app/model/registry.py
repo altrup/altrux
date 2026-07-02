@@ -16,7 +16,7 @@ class ModelRegistry:
         self.asst_open: str = ""
 
         self.session_input_ids: list[int] = []
-        # Per-layer SSM/conv (and, for mamba2_780m_memory, memory) state --
+        # Per-layer SSM/conv (and, for mamba2_2_7b_memory, memory) state --
         # every model's Model.forward(input_ids, state) -> (logits, state)
         # convention, carried across generate_one_token calls. Not an
         # mamba_ssm InferenceParams object: none of this repo's models use
@@ -65,7 +65,7 @@ class ModelRegistry:
         self.model = model_mod.Model(base)
         if ckpt is not None:
             # Loaded *after* wrapping in Model, not before: a model like
-            # mamba2_780m_memory has trainable state (front_end, injections)
+            # mamba2_2_7b_memory has trainable state (front_end, injections)
             # that only exists on the Model wrapper, not on the raw backbone
             # -- loading into `base` would silently miss those keys.
             print(f"loading checkpoint: {ckpt}")
@@ -73,7 +73,7 @@ class ModelRegistry:
             if hasattr(model_mod, "post_load"):
                 model_mod.post_load(self.model, ckpt)
         # Move everything to device after checkpoint load: models like
-        # mamba2_780m_memory add new nn.Modules (front_end, injections) that
+        # mamba2_2_7b_memory add new nn.Modules (front_end, injections) that
         # initialize on CPU and are not covered by load_base's device placement.
         self.model = self.model.to(device)
         self.model.eval()
