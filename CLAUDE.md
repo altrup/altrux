@@ -59,6 +59,12 @@ Whenever you add, rename, or remove a backend environment variable, also update 
 Whenever you add, rename, or remove a frontend environment variable, also update `frontend/.env.example`.
 Whenever you add, rename, or remove an sft environment variable, also update `sft/.env.example`.
 
+## Keep CLAUDE.md files current
+
+There's a `CLAUDE.md` at the root and in some subdirectories (e.g. `models/CLAUDE.md`, `sft/CLAUDE.md`). Update the relevant one in the same change whenever you introduce or discover something a future session would otherwise have to rediscover the hard way — a non-obvious gotcha, a workaround for broken tooling, a convention that isn't visible just from reading the code, or a rule you had to be told twice. Don't record anything derivable by reading the code itself (that belongs in comments or a README, not here).
+
+When editing a `CLAUDE.md`, also check whether the entry you're touching (or a neighboring one) has gone stale — e.g. describes a workaround for a bug that's since been fixed elsewhere — and trim or update it rather than only appending. Keeps the file a live reference instead of an append-only log.
+
 ## Live progress logs
 
 Any operation that takes more than a few seconds must print live progress so it's clear something is happening. This includes data preparation, evaluation, model loading, and any other blocking step. A `\r`-based counter or periodic print is fine — silence is not. Never leave a long operation running with no output.
