@@ -65,6 +65,35 @@ def _ids(n, seed=0):
 
 
 # ---------------------------------------------------------------------------
+# dataset_fingerprint -- lets resume detect a --data swap
+# ---------------------------------------------------------------------------
+
+def test_dataset_fingerprint_differs_for_different_paths_or_sizes(tmp_path):
+    a = tmp_path / "a.pt"
+    b = tmp_path / "b.pt"
+    assert train.dataset_fingerprint(str(a), 10) != train.dataset_fingerprint(str(b), 10)
+    assert train.dataset_fingerprint(str(a), 10) != train.dataset_fingerprint(str(a), 11)
+    assert train.dataset_fingerprint(str(a), 10) == train.dataset_fingerprint(str(a), 10)
+
+
+def test_save_checkpoint_stores_given_dataset_fingerprint(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 0, _ids(5), None)]
+    fp = train.dataset_fingerprint("some/train.pt", 42)
+
+    path = train.save_checkpoint(
+        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
+        total_tokens=1.0, lora_rank=4, lora_alpha=8.0,
+        dataset_fingerprint=fp,
+    )
+
+    state = torch.load(path / "state.pt", weights_only=True)
+    assert state["dataset_fingerprint"] == fp
+
+
+# ---------------------------------------------------------------------------
 # save_checkpoint / load_checkpoint round trip with slot_states + token counters
 # ---------------------------------------------------------------------------
 
@@ -87,6 +116,7 @@ def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch
     # save_checkpoint's docstring for why that distinction matters).
     assert state == {
         "epoch": 0, "slot_states": [(12, 8)], "next_ptr": 13,
+        "dataset_fingerprint": None,
         "total_tokens": 123.0, "last_ckpt_tokens": 123.0,
     }
 
@@ -179,7 +209,7 @@ def _make_args(**overrides):
         # the old accum_steps=1 default these tests were written against.
         epochs=1, eos_weight=1.0, accum_tokens=4, chunk_len=4,
         ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
-        max_len=float("inf"), batch_size=1,
+        max_len=float("inf"), batch_size=1, data="fake_dataset.pt",
     )
     defaults.update(overrides)
     from types import SimpleNamespace

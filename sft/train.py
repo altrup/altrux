@@ -174,6 +174,14 @@ def rotate_full_state(keep: int) -> None:
             p.unlink()
 
 
+def dataset_fingerprint(data_path: str, n_examples: int) -> dict:
+    """Identifies which dataset a checkpoint's slot_states/next_ptr indices
+    are relative to, so resume can detect a --data swap (see save_checkpoint
+    and main()'s resume path) instead of silently reindexing into the wrong
+    dataset's examples."""
+    return {"path": str(Path(data_path).resolve()), "n_examples": n_examples}
+
+
 def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -185,6 +193,7 @@ def save_checkpoint(
     lora_rank: int,
     lora_alpha: float,
     batched_state=None,
+    dataset_fingerprint: dict | None = None,
 ) -> Path:
     """Saves every trainable parameter -- not just LoRA adapters, since a
     model like mamba2_2_7b_memory has an additional full-gradient subsystem
@@ -207,7 +216,12 @@ def save_checkpoint(
     see rotate_full_state), it's saved as mem_state.pt so resume can load
     it directly for an exact continuation. Cheap to omit: a checkpoint
     without mem_state.pt is still fully resumable, just by restarting any
-    mid-example slot from the beginning -- see main()'s resume path."""
+    mid-example slot from the beginning -- see main()'s resume path.
+
+    dataset_fingerprint (see the module-level dataset_fingerprint() function)
+    is saved alongside slot_states/next_ptr so a future resume can tell
+    whether --data still points at the same dataset those indices were
+    recorded against."""
     path = CKPT_DIR / f"epoch-{epoch + 1}" / f"step-{step}"
     path.mkdir(parents=True, exist_ok=True)
     state = {n: p.detach().cpu() for n, p in model.named_parameters() if p.requires_grad}
@@ -222,6 +236,7 @@ def save_checkpoint(
         "epoch": epoch,
         "slot_states": slot_states,
         "next_ptr": next_ptr,
+        "dataset_fingerprint": dataset_fingerprint,
         "total_tokens": total_tokens,
         "last_ckpt_tokens": total_tokens,
     }
@@ -375,6 +390,7 @@ def run_training(
     init_state_fn = getattr(hooks, "init_state", None)
 
     n = len(train_ids)
+    data_fp = dataset_fingerprint(args.data, n)
     global_step = start_step
     total_tokens = start_total_tokens
     last_ckpt_tokens = start_last_ckpt_tokens
@@ -652,6 +668,7 @@ def run_training(
                         model, optimizer, global_step, epoch, slots, next_ptr,
                         total_tokens, args.lora_rank, args.lora_alpha,
                         batched_state=batched_state if args.keep_full_state > 0 else None,
+                        dataset_fingerprint=data_fp,
                     )
                     last_ckpt_tokens = total_tokens
                     rotate_checkpoints(args.keep_ckpts, epoch)
@@ -681,6 +698,7 @@ def run_training(
         model, optimizer, global_step, epoch, slots, next_ptr,
         total_tokens, args.lora_rank, args.lora_alpha,
         batched_state=batched_state if args.keep_full_state > 0 else None,
+        dataset_fingerprint=data_fp,
     )
     rotate_checkpoints(args.keep_ckpts, epoch)
     rotate_full_state(args.keep_full_state)
@@ -729,6 +747,7 @@ def main() -> None:
     start_total_tokens = 0.0
     start_last_ckpt_tokens = 0.0
     start_full_state = None
+    start_dataset_fingerprint = None
     if args.resume:
         ckpt = latest_checkpoint()
         if ckpt is not None:
@@ -747,6 +766,7 @@ def main() -> None:
                 start_epoch = state["epoch"]
                 start_slot_states = state.get("slot_states")
                 start_next_ptr = state.get("next_ptr", 0)
+                start_dataset_fingerprint = state.get("dataset_fingerprint")
                 start_total_tokens = state.get("total_tokens", 0.0)
                 start_last_ckpt_tokens = state.get("last_ckpt_tokens", 0.0)
                 state_batch_size = state.get("state_batch_size")
@@ -788,6 +808,35 @@ def main() -> None:
     train_ids, train_masks = all_ids, all_masks
     n = len(train_ids)
     print(f"train: {n}  epochs: {args.epochs}  batch_size: {args.batch_size}")
+
+    if args.resume and start_slot_states is not None:
+        current_fp = dataset_fingerprint(args.data, n)
+        discard = False
+        if start_dataset_fingerprint is None:
+            # Older checkpoint format, saved before dataset_fingerprint
+            # existed -- unlike an outright mismatch below, this is
+            # ambiguous (could be the same dataset that was always in use,
+            # or a swap that just happens to predate fingerprinting), so
+            # ask rather than silently guessing either way.
+            print(f"resume: checkpoint has no dataset fingerprint (older format) -- current --data is {current_fp['path']} ({current_fp['n_examples']} examples)")
+            try:
+                answer = input("Is this the same dataset the checkpoint was trained on? [Y/n] ").strip().lower()
+            except EOFError:
+                answer = ""
+                print("(no input available -- defaulting to 'n': safer to restart slots than risk reindexing into the wrong dataset)")
+            discard = answer.startswith("n")
+        elif start_dataset_fingerprint != current_fp:
+            print(f"resume: dataset changed ({start_dataset_fingerprint} vs {current_fp})")
+            discard = True
+
+        if discard:
+            print(
+                "resume: discarding slot_states/next_ptr from the checkpoint so slots start "
+                "fresh against this dataset instead of reindexing into it with stale positions"
+            )
+            start_slot_states = None
+            start_next_ptr = 0
+            start_full_state = None
 
     run_training(
         hooks, model, optimizer, trainable_params, train_ids, train_masks, device, args,
