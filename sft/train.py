@@ -335,12 +335,18 @@ def run_training(
     max_len, batch_size (already resolved to numbers, not raw CLI None
     defaults).
 
-    start_full_state, if given (loaded by main() from a checkpoint's
-    mem_state.pt when its recorded batch size matches args.batch_size), is
-    used as-is for the resumed epoch's batched_state, so every slot
-    continues exactly instead of restarting its example from the beginning
-    -- see rotate_full_state for how checkpoints keep this file only for
-    the most recent few."""
+    start_full_state, if given, is a Path to a checkpoint's mem_state.pt
+    (already confirmed by main() to exist and match args.batch_size) --
+    loaded here, not by main(), and only for as long as it takes to seed
+    the resumed epoch's batched_state, so every slot continues exactly
+    instead of restarting its example from the beginning. Deliberately not
+    loaded eagerly in main() and handed over as an already-materialized
+    tensor: main()'s own stack frame stays alive for this entire (very
+    long) call, so any local variable it held bound to the loaded state
+    would pin that whole extra copy in VRAM for the whole run, alongside
+    the live copy batched_state diverges into after the first chunk's
+    detach() -- see rotate_full_state for how checkpoints keep this file
+    only for the most recent few."""
     chunk_len = args.chunk_len or hooks.DEFAULT_CHUNK_LEN
     batch_size = args.batch_size
     extra_log_fn = getattr(hooks, "extra_log", None)
@@ -408,7 +414,14 @@ def run_training(
 
         # Initialize batched model state (batch_size slots).
         if use_full_state:
-            batched_state = start_full_state
+            # Loaded here (not by main(), see run_training's docstring) so
+            # the only reference to it is this local variable, which we
+            # drop immediately below -- from then on the only thing
+            # holding it alive is batched_state itself, exactly like a
+            # freshly-initialized state, so it's collected the same way
+            # once the first chunk's detach() replaces it.
+            batched_state = torch.load(start_full_state, map_location=device, weights_only=False)
+            del start_full_state
         elif init_state_fn is not None:
             batched_state = init_state_fn(model, batch_size, device)
         else:
@@ -730,11 +743,16 @@ def main() -> None:
             # checkpoints and only when its batch size still matches this
             # run's --batch-size; missing or mismatched just means any
             # mid-example slot restarts from the beginning instead of
-            # continuing exactly, not a broken resume.
+            # continuing exactly, not a broken resume. Not loaded here --
+            # just the path is handed to run_training, which loads it
+            # itself right before use (see run_training's docstring for
+            # why: main()'s own frame outlives the entire training run, so
+            # a local variable here bound to the loaded tensors would keep
+            # them VRAM-resident for the whole run).
             mem_state_path = ckpt / "mem_state.pt"
             if mem_state_path.exists():
                 if state_batch_size == args.batch_size:
-                    start_full_state = torch.load(mem_state_path, map_location=device, weights_only=False)
+                    start_full_state = mem_state_path
                 else:
                     print(
                         f"mem_state.pt batch size ({state_batch_size}) doesn't match "
