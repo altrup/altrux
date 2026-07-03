@@ -612,14 +612,42 @@ def run_training(
                 del loss_sum
             elif weight_sum > 0:
                 (loss_sum / weight_sum).backward()
-                window_loss_sum += loss_sum.item()
-                window_tokens += weight_sum.item()
-                total_tokens += weight_sum.item()
-                accum_count += 1
-                trained_any = True
-                prev_n_lines = _show_batch_progress(
-                    model, chunk_extra_log_fn, slots, chunk_actual_lens, loss_sum, weight_sum, prev_n_lines
+                # loss_sum being finite (checked above) does NOT guarantee
+                # backward() produced finite gradients -- an op can have a
+                # perfectly finite forward value but a non-finite local
+                # derivative (e.g. near a sqrt/div singularity). Confirmed
+                # in practice: a real run hit gnorm=nan at the optimizer
+                # step immediately following a chunk exactly like this, and
+                # that NaN went on to permanently corrupt the trainable
+                # weights (FATAL: non-finite weights, no checkpoint saved).
+                # The NaN has already landed in .grad via backward()'s +=
+                # accumulation by the time we can check it, so it can't be
+                # selectively subtracted back out -- discard the whole
+                # accumulation window and start it over from the next
+                # chunk, same recovery shape as a non-finite loss, just one
+                # step later in the pipeline.
+                grad_is_finite = all(
+                    p.grad is None or torch.isfinite(p.grad).all() for p in trainable_params
                 )
+                if not grad_is_finite:
+                    if chunk_extra_log_fn is not None:
+                        _clear_live(prev_n_lines)
+                        prev_n_lines = 0
+                    print(f"  warning: non-finite gradient, discarding this accumulation window")
+                    for p in trainable_params:
+                        if p.grad is not None:
+                            p.grad.zero_()
+                    accum_count = 0
+                    window_loss_sum = window_tokens = 0.0
+                else:
+                    window_loss_sum += loss_sum.item()
+                    window_tokens += weight_sum.item()
+                    total_tokens += weight_sum.item()
+                    accum_count += 1
+                    trained_any = True
+                    prev_n_lines = _show_batch_progress(
+                        model, chunk_extra_log_fn, slots, chunk_actual_lens, loss_sum, weight_sum, prev_n_lines
+                    )
 
             batched_state = batched_state.detach() if batched_state is not None else None
 
