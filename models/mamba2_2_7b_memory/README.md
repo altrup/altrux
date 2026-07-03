@@ -116,7 +116,7 @@ ssm_state_t = clear_t·(ssm_state_t - beta_t·(ssm_state_t·B_t)·B_t^T) + beta_
 y_t = C_t · ssm_state_t                                                   (Mamba2's own readout, unmodified)
 ```
 
-and the *merged* `ssm_state_t` — not a separate copy — is what gets persisted to the next token. The delta term overwrites only the address being written and leaves other content intact (content-addressed forgetting); `clear_t` is a data-dependent global wipe for topic/segment boundaries, initialized near 1 (`clear_proj.bias = 4`) so it never forces decay on its own at init. `beta_t` is kept near 0 at init via a non-learnable `beta_anneal_offset`, linearly annealed from `-3` to `0` over the first 2000 tokens of cumulative training (`Model.set_beta_anneal`, called once per optimizer step via the `on_step` training hook) and held at `0` after.
+and the *merged* `ssm_state_t` — not a separate copy — is what gets persisted to the next token. The delta term overwrites only the address being written and leaves other content intact (content-addressed forgetting); `clear_t` is a data-dependent global wipe for topic/segment boundaries, initialized near 1 (`clear_proj.bias = 4`) so it never forces decay on its own at init. `beta_t` is kept near 0 at init via a non-learnable `beta_anneal_offset`, linearly annealed from `-3` to `0` over the first `BETA_BIAS_ANNEAL_STEPS` (32) optimizer steps (`Model.set_beta_anneal`, called once per optimizer step via the `on_step` training hook, keyed on step count rather than tokens so it's independent of `--chunk-len`/`--accum-tokens`/`--memory-window`) and held at `0` after.
 
 ### Injection
 

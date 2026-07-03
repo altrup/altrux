@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import torch
-
 from .model import (
     ASST_OPEN,
     MODEL_ID,
@@ -16,12 +14,14 @@ from .model import (
 
 
 def post_load(model: Model, checkpoint_path: str | Path) -> None:
-    state_path = Path(checkpoint_path) / "state.pt"
-    if state_path.exists():
-        state = torch.load(state_path, map_location="cpu", weights_only=True)
-        total_tokens = state.get("total_tokens", 0.0)
-        model.set_beta_anneal(total_tokens)
-        print(f"beta anneal set for {total_tokens:.0f} training tokens")
+    # global_step isn't stored inside state.pt itself -- it's the
+    # checkpoint directory's own name (see train.py's save_checkpoint),
+    # e.g. ".../epoch-3/step-171" -> 171.
+    step_dir = Path(checkpoint_path).name
+    if step_dir.startswith("step-"):
+        global_step = int(step_dir.split("-")[1])
+        model.set_beta_anneal(global_step)
+        print(f"beta anneal set for step {global_step}")
 
 
 __all__ = [

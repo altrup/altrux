@@ -427,7 +427,7 @@ def run_training(
     model.train()
     optimizer.zero_grad()
     if on_step_fn is not None:
-        on_step_fn(model, total_tokens)
+        on_step_fn(model, global_step)
 
     trained_any = False
 
@@ -679,7 +679,7 @@ def run_training(
                 ts = datetime.now().strftime("%H:%M:%S")
 
                 if on_step_fn is not None:
-                    on_step_fn(model, total_tokens)
+                    on_step_fn(model, global_step)
 
                 print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
                 if extra_log_fn is not None:

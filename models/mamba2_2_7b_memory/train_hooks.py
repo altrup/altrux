@@ -98,16 +98,17 @@ def reset_slot(model, state, slot_idx: int) -> None:
     model.reset_slot(state, slot_idx)
 
 
-def on_step(model, total_tokens: float) -> None:
+def on_step(model, global_step: int) -> None:
     """Optional hook -- train.py calls this (if defined) once before training
-    starts and again after every optimizer step, passing cumulative training
-    tokens. Used here to anneal beta's startup suppression away over the
-    first BETA_BIAS_ANNEAL_TOKENS tokens of training (see model.py's
-    BETA_BIAS_ANNEAL_START/_TOKENS and Model.set_beta_anneal) -- keyed on
-    total_tokens rather than optimizer steps so it lines up with this
-    project's other token-denominated knobs (e.g. --ckpt-every-tokens) and
-    resumes correctly without extra checkpoint state."""
-    model.set_beta_anneal(total_tokens)
+    starts and again after every optimizer step, passing the global step
+    count. Used here to anneal beta's startup suppression away over the
+    first BETA_BIAS_ANNEAL_STEPS optimizer steps (see model.py's
+    BETA_BIAS_ANNEAL_START/_STEPS and Model.set_beta_anneal) -- keyed on
+    steps rather than tokens so it scales with actual gradient updates
+    received, independent of --chunk-len/--accum-tokens/--memory-window;
+    resumes correctly without extra checkpoint state since global_step
+    already is one."""
+    model.set_beta_anneal(global_step)
 
 
 def extra_log(model) -> str | None:
