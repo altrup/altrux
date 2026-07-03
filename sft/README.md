@@ -95,6 +95,8 @@ For models whose `train_hooks.py` carries state across chunks via `init_state` (
 
 **EOS under-generation**: if the model doesn't emit `<|endoftext|>` to end turns, pass `--eos-weight 5` (or higher) to upweight EOS positions in the loss. EOS tokens are ~0.8% of assistant tokens so they get little gradient by default.
 
+**Reproducibility** (`--seed`, default 42): seeds `torch.manual_seed` once at startup, covering everything not already covered by the per-epoch data-shuffle seed (which is separately, always seeded on the epoch number) — LoRA init/dropout, and for models with per-sequence random state (`mamba2_2_7b_memory`'s neural-memory init and per-slot reset) this is otherwise a real source of run-to-run variance: two runs of the identical command can produce different training-stability outcomes (e.g. one hitting non-finite losses the other doesn't) purely from a different random draw. Pass a different `--seed` to sample a different random init deliberately, e.g. when checking whether a crash is a real bug versus an unlucky draw.
+
 See `python train.py --help` for all options (learning rate, rank, accumulation steps, etc.).
 
 `train.py` is generic across every model in `models/` — it dispatches to that model's `train_hooks.py` (`models/{name}/train_hooks.py`) for the only part that genuinely differs: how to load/wrap the model for training, and how to compute loss for one chunk. Everything else — chunk iteration, shuffling, accumulation counting, checkpoint cadence/rotation (including mid-example resume), evaluation, preflight, non-finite checks — is shared, since both models here are chunked, state-threaded ones (just with very different `--chunk-len`s).
