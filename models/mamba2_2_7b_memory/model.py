@@ -762,7 +762,21 @@ class Model(nn.Module):
         # _mixer_step's own roll-buffer convention) -- causal_conv1d_fn's
         # `initial_states` wants only the last d_conv-1 of those (the
         # left-context strictly before this span's first output).
-        conv_history = conv_state[:, :, 1:]
+        #
+        # causal_conv1d_fn's CUDA kernel hard-requires initial_states in
+        # channel-last layout (stride(1) == 1, i.e. the dim axis
+        # contiguous) -- the same layout mamba_ssm's allocate_inference_cache
+        # produces (torch.zeros(b, d_conv, dim).transpose(1, 2)), which is
+        # why the very first span of a run works. But this function's own
+        # new_conv_state below is built via torch.cat, which always returns
+        # an ordinary row-major tensor (stride(2) == 1) -- so on every
+        # subsequent span, conv_state has lost the channel-last layout and
+        # the kernel asserts. causal_conv1d_interface's own defensive
+        # `.contiguous()` fallback doesn't catch this either, since it only
+        # triggers when BOTH stride(1) and stride(2) are non-1, and
+        # stride(2) == 1 is already true here. Force channel-last
+        # explicitly rather than relying on conv_state's incoming layout.
+        conv_history = conv_state[:, :, 1:].transpose(1, 2).contiguous().transpose(1, 2)
         xBC_conv = causal_conv1d_fn(
             x=xBC_t,
             weight=rearrange(mixer.conv1d.weight, "d 1 w -> d w"),
