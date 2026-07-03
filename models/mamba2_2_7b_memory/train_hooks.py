@@ -119,7 +119,12 @@ def extra_log(model) -> str | None:
     for what beta/retain/surprise/o_t_norm/grad_norm mean. grad_norm is the
     raw (pre-soft-clip) per-token memory-write gradient norm -- see
     model.py's GRAD_SCALE for why it's worth watching: a healthy value
-    should sit well below GRAD_SCALE most of the time, not against it."""
+    should sit well below GRAD_SCALE most of the time, not against it.
+    w1_abs_max/w2_abs_max are the largest single weight magnitude seen in
+    M's two layers this window -- nothing hard-clips these directly (only
+    the gradient used to update them is soft-clipped), so unbounded growth
+    here is a real risk and a plausible source of a chunk whose loss stays
+    finite but whose backward pass produces a non-finite gradient."""
     stats = model.pop_memory_stats()
     if stats is None:
         return None
@@ -127,6 +132,7 @@ def extra_log(model) -> str | None:
         f"memory  beta {stats['beta']:.4f}  retain {stats['retain']:.4f}"
         f"  surprise {stats['surprise']:.4f}  o_t_norm {stats['o_t_norm']:.4f}"
         f"  grad_norm {stats['grad_norm']:.4g}"
+        f"  w1_abs_max {stats['w1_abs_max']:.4g}  w2_abs_max {stats['w2_abs_max']:.4g}"
     )
 
 

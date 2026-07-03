@@ -601,7 +601,26 @@ class Model(nn.Module):
         # _GatedDeltaInjection.__init__) and are the only direct signal of
         # whether the memory subsystem is actually being used or still
         # sitting at its identity init.
-        self._mem_stat_sums = {"beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0}
+        self._mem_stat_sums = {
+            "beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0,
+            # w1_abs_max/w2_abs_max track a running MAX (not a sum-to-average
+            # like the others) across the accumulation window, since an
+            # average would smooth out exactly the kind of outlier spike
+            # they exist to catch. M's w2 (unlike w1, whose pre-activation
+            # gets tanh'd) has no activation bounding its output -- nothing
+            # hard-clips w1/w2's magnitude directly, only the gradient used
+            # to update them (see _NeuralMemory.write's soft clip), so nothing
+            # stops them drifting large over many windows. Watching this is
+            # meant to help confirm/rule out unbounded w1/w2 growth as the
+            # source of a real crash where loss_sum stayed finite but the
+            # backward pass produced a NaN gradient (see git history) --
+            # write()'s create_graph=True second-order autograd through
+            # this exact computation is a plausible place for that. Updated
+            # with a plain .item() at each write() call site (once per
+            # memory-window close, not per token -- cheap enough that the
+            # sync-avoidance reasoning above doesn't apply here).
+            "w1_abs_max": 0.0, "w2_abs_max": 0.0,
+        }
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
         self._mem_stat_write_count = 0
@@ -1018,6 +1037,12 @@ class Model(nn.Module):
                             _, grad_norm = state.neural_memory.write(ks, vs, etas, thetas, alphas)
                             last_grad_norm_per_slot = grad_norm.detach()  # (B,)
                             self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
+                            self._mem_stat_sums["w1_abs_max"] = max(
+                                self._mem_stat_sums["w1_abs_max"], state.neural_memory.w1.detach().abs().max().item()
+                            )
+                            self._mem_stat_sums["w2_abs_max"] = max(
+                                self._mem_stat_sums["w2_abs_max"], state.neural_memory.w2.detach().abs().max().item()
+                            )
                             self._mem_stat_write_count += 1
                             pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
 
@@ -1209,6 +1234,12 @@ class Model(nn.Module):
                         _, grad_norm = state.neural_memory.write(k_w, v_w, eta_w, theta_w, alpha_w)
                         last_grad_norm_per_slot = grad_norm.detach()
                         self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
+                        self._mem_stat_sums["w1_abs_max"] = max(
+                            self._mem_stat_sums["w1_abs_max"], state.neural_memory.w1.detach().abs().max().item()
+                        )
+                        self._mem_stat_sums["w2_abs_max"] = max(
+                            self._mem_stat_sums["w2_abs_max"], state.neural_memory.w2.detach().abs().max().item()
+                        )
                         self._mem_stat_write_count += 1
 
                         # Surprise-weighted pooling -- see forward()'s
@@ -1333,6 +1364,10 @@ class Model(nn.Module):
             # memory-window (see set_memory_window), so at memory_window > 1
             # there are fewer writes than tokens.
             "grad_norm": (self._mem_stat_sums["grad_norm"] / max(self._mem_stat_write_count, 1)).item(),
+            # Already plain Python floats (see _mem_stat_sums init) -- a
+            # running max, not a sum-to-average, so no division here.
+            "w1_abs_max": self._mem_stat_sums["w1_abs_max"],
+            "w2_abs_max": self._mem_stat_sums["w2_abs_max"],
         }
         self._mem_stat_sums = {k: 0.0 for k in self._mem_stat_sums}
         self._mem_stat_inj_count = 0
