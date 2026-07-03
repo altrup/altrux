@@ -611,35 +611,33 @@ def run_training(
                 print(f"  warning: non-finite loss, skipping chunk")
                 del loss_sum
             elif weight_sum > 0:
-                (loss_sum / weight_sum).backward()
-                # loss_sum being finite (checked above) does NOT guarantee
-                # backward() produced finite gradients -- an op can have a
-                # perfectly finite forward value but a non-finite local
-                # derivative (e.g. near a sqrt/div singularity). Confirmed
-                # in practice: a real run hit gnorm=nan at the optimizer
-                # step immediately following a chunk exactly like this, and
-                # that NaN went on to permanently corrupt the trainable
-                # weights (FATAL: non-finite weights, no checkpoint saved).
-                # The NaN has already landed in .grad via backward()'s +=
-                # accumulation by the time we can check it, so it can't be
-                # selectively subtracted back out -- discard the whole
-                # accumulation window and start it over from the next
-                # chunk, same recovery shape as a non-finite loss, just one
-                # step later in the pipeline.
-                grad_is_finite = all(
-                    p.grad is None or torch.isfinite(p.grad).all() for p in trainable_params
+                # torch.autograd.grad (not loss.backward()) so this chunk's
+                # gradient comes back as its own tensor instead of being
+                # summed straight into .grad -- lets us check finiteness
+                # BEFORE merging it into the window's running accumulation,
+                # so a single bad chunk only costs that chunk, not the
+                # whole window's worth of already-accumulated good chunks
+                # (loss_sum being finite, checked above, does NOT guarantee
+                # a finite gradient -- an op can have a perfectly finite
+                # forward value but a non-finite local derivative, e.g. near
+                # a sqrt/div singularity; confirmed in practice, see git
+                # history for the real run this was caught from).
+                chunk_grads = torch.autograd.grad(
+                    loss_sum / weight_sum, trainable_params, allow_unused=True
                 )
+                grad_is_finite = all(g is None or torch.isfinite(g).all() for g in chunk_grads)
                 if not grad_is_finite:
                     if chunk_extra_log_fn is not None:
                         _clear_live(prev_n_lines)
                         prev_n_lines = 0
-                    print(f"  warning: non-finite gradient, discarding this accumulation window")
-                    for p in trainable_params:
-                        if p.grad is not None:
-                            p.grad.zero_()
-                    accum_count = 0
-                    window_loss_sum = window_tokens = 0.0
+                    print(f"  warning: non-finite gradient, discarding chunk")
+                    del chunk_grads
                 else:
+                    for p, g in zip(trainable_params, chunk_grads):
+                        if g is None:
+                            continue
+                        p.grad = g if p.grad is None else p.grad + g
+                    del chunk_grads
                     window_loss_sum += loss_sum.item()
                     window_tokens += weight_sum.item()
                     total_tokens += weight_sum.item()
