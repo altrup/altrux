@@ -369,7 +369,7 @@ def run_training(
 
     `args` needs: epochs, eos_weight, accum_tokens, chunk_len,
     ckpt_every_tokens, keep_ckpts, keep_full_state, lora_rank, lora_alpha,
-    max_len, batch_size (already resolved to numbers, not raw CLI None
+    lr, warmup_steps, max_len, batch_size (already resolved to numbers, not raw CLI None
     defaults).
 
     start_full_state, if given, is a Path to a checkpoint's mem_state.pt
@@ -428,6 +428,23 @@ def run_training(
     optimizer.zero_grad()
     if on_step_fn is not None:
         on_step_fn(model, global_step)
+
+    def set_lr(step: int) -> None:
+        # Linear warmup from 0 to args.lr over --warmup-steps, then held at
+        # args.lr -- a pure function of global_step (same pattern as
+        # BETA_BIAS_ANNEAL_STEPS/set_beta_anneal), so it resumes correctly
+        # with no extra checkpoint state. Applying full --lr from step 1
+        # against a freshly-attached, near-randomly-initialized subsystem
+        # (gate projections, LoRA) waking up at the same time beta's own
+        # suppression is fading is a plausible source of oversized early
+        # gradients -- see the huge pre-clip gnorm values a real run hit in
+        # its first ~20 steps.
+        if args.warmup_steps > 0:
+            frac = min(step / args.warmup_steps, 1.0)
+            for group in optimizer.param_groups:
+                group["lr"] = args.lr * frac
+
+    set_lr(global_step)
 
     trained_any = False
 
@@ -673,6 +690,7 @@ def run_training(
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
+                set_lr(global_step)
                 avg_loss = window_loss_sum / window_tokens
                 accum_count = 0
                 window_loss_sum = window_tokens = 0.0
@@ -681,7 +699,7 @@ def run_training(
                 if on_step_fn is not None:
                     on_step_fn(model, global_step)
 
-                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}")
+                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {optimizer.param_groups[0]['lr']:.2e}")
                 if extra_log_fn is not None:
                     line = extra_log_fn(model)
                     if line is not None:
@@ -745,6 +763,7 @@ def main() -> None:
     parser.add_argument("--data", default="data/train.pt", help="Tokenized dataset from prepare_data.py")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--warmup-steps", type=int, default=32, help="Linearly ramp the learning rate from 0 to --lr over this many optimizer steps, then hold at --lr -- 0 to disable. A pure function of global_step, so it resumes correctly with no extra checkpoint state.")
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN")
     parser.add_argument("--memory-window", type=int, default=None, help="Tokens per memory-subsystem write, for models that define set_memory_window (currently mamba2_2_7b_memory only; no-op otherwise) -- defaults to the model's own DEFAULT_MEMORY_WINDOW (1, i.e. a write every token, unless overridden). Must evenly divide --chunk-len. See docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md.")
