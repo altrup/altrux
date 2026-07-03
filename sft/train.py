@@ -430,17 +430,21 @@ def run_training(
         on_step_fn(model, global_step)
 
     def set_lr(step: int) -> None:
-        # Linear warmup from 0 to args.lr over --warmup-steps, then held at
-        # args.lr -- a pure function of global_step (same pattern as
-        # BETA_BIAS_ANNEAL_STEPS/set_beta_anneal), so it resumes correctly
-        # with no extra checkpoint state. Applying full --lr from step 1
-        # against a freshly-attached, near-randomly-initialized subsystem
-        # (gate projections, LoRA) waking up at the same time beta's own
-        # suppression is fading is a plausible source of oversized early
-        # gradients -- see the huge pre-clip gnorm values a real run hit in
-        # its first ~20 steps.
+        # Linear warmup from args.lr/warmup_steps up to args.lr over
+        # --warmup-steps, then held at args.lr. `step` here means "the step
+        # about to be taken" (1-indexed), NOT "steps completed so far" --
+        # step/warmup_steps (0-indexed) would make the very first optimizer
+        # step use lr=0, a fully wasted no-op step (confirmed: that's what
+        # this looked like before the +1). Still a pure function of
+        # global_step (same pattern as BETA_BIAS_ANNEAL_STEPS/
+        # set_beta_anneal), so it resumes correctly with no extra checkpoint
+        # state. Applying full --lr from step 1 against a freshly-attached,
+        # near-randomly-initialized subsystem (gate projections, LoRA)
+        # waking up at the same time beta's own suppression is fading is a
+        # plausible source of oversized early gradients -- see the huge
+        # pre-clip gnorm values a real run hit in its first ~20 steps.
         if args.warmup_steps > 0:
-            frac = min(step / args.warmup_steps, 1.0)
+            frac = min((step + 1) / args.warmup_steps, 1.0)
             for group in optimizer.param_groups:
                 group["lr"] = args.lr * frac
 
@@ -687,6 +691,7 @@ def run_training(
                         p.grad /= accum_count
 
                 grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, 1.0).item()
+                used_lr = optimizer.param_groups[0]["lr"]
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
@@ -699,7 +704,7 @@ def run_training(
                 if on_step_fn is not None:
                     on_step_fn(model, global_step)
 
-                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {optimizer.param_groups[0]['lr']:.2e}")
+                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}")
                 if extra_log_fn is not None:
                     line = extra_log_fn(model)
                     if line is not None:
