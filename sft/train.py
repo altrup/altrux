@@ -652,10 +652,29 @@ def run_training(
             # already resets that slot's state via reset_slot_fn. Only
             # possible for models that expose per-slot state repair.
             if reset_slot_fn is not None and batched_state is not None:
-                for b, slot in enumerate(slots):
-                    if slot is not None and not _slot_state_finite(batched_state, b):
+                bad_slots = [
+                    b for b, slot in enumerate(slots)
+                    if slot is not None and not _slot_state_finite(batched_state, b)
+                ]
+                if bad_slots:
+                    # Unlike the per-chunk "non-finite loss, skipping chunk"
+                    # warning above (fine to be transient -- it's routine
+                    # and would otherwise spam the scrollback every chunk),
+                    # an abandoned example is rarer and worth keeping
+                    # visible: clear the live block first so this doesn't
+                    # just get silently overwritten by the next chunk's
+                    # live update (prev_n_lines' cursor math has no idea an
+                    # extra line was printed in between, so without this it
+                    # clobbers the warning instead of the intended live
+                    # line), then reset prev_n_lines so the live block
+                    # resumes fresh below it instead of trying to overwrite
+                    # up into it.
+                    if chunk_extra_log_fn is not None:
+                        _clear_live(prev_n_lines)
+                        prev_n_lines = 0
+                    for b in bad_slots:
                         print(f"  warning: non-finite internal state in slot {b}, abandoning example and resetting state")
-                        slot.pos = slot.seqlen
+                        slots[b].pos = slots[b].seqlen
 
             # Advance slot positions; assign next example to any that finished.
             for b, slot in enumerate(slots):
