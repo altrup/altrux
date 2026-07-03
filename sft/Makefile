@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume smoke-test test
+.PHONY: sync data data-memory prepare train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -70,6 +70,24 @@ resume:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
+
+# Dedicated diagnostic run for localizing a non-finite-gradient crash:
+# --detect-anomaly makes the run stop immediately, with a full traceback to
+# the exact forward op responsible, the first time it happens -- instead of
+# the normal train/resume behavior of discarding that chunk and continuing.
+# Slower (extra bookkeeping every forward op) and deliberately NOT
+# resilient, so this is for a short, throwaway run to pin down a real
+# crash, not the long unattended one -- use `make train`/`make resume` for
+# that, without this flag. Always --resume: the whole point is usually to
+# reproduce a crash you already hit partway through a real run, which means
+# starting from its latest checkpoint, not from scratch -- and --resume
+# already no-ops into a fresh start on its own if no checkpoint exists yet
+# (see train.py's main(): "no checkpoint found, starting fresh"), so this
+# is never wrong to default to.
+detect-anomaly:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u train.py --detect-anomaly --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
 # Gradient-wiring check on a synthetic dataset, driven through train.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults
