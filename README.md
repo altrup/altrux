@@ -10,7 +10,8 @@ altrux/
 │   └── mamba2_780m/
 ├── backend/         # FastAPI inference server
 ├── frontend/        # React Router v7 chat UI
-└── sft/             # LoRA supervised fine-tuning scripts
+├── sft/             # LoRA supervised fine-tuning scripts
+└── scripts/         # Standalone helper scripts (e.g. Lambda Cloud instance termination)
 ```
 
 ## Adding a new model
@@ -35,3 +36,5 @@ cd sft && make sync && make data && make train
 ```
 
 See `backend/README.md`, `frontend/README.md`, and `sft/README.md` for full setup details.
+
+On a rented Lambda Cloud GPU, chain `scripts/lambda_terminate.sh` after a training run so a crash doesn't leave the instance billing — see `scripts/README.md`.
