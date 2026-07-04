@@ -26,3 +26,15 @@ By default it looks up the running instance by matching this machine's public
 IP, so it must be run from inside the instance. To terminate a specific
 instance (e.g. from a different machine), set `LAMBDA_INSTANCE_ID` in
 `scripts/.env` instead.
+
+## `lambda_check_key.sh`
+
+Checks whether `LAMBDA_API_KEY` (in `scripts/.env`) is valid, without
+terminating anything. Useful after generating or rotating a key. The Lambda
+Cloud API has no dedicated "validate key" endpoint, so this hits the
+lightweight, always-available `GET /instance-types` and reports whether the
+key was accepted:
+
+```bash
+./scripts/lambda_check_key.sh
+```
