@@ -30,7 +30,7 @@ EOS_ID = 0  # <|endoftext|> for EleutherAI/gpt-neox-20b
 # This model's manual, unfused, per-token mixer step holds a live backward
 # graph whose VRAM cost scales with chunk_len -- on this project's dev GPU
 # (8GB, bf16 -- see load_base), chunk_len 52 is the largest value confirmed
-# (via `make smoke-test --chunk-len N`, which now runs 5+ consecutive chunks
+# (via `make smoke-test --chunk-len N`, which runs 5+ consecutive chunks
 # rather than one isolated chunk -- a single chunk's peak VRAM is NOT
 # representative of real multi-chunk training, since the held-over
 # gradient/cache floor from earlier chunks eats into the next chunk's

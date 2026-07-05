@@ -216,11 +216,13 @@ class _NeuralMemory:
         `params`/`momentum` are still fully detached and re-leafed once per
         *window* (not per token) before the gradient step, bounding the
         backward graph to O(1) windows of chain depth rather than O(T)
-        tokens -- same reasoning as the single-token version this replaced
-        (see git history), just applied once per window instead of once per
-        token. `create_graph=True` and the GRAD_SCALE soft-clip below are
-        both unchanged in spirit, just operating on the window's combined
-        gradient rather than a single token's.
+        tokens -- without this, chain depth would grow with total tokens
+        processed and the backward graph would never be freed. `create_graph`
+        and the GRAD_SCALE soft-clip below still operate per window: `eta`
+        caps the momentum recurrence's decay but doesn't bound the gradient
+        that feeds it, which can spike large enough (especially early in
+        training, before eta/theta are learned) to push the memory
+        non-finite in a single step regardless of eta.
 
         Returns (per_token_losses, grad_norm): per_token_losses is (W,
         batch) -- NOT reduced across the window, kept for diagnostics parity
@@ -234,16 +236,22 @@ class _NeuralMemory:
         pred = self._apply_windowed(ks, *params)
         per_token_loss = ((pred - vs) ** 2).mean(dim=-1)  # (W, batch)
         # create_graph=True: g must stay differentiable w.r.t. params so
-        # k_proj/v_proj/knob_proj receive gradient from the outer loss --
-        # same reasoning as the per-token version this replaced (see git
-        # history for the full explanation and the confirmed failure mode
-        # without it).
+        # k_proj/v_proj/knob_proj receive gradient from the outer loss.
         grads = torch.autograd.grad(per_token_loss.sum(), params, create_graph=create_graph)
 
-        # Soft-clip: see the per-token write() this replaced (git history)
-        # for the full reasoning -- unchanged here except that grad_norm is
-        # now the combined gradient for the whole window's one step, not a
-        # single token's.
+        # Soft-clip g's combined norm across (w1,b1,w2,b2) with tanh, from a
+        # detached copy so it doesn't add a second-order term to the
+        # create_graph=True path k_proj/v_proj's gradient depends on. Chosen
+        # over a hard clip to preserve direction exactly, pass magnitude
+        # through unchanged for typical gradients (tanh(x)~=x near 0), and
+        # avoid the zero-gradient plateau a hard clip leaves above threshold.
+        # GRAD_SCALE is a dimensional-analysis estimate, not a measured one:
+        # w1/w2 alone are large enough that a healthy O(1)-per-element
+        # gradient already has a combined norm around sqrt(element count)
+        # from dimensionality alone -- clipping near that baseline would
+        # constantly saturate on ordinary gradients, so GRAD_SCALE is set
+        # with headroom above it. grad_norm here is the whole window's
+        # combined gradient (one step per window), not a single token's.
         grad_norm = torch.zeros(ks.shape[1], device=ks.device, dtype=ks.dtype)
         for g in grads:
             grad_norm = grad_norm + g.detach().pow(2).flatten(1).sum(dim=1)
