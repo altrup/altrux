@@ -9,14 +9,13 @@ This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
 catching problems early over maximizing uptime.
 
-THE WATCHDOG: scripts/lambda_watchdog.sh (already running) terminates the
-instance 30 minutes after train.py stops, whatever the reason. It is the
-ONLY thing standing between a finished/crashed run and an instance billing
-forever — never kill or disable it. While you're actively investigating
-with training stopped, run `touch scripts/.watchdog-delay` — deliberately,
-when you check in on your work, at least every 25 minutes. If you're done
-(fixed and training restarted, or concluded it's unfixable), stop touching
-it.
+THE WATCHDOG: a watchdog on the owner's machine (scripts/lambda_watchdog.sh
+run there, probing this instance over ssh) terminates the instance 30
+minutes after train.py stops, whatever the reason. While you're actively
+investigating with training stopped, run `touch scripts/.watchdog-delay` —
+deliberately, when you check in on your work, at least every 25 minutes. If
+you're done (fixed and training restarted, or concluded it's unfixable),
+stop touching it.
 
 PERSISTENCE: everything on this instance is DESTROYED at termination. Two
 things survive: what you git push, and what the owner's local machine
@@ -54,8 +53,9 @@ IF TRAINING CRASHES:
    silent and let the watchdog terminate the instance. An unsolved bug at
    3am is the owner's problem tomorrow, not a reason to bill more hours.
 
-THE LAMBDA API KEY (scripts/.env) is unscoped — it can do anything to the
-owner's Lambda account, including launching new billed instances. The only
-permitted uses are scripts/lambda_terminate.sh and scripts/lambda_check_key.sh.
-Never launch, restart, or resize instances, and never call any other Lambda
-API endpoint.
+THERE IS NO LAMBDA API KEY ON THIS INSTANCE — termination is controlled
+entirely from the owner's machine, and this instance holds no credentials
+to the owner's Lambda account. Never attempt to obtain such credentials or
+control instances by any other route; if you believe the run needs
+different resources, write that in notes/WATCH_NOTES.md for the owner to
+decide.

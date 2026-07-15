@@ -57,23 +57,32 @@ Assumes the repo lives at `~/altrux` on the instance (override with
 
 ## `lambda_watchdog.sh`
 
-Terminates the instance (via `lambda_terminate.sh`) once nothing has been
-training for `--timeout` seconds (default 1800 — generous enough that a
-monitoring session's deliberate delay touches don't need to be
-unrealistically frequent, while a forgotten instance still dies within half
-an hour). Run it on the instance in the background at the start of a
-session:
+Runs on the **local** machine and terminates the instance (via
+`lambda_terminate.sh`) once nothing has been training there for `--timeout`
+seconds (default 1800 — generous enough that a monitoring session's
+deliberate delay touches don't need to be unrealistically frequent, while a
+forgotten instance still dies within half an hour). Keeping it local means
+the Lambda API key never exists on the instance at all — nothing running
+there (including an autonomous monitoring session) holds credentials to
+launch, resize, or terminate instances. The tradeoff: this machine must stay
+awake and online for the whole run, or nothing stops the billing. Run it
+alongside the pull loop:
 
 ```bash
-nohup ./scripts/lambda_watchdog.sh >> watchdog.log 2>&1 &
+./scripts/lambda_watchdog.sh &
+./scripts/lambda_pull.sh --follow
 ```
 
-"Training" = a process matching `--pattern` (default `train.py`) exists.
-Anyone working interactively on the instance between runs (e.g. a Claude Code
-session) can push termination back by touching the delay file:
+"Training" = a process matching `--pattern` (default `train.py`) exists on
+the instance, probed over ssh every `--interval` (60s). An instance that
+stops answering ssh while the API reports it active is terminated after
+`--unreachable-timeout` (900s) — unreachable can't be trained on, and
+shouldn't bill. Anyone working interactively on the instance between runs
+(e.g. a Claude Code session) can push termination back by touching the delay
+file **on the instance**:
 
 ```bash
-touch scripts/.watchdog-delay
+touch ~/altrux/scripts/.watchdog-delay
 ```
 
 A touch grants at most one `--timeout` window from the moment of the touch
@@ -83,6 +92,10 @@ actively working — never paused outright. `--terminate-cmd "echo boom"`
 dry-runs the countdown without a real terminate. This is a guardrail against
 a forgotten idle instance, not a security boundary: anything on the instance
 could also just kill the watchdog process.
+
+The instance is found via the API (expects exactly one active instance);
+set `LAMBDA_INSTANCE_ID`/`LAMBDA_INSTANCE_IP` in `scripts/.env` to target
+one explicitly. `--terminate-cmd "echo boom"` dry-runs the countdown.
 
 The `/watch-training` slash command (`.claude/commands/watch-training.md`)
 is the standing brief for a Claude Code session monitoring the run on the
