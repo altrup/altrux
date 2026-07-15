@@ -5,8 +5,16 @@
 # Run from the LOCAL machine, before terminating the instance — the run's
 # logs live only on the instance and die with it:
 #
-#   ./scripts/lambda_pull.sh            # instance IP looked up via the API
-#   ./scripts/lambda_pull.sh 1.2.3.4    # or given explicitly
+#   ./scripts/lambda_pull.sh                      # one-shot; IP via the API
+#   ./scripts/lambda_pull.sh 1.2.3.4              # one-shot; IP explicit
+#   ./scripts/lambda_pull.sh --follow [1.2.3.4]   # re-pull every 5 minutes
+#   ./scripts/lambda_pull.sh --follow --interval 60
+#
+# --follow keeps pulling until the instance stops answering (i.e. it was
+# terminated) or Ctrl-C, so even a hard crash mid-run loses at most one
+# interval's worth of logs. Pair it with a delayed terminate on the
+# instance ("; sleep 600 ;" between training and lambda_terminate.sh) so
+# the final pull is guaranteed a window after training ends.
 #
 # Reads LAMBDA_API_KEY from scripts/.env (see scripts/.env.example) for the
 # IP lookup; assumes the repo lives at ~/altrux on the instance (override
@@ -24,7 +32,17 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
 fi
 
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
-ip="${1:-}"
+follow=0
+interval=300
+ip=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --follow) follow=1; shift ;;
+    --interval) interval="$2"; shift 2 ;;
+    -*) echo "error: unknown flag $1" >&2; exit 1 ;;
+    *) ip="$1"; shift ;;
+  esac
+done
 
 if [[ -z "$ip" ]]; then
   if [[ -z "${LAMBDA_API_KEY:-}" ]]; then
@@ -43,10 +61,31 @@ print(instances[0]['ip'])
   echo "Found instance at $ip"
 fi
 
-echo "Pulling sft/logs/ ..."
-rsync -avz --progress "ubuntu@${ip}:${remote_repo}/sft/logs/" "$REPO_ROOT/sft/logs/"
+pull() {
+  echo "Pulling sft/logs/ ..."
+  rsync -az --info=stats1 "ubuntu@${ip}:${remote_repo}/sft/logs/" "$REPO_ROOT/sft/logs/" || return 1
+  echo "Pulling models/*/checkpoints/ ..."
+  rsync -az --info=stats1 --relative "ubuntu@${ip}:${remote_repo}/./models/*/checkpoints/" "$REPO_ROOT/" || return 1
+}
 
-echo "Pulling models/*/checkpoints/ ..."
-rsync -avz --progress --relative "ubuntu@${ip}:${remote_repo}/./models/*/checkpoints/" "$REPO_ROOT/"
+if [[ "$follow" -eq 0 ]]; then
+  pull
+  echo "Done. Terminate the instance with scripts/lambda_terminate.sh (or set LAMBDA_INSTANCE_ID and run it from here)."
+  exit 0
+fi
 
-echo "Done. Terminate the instance with scripts/lambda_terminate.sh (or set LAMBDA_INSTANCE_ID and run it from here)."
+echo "Following: pulling every ${interval}s until the instance stops answering (Ctrl-C to stop)..."
+succeeded=0
+while true; do
+  if ! pull; then
+    if [[ "$succeeded" -eq 0 ]]; then
+      echo "error: first pull failed — check the IP, ssh access, and LAMBDA_REMOTE_REPO before trusting --follow" >&2
+      exit 1
+    fi
+    echo "Instance stopped answering — assuming it was terminated. Last successful pull stands."
+    exit 0
+  fi
+  succeeded=1
+  echo "[$(date +%H:%M:%S)] pull ok — next in ${interval}s"
+  sleep "$interval"
+done

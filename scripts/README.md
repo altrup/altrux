@@ -16,10 +16,12 @@ cp scripts/.env.example scripts/.env
 ```
 
 Chain it after a training run so a crash doesn't leave the instance (and the
-bill) running:
+bill) running — with `;`, not `&&`, so terminate still fires when training
+*fails* (the exact case it exists for). The `sleep` gives a local
+`lambda_pull.sh --follow` loop time for its final pull:
 
 ```bash
-cd sft && make train && ../scripts/lambda_terminate.sh
+cd sft && { make resume; sleep 600; ../scripts/lambda_terminate.sh; }
 ```
 
 By default it looks up the running instance by matching this machine's public
@@ -35,9 +37,16 @@ survive termination (they otherwise die with the instance). Run it from the
 **local** machine before `lambda_terminate.sh`:
 
 ```bash
-./scripts/lambda_pull.sh            # instance IP looked up via the API
-./scripts/lambda_pull.sh 1.2.3.4    # or given explicitly
+./scripts/lambda_pull.sh                      # one-shot; IP via the API
+./scripts/lambda_pull.sh 1.2.3.4              # one-shot; IP explicit
+./scripts/lambda_pull.sh --follow             # re-pull every 5 min until terminated
+./scripts/lambda_pull.sh --follow --interval 60
 ```
+
+`--follow` keeps pulling until the instance stops answering (terminated) or
+Ctrl-C, bounding what a hard crash can lose to one interval. Pair it with a
+delayed terminate on the instance (see the `sleep` in `lambda_terminate.sh`'s
+example above) so the final pull after training ends is guaranteed.
 
 Assumes the repo lives at `~/altrux` on the instance (override with
 `LAMBDA_REMOTE_REPO` in `scripts/.env`) and ssh access as `ubuntu@`.
