@@ -339,8 +339,30 @@ class _TitansFrontEnd(nn.Module):
         self.k_proj = nn.Linear(d_model, mem_dim)
         self.v_proj = nn.Linear(d_model, mem_dim)
         # eta (momentum), theta (step size), alpha (decay) -- all small and
-        # data-dependent, per Titans.
+        # data-dependent, per Titans. Zero-init weight + fixed bias so each
+        # knob starts at a chosen operating point and learns data-dependence
+        # from there: a default random init, fed by the residual stream
+        # (rms in the tens at READ_LAYER), puts every pre-activation tens
+        # deep into sigmoid's rails -- theta pinned at ~0 (the memory is
+        # never written), eta pinned at its cap, alpha slammed to a random
+        # rail per token -- with ~no gradient through the saturated sigmoids
+        # to recover. sft/measure_knobs.py measures the actual per-token
+        # knob distributions on a checkpoint or fresh init.
         self.knob_proj = nn.Linear(d_model, 3)
+        nn.init.zeros_(self.knob_proj.weight)
+        # eta/theta bias 0: sigmoid midpoint, full gradient (momentum decay
+        # 0.45, write step 0.05). alpha bias -4: decay starts at
+        # ~0.002/window (retention half-life ~350 windows) so the store
+        # retains by default and learns to forget -- at the midpoint it
+        # would instead halve every ~14 windows, erasing itself faster than
+        # any long-range signal could reward keeping it. -4 sits in the
+        # same low-gradient tail that beta's comment below rules out for
+        # beta_proj.bias, but the asymmetry makes it safe here: a
+        # slow-to-wake beta disables the whole subsystem, while for alpha
+        # the saturated default IS the desired behavior and forgetting is a
+        # refinement the optimizer can afford to learn slowly.
+        with torch.no_grad():
+            self.knob_proj.bias.copy_(torch.tensor([0.0, 0.0, -4.0]))
 
     def init_memory(self, batch_size: int, device, dtype) -> _NeuralMemory:
         return _NeuralMemory(batch_size, self.mem_dim, self.mem_hidden, device, dtype)
@@ -383,7 +405,14 @@ class _TitansFrontEnd(nn.Module):
             q = _rms_normalize(self.q_proj(residual))
             k = _rms_normalize(self.k_proj(residual))
             v = _rms_normalize(self.v_proj(residual))
-            knobs = torch.sigmoid(self.knob_proj(residual))
+            # knob_proj gets the same unit-rms treatment, applied to its
+            # *input* (q/k/v normalize the output instead so their learned
+            # weight sets the output scale; the knobs' output scale is
+            # already pinned by sigmoid + the caps below): its
+            # pre-activations then track the learned weights rather than
+            # the residual's raw magnitude, keeping the sigmoids off their
+            # zero-gradient rails as the weights grow from zero-init.
+            knobs = torch.sigmoid(self.knob_proj(_rms_normalize(residual)))
             # eta capped at 0.9 (not left at sigmoid's full (0, 1) range like
             # theta/alpha's caps, which bound them *small* on purpose --
             # small theta/alpha is what makes the write step gentle and the
