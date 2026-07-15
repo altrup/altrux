@@ -15,13 +15,15 @@ cp scripts/.env.example scripts/.env
 # fill in LAMBDA_API_KEY (generate at https://cloud.lambdalabs.com/api-keys)
 ```
 
-Chain it after a training run so a crash doesn't leave the instance (and the
-bill) running — with `;`, not `&&`, so terminate still fires when training
-*fails* (the exact case it exists for). The `sleep` gives a local
-`lambda_pull.sh --follow` loop time for its final pull:
+The usual way to invoke it is indirectly, via `lambda_watchdog.sh` (below),
+which calls it once nothing has been training for its timeout — covering
+normal completion, crashes, and forgotten idle instances with one mechanism.
+It can also be run by hand, or chained directly after a run (use `;`, not
+`&&`, so terminate still fires when training *fails* — the exact case it
+exists for):
 
 ```bash
-cd sft && { make resume; sleep 600; ../scripts/lambda_terminate.sh; }
+cd sft && { make resume; ../scripts/lambda_terminate.sh; }
 ```
 
 By default it looks up the running instance by matching this machine's public
@@ -44,9 +46,10 @@ survive termination (they otherwise die with the instance). Run it from the
 ```
 
 `--follow` keeps pulling until the instance stops answering (terminated) or
-Ctrl-C, bounding what a hard crash can lose to one interval. Pair it with a
-delayed terminate on the instance (see the `sleep` in `lambda_terminate.sh`'s
-example above) so the final pull after training ends is guaranteed.
+Ctrl-C, bounding what a hard crash can lose to one interval. Keep its
+`--interval` (default 300s) under the watchdog's `--timeout` (default 600s):
+the watchdog's grace period after training exits is exactly the window the
+final pull happens in.
 
 Assumes the repo lives at `~/altrux` on the instance (override with
 `LAMBDA_REMOTE_REPO` in `scripts/.env`) and ssh access as `ubuntu@`.
