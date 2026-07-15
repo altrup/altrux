@@ -71,6 +71,11 @@ pull() {
   "${RSYNC[@]}" "ubuntu@${ip}:${remote_repo}/sft/logs/" "$REPO_ROOT/sft/logs/" || return 1
   echo "Pulling models/*/checkpoints/ ..."
   "${RSYNC[@]}" --relative "ubuntu@${ip}:${remote_repo}/./models/*/checkpoints/" "$REPO_ROOT/" || return 1
+  # Best-effort: notes/ is where a monitoring session on the instance
+  # writes its observations (gitignored, so it travels by rsync, not
+  # push). Its absence must not read as "instance dead" in --follow.
+  echo "Pulling notes/ (if any) ..."
+  "${RSYNC[@]}" "ubuntu@${ip}:${remote_repo}/notes/" "$REPO_ROOT/notes/" 2>/dev/null || true
 }
 
 if [[ "$follow" -eq 0 ]]; then

@@ -33,10 +33,11 @@ instance (e.g. from a different machine), set `LAMBDA_INSTANCE_ID` in
 
 ## `lambda_pull.sh`
 
-Pulls training artifacts — `sft/logs/` and every `models/*/checkpoints/` —
-down from a running instance to this machine via rsync, so the run's logs
-survive termination (they otherwise die with the instance). Run it from the
-**local** machine before `lambda_terminate.sh`:
+Pulls training artifacts — `sft/logs/`, every `models/*/checkpoints/`, and
+`notes/` (free-form observations written by whoever is monitoring on the
+instance; gitignored, so rsync is how it travels) — down from a running
+instance to this machine via rsync, so they survive termination (everything
+on the instance otherwise dies with it). Run it from the **local** machine:
 
 ```bash
 ./scripts/lambda_pull.sh                      # one-shot; IP via the API
