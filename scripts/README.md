@@ -2,6 +2,25 @@
 
 Standalone helper scripts that don't belong to a specific subproject.
 
+## Typical run night (rented Lambda GPU)
+
+One-time setup: `cp scripts/.env.example scripts/.env` and fill in
+`LAMBDA_API_KEY`. Everything below assumes exactly one active instance (the
+scripts find its IP via the API) and the repo cloned at `~/altrux` on it.
+
+On the **local** machine — must stay awake and online for the whole run,
+it's the only thing that can stop the billing:
+
+```bash
+./scripts/lambda_watchdog.sh &      # terminates the instance when idle; key stays local
+./scripts/lambda_pull.sh --follow   # rescues logs/checkpoints/notes every 5 min
+```
+
+On the **instance**: clone the repo, `make sync`, verify a trivial `git push`
+works, prepare data, then start training (`cd sft && make resume`) —
+monitored by a Claude Code session started with `/watch-training`. No
+watchdog, no terminate chain, no API key on the instance.
+
 ## `lambda_terminate.sh`
 
 Terminates the current Lambda Cloud GPU instance via the Lambda Cloud API — a
