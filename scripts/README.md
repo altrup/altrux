@@ -84,6 +84,11 @@ dry-runs the countdown without a real terminate. This is a guardrail against
 a forgotten idle instance, not a security boundary: anything on the instance
 could also just kill the watchdog process.
 
+The `/watch-training` slash command (`.claude/commands/watch-training.md`)
+is the standing brief for a Claude Code session monitoring the run on the
+instance — it encodes the watchdog contract, the commit-and-push +
+`notes/WATCH_NOTES.md` persistence rules, and the give-up criteria.
+
 ## `lambda_check_key.sh`
 
 Checks whether `LAMBDA_API_KEY` (in `scripts/.env`) is valid, without
