@@ -27,6 +27,21 @@ IP, so it must be run from inside the instance. To terminate a specific
 instance (e.g. from a different machine), set `LAMBDA_INSTANCE_ID` in
 `scripts/.env` instead.
 
+## `lambda_pull.sh`
+
+Pulls training artifacts — `sft/logs/` and every `models/*/checkpoints/` —
+down from a running instance to this machine via rsync, so the run's logs
+survive termination (they otherwise die with the instance). Run it from the
+**local** machine before `lambda_terminate.sh`:
+
+```bash
+./scripts/lambda_pull.sh            # instance IP looked up via the API
+./scripts/lambda_pull.sh 1.2.3.4    # or given explicitly
+```
+
+Assumes the repo lives at `~/altrux` on the instance (override with
+`LAMBDA_REMOTE_REPO` in `scripts/.env`) and ssh access as `ubuntu@`.
+
 ## `lambda_check_key.sh`
 
 Checks whether `LAMBDA_API_KEY` (in `scripts/.env`) is valid, without
