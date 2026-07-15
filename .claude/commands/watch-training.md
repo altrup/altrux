@@ -27,6 +27,12 @@ notes/). Therefore:
   working tree.
 - Write observations (health checks, anomalies, fixes, open questions) to
   notes/WATCH_NOTES.md as you go, not at the end.
+- The rsync pull runs every ~5 minutes, so anything you write needs the
+  instance alive that much longer to survive. Whenever you finish your LAST
+  writes before going quiet (final notes, a fix you just pushed), touch
+  scripts/.watchdog-delay once more — that guarantees a full watchdog
+  window (~6 pull cycles) before termination, so nothing is written and
+  then immediately lost.
 
 MONITORING, every ~15 min while training runs: tail the newest
 sft/logs/train-*.log. Healthy: loss trending down, "surprise" NOT flat at
@@ -43,6 +49,13 @@ IF TRAINING CRASHES:
 2. Clean fix -> apply, commit, push, `make resume`.
 3. Same failure twice after a fix attempt, or you're guessing: stop. Write
    everything you learned to notes/WATCH_NOTES.md, push any commits, verify
-   the latest checkpoint is intact, then stop touching the delay file and
-   let the watchdog terminate the instance. An unsolved bug at 3am is the
-   owner's problem tomorrow, not a reason to bill more hours.
+   the latest checkpoint is intact, touch the delay file one final time (so
+   the rsync pull has a full window to collect what you wrote), then go
+   silent and let the watchdog terminate the instance. An unsolved bug at
+   3am is the owner's problem tomorrow, not a reason to bill more hours.
+
+THE LAMBDA API KEY (scripts/.env) is unscoped — it can do anything to the
+owner's Lambda account, including launching new billed instances. The only
+permitted uses are scripts/lambda_terminate.sh and scripts/lambda_check_key.sh.
+Never launch, restart, or resize instances, and never call any other Lambda
+API endpoint.
