@@ -61,11 +61,16 @@ print(instances[0]['ip'])
   echo "Found instance at $ip"
 fi
 
+# BatchMode forbids interactive auth prompts (which would hang --follow
+# unattended); ConnectTimeout makes a terminated instance fail in seconds
+# instead of a full TCP timeout.
+RSYNC=(rsync -az --info=stats1 -e "ssh -o ConnectTimeout=10 -o BatchMode=yes")
+
 pull() {
   echo "Pulling sft/logs/ ..."
-  rsync -az --info=stats1 "ubuntu@${ip}:${remote_repo}/sft/logs/" "$REPO_ROOT/sft/logs/" || return 1
+  "${RSYNC[@]}" "ubuntu@${ip}:${remote_repo}/sft/logs/" "$REPO_ROOT/sft/logs/" || return 1
   echo "Pulling models/*/checkpoints/ ..."
-  rsync -az --info=stats1 --relative "ubuntu@${ip}:${remote_repo}/./models/*/checkpoints/" "$REPO_ROOT/" || return 1
+  "${RSYNC[@]}" --relative "ubuntu@${ip}:${remote_repo}/./models/*/checkpoints/" "$REPO_ROOT/" || return 1
 }
 
 if [[ "$follow" -eq 0 ]]; then
