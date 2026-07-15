@@ -51,6 +51,32 @@ example above) so the final pull after training ends is guaranteed.
 Assumes the repo lives at `~/altrux` on the instance (override with
 `LAMBDA_REMOTE_REPO` in `scripts/.env`) and ssh access as `ubuntu@`.
 
+## `lambda_watchdog.sh`
+
+Terminates the instance (via `lambda_terminate.sh`) once nothing has been
+training for `--timeout` seconds (default 600). Run it on the instance in the
+background at the start of a session:
+
+```bash
+nohup ./scripts/lambda_watchdog.sh >> watchdog.log 2>&1 &
+```
+
+"Training" = a process matching `--pattern` (default `train.py`) exists.
+Anyone working interactively on the instance between runs (e.g. a Claude Code
+session) can push termination back by touching the delay file:
+
+```bash
+touch scripts/.watchdog-delay
+```
+
+A touch grants at most one `--timeout` window from the moment of the touch
+(future-dated mtimes are rewritten to now), so the timer can only be
+*delayed* — repeatedly, by touching again every <timeout seconds while
+actively working — never paused outright. `--terminate-cmd "echo boom"`
+dry-runs the countdown without a real terminate. This is a guardrail against
+a forgotten idle instance, not a security boundary: anything on the instance
+could also just kill the watchdog process.
+
 ## `lambda_check_key.sh`
 
 Checks whether `LAMBDA_API_KEY` (in `scripts/.env`) is valid, without
