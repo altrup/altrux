@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-timeout=600
+timeout=1800
 interval=30
 pattern="train.py"
 delay_file="$SCRIPT_DIR/.watchdog-delay"

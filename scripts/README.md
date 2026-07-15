@@ -48,9 +48,9 @@ on the instance otherwise dies with it). Run it from the **local** machine:
 
 `--follow` keeps pulling until the instance stops answering (terminated) or
 Ctrl-C, bounding what a hard crash can lose to one interval. Keep its
-`--interval` (default 300s) under the watchdog's `--timeout` (default 600s):
-the watchdog's grace period after training exits is exactly the window the
-final pull happens in.
+`--interval` (default 300s) under the watchdog's `--timeout` (default
+1800s): the watchdog's grace period after training exits is exactly the
+window the final pull happens in.
 
 Assumes the repo lives at `~/altrux` on the instance (override with
 `LAMBDA_REMOTE_REPO` in `scripts/.env`) and ssh access as `ubuntu@`.
@@ -58,8 +58,11 @@ Assumes the repo lives at `~/altrux` on the instance (override with
 ## `lambda_watchdog.sh`
 
 Terminates the instance (via `lambda_terminate.sh`) once nothing has been
-training for `--timeout` seconds (default 600). Run it on the instance in the
-background at the start of a session:
+training for `--timeout` seconds (default 1800 — generous enough that a
+monitoring session's deliberate delay touches don't need to be
+unrealistically frequent, while a forgotten instance still dies within half
+an hour). Run it on the instance in the background at the start of a
+session:
 
 ```bash
 nohup ./scripts/lambda_watchdog.sh >> watchdog.log 2>&1 &
