@@ -210,6 +210,9 @@ def _make_args(**overrides):
         epochs=1, eos_weight=1.0, accum_tokens=4, chunk_len=4,
         ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
         max_len=float("inf"), batch_size=1, data="fake_dataset.pt",
+        # warmup_steps=0 disables warmup so these tests keep the constant
+        # --lr they were written against.
+        warmup_steps=0, lr=1e-3,
     )
     defaults.update(overrides)
     from types import SimpleNamespace
