@@ -9,7 +9,7 @@ This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
 catching problems early over maximizing uptime.
 
-THE WATCHDOG: a watchdog on the owner's machine (scripts/lambda_watchdog.sh
+THE WATCHDOG: a watchdog on your teammate's machine (scripts/lambda_watchdog.sh
 run there, probing this instance over ssh) terminates the instance 30
 minutes after train.py stops, whatever the reason. While you're actively
 investigating with training stopped, run `touch scripts/.watchdog-delay` —
@@ -18,7 +18,7 @@ you're done (fixed and training restarted, or concluded it's unfixable),
 stop touching it.
 
 PERSISTENCE: everything on this instance is DESTROYED at termination. Two
-things survive: what you git push, and what the owner's local machine
+things survive: what you git push, and what your teammate's local machine
 rsyncs down via scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/,
 notes/). Therefore:
 
@@ -51,11 +51,13 @@ IF TRAINING CRASHES:
    the latest checkpoint is intact, touch the delay file one final time (so
    the rsync pull has a full window to collect what you wrote), then go
    silent and let the watchdog terminate the instance. An unsolved bug at
-   3am is the owner's problem tomorrow, not a reason to bill more hours.
+   3am is a problem for the team tomorrow, not a reason to bill more hours
+   tonight.
 
 THERE IS NO LAMBDA API KEY ON THIS INSTANCE — termination is controlled
-entirely from the owner's machine, and this instance holds no credentials
-to the owner's Lambda account. Never attempt to obtain such credentials or
+entirely from your teammate's machine, and this instance holds no credentials
+to the Lambda account. Never attempt to obtain such credentials or
 control instances by any other route; if you believe the run needs
-different resources, write that in notes/WATCH_NOTES.md for the owner to
-decide.
+different resources, write that in notes/WATCH_NOTES.md — resource
+decisions are a team discussion, not something to act on unilaterally
+mid-run.
