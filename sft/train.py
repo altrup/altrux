@@ -233,14 +233,21 @@ def save_checkpoint(
     the design spec). Omitted from the JSON entirely when None, so
     checkpoints for models without this concept are unaffected."""
     path = CKPT_DIR / f"epoch-{epoch + 1}" / f"step-{step}"
-    path.mkdir(parents=True, exist_ok=True)
+    # Written to a sibling temp dir and published with one atomic rename, so a
+    # checkpoint is never observed half-written -- a crash mid-save would
+    # otherwise leave a step-N/ that latest_checkpoint() picks as newest and
+    # --resume then fails on. The leading dot keeps the temp dir out of
+    # iter_checkpoints()/rotate_checkpoints(), which match a "step-" prefix.
+    tmp = path.with_name(f".{path.name}.partial")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
     state = {n: p.detach().cpu() for n, p in model.named_parameters() if p.requires_grad}
-    torch.save(state, path / "trainable.pt")
+    torch.save(state, tmp / "trainable.pt")
     lora_config = {"rank": lora_rank, "alpha": lora_alpha}
     if memory_window is not None:
         lora_config["memory_window"] = memory_window
-    (path / "lora_config.json").write_text(json.dumps(lora_config))
-    torch.save(optimizer.state_dict(), path / "optimizer.pt")
+    (tmp / "lora_config.json").write_text(json.dumps(lora_config))
+    torch.save(optimizer.state_dict(), tmp / "optimizer.pt")
     slot_states = [
         (s.example_idx, s.pos) if s is not None else None
         for s in slots
@@ -255,8 +262,12 @@ def save_checkpoint(
     }
     if batched_state is not None:
         state_dict["state_batch_size"] = len(slots)
-        torch.save(batched_state, path / "mem_state.pt")
-    torch.save(state_dict, path / "state.pt")
+        torch.save(batched_state, tmp / "mem_state.pt")
+    torch.save(state_dict, tmp / "state.pt")
+    # os.replace onto a non-empty dir fails, so clear any same-step save first
+    # (only reachable when a resume re-saves a step that already exists).
+    shutil.rmtree(path, ignore_errors=True)
+    os.replace(tmp, path)
     return path
 
 

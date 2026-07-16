@@ -159,6 +159,35 @@ def test_save_checkpoint_omits_mem_state_when_batched_state_is_none(monkeypatch,
     assert "state_batch_size" not in state
 
 
+def test_save_checkpoint_crashing_mid_save_leaves_previous_checkpoint_newest(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    slots = [train._Slot(0, 3, _ids(5), None)]
+    good = train.save_checkpoint(
+        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
+        total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
+    )
+
+    real_save = torch.save
+
+    def fail_writing_state(obj, f, *args, **kwargs):
+        if Path(f).name == "state.pt":
+            raise RuntimeError("simulated crash mid-save")
+        return real_save(obj, f, *args, **kwargs)
+
+    monkeypatch.setattr(train.torch, "save", fail_writing_state)
+
+    with pytest.raises(RuntimeError):
+        train.save_checkpoint(
+            model, optimizer, step=2, epoch=0, slots=slots, next_ptr=1,
+            total_tokens=20.0, lora_rank=4, lora_alpha=8.0,
+        )
+
+    assert [s for s, _ in train.iter_checkpoints()] == [1]
+    assert train.latest_checkpoint() == good
+
+
 def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_path):
     monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
