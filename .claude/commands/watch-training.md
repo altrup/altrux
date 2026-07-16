@@ -33,8 +33,10 @@ notes/). Therefore:
   window (~6 pull cycles) before termination, so nothing is written and
   then immediately lost.
 
-MONITORING, every ~15 min while training runs: tail the newest
-sft/logs/train-*.log. Healthy: loss trending down, "surprise" NOT flat at
+MONITORING while training runs: check every ~5 min for the first hour of a
+run (early failures — OOM, shape bugs, pathological loss — show up in the
+first minutes, and catching them early is cheap), then every ~15 min once
+it's proven stable. Tail the newest sft/logs/train-*.log. Healthy: loss trending down, "surprise" NOT flat at
 ~1.0, w1_abs_max neither collapsing to 0 nor growing unboundedly, few/no
 "non-finite" warnings. Repeated "non-finite loss/gradient, skipping chunk"
 warnings are a known failure mode — if more than rare: stop the run,
