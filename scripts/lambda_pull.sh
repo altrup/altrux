@@ -78,7 +78,10 @@ fi
 # unattended); ConnectTimeout makes a terminated instance fail in seconds
 # instead of a full TCP timeout.
 SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes)
-RSYNC=(rsync -az --info=stats1 -e "ssh ${SSH_OPTS[*]}")
+# .step-N.partial is a checkpoint mid-save (see sft/train.py's
+# save_checkpoint); it's renamed into place when complete, so pulling it would
+# just spend bandwidth on bytes that arrive again under their real name.
+RSYNC=(rsync -az --info=stats1 --exclude='.*.partial' -e "ssh ${SSH_OPTS[*]}")
 if [[ "$with_mem_state" -eq 0 ]]; then
   RSYNC+=(--exclude=mem_state.pt)
 else
