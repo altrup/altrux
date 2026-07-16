@@ -124,15 +124,20 @@ def extra_log(model) -> str | None:
     M's two layers this window -- nothing hard-clips these directly (only
     the gradient used to update them is soft-clipped), so unbounded growth
     here is a real risk and a plausible source of a chunk whose loss stays
-    finite but whose backward pass produces a non-finite gradient."""
+    finite but whose backward pass produces a non-finite gradient.
+    retain_min/alpha/w*_rms_min/w*_drift watch for the opposite failure --
+    memory being erased or never written (see _fresh_mem_stat_sums)."""
     stats = model.pop_memory_stats()
     if stats is None:
         return None
     return (
         f"memory  beta {stats['beta']:.4f}  retain {stats['retain']:.4f}"
+        f"  retain_min {stats['retain_min']:.4f}  alpha {stats['alpha']:.4f}"
         f"  surprise {stats['surprise']:.4f}  o_t_norm {stats['o_t_norm']:.4f}"
         f"  grad_norm {stats['grad_norm']:.4g}"
         f"  w1_abs_max {stats['w1_abs_max']:.4g}  w2_abs_max {stats['w2_abs_max']:.4g}"
+        f"  w1_rms_min {stats['w1_rms_min']:.4g}  w2_rms_min {stats['w2_rms_min']:.4g}"
+        f"  w_drift {stats['w1_drift']:.4g}/{stats['w2_drift']:.4g}"
     )
 
 

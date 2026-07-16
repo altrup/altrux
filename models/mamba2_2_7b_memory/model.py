@@ -162,6 +162,11 @@ class _NeuralMemory:
         self.w2 = (torch.rand(batch_size, dim, hidden_dim, device=device, dtype=dtype) * 2 - 1) * bound2
         self.b2 = torch.zeros(batch_size, dim, device=device, dtype=dtype)
         self.momentum = [torch.zeros_like(p) for p in (self.w1, self.b1, self.w2, self.b2)]
+        # Snapshot of the random init, so the w*_drift stats (see
+        # Model._accum_write_stats) can measure how far writes have
+        # cumulatively moved M within the current example.
+        self.w1_init = self.w1.clone()
+        self.w2_init = self.w2.clone()
 
     @staticmethod
     def _apply(x: torch.Tensor, w1, b1, w2, b2) -> torch.Tensor:
@@ -553,6 +558,11 @@ class MemoryState:
         neural_memory.w2 = self.neural_memory.w2.detach()
         neural_memory.b2 = self.neural_memory.b2.detach()
         neural_memory.momentum = [s.detach() for s in self.neural_memory.momentum]
+        # getattr fallback: a state unpickled from a mem_state.pt saved before
+        # w1_init/w2_init existed lacks them -- fall back to the current
+        # weights as the drift baseline (heals fully at each slot reset).
+        neural_memory.w1_init = getattr(self.neural_memory, "w1_init", self.neural_memory.w1).detach()
+        neural_memory.w2_init = getattr(self.neural_memory, "w2_init", self.neural_memory.w2).detach()
         return MemoryState(
             conv_states=[c.detach() for c in self.conv_states],
             ssm_states=[s.detach() for s in self.ssm_states],
@@ -638,26 +648,7 @@ class Model(nn.Module):
         # _GatedDeltaInjection.__init__) and are the only direct signal of
         # whether the memory subsystem is actually being used or still
         # sitting at its identity init.
-        self._mem_stat_sums = {
-            "beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0,
-            # w1_abs_max/w2_abs_max track a running MAX (not a sum-to-average
-            # like the others) across the accumulation window, since an
-            # average would smooth out exactly the kind of outlier spike
-            # they exist to catch. M's w2 (unlike w1, whose pre-activation
-            # gets tanh'd) has no activation bounding its output -- nothing
-            # hard-clips w1/w2's magnitude directly, only the gradient used
-            # to update them (see _NeuralMemory.write's soft clip), so nothing
-            # stops them drifting large over many windows. Watching this is
-            # meant to help confirm/rule out unbounded w1/w2 growth as the
-            # source of a real crash where loss_sum stayed finite but the
-            # backward pass produced a NaN gradient (see git history) --
-            # write()'s create_graph=True second-order autograd through
-            # this exact computation is a plausible place for that. Updated
-            # with a plain .item() at each write() call site (once per
-            # memory-window close, not per token -- cheap enough that the
-            # sync-avoidance reasoning above doesn't apply here).
-            "w1_abs_max": 0.0, "w2_abs_max": 0.0,
-        }
+        self._mem_stat_sums = self._fresh_mem_stat_sums()
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
         self._mem_stat_write_count = 0
@@ -1031,6 +1022,11 @@ class Model(nn.Module):
                     retain_per_slot = retain[:, 0, 0, 0].detach()  # (B,)
                     self._mem_stat_sums["beta"] += beta_per_slot.mean()
                     self._mem_stat_sums["retain"] += retain_per_slot.mean()
+                    prev_min = self._mem_stat_sums["retain_min"]
+                    slot_min = retain_per_slot.min()
+                    self._mem_stat_sums["retain_min"] = (
+                        slot_min if prev_min is None else torch.minimum(prev_min, slot_min)
+                    )
                     self._mem_stat_inj_count += 1
                     token_betas.append(beta_per_slot)
                     token_retains.append(retain_per_slot)
@@ -1074,12 +1070,7 @@ class Model(nn.Module):
                             _, grad_norm = state.neural_memory.write(ks, vs, etas, thetas, alphas)
                             last_grad_norm_per_slot = grad_norm.detach()  # (B,)
                             self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
-                            self._mem_stat_sums["w1_abs_max"] = max(
-                                self._mem_stat_sums["w1_abs_max"], state.neural_memory.w1.detach().abs().max().item()
-                            )
-                            self._mem_stat_sums["w2_abs_max"] = max(
-                                self._mem_stat_sums["w2_abs_max"], state.neural_memory.w2.detach().abs().max().item()
-                            )
+                            self._accum_write_stats(state.neural_memory, alphas)
                             self._mem_stat_write_count += 1
                             pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
 
@@ -1234,6 +1225,11 @@ class Model(nn.Module):
                 retain_per_slot = retain[:, 0, 0, 0].detach()
                 self._mem_stat_sums["beta"] += beta_per_slot.mean()
                 self._mem_stat_sums["retain"] += retain_per_slot.mean()
+                prev_min = self._mem_stat_sums["retain_min"]
+                slot_min = retain_per_slot.min()
+                self._mem_stat_sums["retain_min"] = (
+                    slot_min if prev_min is None else torch.minimum(prev_min, slot_min)
+                )
                 self._mem_stat_inj_count += 1
                 if is_last_window:
                     token_betas.append(beta_per_slot)
@@ -1271,12 +1267,7 @@ class Model(nn.Module):
                         _, grad_norm = state.neural_memory.write(k_w, v_w, eta_w, theta_w, alpha_w)
                         last_grad_norm_per_slot = grad_norm.detach()
                         self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
-                        self._mem_stat_sums["w1_abs_max"] = max(
-                            self._mem_stat_sums["w1_abs_max"], state.neural_memory.w1.detach().abs().max().item()
-                        )
-                        self._mem_stat_sums["w2_abs_max"] = max(
-                            self._mem_stat_sums["w2_abs_max"], state.neural_memory.w2.detach().abs().max().item()
-                        )
+                        self._accum_write_stats(state.neural_memory, alpha_w)
                         self._mem_stat_write_count += 1
 
                         # Surprise-weighted pooling -- see forward()'s
@@ -1371,10 +1362,76 @@ class Model(nn.Module):
         nm.b1[slot_idx].zero_()
         nm.w2[slot_idx].copy_((torch.rand(MEM_DIM, MEM_HIDDEN, device=device, dtype=mem_dtype) * 2 - 1) * bound2)
         nm.b2[slot_idx].zero_()
+        if not hasattr(nm, "w1_init"):
+            nm.w1_init = nm.w1.detach().clone()
+            nm.w2_init = nm.w2.detach().clone()
+        else:
+            nm.w1_init[slot_idx].copy_(nm.w1[slot_idx])
+            nm.w2_init[slot_idx].copy_(nm.w2[slot_idx])
         for s in nm.momentum:
             s[slot_idx].zero_()
         state.last_o_t[slot_idx].zero_()
         state.last_surprise[slot_idx].zero_()
+
+    @staticmethod
+    def _fresh_mem_stat_sums() -> dict[str, "float | torch.Tensor | None"]:
+        return {
+            "beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0,
+            # w1_abs_max/w2_abs_max track a running MAX (not a sum-to-average
+            # like the others) across the accumulation window, since an
+            # average would smooth out exactly the kind of outlier spike
+            # they exist to catch. M's w2 (unlike w1, whose pre-activation
+            # gets tanh'd) has no activation bounding its output -- nothing
+            # hard-clips w1/w2's magnitude directly, only the gradient used
+            # to update them (see _NeuralMemory.write's soft clip), so nothing
+            # stops them drifting large over many windows. Watching this is
+            # meant to help confirm/rule out unbounded w1/w2 growth as the
+            # source of a real crash where loss_sum stayed finite but the
+            # backward pass produced a NaN gradient (see git history) --
+            # write()'s create_graph=True second-order autograd through
+            # this exact computation is a plausible place for that. Updated
+            # with a plain .item() at each write() call site (once per
+            # memory-window close, not per token -- cheap enough that the
+            # sync-avoidance reasoning above doesn't apply here).
+            "w1_abs_max": 0.0, "w2_abs_max": 0.0,
+            # alpha is write()'s (1 - alpha) weight decay on M -- the one
+            # knob that erases memory content directly (beta/retain gate the
+            # ssm_state injection, not M itself), so it gets its own stat.
+            # Sum-to-average over write() calls.
+            "alpha": 0.0,
+            # Running-MIN counterparts to the means/maxes above: retain's
+            # mean can hide an episodic near-zero wipe, and w*_abs_max's max
+            # can hide a mostly-zeroed matrix behind one large element.
+            # w*_rms_min is the smallest per-slot RMS seen this window (a
+            # healthy fresh slot sits near its init RMS, bound/sqrt(3):
+            # ~0.011 for w1, ~0.0057 for w2). None = no sample yet this
+            # window (reported as nan).
+            "retain_min": None,
+            "w1_rms_min": None, "w2_rms_min": None,
+            # Mean per-slot RMS distance of M's weights from their
+            # per-example random init: how much has cumulatively been
+            # written this example. Sum-to-average over write() calls.
+            "w1_drift": 0.0, "w2_drift": 0.0,
+        }
+
+    def _accum_write_stats(self, nm: _NeuralMemory, alphas: torch.Tensor) -> None:
+        """Accumulate the write-cadence stats (see _fresh_mem_stat_sums).
+        Called once per memory-window close at each write() call site --
+        cheap enough for plain .item() syncs, unlike the per-token sites."""
+        sums = self._mem_stat_sums
+        w1 = nm.w1.detach()
+        w2 = nm.w2.detach()
+        sums["w1_abs_max"] = max(sums["w1_abs_max"], w1.abs().max().item())
+        sums["w2_abs_max"] = max(sums["w2_abs_max"], w2.abs().max().item())
+        sums["alpha"] += alphas.detach().mean().item()
+        w1_rms = w1.pow(2).mean(dim=(1, 2)).sqrt().min().item()
+        w2_rms = w2.pow(2).mean(dim=(1, 2)).sqrt().min().item()
+        sums["w1_rms_min"] = w1_rms if sums["w1_rms_min"] is None else min(sums["w1_rms_min"], w1_rms)
+        sums["w2_rms_min"] = w2_rms if sums["w2_rms_min"] is None else min(sums["w2_rms_min"], w2_rms)
+        if not hasattr(nm, "w1_init"):
+            nm.w1_init, nm.w2_init = w1.clone(), w2.clone()
+        sums["w1_drift"] += (w1 - nm.w1_init).pow(2).mean(dim=(1, 2)).sqrt().mean().item()
+        sums["w2_drift"] += (w2 - nm.w2_init).pow(2).mean(dim=(1, 2)).sqrt().mean().item()
 
     def pop_memory_stats(self) -> dict[str, float] | None:
         """Returns averages since the last call (None if forward hasn't run
@@ -1405,8 +1462,26 @@ class Model(nn.Module):
             # running max, not a sum-to-average, so no division here.
             "w1_abs_max": self._mem_stat_sums["w1_abs_max"],
             "w2_abs_max": self._mem_stat_sums["w2_abs_max"],
+            "alpha": self._mem_stat_sums["alpha"] / max(self._mem_stat_write_count, 1),
+            "retain_min": (
+                self._mem_stat_sums["retain_min"].item()
+                if self._mem_stat_sums["retain_min"] is not None
+                else float("nan")
+            ),
+            "w1_rms_min": (
+                self._mem_stat_sums["w1_rms_min"]
+                if self._mem_stat_sums["w1_rms_min"] is not None
+                else float("nan")
+            ),
+            "w2_rms_min": (
+                self._mem_stat_sums["w2_rms_min"]
+                if self._mem_stat_sums["w2_rms_min"] is not None
+                else float("nan")
+            ),
+            "w1_drift": self._mem_stat_sums["w1_drift"] / max(self._mem_stat_write_count, 1),
+            "w2_drift": self._mem_stat_sums["w2_drift"] / max(self._mem_stat_write_count, 1),
         }
-        self._mem_stat_sums = {k: 0.0 for k in self._mem_stat_sums}
+        self._mem_stat_sums = self._fresh_mem_stat_sums()
         self._mem_stat_inj_count = 0
         self._mem_stat_tok_count = 0
         self._mem_stat_write_count = 0
