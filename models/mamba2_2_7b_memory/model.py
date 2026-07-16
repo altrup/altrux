@@ -534,7 +534,16 @@ class _GatedDeltaInjection(nn.Module):
         """
         z = self.down(o_t)
         p = rearrange(self.value_proj(z), "b (h p) -> b h p", p=self.headdim)
-        key = self.key_proj(z)
+        # The gated-delta merge's forget term (see _mixer_step) only cancels
+        # the state's key-component exactly for a unit-norm key: the per-write
+        # gain along the key is retain * (1 - beta * |key|^2), which for
+        # |key|^2 > 2/beta is below -1 -- every write then flips the sign of
+        # that component AND grows it, an exponential ssm_state blow-up
+        # (observed live as min_cos_sim pinned at -1 with ssm_norm -> inf on
+        # slots deep into long examples once beta trained past ~0.3).
+        # Normalizing bounds the gain to retain * (1 - beta), stable for any
+        # learned beta/retain in (0, 1).
+        key = F.normalize(self.key_proj(z), dim=-1)
         # surprise is already a mean-squared-error-per-dim (see
         # _NeuralMemory.write) -- an O(1) quantity -- so it can be squashed
         # with its own sigmoid directly, bounded to [0.5, 1) since surprise
