@@ -16,6 +16,10 @@ it's the only thing that can stop the billing:
 ./scripts/lambda_pull.sh --follow   # rescues logs/checkpoints/notes every 5 min
 ```
 
+The follow loop skips `mem_state.pt` (too large to pull every interval); run
+`./scripts/lambda_pull.sh --with-mem-state` once before terminating if you
+want it.
+
 On the **instance**: clone the repo, `make sync`, verify a trivial `git push`
 works, prepare data, then start training (`cd sft && make resume`) —
 monitored by a Claude Code session started with `/watch-training`. No
@@ -63,7 +67,15 @@ on the instance otherwise dies with it). Run it from the **local** machine:
 ./scripts/lambda_pull.sh 1.2.3.4              # one-shot; IP explicit
 ./scripts/lambda_pull.sh --follow             # re-pull every 5 min until terminated
 ./scripts/lambda_pull.sh --follow --interval 60
+./scripts/lambda_pull.sh --with-mem-state     # final pull, before terminating
 ```
+
+`mem_state.pt` — a checkpoint's full internal model state, written by
+`sft/train.py` — is excluded unless `--with-mem-state` is passed. It's large
+enough that pulling it every interval wouldn't finish between pulls, and a
+checkpoint without it still resumes (mid-example slots restart rather than
+continuing exactly). Pass `--with-mem-state` for one last pull before
+terminating, when exact mid-example resume is worth the transfer.
 
 Any of those three that don't exist on the instance are skipped — a run that
 hasn't written its first checkpoint yet isn't an error. A missing *repo* is,

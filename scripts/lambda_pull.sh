@@ -12,6 +12,14 @@
 #   ./scripts/lambda_pull.sh 1.2.3.4              # one-shot; IP explicit
 #   ./scripts/lambda_pull.sh --follow [1.2.3.4]   # re-pull every 5 minutes
 #   ./scripts/lambda_pull.sh --follow --interval 60
+#   ./scripts/lambda_pull.sh --with-mem-state     # final pull, before terminating
+#
+# mem_state.pt (a checkpoint's full internal model state, written by
+# sft/train.py) is excluded unless --with-mem-state is passed: it's large
+# enough that copying it every interval would not finish between pulls, and
+# a checkpoint without it still resumes (just restarting mid-example slots).
+# Pass --with-mem-state for one last pull before terminating, when exact
+# mid-example resume is worth the transfer.
 #
 # --follow keeps pulling until the instance stops answering (i.e. it was
 # terminated) or Ctrl-C, so even a hard crash mid-run loses at most one
@@ -37,11 +45,13 @@ fi
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
 follow=0
 interval=300
+with_mem_state=0
 ip=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --follow) follow=1; shift ;;
     --interval) interval="$2"; shift 2 ;;
+    --with-mem-state) with_mem_state=1; shift ;;
     -*) echo "error: unknown flag $1" >&2; exit 1 ;;
     *) ip="$1"; shift ;;
   esac
@@ -69,6 +79,11 @@ fi
 # instead of a full TCP timeout.
 SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes)
 RSYNC=(rsync -az --info=stats1 -e "ssh ${SSH_OPTS[*]}")
+if [[ "$with_mem_state" -eq 0 ]]; then
+  RSYNC+=(--exclude=mem_state.pt)
+else
+  echo "Including mem_state.pt (--with-mem-state) — this can be a large transfer."
+fi
 
 # Lists the artifact dirs that exist on the instance, one per line. Exits 10
 # if the repo itself is missing, distinguishing a misconfigured
