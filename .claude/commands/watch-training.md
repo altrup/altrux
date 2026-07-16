@@ -47,7 +47,10 @@ knobs on a checkpoint or fresh init.
 CONTEXT BUDGET: the watch session may run for many hours — keep the main
 context lean. Delegate bulky low-judgment work to a subagent that returns a
 short summary (e.g. "summarize how o_t enters ssm_state in model.py", or
-running and parsing a diagnostic script). Keep the actual debugging
+running and parsing a diagnostic script), and pick a model tier to match —
+a cheaper/faster model (e.g. haiku) for mechanical search-and-summarize,
+the session's own model only when the subagent's task itself needs
+judgment. Keep the actual debugging
 reasoning in the main session: if you expect you'll need to read the code
 closely yourself anyway, read it directly — delegating a summary and then
 re-reading the whole file costs more than never delegating.
