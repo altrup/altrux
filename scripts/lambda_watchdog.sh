@@ -178,8 +178,15 @@ while true; do
     if (( remaining <= 0 )); then
       terminate "no training and no delay touch for ${timeout}s"
     fi
-    if [[ "$training" != "1" ]]; then
-      echo "watchdog: [$(date +%H:%M:%S)] nothing training — terminating in ${remaining}s unless training resumes or the delay file is touched"
+    # Every probe logs: an unguarded instance and a healthy one must not look
+    # alike, and a silent watchdog is indistinguishable from a dead one.
+    ts="[$(date +%H:%M:%S)]"
+    if [[ "$training" == "1" ]]; then
+      echo "watchdog: $ts training ($pattern) — next check in ${interval}s"
+    elif (( delay_mtime > last_active )); then
+      echo "watchdog: $ts nothing training — delay touched $(( remote_now - delay_mtime ))s ago — terminating in ${remaining}s"
+    else
+      echo "watchdog: $ts nothing training — terminating in ${remaining}s unless training resumes or the delay file is touched"
     fi
   else
     if ! instance_still_active; then
