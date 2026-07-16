@@ -9,6 +9,16 @@
 #   ./scripts/lambda_watchdog.sh &
 #   ./scripts/lambda_pull.sh --follow
 #
+# Before terminating, it runs lambda_pull.sh twice: once for the
+# resume-critical files, then once with --with-mem-state for the large
+# mem_state.pt (--no-pull skips both, --no-mem-state just the second). A
+# graceful terminate is the only moment that knows a run is over, so it's the
+# only place mem_state.pt can be rescued automatically. Both pulls are
+# best-effort and separately bounded (--pull-timeout, --mem-state-timeout) --
+# terminate follows whether they succeed, fail, or time out. The --follow loop
+# stays worth running alongside: it bounds what a hard crash loses, where no
+# graceful terminate ever happens.
+#
 # "Training" means a process matching --pattern (default: train.py) exists
 # on the instance, probed over ssh every --interval seconds. Anyone working
 # on the instance (e.g. a Claude Code session between runs) can DELAY
@@ -48,12 +58,20 @@ interval=60
 unreachable_timeout=900
 pattern="train.py"
 terminate_cmd=""
+pull=1
+pull_timeout=900
+mem_state=1
+mem_state_timeout=3600
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout="$2"; shift 2 ;;
     --interval) interval="$2"; shift 2 ;;
     --unreachable-timeout) unreachable_timeout="$2"; shift 2 ;;
     --pattern) pattern="$2"; shift 2 ;;
+    --no-pull) pull=0; shift ;;
+    --pull-timeout) pull_timeout="$2"; shift 2 ;;
+    --no-mem-state) mem_state=0; shift ;;
+    --mem-state-timeout) mem_state_timeout="$2"; shift 2 ;;
     # Override what runs on timeout -- e.g. `--terminate-cmd "echo boom"`
     # to dry-run the countdown without a real terminate.
     --terminate-cmd) terminate_cmd="$2"; shift 2 ;;
@@ -103,10 +121,29 @@ if [[ -n "${WATCHDOG_SSH_OVERRIDE:-}" ]]; then
   read -ra SSH_CMD <<< "$WATCHDOG_SSH_OVERRIDE"
 fi
 
+# $2: whether to attempt a final pull first (0 on the unreachable path --
+# nothing can be pulled from an instance that won't answer ssh).
 terminate() {
-  echo "watchdog: $1 — terminating instance $instance_id"
+  local reason="$1" do_pull="${2:-1}"
+  echo "watchdog: $reason — terminating instance $instance_id"
   if [[ -n "$terminate_cmd" ]]; then
     exec bash -c "$terminate_cmd"
+  fi
+  if [[ "$pull" -eq 1 && "$do_pull" -eq 1 ]]; then
+    # Two stages, small-files-first: mem_state.pt sorts before optimizer.pt /
+    # state.pt / trainable.pt within a checkpoint, so a single --with-mem-state
+    # pull that hits its timeout mid-transfer would starve exactly the files a
+    # resume needs. Both stages are best-effort -- the terminate has to happen
+    # even if a pull hangs, since an unbounded billing leak is the one thing
+    # this script exists to prevent.
+    echo "watchdog: final pull (resume-critical files) before terminating..."
+    timeout "$pull_timeout" "$SCRIPT_DIR/lambda_pull.sh" "$instance_ip" \
+      || echo "watchdog: final pull failed or timed out after ${pull_timeout}s — terminating anyway" >&2
+    if [[ "$mem_state" -eq 1 ]]; then
+      echo "watchdog: pulling mem_state.pt (large; --no-mem-state to skip)..."
+      timeout "$mem_state_timeout" "$SCRIPT_DIR/lambda_pull.sh" --with-mem-state "$instance_ip" \
+        || echo "watchdog: mem_state.pt pull failed or timed out after ${mem_state_timeout}s — terminating anyway (checkpoints still resume without it)" >&2
+    fi
   fi
   LAMBDA_INSTANCE_ID="$instance_id" exec "$SCRIPT_DIR/lambda_terminate.sh"
 }
@@ -154,7 +191,7 @@ while true; do
     unreachable_for=$(( now - unreachable_since ))
     echo "watchdog: [$(date +%H:%M:%S)] instance unreachable for ${unreachable_for}s (API says active) — terminating at ${unreachable_timeout}s"
     if (( unreachable_for >= unreachable_timeout )); then
-      terminate "unreachable for ${unreachable_timeout}s while billing"
+      terminate "unreachable for ${unreachable_timeout}s while billing" 0
     fi
   fi
   sleep "$interval"

@@ -16,9 +16,10 @@ it's the only thing that can stop the billing:
 ./scripts/lambda_pull.sh --follow   # rescues logs/checkpoints/notes every 5 min
 ```
 
-The follow loop skips `mem_state.pt` (too large to pull every interval); run
-`./scripts/lambda_pull.sh --with-mem-state` once before terminating if you
-want it.
+That's the whole local side — the watchdog does a final pull (including
+`mem_state.pt`) by itself right before it terminates, so nothing needs to be
+run by hand at the end. The `--follow` loop is still worth running alongside:
+it bounds what a *hard* crash loses, where no graceful terminate ever happens.
 
 On the **instance**: clone the repo, `make sync`, verify a trivial `git push`
 works, prepare data, then start training (`cd sft && make resume`) —
@@ -108,6 +109,20 @@ alongside the pull loop:
 ./scripts/lambda_watchdog.sh &
 ./scripts/lambda_pull.sh --follow
 ```
+
+Right before terminating, it runs `lambda_pull.sh` twice: once for the
+resume-critical files, then once with `--with-mem-state` for the large
+`mem_state.pt`. A graceful terminate is the only moment that knows a run is
+over, so it's the only place `mem_state.pt` can be rescued automatically —
+the `--follow` loop deliberately skips it. Both pulls are best-effort and
+separately bounded (`--pull-timeout`, default 900s; `--mem-state-timeout`,
+default 3600s): the terminate happens whether they succeed, fail, or time
+out, because an unbounded billing leak is the one thing this script exists to
+prevent. Small files go first so a timeout can't starve the files a resume
+actually needs. `--no-mem-state` skips the second pull (useful on a slow
+link — 8GB of `mem_state.pt` is ~8 min at 130 Mbit/s but ~14 hours at
+1.5 Mbit/s); `--no-pull` skips both. The unreachable path never pulls —
+there's nothing to pull from an instance that won't answer ssh.
 
 "Training" = a process matching `--pattern` (default `train.py`) exists on
 the instance, probed over ssh every `--interval` (60s). An instance that
