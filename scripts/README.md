@@ -65,6 +65,11 @@ on the instance otherwise dies with it). Run it from the **local** machine:
 ./scripts/lambda_pull.sh --follow --interval 60
 ```
 
+Any of those three that don't exist on the instance are skipped — a run that
+hasn't written its first checkpoint yet isn't an error. A missing *repo* is,
+and fails immediately (including under `--follow`, so a wrong
+`LAMBDA_REMOTE_REPO` can't masquerade as a terminated instance).
+
 `--follow` keeps pulling until the instance stops answering (terminated) or
 Ctrl-C, bounding what a hard crash can lose to one interval. Keep its
 `--interval` (default 300s) under the watchdog's `--timeout` (default

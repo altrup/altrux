@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Pulls training artifacts (sft/logs/ and models/*/checkpoints/) down from a
-# running Lambda Cloud instance to this machine, via rsync over ssh.
+# Pulls training artifacts down from a running Lambda Cloud instance to this
+# machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/, and
+# notes/ (a monitoring session's observations — gitignored, so rsync is how
+# they travel). Whichever of those don't exist yet are skipped; only a
+# missing repo is an error.
 #
 # Run from the LOCAL machine, before terminating the instance — the run's
 # logs live only on the instance and die with it:
@@ -64,18 +67,41 @@ fi
 # BatchMode forbids interactive auth prompts (which would hang --follow
 # unattended); ConnectTimeout makes a terminated instance fail in seconds
 # instead of a full TCP timeout.
-RSYNC=(rsync -az --info=stats1 -e "ssh -o ConnectTimeout=10 -o BatchMode=yes")
+SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes)
+RSYNC=(rsync -az --info=stats1 -e "ssh ${SSH_OPTS[*]}")
+
+# Lists the artifact dirs that exist on the instance, one per line. Exits 10
+# if the repo itself is missing, distinguishing a misconfigured
+# LAMBDA_REMOTE_REPO from an artifact dir a run hasn't created yet.
+probe_paths() {
+  ssh "${SSH_OPTS[@]}" "ubuntu@${ip}" "
+    cd '$remote_repo' 2>/dev/null || exit 10
+    for p in sft/logs notes models/*/checkpoints; do
+      [ -d \"\$p\" ] && printf '%s\n' \"\$p\"
+    done
+    exit 0
+  "
+}
 
 pull() {
-  echo "Pulling sft/logs/ ..."
-  "${RSYNC[@]}" "ubuntu@${ip}:${remote_repo}/sft/logs/" "$REPO_ROOT/sft/logs/" || return 1
-  echo "Pulling models/*/checkpoints/ ..."
-  "${RSYNC[@]}" --relative "ubuntu@${ip}:${remote_repo}/./models/*/checkpoints/" "$REPO_ROOT/" || return 1
-  # Best-effort: notes/ is where a monitoring session on the instance
-  # writes its observations (gitignored, so it travels by rsync, not
-  # push). Its absence must not read as "instance dead" in --follow.
-  echo "Pulling notes/ (if any) ..."
-  "${RSYNC[@]}" "ubuntu@${ip}:${remote_repo}/notes/" "$REPO_ROOT/notes/" 2>/dev/null || true
+  local paths rc=0
+  paths="$(probe_paths)" || rc=$?
+  if [[ "$rc" -eq 10 ]]; then
+    echo "error: no repo at ~/${remote_repo} on ${ip} — set LAMBDA_REMOTE_REPO in scripts/.env if it lives elsewhere" >&2
+    exit 1
+  elif [[ "$rc" -ne 0 ]]; then
+    return 1
+  fi
+
+  if [[ -z "$paths" ]]; then
+    echo "Nothing to pull yet — no sft/logs/, models/*/checkpoints/, or notes/ on the instance."
+    return 0
+  fi
+
+  while IFS= read -r p; do
+    echo "Pulling $p/ ..."
+    "${RSYNC[@]}" --relative "ubuntu@${ip}:${remote_repo}/./${p}/" "$REPO_ROOT/" || return 1
+  done <<< "$paths"
 }
 
 if [[ "$follow" -eq 0 ]]; then
