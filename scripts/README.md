@@ -121,6 +121,21 @@ is the standing brief for a Claude Code session monitoring the run on the
 instance — it encodes the watchdog contract, the commit-and-push +
 `notes/WATCH_NOTES.md` persistence rules, and the give-up criteria.
 
+## `lambda_check_instance.sh`
+
+Dry-runs `lambda_terminate.sh`'s instance resolution — reports every instance
+the key can see and which one terminate would target, without terminating
+anything:
+
+```bash
+./scripts/lambda_check_instance.sh
+```
+
+Exits non-zero when nothing resolves, so a misconfigured setup surfaces before
+the terminate matters. Run from the **local** machine it only matches when
+`LAMBDA_INSTANCE_ID` is set (terminate's IP lookup expects to run on the
+instance).
+
 ## `lambda_check_key.sh`
 
 Checks whether `LAMBDA_API_KEY` (in `scripts/.env`) is valid, without
