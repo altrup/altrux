@@ -44,6 +44,14 @@ reproduce with `make detect-anomaly` (halts at the offending op with a
 traceback), investigate. sft/measure_knobs.py diagnoses the memory write
 knobs on a checkpoint or fresh init.
 
+CONTEXT BUDGET: the watch session may run for many hours — keep the main
+context lean. Delegate bulky low-judgment work to a subagent that returns a
+short summary (e.g. "summarize how o_t enters ssm_state in model.py", or
+running and parsing a diagnostic script). Keep the actual debugging
+reasoning in the main session: if you expect you'll need to read the code
+closely yourself anyway, read it directly — delegating a summary and then
+re-reading the whole file costs more than never delegating.
+
 IF TRAINING CRASHES:
 
 1. Diagnose from the traceback and log tail before restarting.
