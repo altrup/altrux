@@ -142,6 +142,36 @@ BETA_BIAS_ANNEAL_STEPS = 32
 GRAD_SCALE = 300.0
 
 
+_NONFINITE_DUMP_LIMIT = 5
+
+
+def _dump_nonfinite_write(nm: "_NeuralMemory", ks, vs, etas, thetas, alphas, pred, per_token_loss) -> None:
+    """Prints per-slot norms of every write() input and of M's weights the
+    first few times the write loss goes non-finite, to localize whether the
+    explosion arrives via the write targets (vs, i.e. the residual stream),
+    the keys, or M's own weights. Capped so a persistent failure can't spam
+    the log."""
+    global _NONFINITE_DUMP_LIMIT
+    if _NONFINITE_DUMP_LIMIT <= 0:
+        return
+    _NONFINITE_DUMP_LIMIT -= 1
+    bad = (~per_token_loss.detach().isfinite()).any(dim=0).nonzero().flatten().tolist()
+    print(f"  [nonfinite-write] loss non-finite for slots {bad}")
+    for b in bad:
+        print(
+            f"  [nonfinite-write] slot {b}:"
+            f" k_norm {ks.detach()[:, b].norm().item():.4g}"
+            f" v_norm {vs.detach()[:, b].norm().item():.4g}"
+            f" pred_norm {pred.detach()[:, b].norm().item():.4g}"
+            f" eta {etas.detach()[:, b].mean().item():.4g}"
+            f" theta {thetas.detach()[:, b].mean().item():.4g}"
+            f" alpha {alphas.detach()[:, b].mean().item():.4g}"
+            f" w1_absmax {nm.w1[b].detach().abs().max().item():.4g}"
+            f" w2_absmax {nm.w2[b].detach().abs().max().item():.4g}"
+            f" mom_absmax {max(s[b].detach().abs().max().item() for s in nm.momentum):.4g}"
+        )
+
+
 class _NeuralMemory:
     """Titans-style fast-weight MLP: a 2-layer MLP whose *weights* are the
     memory content, mutated by a test-time gradient step every token.
@@ -240,6 +270,8 @@ class _NeuralMemory:
 
         pred = self._apply_windowed(ks, *params)
         per_token_loss = ((pred - vs) ** 2).mean(dim=-1)  # (W, batch)
+        if not per_token_loss.detach().isfinite().all():
+            _dump_nonfinite_write(self, ks, vs, etas, thetas, alphas, pred, per_token_loss)
         # create_graph=True: g must stay differentiable w.r.t. params so
         # k_proj/v_proj/knob_proj receive gradient from the outer loss.
         grads = torch.autograd.grad(per_token_loss.sum(), params, create_graph=create_graph)
@@ -1120,6 +1152,8 @@ class Model(nn.Module):
                         entry["grad_norm"] = (
                             last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
                         )
+                    entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in INJECTED_LAYERS)
+                    entry["resid_norm"] = residual[b].norm().item()
                     logs.append(entry)
                 self._last_token_logs = logs
 
@@ -1303,6 +1337,8 @@ class Model(nn.Module):
                     entry["grad_norm"] = (
                         last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
                     )
+                entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in INJECTED_LAYERS)
+                entry["resid_norm"] = residual[b, -1].norm().item()
                 logs.append(entry)
             self._last_token_logs = logs
 
