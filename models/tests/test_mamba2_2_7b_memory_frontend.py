@@ -19,7 +19,7 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from models.mamba2_2_7b_memory.model import _TitansFrontEnd
+from models.mamba2_2_7b_memory.model import ALPHA_CAP, _TitansFrontEnd
 
 D_MODEL, MEM_DIM, MEM_HIDDEN = 256, 16, 32
 RAW_RESIDUAL_RMS = 30.0
@@ -59,6 +59,18 @@ def test_knobs_stay_off_rails_with_ordinary_weights():
     # interior with real gradient.
     assert (eta > 0.9 * 0.02).all() and (eta < 0.9 * 0.98).all()
     assert (theta > 0.1 * 0.02).all() and (theta < 0.1 * 0.98).all()
+
+
+def test_alpha_never_exceeds_cap():
+    fe = _make_front_end()
+    # Slam the alpha pre-activation as deep into sigmoid's upper rail as a
+    # trained projection ever could -- the ceiling must hold regardless.
+    with torch.no_grad():
+        fe.knob_proj.weight.normal_(0, 5.0)
+        fe.knob_proj.bias.fill_(50.0)
+    _, _, _, _, _, alpha = fe.observe(_raw_scale_residual())
+    assert (alpha <= ALPHA_CAP).all()
+    assert ALPHA_CAP <= 1e-4  # episodic retention prior, see model.py
 
 
 def test_gradient_reaches_every_knob():

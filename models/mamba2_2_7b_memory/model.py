@@ -141,6 +141,22 @@ BETA_BIAS_ANNEAL_STEPS = 32
 # Model.last_token_log) and retune from there.
 GRAD_SCALE = 300.0
 
+# Hard ceiling on alpha, the write's global weight decay on M (the sigmoid
+# multiplier in _TitansFrontEnd.observe). This is a prior, not something the
+# model can learn: BPTT truncates at --chunk-len, so alpha's projection only
+# ever receives short-horizon gradient ("decay now -> cleaner reads within
+# this chunk") while the compounded long-horizon cost of erosion -- content
+# decayed to nothing thousands of windows before the read that needed it --
+# is invisible to it. Left at sigmoid's natural 0.1-scale cap, a real run
+# walked alpha up ~20x in an hour and eroded ~80% of M's content within one
+# long example (notes/EXPERIMENT_NOTES.md, 2026-07-17). At 1e-4 the
+# worst-case half-life is ~7k writes (~55k tokens at memory-window 8) --
+# sustained choice still compounds into era-level forgetting, but a fast
+# wipe is out of reach. Targeted forgetting is the delta-overwrite path
+# (write a new value at a key), not alpha. See
+# docs/superpowers/specs/2026-07-17-episodic-chains-design.md.
+ALPHA_CAP = 1e-4
+
 
 _NONFINITE_DUMP_LIMIT = 5
 
@@ -388,16 +404,15 @@ class _TitansFrontEnd(nn.Module):
         self.knob_proj = nn.Linear(d_model, 3)
         nn.init.zeros_(self.knob_proj.weight)
         # eta/theta bias 0: sigmoid midpoint, full gradient (momentum decay
-        # 0.45, write step 0.05). alpha bias -4: decay starts at
-        # ~0.002/window (retention half-life ~350 windows) so the store
-        # retains by default and learns to forget -- at the midpoint it
-        # would instead halve every ~14 windows, erasing itself faster than
-        # any long-range signal could reward keeping it. -4 sits in the
-        # same low-gradient tail that beta's comment below rules out for
-        # beta_proj.bias, but the asymmetry makes it safe here: a
-        # slow-to-wake beta disables the whole subsystem, while for alpha
-        # the saturated default IS the desired behavior and forgetting is a
-        # refinement the optimizer can afford to learn slowly.
+        # 0.45, write step 0.05). alpha bias -4: decay starts near the
+        # bottom of its already-small range (sigmoid(-4) * ALPHA_CAP ~=
+        # 2e-6/window) so the store retains by default and forgetting is
+        # learned. -4 sits in the same low-gradient tail that beta's
+        # comment below rules out for beta_proj.bias, but the asymmetry
+        # makes it safe here: a slow-to-wake beta disables the whole
+        # subsystem, while for alpha the saturated default IS the desired
+        # behavior and forgetting is a refinement the optimizer can afford
+        # to learn slowly.
         with torch.no_grad():
             self.knob_proj.bias.copy_(torch.tensor([0.0, 0.0, -4.0]))
 
@@ -452,13 +467,14 @@ class _TitansFrontEnd(nn.Module):
             knobs = torch.sigmoid(self.knob_proj(_rms_normalize(residual)))
             # eta capped at 0.9 (not left at sigmoid's full (0, 1) range like
             # theta/alpha's caps, which bound them *small* on purpose --
-            # small theta/alpha is what makes the write step gentle and the
-            # memory's content persist across a long document): S_t = eta *
-            # S_{t-1} - theta * g_t accumulates with essentially no decay
-            # when eta is allowed to approach 1, turning the momentum into an
-            # undamped running sum of every token's write. Capping below 1
-            # guarantees at least 10% decay per token.
-            eta, theta, alpha = knobs[..., 0] * 0.9, knobs[..., 1] * 0.1, knobs[..., 2] * 0.1
+            # small theta is what makes the write step gentle, and alpha's
+            # far tighter ALPHA_CAP is what makes the memory's content
+            # persist across a whole chain of episodes, see its comment):
+            # S_t = eta * S_{t-1} - theta * g_t accumulates with essentially
+            # no decay when eta is allowed to approach 1, turning the
+            # momentum into an undamped running sum of every token's write.
+            # Capping below 1 guarantees at least 10% decay per token.
+            eta, theta, alpha = knobs[..., 0] * 0.9, knobs[..., 1] * 0.1, knobs[..., 2] * ALPHA_CAP
         return q, k, v, eta, theta, alpha
 
 
@@ -1415,6 +1431,21 @@ class Model(nn.Module):
             nm.w2_init[slot_idx].copy_(nm.w2[slot_idx])
         for s in nm.momentum:
             s[slot_idx].zero_()
+        state.last_o_t[slot_idx].zero_()
+        state.last_surprise[slot_idx].zero_()
+
+    def sleep_slot(self, state: "MemoryState", slot_idx: int) -> None:
+        """Wipe slot slot_idx's backbone state in-place -- per-layer SSM/conv
+        state back to the zeros a fresh sequence starts from -- while leaving
+        the neural memory (w1/w2, momentum, drift baselines) untouched. This
+        is a "sleep" boundary: context turnover that only the episodic store
+        survives (see the README's three-tier design goal). last_o_t/
+        last_surprise are zeroed with the backbone (they describe a read made
+        against the wiped context; the first post-sleep token recomputes them
+        from the persistent memory). Call only on a detached state."""
+        for conv, ssm in zip(state.conv_states, state.ssm_states):
+            conv[slot_idx].zero_()
+            ssm[slot_idx].zero_()
         state.last_o_t[slot_idx].zero_()
         state.last_surprise[slot_idx].zero_()
 
