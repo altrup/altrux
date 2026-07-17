@@ -88,6 +88,11 @@ as one — so every post-sleep empty-state regime gets the same upweighting
 that example starts get today. `--recall-weight` and `recall_masks` carry
 over unchanged for the engineered queries.
 
+Defaults change from the no-op 1.0 to the values the 2026-07-17 run
+validated: `--recall-weight 8`, `--head-weight 4`, `--head-tokens 1024`.
+The weighted objective is the intended configuration for chain data (queries
+are ~0.1% of tokens); 1.0 remains available as an explicit ablation flag.
+
 ### 4. Evaluation — `sft/probe_recall.py`
 
 New cross-sleep condition: state N facts, wipe the backbone via the same
