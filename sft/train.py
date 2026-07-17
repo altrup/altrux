@@ -84,9 +84,19 @@ class _Slot:
     position within the example. Positions advance by chunk_len on each
     step; when pos >= seqlen-1 the example is done and the slot is either
     assigned the next example (with state reset) or set to None (epoch done).
+
+    `sleeps` (optional, from the dataset's sleep_positions) are token
+    offsets where the model's backbone state gets wiped mid-example while
+    its persistent memory carries on -- see the episodic-chains design spec.
+    A sleep fires at the first chunk boundary at or past its offset (slots
+    advance in exact chunk_len strides, so firing between chunks avoids
+    feeding zero-pad garbage through the memory; the <chunk_len drift is
+    negligible against multi-thousand-token episodes). `sleep_i` counts
+    fired sleeps; `last_reset` is where the most recent backbone reset
+    happened (0 = example start), the origin for --head-weight's ramp.
     """
 
-    __slots__ = ("slot_idx", "example_idx", "ids", "mask", "recall", "pos", "seqlen")
+    __slots__ = ("slot_idx", "example_idx", "ids", "mask", "recall", "sleeps", "sleep_i", "last_reset", "pos", "seqlen")
 
     def __init__(
         self,
@@ -95,14 +105,31 @@ class _Slot:
         ids: torch.Tensor,
         mask: torch.Tensor | None,
         recall: torch.Tensor | None = None,
+        sleeps: torch.Tensor | None = None,
     ):
         self.slot_idx = slot_idx
         self.example_idx = example_idx
         self.ids = ids
         self.mask = mask
         self.recall = recall
+        self.sleeps = sorted(int(s) for s in sleeps) if sleeps is not None else []
+        self.sleep_i = 0
+        self.last_reset = 0
         self.pos = 0
         self.seqlen = ids.numel()
+
+    def seek(self, pos: int) -> None:
+        """Set the position (resume), marking sleeps at or before it as
+        already fired -- the saved internal state already reflects them, so
+        the training loop must not fire them again. last_reset uses the
+        sleep's own offset rather than the chunk boundary it originally
+        fired at (off by < chunk_len, and only if --chunk-len changed
+        between runs would even that differ) -- close enough for the
+        --head-weight ramp it feeds."""
+        self.pos = pos
+        fired = [s for s in self.sleeps if s <= pos]
+        self.sleep_i = len(fired)
+        self.last_reset = fired[-1] if fired else 0
 
     def is_done(self) -> bool:
         return self.pos >= self.seqlen - 1
@@ -368,6 +395,7 @@ def run_training(
     train_ids: list[torch.Tensor],
     train_masks: list,
     train_recall: list,
+    train_sleeps: list,
     device,
     args,
     start_epoch: int,
@@ -438,6 +466,7 @@ def run_training(
     chunk_extra_log_fn = getattr(hooks, "chunk_extra_log", None)
     on_step_fn = getattr(hooks, "on_step", None)
     reset_slot_fn = getattr(hooks, "reset_slot", None)
+    sleep_slot_fn = getattr(hooks, "sleep_slot", None)
     init_state_fn = getattr(hooks, "init_state", None)
 
     n = len(train_ids)
@@ -500,7 +529,7 @@ def run_training(
                 ids = train_ids[idx].to(device)
                 mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
                 recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
-                slots.append(_Slot(b, idx, ids, mask, recall))
+                slots.append(_Slot(b, idx, ids, mask, recall, train_sleeps[idx]))
             else:
                 slots.append(None)
 
@@ -549,8 +578,8 @@ def run_training(
                 ids = train_ids[example_idx].to(device)
                 mask = train_masks[example_idx].to(device) if train_masks[example_idx] is not None else None
                 recall = train_recall[example_idx].to(device) if train_recall[example_idx] is not None else None
-                slots[b] = _Slot(b, example_idx, ids, mask, recall)
-                slots[b].pos = pos
+                slots[b] = _Slot(b, example_idx, ids, mask, recall, train_sleeps[example_idx])
+                slots[b].seek(pos)
 
             if use_full_state:
                 # Exact resume: the checkpoint saved the full batched
@@ -576,7 +605,7 @@ def run_training(
                 n_restarted = sum(1 for slot in slots if slot is not None and slot.pos > 0)
                 for slot in slots:
                     if slot is not None:
-                        slot.pos = 0
+                        slot.seek(0)
                 if n_restarted:
                     print(f"no saved internal state for resume -- restarting {n_restarted} slot(s) from the beginning of their example")
 
@@ -600,6 +629,15 @@ def run_training(
                     batch_weights.append(torch.zeros(chunk_len, dtype=torch.float32, device=device))
                     chunk_actual_lens.append(0)
                 else:
+                    # Fire any sleep whose offset this slot has reached: wipe
+                    # its backbone state (persistent memory carries on) before
+                    # the next chunk. See _Slot's docstring for the
+                    # chunk-boundary snapping.
+                    if sleep_slot_fn is not None and batched_state is not None:
+                        while slot.sleep_i < len(slot.sleeps) and slot.pos >= slot.sleeps[slot.sleep_i]:
+                            sleep_slot_fn(model, batched_state, slot.slot_idx)
+                            slot.last_reset = slot.pos
+                            slot.sleep_i += 1
                     end = min(slot.pos + chunk_len, slot.seqlen - 1)
                     actual = end - slot.pos
                     inp = slot.ids[slot.pos:end]
@@ -612,9 +650,14 @@ def run_training(
                         wt[actual:] = 0.0
                     if args.head_weight != 1.0:
                         # Weights index target tokens: position i predicts the
-                        # token at absolute position slot.pos + 1 + i.
+                        # token at absolute position slot.pos + 1 + i. The ramp
+                        # is measured from the last backbone reset (example
+                        # start or a fired sleep), so every empty-state regime
+                        # gets the boost, not just the example's first tokens.
                         tpos = torch.arange(
-                            slot.pos + 1, slot.pos + 1 + chunk_len, device=device, dtype=torch.float32
+                            slot.pos + 1 - slot.last_reset,
+                            slot.pos + 1 - slot.last_reset + chunk_len,
+                            device=device, dtype=torch.float32,
                         )
                         wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(min=0.0)
                     if slot.recall is not None and args.recall_weight != 1.0:
@@ -750,7 +793,7 @@ def run_training(
                         ids = train_ids[idx].to(device)
                         mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
                         recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
-                        slots[b] = _Slot(b, idx, ids, mask, recall)
+                        slots[b] = _Slot(b, idx, ids, mask, recall, train_sleeps[idx])
                         if reset_slot_fn is not None and batched_state is not None:
                             reset_slot_fn(model, batched_state, b)
                     else:
@@ -863,9 +906,9 @@ def main() -> None:
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
-    parser.add_argument("--recall-weight", type=float, default=1.0, help="Loss weight multiplier for tokens marked True in the dataset's optional recall_masks tensors (prepare_interference.py marks its spliced query-answer tokens) -- >1 to amplify the recall training signal, which is otherwise a tiny fraction (~0.1%%) of all tokens. No-op on datasets without recall_masks.")
-    parser.add_argument("--head-weight", type=float, default=1.0, help="Loss weight multiplier at the very first token of each example, decaying linearly to 1.0 over --head-tokens -- >1 to emphasise early-conversation behaviour (the empty-memory/empty-state regime), which is otherwise underweighted because most tokens sit deep inside long examples.")
-    parser.add_argument("--head-tokens", type=int, default=1024, help="Length of the --head-weight linear decay ramp, in tokens from the start of each example")
+    parser.add_argument("--recall-weight", type=float, default=8.0, help="Loss weight multiplier for tokens marked True in the dataset's optional recall_masks tensors (prepare_chains.py/prepare_interference.py mark their spliced query-answer tokens) -- amplifies the recall training signal, which is otherwise a tiny fraction (~0.1%%) of all tokens. 1.0 reproduces the unweighted objective. No-op on datasets without recall_masks.")
+    parser.add_argument("--head-weight", type=float, default=4.0, help="Loss weight multiplier at the first token after each backbone reset (example start, and each sleep for datasets with sleep_positions), decaying linearly to 1.0 over --head-tokens -- emphasises the empty-state regime, which is otherwise underweighted because most tokens sit deep inside long examples. 1.0 reproduces the unweighted objective.")
+    parser.add_argument("--head-tokens", type=int, default=1024, help="Length of the --head-weight linear decay ramp, in tokens from each backbone reset")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for everything not covered by the per-epoch data-shuffle seed (see run_training) -- LoRA init/dropout, and for models with per-sequence random state (e.g. mamba2_2_7b_memory's neural-memory init/reset) -- fixed by default so a run (or a crash) is reproducible; pass a different value to sample a different random init.")
     parser.add_argument("--detect-anomaly", action="store_true", help="Enable torch.autograd.set_detect_anomaly -- when a chunk's gradient comes back non-finite (the run's existing per-chunk check, see run_training), instead of just discarding it and continuing, autograd raises immediately with a traceback pointing at the exact forward op responsible, and the run stops there. Diagnostic only: real, not-small overhead (extra bookkeeping on every op during forward), and turns the normally-recoverable non-finite-gradient path into a hard stop -- use a dedicated short run to localize a real crash, not the long unattended one. See `make detect-anomaly`.")
     args = parser.parse_args()
@@ -955,8 +998,11 @@ def main() -> None:
     all_recall: list[torch.Tensor | None] = data.get("recall_masks") or [None] * len(all_ids)
     if args.recall_weight != 1.0 and all(r is None for r in all_recall):
         print(f"warning: --recall-weight {args.recall_weight} given but {args.data} has no recall_masks -- it will have no effect")
+    all_sleeps: list[torch.Tensor | None] = data.get("sleep_positions") or [None] * len(all_ids)
+    if any(s is not None and len(s) for s in all_sleeps) and getattr(hooks, "sleep_slot", None) is None:
+        print(f"warning: {args.data} has sleep_positions but {MODEL_NAME}'s train_hooks defines no sleep_slot -- sleeps will be ignored")
 
-    train_ids, train_masks, train_recall = all_ids, all_masks, all_recall
+    train_ids, train_masks, train_recall, train_sleeps = all_ids, all_masks, all_recall, all_sleeps
     n = len(train_ids)
     print(f"train: {n}  epochs: {args.epochs}  batch_size: {args.batch_size}")
 
@@ -990,7 +1036,7 @@ def main() -> None:
             start_full_state = None
 
     run_training(
-        hooks, model, optimizer, trainable_params, train_ids, train_masks, train_recall, device, args,
+        hooks, model, optimizer, trainable_params, train_ids, train_masks, train_recall, train_sleeps, device, args,
         start_epoch, start_slot_states, start_next_ptr, start_step, start_total_tokens, start_last_ckpt_tokens,
         start_full_state,
     )

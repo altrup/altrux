@@ -263,7 +263,7 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     args = _make_args(ckpt_every_tokens=8)  # 8 tokens = 2 chunks in
 
     train.run_training(
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), "cpu", args,
+        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -289,7 +289,7 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     args = _make_args(ckpt_every_tokens=8)
 
     train.run_training(
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), "cpu", args,
+        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -302,7 +302,7 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     optimizer2 = torch.optim.AdamW(model2.parameters(), lr=1e-3)
 
     train.run_training(
-        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, [None] * len(train_ids), "cpu", args,
+        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=saved_state["epoch"], start_slot_states=saved_state["slot_states"],
         start_next_ptr=saved_state["next_ptr"], start_step=0,
         start_total_tokens=saved_state["total_tokens"],
@@ -332,7 +332,7 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     args = _make_args(ckpt_every_tokens=4, keep_ckpts=99)
 
     train.run_training(
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), "cpu", args,
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=[(0, 12)], start_next_ptr=0, start_step=0,
         start_total_tokens=12.0, start_last_ckpt_tokens=12.0,
     )
@@ -360,7 +360,7 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
     args = _make_args(ckpt_every_tokens=12)
 
     train.run_training(
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), "cpu", args,
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -400,7 +400,7 @@ def _run_with_weights(tmp_path, monkeypatch, recall, args):
         recorded = []
 
     train.run_training(
-        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [recall], "cpu", args,
+        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [recall], [None], "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -425,3 +425,79 @@ def test_head_weight_ramps_down_linearly_over_head_tokens(monkeypatch, tmp_path)
     tpos = torch.arange(1, 13, dtype=torch.float32)
     expected = 1.0 + 4.0 * (1.0 - tpos / 8).clamp(min=0.0)
     assert torch.allclose(weights, expected)
+
+
+# ---------------------------------------------------------------------------
+# sleep_positions: mid-example backbone resets (episodic chains)
+# ---------------------------------------------------------------------------
+
+class _SleepRecordingHooks(_RecordingHooks):
+    """Adds a sleep_slot hook that records each firing as (slot_idx, chunks
+    seen so far) -- the chunk count pins down *when* the sleep fired relative
+    to the chunk stream, which is the snapping behavior under test."""
+
+    fired: list
+
+    @classmethod
+    def sleep_slot(cls, model, state, slot_idx):
+        cls.fired.append((slot_idx, len(cls.recorded)))
+
+
+def _run_with_sleeps(tmp_path, monkeypatch, sleeps, args, n_tokens=13):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    train_ids = [_ids(n_tokens, seed=3)]
+
+    class Hooks(_SleepRecordingHooks):
+        recorded = []
+        fired = []
+
+    train.run_training(
+        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None], [sleeps], "cpu", args,
+        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    )
+    return Hooks
+
+
+def test_sleep_fires_once_at_first_chunk_boundary_past_its_offset(monkeypatch, tmp_path):
+    # chunk_len=4, sleep offset 6: pos hits 4 (< 6, no fire), then 8 -- the
+    # sleep fires exactly once, before the third chunk is built.
+    hooks = _run_with_sleeps(tmp_path, monkeypatch, torch.tensor([6]), _make_args())
+    assert hooks.fired == [(0, 2)]
+
+
+def test_head_weight_ramp_restarts_at_fired_sleep(monkeypatch, tmp_path):
+    # Sleep at offset 6 fires at the chunk boundary pos=8, so the ramp's
+    # origin moves to 8: target positions 9..12 are 1..4 tokens post-reset.
+    hooks = _run_with_sleeps(
+        tmp_path, monkeypatch, torch.tensor([6]), _make_args(head_weight=5.0, head_tokens=8)
+    )
+    weights = torch.cat([w[0] for w in hooks.recorded])
+    tpos = torch.cat([torch.arange(1, 9), torch.arange(1, 5)]).float()
+    expected = 1.0 + 4.0 * (1.0 - tpos / 8).clamp(min=0.0)
+    assert torch.allclose(weights, expected)
+
+
+def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    train_ids = [_ids(13, seed=3)]
+    full_state = tmp_path / "mem_state_fake.pt"
+    torch.save(torch.zeros(1), full_state)
+
+    class Hooks(_SleepRecordingHooks):
+        recorded = []
+        fired = []
+
+    train.run_training(
+        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None],
+        [torch.tensor([6])], "cpu", _make_args(),
+        start_epoch=0, start_slot_states=[(0, 8)], start_next_ptr=1, start_step=0,
+        start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
+    )
+    assert Hooks.fired == []

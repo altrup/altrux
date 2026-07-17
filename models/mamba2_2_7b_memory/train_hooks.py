@@ -100,6 +100,15 @@ def reset_slot(model, state, slot_idx: int) -> None:
     model.reset_slot(state, slot_idx)
 
 
+def sleep_slot(model, state, slot_idx: int) -> None:
+    """Optional hook -- train.py calls this (if defined) when a slot reaches
+    one of its example's sleep_positions offsets: wipe the backbone state
+    (per-layer SSM/conv) while the neural memory persists, so cross-sleep
+    recall in the episodic-chains data can only flow through the memory.
+    Call only on a detached state. See Model.sleep_slot."""
+    model.sleep_slot(state, slot_idx)
+
+
 def on_step(model, global_step: int) -> None:
     """Optional hook -- train.py calls this (if defined) once before training
     starts and again after every optimizer step, passing the global step
