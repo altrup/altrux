@@ -77,8 +77,16 @@ recorded as metadata.
 Slots keep the existing one-example-at-a-time machinery — a chain **is** the
 example. The chunk driver consults `sleep_positions` and triggers the slot's
 backbone reset at those offsets. `M` resets at chain end exactly as it resets
-per-example today. Checkpoint format unchanged; a restarted mid-chain slot
-replays its chain from the top, same as any example today.
+per-example today (fresh small random `w1`/`w2` init, zero momentum); the
+backbone reset is zeros, identical to what a fresh sequence starts from.
+Checkpoint format unchanged; a restarted mid-chain slot replays its chain
+from the top, same as any example today.
+
+`--head-weight`/`--head-tokens` generalize from "first N tokens of each
+example" to "first N tokens after each backbone reset" — chain start counts
+as one — so every post-sleep empty-state regime gets the same upweighting
+that example starts get today. `--recall-weight` and `recall_masks` carry
+over unchanged for the engineered queries.
 
 ### 4. Evaluation — `sft/probe_recall.py`
 
