@@ -77,7 +77,9 @@ def chunk_loss(
     state,
     eos_weight: float,
 ):
-    """mask_slice is a (B, T) bool tensor: True = real token, False = padding.
+    """mask_slice is a (B, T) per-token loss-weight tensor: 0 = padding,
+    1 = normal token, and values >1 carry train.py's optional recall/head
+    boosts (--recall-weight/--head-weight).
     Trains on every real token (no user/assistant distinction -- see module
     docstring). Returns (loss_sum, weight_sum, state); the generic loop in
     sft/train.py owns chunking, accumulation, checkpointing, and live

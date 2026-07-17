@@ -26,6 +26,11 @@ are user turns (False); each query's assistant answer is True -- that answer
 IS the recall training signal for mask-respecting models (mamba2_2_7b_memory
 itself trains on all tokens regardless).
 
+The output also carries a `recall_masks` list (True exactly on the spliced
+answer-content tokens, None for untouched examples) so train.py's
+--recall-weight can amplify the recall signal, which is otherwise ~0.1% of
+all tokens.
+
 Fact keys come from the same vocab scan as probe_recall.py but from a
 disjoint slice (skip=1024), so the probe remains an honest held-out eval.
 
@@ -209,6 +214,7 @@ def main() -> None:
     # conversation still opens naturally). Revisions land at random later
     # boundaries; queries about a revised fact only land after its revision,
     # so the expected answer is always the newest value.
+    recall_list: list[torch.Tensor | None] = [None] * n
     for done, (ex, fact_turn_idx, facts, query_plan) in enumerate(plans):
         ids, masks = ids_list[ex], masks_list[ex]
         boundaries = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
@@ -230,26 +236,34 @@ def main() -> None:
             inserts.append((rng.choice(candidates), [q_idx, a_idx], True))
         inserts.sort(key=lambda x: x[0])
 
-        id_parts, mask_parts, cursor = [], [], 0
+        id_parts, mask_parts, recall_parts, cursor = [], [], [], 0
         for pos, turn_ids, is_query in inserts:
             id_parts.append(ids[cursor:pos])
             mask_parts.append(masks[cursor:pos])
+            recall_parts.append(torch.zeros(pos - cursor, dtype=torch.bool))
             for i, ti in enumerate(turn_ids):
                 t, m = turn_tensors(ti, trainable=(is_query and i == 1))
                 id_parts.append(t)
                 mask_parts.append(m)
+                recall_parts.append(m)  # True exactly on spliced answer content
             cursor = pos
         id_parts.append(ids[cursor:])
         mask_parts.append(masks[cursor:])
+        recall_parts.append(torch.zeros(len(ids) - cursor, dtype=torch.bool))
         ids_list[ex] = torch.cat(id_parts)
         masks_list[ex] = torch.cat(mask_parts)
+        recall_list[ex] = torch.cat(recall_parts)
         if done % 200 == 0:
             print(f"\r  spliced {done + 1}/{len(plans)} examples", end="", flush=True)
     print(f"\r  spliced {len(plans)}/{len(plans)} examples")
 
-    torch.save({"ids": ids_list, "masks": masks_list}, args.output)
+    torch.save({"ids": ids_list, "masks": masks_list, "recall_masks": recall_list}, args.output)
     total = sum(len(t) for t in ids_list)
-    print(f"wrote {args.output}: {n} examples ({len(plans)} injected, {n_revised_total} revised facts), {total / 1e6:.1f}M tokens")
+    n_recall = sum(int(r.sum()) for r in recall_list if r is not None)
+    print(
+        f"wrote {args.output}: {n} examples ({len(plans)} injected, {n_revised_total} revised facts), "
+        f"{total / 1e6:.1f}M tokens ({n_recall / 1e3:.1f}k recall-answer tokens for --recall-weight)"
+    )
 
 
 if __name__ == "__main__":

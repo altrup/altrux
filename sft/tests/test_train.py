@@ -236,7 +236,8 @@ def _make_args(**overrides):
         # accum_tokens=4 with chunk_len=4 derives to accum_steps=1 (see
         # run_training's accum_tokens -> accum_steps derivation), matching
         # the old accum_steps=1 default these tests were written against.
-        epochs=1, eos_weight=1.0, accum_tokens=4, chunk_len=4,
+        epochs=1, eos_weight=1.0, recall_weight=1.0, head_weight=1.0, head_tokens=1024,
+        accum_tokens=4, chunk_len=4,
         ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
         max_len=float("inf"), batch_size=1, data="fake_dataset.pt",
         # warmup_steps=0 disables warmup so these tests keep the constant
@@ -262,7 +263,7 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     args = _make_args(ckpt_every_tokens=8)  # 8 tokens = 2 chunks in
 
     train.run_training(
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, "cpu", args,
+        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -288,7 +289,7 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     args = _make_args(ckpt_every_tokens=8)
 
     train.run_training(
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, "cpu", args,
+        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -301,7 +302,7 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     optimizer2 = torch.optim.AdamW(model2.parameters(), lr=1e-3)
 
     train.run_training(
-        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, "cpu", args,
+        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, [None] * len(train_ids), "cpu", args,
         start_epoch=saved_state["epoch"], start_slot_states=saved_state["slot_states"],
         start_next_ptr=saved_state["next_ptr"], start_step=0,
         start_total_tokens=saved_state["total_tokens"],
@@ -331,7 +332,7 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     args = _make_args(ckpt_every_tokens=4, keep_ckpts=99)
 
     train.run_training(
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, "cpu", args,
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=[(0, 12)], start_next_ptr=0, start_step=0,
         start_total_tokens=12.0, start_last_ckpt_tokens=12.0,
     )
@@ -359,7 +360,7 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
     args = _make_args(ckpt_every_tokens=12)
 
     train.run_training(
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, "cpu", args,
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
@@ -371,3 +372,56 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
     example_idx, pos = state["slot_states"][0]
     assert pos == 0
     assert example_idx == 1
+
+
+# ---------------------------------------------------------------------------
+# per-token loss weighting: --recall-weight / --head-weight
+# ---------------------------------------------------------------------------
+
+class _RecordingHooks(FakeHooks):
+    """FakeHooks that records every weight tensor passed to chunk_loss."""
+
+    recorded: list
+
+    @classmethod
+    def chunk_loss(cls, model, input_ids, target_ids, mask_slice, state, eos_weight):
+        cls.recorded.append(mask_slice.clone())
+        return FakeHooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight)
+
+
+def _run_with_weights(tmp_path, monkeypatch, recall, args):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    train_ids = [_ids(13, seed=3)]
+
+    class Hooks(_RecordingHooks):
+        recorded = []
+
+    train.run_training(
+        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [recall], "cpu", args,
+        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    )
+    # (n_chunks, chunk_len) weights for the single slot, target positions 1..12
+    return torch.cat([w[0] for w in Hooks.recorded])
+
+
+def test_recall_weight_boosts_exactly_the_marked_target_tokens(monkeypatch, tmp_path):
+    recall = torch.zeros(13, dtype=torch.bool)
+    recall[[5, 6]] = True
+    weights = _run_with_weights(tmp_path, monkeypatch, recall, _make_args(recall_weight=3.0))
+    expected = torch.ones(12)
+    # weight index i covers target token at absolute position i + 1
+    expected[[4, 5]] = 3.0
+    assert torch.equal(weights, expected)
+
+
+def test_head_weight_ramps_down_linearly_over_head_tokens(monkeypatch, tmp_path):
+    weights = _run_with_weights(
+        tmp_path, monkeypatch, None, _make_args(head_weight=5.0, head_tokens=8)
+    )
+    tpos = torch.arange(1, 13, dtype=torch.float32)
+    expected = 1.0 + 4.0 * (1.0 - tpos / 8).clamp(min=0.0)
+    assert torch.allclose(weights, expected)

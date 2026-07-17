@@ -86,13 +86,21 @@ class _Slot:
     assigned the next example (with state reset) or set to None (epoch done).
     """
 
-    __slots__ = ("slot_idx", "example_idx", "ids", "mask", "pos", "seqlen")
+    __slots__ = ("slot_idx", "example_idx", "ids", "mask", "recall", "pos", "seqlen")
 
-    def __init__(self, slot_idx: int, example_idx: int, ids: torch.Tensor, mask: torch.Tensor | None):
+    def __init__(
+        self,
+        slot_idx: int,
+        example_idx: int,
+        ids: torch.Tensor,
+        mask: torch.Tensor | None,
+        recall: torch.Tensor | None = None,
+    ):
         self.slot_idx = slot_idx
         self.example_idx = example_idx
         self.ids = ids
         self.mask = mask
+        self.recall = recall
         self.pos = 0
         self.seqlen = ids.numel()
 
@@ -359,6 +367,7 @@ def run_training(
     trainable_params: list[torch.nn.Parameter],
     train_ids: list[torch.Tensor],
     train_masks: list,
+    train_recall: list,
     device,
     args,
     start_epoch: int,
@@ -378,7 +387,8 @@ def run_training(
     loading the next. All B slots are processed in one batched
     forward+backward per chunk step.
 
-    `args` needs: epochs, eos_weight, accum_tokens, chunk_len,
+    `args` needs: epochs, eos_weight, recall_weight, head_weight,
+    head_tokens, accum_tokens, chunk_len,
     ckpt_every_tokens, keep_ckpts, keep_full_state, lora_rank, lora_alpha,
     lr, warmup_steps, max_len, batch_size (already resolved to numbers, not raw CLI None
     defaults).
@@ -489,7 +499,8 @@ def run_training(
                 next_ptr += 1
                 ids = train_ids[idx].to(device)
                 mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
-                slots.append(_Slot(b, idx, ids, mask))
+                recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
+                slots.append(_Slot(b, idx, ids, mask, recall))
             else:
                 slots.append(None)
 
@@ -537,7 +548,8 @@ def run_training(
                     continue  # example was filtered out -- start slot fresh
                 ids = train_ids[example_idx].to(device)
                 mask = train_masks[example_idx].to(device) if train_masks[example_idx] is not None else None
-                slots[b] = _Slot(b, example_idx, ids, mask)
+                recall = train_recall[example_idx].to(device) if train_recall[example_idx] is not None else None
+                slots[b] = _Slot(b, example_idx, ids, mask, recall)
                 slots[b].pos = pos
 
             if use_full_state:
@@ -585,21 +597,31 @@ def run_training(
                     # Idle slot: pad with zeros, zero weight.
                     batch_inputs.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
                     batch_targets.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
-                    batch_weights.append(torch.zeros(chunk_len, dtype=torch.bool, device=device))
+                    batch_weights.append(torch.zeros(chunk_len, dtype=torch.float32, device=device))
                     chunk_actual_lens.append(0)
                 else:
                     end = min(slot.pos + chunk_len, slot.seqlen - 1)
                     actual = end - slot.pos
                     inp = slot.ids[slot.pos:end]
                     tgt = slot.ids[slot.pos + 1:end + 1]
+                    wt = torch.ones(chunk_len, dtype=torch.float32, device=device)
                     if actual < chunk_len:
                         pad = chunk_len - actual
                         inp = F.pad(inp, (0, pad))
                         tgt = F.pad(tgt, (0, pad))
-                        wt = torch.ones(chunk_len, dtype=torch.bool, device=device)
-                        wt[actual:] = False
-                    else:
-                        wt = torch.ones(chunk_len, dtype=torch.bool, device=device)
+                        wt[actual:] = 0.0
+                    if args.head_weight != 1.0:
+                        # Weights index target tokens: position i predicts the
+                        # token at absolute position slot.pos + 1 + i.
+                        tpos = torch.arange(
+                            slot.pos + 1, slot.pos + 1 + chunk_len, device=device, dtype=torch.float32
+                        )
+                        wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(min=0.0)
+                    if slot.recall is not None and args.recall_weight != 1.0:
+                        rm = slot.recall[slot.pos + 1:end + 1]
+                        if actual < chunk_len:
+                            rm = F.pad(rm, (0, chunk_len - actual))
+                        wt = torch.where(rm, wt * args.recall_weight, wt)
                     batch_inputs.append(inp)
                     batch_targets.append(tgt)
                     batch_weights.append(wt)
@@ -607,7 +629,7 @@ def run_training(
 
             input_ids = torch.stack(batch_inputs)   # (B, chunk_len)
             target_ids = torch.stack(batch_targets)  # (B, chunk_len)
-            weight_mask = torch.stack(batch_weights)  # (B, chunk_len) bool
+            weight_mask = torch.stack(batch_weights)  # (B, chunk_len) float: 0 = padding, may carry >1 boosts
 
             loss_sum, weight_sum, batched_state = hooks.chunk_loss(
                 model, input_ids, target_ids, weight_mask, batched_state, args.eos_weight
@@ -651,7 +673,10 @@ def run_training(
                     del chunk_grads
                     window_loss_sum += loss_sum.item()
                     window_tokens += weight_sum.item()
-                    total_tokens += weight_sum.item()
+                    # Real token count, not weight_sum: eos/recall/head boosts
+                    # inflate weight_sum, and checkpoint cadence should track
+                    # actual tokens trained.
+                    total_tokens += sum(chunk_actual_lens)
                     accum_count += 1
                     trained_any = True
                     prev_n_lines = _show_batch_progress(
@@ -724,7 +749,8 @@ def run_training(
                         next_ptr += 1
                         ids = train_ids[idx].to(device)
                         mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
-                        slots[b] = _Slot(b, idx, ids, mask)
+                        recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
+                        slots[b] = _Slot(b, idx, ids, mask, recall)
                         if reset_slot_fn is not None and batched_state is not None:
                             reset_slot_fn(model, batched_state, b)
                     else:
@@ -837,6 +863,9 @@ def main() -> None:
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
+    parser.add_argument("--recall-weight", type=float, default=1.0, help="Loss weight multiplier for tokens marked True in the dataset's optional recall_masks tensors (prepare_interference.py marks its spliced query-answer tokens) -- >1 to amplify the recall training signal, which is otherwise a tiny fraction (~0.1%%) of all tokens. No-op on datasets without recall_masks.")
+    parser.add_argument("--head-weight", type=float, default=1.0, help="Loss weight multiplier at the very first token of each example, decaying linearly to 1.0 over --head-tokens -- >1 to emphasise early-conversation behaviour (the empty-memory/empty-state regime), which is otherwise underweighted because most tokens sit deep inside long examples.")
+    parser.add_argument("--head-tokens", type=int, default=1024, help="Length of the --head-weight linear decay ramp, in tokens from the start of each example")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for everything not covered by the per-epoch data-shuffle seed (see run_training) -- LoRA init/dropout, and for models with per-sequence random state (e.g. mamba2_2_7b_memory's neural-memory init/reset) -- fixed by default so a run (or a crash) is reproducible; pass a different value to sample a different random init.")
     parser.add_argument("--detect-anomaly", action="store_true", help="Enable torch.autograd.set_detect_anomaly -- when a chunk's gradient comes back non-finite (the run's existing per-chunk check, see run_training), instead of just discarding it and continuing, autograd raises immediately with a traceback pointing at the exact forward op responsible, and the run stops there. Diagnostic only: real, not-small overhead (extra bookkeeping on every op during forward), and turns the normally-recoverable non-finite-gradient path into a hard stop -- use a dedicated short run to localize a real crash, not the long unattended one. See `make detect-anomaly`.")
     args = parser.parse_args()
@@ -923,8 +952,11 @@ def main() -> None:
     data = torch.load(args.data, map_location="cpu", weights_only=False)
     all_ids: list[torch.Tensor] = data["ids"]
     all_masks: list[torch.Tensor] = data.get("masks") or [None] * len(all_ids)
+    all_recall: list[torch.Tensor | None] = data.get("recall_masks") or [None] * len(all_ids)
+    if args.recall_weight != 1.0 and all(r is None for r in all_recall):
+        print(f"warning: --recall-weight {args.recall_weight} given but {args.data} has no recall_masks -- it will have no effect")
 
-    train_ids, train_masks = all_ids, all_masks
+    train_ids, train_masks, train_recall = all_ids, all_masks, all_recall
     n = len(train_ids)
     print(f"train: {n}  epochs: {args.epochs}  batch_size: {args.batch_size}")
 
@@ -958,7 +990,7 @@ def main() -> None:
             start_full_state = None
 
     run_training(
-        hooks, model, optimizer, trainable_params, train_ids, train_masks, device, args,
+        hooks, model, optimizer, trainable_params, train_ids, train_masks, train_recall, device, args,
         start_epoch, start_slot_states, start_next_ptr, start_step, start_total_tokens, start_last_ckpt_tokens,
         start_full_state,
     )

@@ -107,6 +107,9 @@ def main() -> None:
         data="<synthetic>",
         epochs=1,
         eos_weight=args.eos_weight,
+        recall_weight=1.0,
+        head_weight=1.0,
+        head_tokens=1024,
         accum_tokens=args.accum_tokens,
         chunk_len=chunk_len,
         batch_size=args.batch_size,
@@ -124,7 +127,8 @@ def main() -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             train.CKPT_DIR = Path(tmp_dir)
             train.run_training(
-                train.hooks, model, optimizer, trainable_params, train_ids, train_masks, device, run_args,
+                train.hooks, model, optimizer, trainable_params, train_ids, train_masks,
+                [None] * len(train_ids), device, run_args,
                 start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
                 start_total_tokens=0.0, start_last_ckpt_tokens=0.0, start_full_state=None,
             )
