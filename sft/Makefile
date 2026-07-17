@@ -89,6 +89,14 @@ detect-anomaly:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --detect-anomaly --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
+# Splice interference-recall structure (labeled random codes + delayed
+# query/answer turns) into a fraction of an already-tokenized dataset --
+# manufactures the beyond-SSM-capacity recall regime the neural memory
+# exists for. Token-level splice; runs in minutes on CPU.
+prepare-interference:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u prepare_interference.py $(ARGS)
+
 # Long-gap recall probe against the latest checkpoint: states a random code,
 # runs thousands of filler tokens, queries it back, and compares the code's
 # log-prob with the neural memory intact vs ablated (fresh random M at query

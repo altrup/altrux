@@ -59,10 +59,13 @@ FILLER_SENTENCES = [
 ]
 
 
-def single_token_labels(tokenizer, n: int) -> list[str]:
+def single_token_labels(tokenizer, n: int, skip: int = 0) -> list[str]:
     """Deterministic list of n distinct label words that each tokenize to
     exactly one token after a space (scanned from the tokenizer's own vocab),
-    so query rows stay equal-length no matter which label each row asks for."""
+    so query rows stay equal-length no matter which label each row asks for.
+    `skip` offsets into the scan order: the probe uses skip=0 and
+    prepare_interference.py trains on a disjoint pool (skip=1024), keeping
+    this probe an honest held-out eval."""
     import re
 
     labels = []
@@ -70,9 +73,9 @@ def single_token_labels(tokenizer, n: int) -> list[str]:
         piece = tokenizer.decode([tok_id])
         if re.fullmatch(r" [a-z]{4,9}", piece):
             labels.append(piece[1:])
-            if len(labels) == n:
-                return labels
-    raise ValueError(f"only found {len(labels)} single-token labels, need {n}")
+            if len(labels) == skip + n:
+                return labels[skip:]
+    raise ValueError(f"only found {len(labels)} single-token labels, need {skip + n}")
 
 
 def build_probe_rows(
