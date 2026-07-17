@@ -89,6 +89,15 @@ detect-anomaly:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u train.py --detect-anomaly --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
+# Long-gap recall probe against the latest checkpoint: states a random code,
+# runs thousands of filler tokens, queries it back, and compares the code's
+# log-prob with the neural memory intact vs ablated (fresh random M at query
+# time). Isolates the Titans memory's contribution from Mamba's own SSM
+# state. Safe to run alongside training (second model instance, ~10 GB).
+probe-recall:
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u probe_recall.py $(ARGS)
+
 # Gradient-wiring check on a synthetic dataset, driven through train.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults
 # as `make train` -- useful for mamba2_2_7b_memory, whose real examples are

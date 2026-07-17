@@ -128,6 +128,12 @@ make resume ARGS="--data data/train_memory.pt --eos-weight 32 --batch-size 12 --
 HF_HOME=../.cache/huggingface PYTHONPATH=.. HSA_ENABLE_INTERRUPT=1 uv run --no-sync python measure_knobs.py --ckpt ../models/mamba2_2_7b_memory/checkpoints/epoch-1/step-45
 ```
 
+**`probe_recall.py`** (`make probe-recall`) — long-gap recall probe against the latest checkpoint: states a random digit code in an early user turn, runs a long stretch of filler turns (`--gaps`, default `1024,4096,12288` tokens), queries the code back, and reports its mean per-token log-prob with the neural memory intact vs ablated (fresh random `M` swapped in at query time) plus a no-prefix floor. Mamba's own SSM state carries context too, so the intact−ablated delta is what isolates the Titans memory's specific contribution; a delta near 0 at long gaps means the memory isn't functionally recalling, whatever the training-log write stats say. `--n-probes` (default 8) conversations run batched per gap. Safe to run alongside training — it's a second ~10 GB model instance.
+
+```bash
+MODEL_NAME=mamba2_2_7b_memory make probe-recall ARGS="--gaps 1024,8192"
+```
+
 **`--memory-window`** (default 1, i.e. today's exact per-token behavior): how many tokens' worth of signal `mamba2_2_7b_memory`'s memory subsystem consolidates into one gradient step *and* one `ssm_state` injection (a surprise-weighted pooling of the window's reads, not just the last token's), instead of taking one every single token. Must evenly divide `--chunk-len` — a window can't span across the chunk boundary where BPTT gets truncated. No-op for `mamba2_780m` (or any model without a `set_memory_window` method). See `docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md` for the full design and what's still deferred. The memory-window mechanism is also what the backbone's fused-kernel training path (`Model._forward_fused`, feature-detected — CUDA with `causal-conv1d` installed, see the design spec and `models/mamba2_2_7b_memory/README.md`) dispatches around: only each window's closing token still runs the manual per-token path there. There's no principled default above 1 yet — sweep small values (e.g. on `mamba2_2_7b_memory`'s synthetic-data `make smoke-test`) before committing real training hours to one.
 
 ## Using the adapter
