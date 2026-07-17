@@ -59,7 +59,8 @@ instance (e.g. from a different machine), set `LAMBDA_INSTANCE_ID` in
 
 Pulls training artifacts — `sft/logs/`, every `models/*/checkpoints/`, and
 `notes/` (free-form observations written by whoever is monitoring on the
-instance; gitignored, so rsync is how it travels) — down from a running
+instance; committed only from the local machine after a run, so rsync is
+how it travels off the instance) — down from a running
 instance to this machine via rsync, so they survive termination (everything
 on the instance otherwise dies with it). Run it from the **local** machine:
 

@@ -36,9 +36,10 @@ notes/). Therefore:
 - Any code change: commit AND push promptly. Never leave fixes only in the
   working tree.
 - Write observations (health checks, anomalies, fixes, open questions) to
-  notes/EXPERIMENT_NOTES.md as you go, not at the end. notes/ is
-  deliberately gitignored and travels only via the rsync pull — never
-  commit or force-add it.
+  notes/EXPERIMENT_NOTES.md as you go, not at the end. Never commit notes/
+  from the instance — the rsync pull carries it to your teammate's
+  machine, where it gets committed after the run; an instance-side commit
+  would race that flow.
 - The rsync pull runs every ~5 minutes, so anything you write needs the
   instance alive that much longer to survive. Whenever you finish your LAST
   writes before going quiet (final notes, a fix you just pushed), touch

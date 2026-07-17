@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pulls training artifacts down from a running Lambda Cloud instance to this
 # machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/, and
-# notes/ (a monitoring session's observations — gitignored, so rsync is how
-# they travel). Whichever of those don't exist yet are skipped; only a
+# notes/ (the experimenter session's observations — committed to git only
+# from this machine after a run; rsync is how they travel off the
+# instance). Whichever of those don't exist yet are skipped; only a
 # missing repo is an error.
 #
 # Run from the LOCAL machine, before terminating the instance — the run's

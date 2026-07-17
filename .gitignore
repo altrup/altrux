@@ -5,4 +5,3 @@ scripts/.env
 .watchdog-delay
 .watchdog-terminate
 .watchdog.lock
-notes/
