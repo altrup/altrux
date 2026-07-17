@@ -98,7 +98,7 @@ continuity with the step-126/168/245/308 baselines.
 
 ### 5. Unchanged
 
-Weighted-loss flags, memory-window batching, checkpoint cadence and format,
+`--recall-weight` semantics, memory-window batching, checkpoint cadence and format,
 fused/manual forward dispatch. Whether the next run resumes step-350 weights
 or starts fresh is a run-time call (resume cheaper; fresh cleaner if
 suppression is sticky — the alpha recap de-fangs it either way).
