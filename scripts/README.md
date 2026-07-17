@@ -23,7 +23,7 @@ it bounds what a *hard* crash loses, where no graceful terminate ever happens.
 
 On the **instance**: clone the repo, `make sync`, verify a trivial `git push`
 works, prepare data, then start training (`cd sft && make resume`) —
-monitored by a Claude Code session started with `/watch-training`. No
+monitored by a Claude Code session started with `/experimenter`. No
 watchdog, no terminate chain, no API key on the instance.
 
 ## `lambda_terminate.sh`
@@ -162,10 +162,10 @@ The instance is found via the API (expects exactly one active instance);
 set `LAMBDA_INSTANCE_ID`/`LAMBDA_INSTANCE_IP` in `scripts/.env` to target
 one explicitly. `--terminate-cmd "echo boom"` dry-runs the countdown.
 
-The `/watch-training` slash command (`.claude/commands/watch-training.md`)
+The `/experimenter` slash command (`.claude/commands/experimenter.md`)
 is the standing brief for a Claude Code session monitoring the run on the
 instance — it encodes the watchdog contract, the commit-and-push +
-`notes/WATCH_NOTES.md` persistence rules, and the give-up criteria.
+`notes/EXPERIMENT_NOTES.md` persistence rules, and the give-up criteria.
 
 ## `lambda_check_instance.sh`
 

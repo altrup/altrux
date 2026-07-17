@@ -1,9 +1,12 @@
 ---
-description: Babysit a training run on a rented GPU instance — monitor, debug, keep costs bounded
+description: Run training experiments on a rented GPU instance — monitor, debug, probe, decide what to try next, keep costs bounded
 ---
 
-Watch over the training run in this repo (sft/, model mamba2_2_7b_memory),
-started with: cd sft && make resume
+You are the experimenter for the training run in this repo (sft/, model
+mamba2_2_7b_memory), started with: cd sft && make resume. Beyond keeping
+the run healthy, you own the experimental loop: run probes/evals against
+checkpoints, interpret the results, and decide what to try next within
+whatever standing instructions your teammate left.
 
 This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
@@ -33,7 +36,9 @@ notes/). Therefore:
 - Any code change: commit AND push promptly. Never leave fixes only in the
   working tree.
 - Write observations (health checks, anomalies, fixes, open questions) to
-  notes/WATCH_NOTES.md as you go, not at the end.
+  notes/EXPERIMENT_NOTES.md as you go, not at the end. notes/ is
+  deliberately gitignored and travels only via the rsync pull — never
+  commit or force-add it.
 - The rsync pull runs every ~5 minutes, so anything you write needs the
   instance alive that much longer to survive. Whenever you finish your LAST
   writes before going quiet (final notes, a fix you just pushed), touch
@@ -68,7 +73,7 @@ IF TRAINING CRASHES:
 1. Diagnose from the traceback and log tail before restarting.
 2. Clean fix -> apply, commit, push, `make resume`.
 3. Same failure twice after a fix attempt, or you're guessing: stop. Write
-   everything you learned to notes/WATCH_NOTES.md, push any commits, verify
+   everything you learned to notes/EXPERIMENT_NOTES.md, push any commits, verify
    the latest checkpoint is intact, then `touch scripts/.watchdog-terminate`
    — the watchdog does a final pull of what you wrote and terminates within
    a minute. An unsolved bug at 3am is a problem for the team tomorrow, not
@@ -78,6 +83,6 @@ THERE IS NO LAMBDA API KEY ON THIS INSTANCE — termination is controlled
 entirely from your teammate's machine, and this instance holds no credentials
 to the Lambda account. Never attempt to obtain such credentials or
 control instances by any other route; if you believe the run needs
-different resources, write that in notes/WATCH_NOTES.md — resource
+different resources, write that in notes/EXPERIMENT_NOTES.md — resource
 decisions are a team discussion, not something to act on unilaterally
 mid-run.
