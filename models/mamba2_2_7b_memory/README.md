@@ -6,6 +6,18 @@
 
 Backbone shape: `d_model=2560`, `n_layer=64`, `d_inner=5120` (expand 2), `nheads=80`, `headdim=64`, `d_state=128`, `ngroups=1` (B/C shared across heads). Per head, Mamba2's own SSM state is a 64×128 matrix, written with a rank-1 outer product and read via the C projection. At injected layers (see below), the memory subsystem's gated-delta rule is merged directly into this same state tensor — not a side accumulator added on top — so memory shares both the *form* (rank-1/low-rank associative writes, projection-based reads) and the actual storage with Mamba2's own state.
 
+## Design goal — a three-tier memory hierarchy
+
+The intended division of labor between the model's three stores:
+
+| Tier | Store | Holds | Regime |
+|---|---|---|---|
+| Working | Mamba2's own SSM state | everything about the current context | recent *or* few — a fixed-size linear buffer that decays every token and can't choose not to forget |
+| Episodic | the neural memory `M` | *selected* residue that must survive context turnover — gist, not verbatim tokens | high fact-count and/or post-reset survival; surprise-gated selective writes, content-addressed reads, persistence set by `α` |
+| Semantic/procedural | the trained parameters | skills and world knowledge | consolidated over training, static at inference |
+
+The boundary between the first two is capacity and interference, **not duration**: probes on a trained checkpoint (2026-07-17, `sft/probe_recall.py`) showed the SSM alone carries a *single* fact at ~96% out to 12k tokens, but collapses to chance at 128+ competing facts by 2.5k tokens. Training data must therefore demand recall the SSM structurally cannot provide — many competing facts, and recall across SSM-state resets — or the optimizer will keep routing everything through the backbone and suppress `M` (observed: alpha climbing, o_t_norm shrinking, ablation deltas ~0).
+
 ## Tokenizer
 
 `EleutherAI/gpt-neox-20b`, same as the other Mamba2 models in this repo — the checkpoint ships without its own tokenizer, so the GPT-NeoX-20B tokenizer (the standard pairing from the original Mamba training recipe) is used here too.
