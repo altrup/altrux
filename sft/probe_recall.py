@@ -18,8 +18,14 @@ A clearly positive (intact - ablated) at long gaps means the memory recalls;
 ~0 means it is currently non-functional for recall. Codes are random digit
 strings, so the floor is ~uniform and any prior leakage is visible.
 
+--n-facts sweeps interference: each conversation states that many labeled
+codes ("The code for river is 4 8 2 1 3.") and queries one label at random.
+One salient fact sits comfortably in Mamba's SSM state, so the memory only
+has a measurable job once the fact load exceeds SSM capacity -- sweep until
+ablated recall degrades and see whether intact holds up.
+
 Run via `make probe-recall` (defaults) or directly:
-  uv run --no-sync python probe_recall.py --gaps 1024,4096,12288 --n-probes 8
+  uv run --no-sync python probe_recall.py --gaps 1024 --n-facts 64,128,256
 """
 
 import argparse
@@ -53,17 +59,40 @@ FILLER_SENTENCES = [
 ]
 
 
-def build_probe_rows(tokenizer, user_open: str, asst_open: str, n_probes: int, gap_tokens: int, rng: random.Random):
-    """Returns (prefix_ids, query_ids, target_ids), each (n_probes, L) --
-    equal lengths across rows by construction (codes are fixed-count single
-    digits; filler is shared across rows)."""
-    codes = [[rng.randrange(10) for _ in range(5)] for _ in range(n_probes)]
-    code_strs = [" " + " ".join(str(d) for d in c) for c in codes]
+def single_token_labels(tokenizer, n: int) -> list[str]:
+    """Deterministic list of n distinct label words that each tokenize to
+    exactly one token after a space (scanned from the tokenizer's own vocab),
+    so query rows stay equal-length no matter which label each row asks for."""
+    import re
 
-    fact_rows = [
-        tokenizer(f"{user_open} Please remember this carefully: the secret code is{cs}.", add_special_tokens=False)["input_ids"]
-        for cs in code_strs
-    ]
+    labels = []
+    for tok_id in range(len(tokenizer)):
+        piece = tokenizer.decode([tok_id])
+        if re.fullmatch(r" [a-z]{4,9}", piece):
+            labels.append(piece[1:])
+            if len(labels) == n:
+                return labels
+    raise ValueError(f"only found {len(labels)} single-token labels, need {n}")
+
+
+def build_probe_rows(
+    tokenizer, user_open: str, asst_open: str, n_probes: int, n_facts: int, gap_tokens: int, rng: random.Random
+):
+    """Returns (prefix_ids, query_ids, target_ids), each (n_probes, L) --
+    equal lengths across rows by construction: labels are shared across rows
+    and single-token, codes are fixed-count single digits (random per row),
+    and each row queries one of its labels at random."""
+    labels = single_token_labels(tokenizer, n_facts)
+    codes = [[[rng.randrange(10) for _ in range(5)] for _ in range(n_facts)] for _ in range(n_probes)]
+
+    fact_rows = []
+    for r in range(n_probes):
+        ids: list[int] = []
+        for f, label in enumerate(labels):
+            cs = " " + " ".join(str(d) for d in codes[r][f])
+            role = user_open if f % 2 == 0 else asst_open
+            ids.extend(tokenizer(f"{role} The code for {label} is{cs}.", add_special_tokens=False)["input_ids"])
+        fact_rows.append(ids)
     assert len({len(r) for r in fact_rows}) == 1, "fact rows must tokenize to equal lengths"
 
     filler_ids: list[int] = []
@@ -80,13 +109,20 @@ def build_probe_rows(tokenizer, user_open: str, asst_open: str, n_probes: int, g
     fill = filler_ids[: prefix_len - len(fact_rows[0])]
     prefix = torch.tensor([row + fill for row in fact_rows], dtype=torch.long)
 
-    query_ids = tokenizer(
-        f"{user_open} What was the secret code I asked you to remember?{asst_open} The secret code is",
-        add_special_tokens=False,
-    )["input_ids"]
-    query = torch.tensor([query_ids] * n_probes, dtype=torch.long)
-    target_rows = [tokenizer(cs, add_special_tokens=False)["input_ids"] for cs in code_strs]
+    query_rows, target_rows = [], []
+    for r in range(n_probes):
+        j = rng.randrange(n_facts)
+        cs = " " + " ".join(str(d) for d in codes[r][j])
+        query_rows.append(
+            tokenizer(
+                f"{user_open} What was the code for {labels[j]}?{asst_open} The code for {labels[j]} is",
+                add_special_tokens=False,
+            )["input_ids"]
+        )
+        target_rows.append(tokenizer(cs, add_special_tokens=False)["input_ids"])
+    assert len({len(r) for r in query_rows}) == 1, "query rows must tokenize to equal lengths"
     assert len({len(r) for r in target_rows}) == 1
+    query = torch.tensor(query_rows, dtype=torch.long)
     target = torch.tensor(target_rows, dtype=torch.long)
     return prefix, query, target
 
@@ -141,7 +177,8 @@ def score_targets(model, query: torch.Tensor, target: torch.Tensor, state, label
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--gaps", default="1024,4096,12288", help="Comma-separated filler lengths in tokens")
+    parser.add_argument("--gaps", default="1024", help="Comma-separated filler lengths in tokens")
+    parser.add_argument("--n-facts", default="64,128", help="Comma-separated fact counts per conversation (interference sweep)")
     parser.add_argument("--n-probes", type=int, default=8, help="Probe conversations per gap (batched together)")
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
@@ -183,35 +220,37 @@ def main() -> None:
     results = []
     with torch.no_grad():
         for gap in (int(g) for g in args.gaps.split(",")):
-            prefix, query, target = build_probe_rows(
-                tokenizer, model_mod.USER_OPEN, model_mod.ASST_OPEN, args.n_probes, gap, rng
-            )
-            prefix, query, target = prefix.to(device), query.to(device), target.to(device)
-            print(f"gap {gap}: prefix {prefix.shape[1]} tokens, {args.n_probes} probes")
+            for n_facts in (int(f) for f in args.n_facts.split(",")):
+                tag = f"gap {gap} x{n_facts}"
+                prefix, query, target = build_probe_rows(
+                    tokenizer, model_mod.USER_OPEN, model_mod.ASST_OPEN, args.n_probes, n_facts, gap, rng
+                )
+                prefix, query, target = prefix.to(device), query.to(device), target.to(device)
+                print(f"{tag}: prefix {prefix.shape[1]} tokens ({n_facts} facts + {gap} filler), {args.n_probes} probes")
 
-            _, state = run_chunks(model, prefix, None, f"gap {gap} prefix")
-            intact = score_targets(model, query, target, clone_state(mmod, state), f"gap {gap} intact")
+                _, state = run_chunks(model, prefix, None, f"{tag} prefix")
+                intact = score_targets(model, query, target, clone_state(mmod, state), f"{tag} intact")
 
-            abl_state = clone_state(mmod, state)
-            mem_dtype = model.front_end.q_proj.weight.dtype
-            abl_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-            abl_state.last_o_t.zero_()
-            abl_state.last_surprise.zero_()
-            ablated = score_targets(model, query, target, abl_state, f"gap {gap} ablated")
+                abl_state = clone_state(mmod, state)
+                mem_dtype = model.front_end.q_proj.weight.dtype
+                abl_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+                abl_state.last_o_t.zero_()
+                abl_state.last_surprise.zero_()
+                ablated = score_targets(model, query, target, abl_state, f"{tag} ablated")
 
-            floor = score_targets(model, query, target, None, f"gap {gap} floor")
+                floor = score_targets(model, query, target, None, f"{tag} floor")
 
-            diff = intact - ablated
-            results.append((gap, intact, ablated, floor, diff))
-            print(
-                f"gap {gap:>6}: intact {intact.mean():.3f}  ablated {ablated.mean():.3f}"
-                f"  floor {floor.mean():.3f}  memory-delta {diff.mean():.3f} (±{diff.std():.3f})"
-            )
+                diff = intact - ablated
+                results.append((gap, n_facts, intact, ablated, floor, diff))
+                print(
+                    f"{tag}: intact {intact.mean():.3f}  ablated {ablated.mean():.3f}"
+                    f"  floor {floor.mean():.3f}  memory-delta {diff.mean():.3f} (±{diff.std():.3f})"
+                )
 
     print("\nsummary (mean log-prob per code token; higher = better recall):")
-    print(f"{'gap':>8} {'intact':>8} {'ablated':>8} {'floor':>8} {'mem-delta':>10}")
-    for gap, intact, ablated, floor, diff in results:
-        print(f"{gap:>8} {intact.mean():>8.3f} {ablated.mean():>8.3f} {floor.mean():>8.3f} {diff.mean():>10.3f}")
+    print(f"{'gap':>8} {'facts':>6} {'intact':>8} {'ablated':>8} {'floor':>8} {'mem-delta':>10}")
+    for gap, n_facts, intact, ablated, floor, diff in results:
+        print(f"{gap:>8} {n_facts:>6} {intact.mean():>8.3f} {ablated.mean():>8.3f} {floor.mean():>8.3f} {diff.mean():>10.3f}")
 
 
 if __name__ == "__main__":
