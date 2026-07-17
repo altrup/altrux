@@ -46,6 +46,10 @@
 # If the instance stops answering ssh while the API still reports it
 # active, it terminates after --unreachable-timeout seconds anyway -- an
 # instance that can't be reached can't be trained on, and shouldn't bill.
+# Each probe is hard-bounded to --interval seconds (ssh keepalives plus a
+# timeout wrap), so unreachability evidence is never staler than one
+# interval -- a single hung ssh connection can't silently swallow many
+# minutes and then vault past the threshold in one step.
 # The flip side of keeping the key local: if THIS machine sleeps or loses
 # network, nothing stops the billing. Keep it awake for the whole run.
 #
@@ -91,6 +95,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Two watchdogs against one instance double the terminate risk and produce
+# interleaved, misleading logs -- refuse to be the second.
+exec 9>"$SCRIPT_DIR/.watchdog.lock"
+if ! flock -n 9; then
+  echo "error: another lambda_watchdog.sh is already running (holds $SCRIPT_DIR/.watchdog.lock)" >&2
+  exit 1
+fi
+
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
 ssh_user="${LAMBDA_SSH_USER:-ubuntu}"
 
@@ -128,7 +140,11 @@ probe_snippet="
   stat -c %Y '$remote_repo/scripts/.watchdog-terminate' 2>/dev/null || echo 0
 "
 
-SSH_CMD=(ssh -o ConnectTimeout=10 -o BatchMode=yes "${ssh_user}@${instance_ip}")
+# ConnectTimeout only bounds the TCP connect; the keepalives kill a
+# connection that establishes and then goes dead (otherwise a probe can
+# block on kernel TCP timeouts for 15+ minutes).
+SSH_CMD=(ssh -o ConnectTimeout=10 -o BatchMode=yes
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=2 "${ssh_user}@${instance_ip}")
 # Test hook: WATCHDOG_SSH_OVERRIDE="bash -c" runs probes in a local shell
 # instead of over ssh.
 if [[ -n "${WATCHDOG_SSH_OVERRIDE:-}" ]]; then
@@ -176,7 +192,10 @@ watch_start=""      # remote epoch of the first successful probe; older terminat
 unreachable_since=""
 
 while true; do
-  if output="$("${SSH_CMD[@]}" "$probe_snippet" 2>/dev/null)"; then
+  # The timeout wrap is the hard staleness bound: a probe that somehow
+  # still blocks (keepalives notwithstanding) is killed and counted as one
+  # interval's worth of failure, never as the whole time it hung.
+  if output="$(timeout "$interval" "${SSH_CMD[@]}" "$probe_snippet" 2>/dev/null)"; then
     unreachable_since=""
     { read -r remote_now; read -r training; read -r delay_mtime; read -r terminate_mtime; } <<< "$output"
     watch_start="${watch_start:-$remote_now}"
@@ -189,7 +208,7 @@ while true; do
     if (( delay_mtime > remote_now + 60 )); then
       # A future-dated mtime would hold the deadline open forever; rewrite
       # it to now so it grants exactly one window, like any other touch.
-      "${SSH_CMD[@]}" "touch '$remote_repo/scripts/.watchdog-delay'" 2>/dev/null || true
+      timeout 30 "${SSH_CMD[@]}" "touch '$remote_repo/scripts/.watchdog-delay'" 2>/dev/null || true
       delay_mtime="$remote_now"
     fi
     effective=$(( last_active > delay_mtime ? last_active : delay_mtime ))
