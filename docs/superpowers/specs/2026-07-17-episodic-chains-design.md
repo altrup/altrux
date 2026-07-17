@@ -35,8 +35,11 @@ recorded as metadata.
 
 - **Pool**: the existing prepared data — normal-length examples and
   LongAlign long conversations, both.
-- **Chain length**: 8–32 episodes, log-uniform, targeting ~30k–130k tokens.
-  Short chains occur naturally in the mix; no separate staged curriculum.
+- **Chain length**: sample a per-chain token budget, log-uniform 30k–130k;
+  append sampled episodes until the budget is met, closing at the episode
+  boundary that crosses it. Episode count is derived (~8–32 with the mixed
+  pool). Short chains occur naturally in the mix; no separate staged
+  curriculum.
 - **Sleeps**: placed at randomly chosen *between-episode* boundaries so a
   wake spans 1–4 episodes; placement is unpredictable (no fixed cadence the
   model could cram against). Additionally ~20% of long conversations get one
