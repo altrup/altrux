@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 scripts/.env
 .watchdog-delay
+.watchdog-terminate
 notes/

@@ -17,6 +17,14 @@ deliberately, when you check in on your work, at least every 25 minutes. If
 you're done (fixed and training restarted, or concluded it's unfixable),
 stop touching it.
 
+When the run is definitively OVER (training finished, or you've concluded
+it's unfixable), run `touch scripts/.watchdog-terminate` — the watchdog's
+next probe (within ~1 min) then terminates immediately instead of billing
+out the remaining idle window. Its terminate path does a final pull of
+logs/checkpoints/notes first, so anything already written to disk survives;
+code fixes survive only via git push. This is irreversible, so it is the
+LAST thing you do: final notes written, commits pushed, then touch it.
+
 PERSISTENCE: everything on this instance is DESTROYED at termination. Two
 things survive: what you git push, and what your teammate's local machine
 rsyncs down via scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/,
@@ -61,11 +69,10 @@ IF TRAINING CRASHES:
 2. Clean fix -> apply, commit, push, `make resume`.
 3. Same failure twice after a fix attempt, or you're guessing: stop. Write
    everything you learned to notes/WATCH_NOTES.md, push any commits, verify
-   the latest checkpoint is intact, touch the delay file one final time (so
-   the rsync pull has a full window to collect what you wrote), then go
-   silent and let the watchdog terminate the instance. An unsolved bug at
-   3am is a problem for the team tomorrow, not a reason to bill more hours
-   tonight.
+   the latest checkpoint is intact, then `touch scripts/.watchdog-terminate`
+   — the watchdog does a final pull of what you wrote and terminates within
+   a minute. An unsolved bug at 3am is a problem for the team tomorrow, not
+   a reason to bill more hours tonight.
 
 THERE IS NO LAMBDA API KEY ON THIS INSTANCE — termination is controlled
 entirely from your teammate's machine, and this instance holds no credentials

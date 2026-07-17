@@ -31,6 +31,18 @@
 # back indefinitely only by touching again every <timeout seconds, never
 # paused outright.
 #
+# The inverse also exists: touching the terminate file on the instance
+#
+#   touch ~/altrux/scripts/.watchdog-terminate
+#
+# makes the next probe terminate immediately (with the usual final pulls)
+# instead of waiting out --timeout -- how a session on the instance, which
+# holds no API key, says "this run is over, stop billing now". Only touches
+# made after this watchdog's first successful probe count: a stale file
+# left over from a previous run (or restored by a repo sync) must not kill
+# a healthy run at startup. Requesting termination is the one instance->API
+# direction that's safe to allow -- it can only stop billing, never extend it.
+#
 # If the instance stops answering ssh while the API still reports it
 # active, it terminates after --unreachable-timeout seconds anyway -- an
 # instance that can't be reached can't be trained on, and shouldn't bill.
@@ -107,11 +119,13 @@ echo "Watching instance $instance_id at $instance_ip (pattern: '$pattern', timeo
 # contains the (bracketed) pattern text.
 neutralized="$(printf '%s' "$pattern" | sed 's/^\([^[\\^.$]\)/[\1]/')"
 
-# One round trip per probe: remote epoch, training yes/no, delay-file mtime.
+# One round trip per probe: remote epoch, training yes/no, delay-file
+# mtime, terminate-file mtime.
 probe_snippet="
   date +%s
   pgrep -f '$neutralized' >/dev/null && echo 1 || echo 0
   stat -c %Y '$remote_repo/scripts/.watchdog-delay' 2>/dev/null || echo 0
+  stat -c %Y '$remote_repo/scripts/.watchdog-terminate' 2>/dev/null || echo 0
 "
 
 SSH_CMD=(ssh -o ConnectTimeout=10 -o BatchMode=yes "${ssh_user}@${instance_ip}")
@@ -158,12 +172,17 @@ instance_still_active() {
 }
 
 last_active=""      # in REMOTE clock terms; set by the first successful probe (grace window)
+watch_start=""      # remote epoch of the first successful probe; older terminate touches are stale
 unreachable_since=""
 
 while true; do
   if output="$("${SSH_CMD[@]}" "$probe_snippet" 2>/dev/null)"; then
     unreachable_since=""
-    { read -r remote_now; read -r training; read -r delay_mtime; } <<< "$output"
+    { read -r remote_now; read -r training; read -r delay_mtime; read -r terminate_mtime; } <<< "$output"
+    watch_start="${watch_start:-$remote_now}"
+    if (( terminate_mtime >= watch_start )); then
+      terminate "termination requested via .watchdog-terminate (touched $(( remote_now - terminate_mtime ))s ago)"
+    fi
     if [[ -z "$last_active" || "$training" == "1" ]]; then
       last_active="$remote_now"
     fi

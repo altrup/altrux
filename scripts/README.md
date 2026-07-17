@@ -144,6 +144,20 @@ dry-runs the countdown without a real terminate. This is a guardrail against
 a forgotten idle instance, not a security boundary: anything on the instance
 could also just kill the watchdog process.
 
+The inverse also exists — touching the terminate file **on the instance**:
+
+```bash
+touch ~/altrux/scripts/.watchdog-terminate
+```
+
+makes the next probe terminate immediately (with the usual final pulls)
+instead of waiting out `--timeout`. It's how a session on the instance, which
+holds no API key, says "this run is over, stop billing now" — requesting
+termination can only *stop* billing, so it's the one instance-side control
+that's safe to grant. Only touches made after the watchdog's first successful
+probe count; a stale file left over from a previous run can't kill a healthy
+run at startup.
+
 The instance is found via the API (expects exactly one active instance);
 set `LAMBDA_INSTANCE_ID`/`LAMBDA_INSTANCE_IP` in `scripts/.env` to target
 one explicitly. `--terminate-cmd "echo boom"` dry-runs the countdown.
