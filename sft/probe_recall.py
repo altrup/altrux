@@ -147,9 +147,12 @@ def clone_state(mmod, state):
     )
 
 
-def run_chunks(model, ids: torch.Tensor, state, label: str):
+def run_chunks(model, ids: torch.Tensor, state, label: str, keep_logits: bool = True):
     """Forward `ids` in CHUNK_LEN chunks, threading and detaching state.
-    Returns (all_logits, final_state); prints live progress."""
+    Returns (all_logits, final_state); prints live progress. Pass
+    keep_logits=False when only the final state matters (the prefix pass):
+    accumulated full-vocab logits for a long prefix at many probes are
+    several GB and have OOMed a real run."""
     logits_parts = []
     n_chunks = (ids.shape[1] + CHUNK_LEN - 1) // CHUNK_LEN
     for ci in range(n_chunks):
@@ -159,9 +162,12 @@ def run_chunks(model, ids: torch.Tensor, state, label: str):
             chunk = torch.cat([chunk, pad], dim=1)
         logits, state = model(chunk, state=state)
         state = state.detach()
-        logits_parts.append(logits.detach())
+        if keep_logits:
+            logits_parts.append(logits.detach())
         print(f"\r  {label}: chunk {ci + 1}/{n_chunks}", end="", flush=True)
     print()
+    if not keep_logits:
+        return None, state
     return torch.cat(logits_parts, dim=1)[:, : ids.shape[1]], state
 
 
@@ -231,7 +237,7 @@ def main() -> None:
                 prefix, query, target = prefix.to(device), query.to(device), target.to(device)
                 print(f"{tag}: prefix {prefix.shape[1]} tokens ({n_facts} facts + {gap} filler), {args.n_probes} probes")
 
-                _, state = run_chunks(model, prefix, None, f"{tag} prefix")
+                _, state = run_chunks(model, prefix, None, f"{tag} prefix", keep_logits=False)
                 intact = score_targets(model, query, target, clone_state(mmod, state), f"{tag} intact")
 
                 abl_state = clone_state(mmod, state)
