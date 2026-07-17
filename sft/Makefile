@@ -1,7 +1,7 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
-.PHONY: sync data data-memory prepare train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory prepare prepare-interference prepare-chains probe-recall train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -96,6 +96,14 @@ detect-anomaly:
 prepare-interference:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u prepare_interference.py $(ARGS)
+
+# Episodic-chain training data (data/train.pt + data/train_memory.pt ->
+# data/train_chains.pt): concatenated episodes with sleep_positions,
+# fact blocks, and queries at three distances -- see
+# docs/superpowers/specs/2026-07-17-episodic-chains-design.md.
+prepare-chains:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u prepare_chains.py $(ARGS)
 
 # Long-gap recall probe against the latest checkpoint: states a random code,
 # runs thousands of filler tokens, queries it back, and compares the code's
