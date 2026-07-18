@@ -18,6 +18,17 @@ A clearly positive (intact - ablated) at long gaps means the memory recalls;
 ~0 means it is currently non-functional for recall. Codes are random digit
 strings, so the floor is ~uniform and any prior leakage is visible.
 
+--sleep adds two cross-sleep conditions per combo: after the full prefix
+(facts + gap), the backbone state is wiped via Model.sleep_slot -- the
+training regime's sleep -- and the query runs in the fresh wake:
+
+  sleep-intact  -- backbone wiped, neural memory kept. Recall here can only
+                   flow through the memory; this is the direct measure of
+                   the episodic tier working.
+  sleep-ablated -- backbone wiped AND memory replaced fresh. Should sit at
+                   the floor; if it doesn't, something other than SSM state
+                   or the memory is leaking the answer.
+
 --n-facts sweeps interference: each conversation states that many labeled
 codes ("The code for river is 4 8 2 1 3.") and queries one label at random.
 One salient fact sits comfortably in Mamba's SSM state, so the memory only
@@ -189,6 +200,7 @@ def main() -> None:
     parser.add_argument("--gaps", default="1024", help="Comma-separated filler lengths in tokens")
     parser.add_argument("--n-facts", default="64,128", help="Comma-separated fact counts per conversation (interference sweep)")
     parser.add_argument("--n-probes", type=int, default=8, help="Probe conversations per gap (batched together)")
+    parser.add_argument("--sleep", action="store_true", help="Also score the cross-sleep conditions (backbone wiped after the prefix, memory kept vs replaced) -- see the module docstring")
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
@@ -240,8 +252,8 @@ def main() -> None:
                 _, state = run_chunks(model, prefix, None, f"{tag} prefix", keep_logits=False)
                 intact = score_targets(model, query, target, clone_state(mmod, state), f"{tag} intact")
 
-                abl_state = clone_state(mmod, state)
                 mem_dtype = model.front_end.q_proj.weight.dtype
+                abl_state = clone_state(mmod, state)
                 abl_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
                 abl_state.last_o_t.zero_()
                 abl_state.last_surprise.zero_()
@@ -249,17 +261,51 @@ def main() -> None:
 
                 floor = score_targets(model, query, target, None, f"{tag} floor")
 
+                sleep_scores = {}
+                if args.sleep:
+                    slept = clone_state(mmod, state)
+                    for b in range(args.n_probes):
+                        model.sleep_slot(slept, b)
+                    sleep_scores["sleep-intact"] = score_targets(
+                        model, query, target, slept, f"{tag} sleep-intact"
+                    )
+                    slept_abl = clone_state(mmod, state)
+                    for b in range(args.n_probes):
+                        model.sleep_slot(slept_abl, b)
+                    slept_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+                    sleep_scores["sleep-ablated"] = score_targets(
+                        model, query, target, slept_abl, f"{tag} sleep-ablated"
+                    )
+
                 diff = intact - ablated
-                results.append((gap, n_facts, intact, ablated, floor, diff))
-                print(
+                results.append((gap, n_facts, intact, ablated, floor, diff, sleep_scores))
+                line = (
                     f"{tag}: intact {intact.mean():.3f}  ablated {ablated.mean():.3f}"
                     f"  floor {floor.mean():.3f}  memory-delta {diff.mean():.3f} (±{diff.std():.3f})"
                 )
+                if sleep_scores:
+                    s_diff = sleep_scores["sleep-intact"] - sleep_scores["sleep-ablated"]
+                    line += (
+                        f"  sleep-intact {sleep_scores['sleep-intact'].mean():.3f}"
+                        f"  sleep-ablated {sleep_scores['sleep-ablated'].mean():.3f}"
+                        f"  sleep-delta {s_diff.mean():.3f} (±{s_diff.std():.3f})"
+                    )
+                print(line)
 
     print("\nsummary (mean log-prob per code token; higher = better recall):")
-    print(f"{'gap':>8} {'facts':>6} {'intact':>8} {'ablated':>8} {'floor':>8} {'mem-delta':>10}")
-    for gap, n_facts, intact, ablated, floor, diff in results:
-        print(f"{gap:>8} {n_facts:>6} {intact.mean():>8.3f} {ablated.mean():>8.3f} {floor.mean():>8.3f} {diff.mean():>10.3f}")
+    header = f"{'gap':>8} {'facts':>6} {'intact':>8} {'ablated':>8} {'floor':>8} {'mem-delta':>10}"
+    if args.sleep:
+        header += f" {'slp-int':>8} {'slp-abl':>8} {'slp-delta':>10}"
+    print(header)
+    for gap, n_facts, intact, ablated, floor, diff, sleep_scores in results:
+        row = f"{gap:>8} {n_facts:>6} {intact.mean():>8.3f} {ablated.mean():>8.3f} {floor.mean():>8.3f} {diff.mean():>10.3f}"
+        if sleep_scores:
+            s_diff = sleep_scores["sleep-intact"] - sleep_scores["sleep-ablated"]
+            row += (
+                f" {sleep_scores['sleep-intact'].mean():>8.3f}"
+                f" {sleep_scores['sleep-ablated'].mean():>8.3f} {s_diff.mean():>10.3f}"
+            )
+        print(row)
 
 
 if __name__ == "__main__":
