@@ -29,6 +29,19 @@ question FIRST" item). Design agreed in the team discussion:
   backbone, then teacher-force the **actual continuation** (~1–2k tokens) and
   score mean per-token log-prob, memory intact vs ablated. No labels or
   summaries needed — the text's own continuation is the ground truth.
+- **The wipe MUST land mid-conversation of one continuous text** — chains
+  place most sleeps at between-EPISODE boundaries, and episodes are
+  independent conversations, so a boundary-sleep continuation carries ~zero
+  information about the pre-sleep text: nothing to measure, by construction.
+  (The chains design's ~20% mid-conversation between-turn sleeps are the
+  right shape; the eval should use long continuous conversations/documents
+  and place the wipe at a between-turn point.)
+- **Distance-grade it**: vary the wipe depth / check whether the delta
+  survives when the continuation depends on EARLY pre-sleep content, not just
+  the final turns before the wipe. This distinguishes "`M` holds episodic
+  gist" from "`M` is a last-few-turns buffer" — the latter is still a real
+  only-`M` contribution (SSM wiped, prior can't know this text) but is the
+  bottom rung, and we want to see whether it plateaus there.
 - Metric: intact − ablated mean log-prob over post-sleep continuation tokens
   (equivalently a perplexity delta). Any retained signal — topic, entities,
   style, facts — shows up; it is the most permissive detector of "`M` stored
@@ -56,12 +69,25 @@ Decision rule:
 Shift training gradient from the task `M` demonstrably loses (verbatim codes,
 `--recall-weight 8`) toward the task it can win (cross-sleep natural
 continuation, which the parametric prior cannot fully absorb — the specifics
-of *this* chain exist only in `M`). The machinery mostly exists already:
-`--head-weight` applies after each sleep, and 702 chains carry pure
-natural-continuation signal. Candidate change: drop `--recall-weight` to ~1
-(or regenerate without engineered queries), keep/raise post-sleep
-head-weighting. Then track the GIST delta (not the exact-code delta) across
-checkpoints as the success criterion.
+of *this* chain exist only in `M`). Two parts, both needed:
+
+- Neutralize/remove the engineered exact-code queries (`--recall-weight 1`,
+  or regenerate without them).
+- **Raise the mid-conversation sleep fraction well above the current ~20%**
+  (a `prepare_chains.py` change): between-EPISODE sleeps carry no natural
+  cross-sleep signal (independent episodes), so dropping the queries without
+  moving sleeps into conversations would leave almost no cross-sleep gradient
+  at all. Keep `--head-weight` on post-sleep tokens.
+
+Known risk, accepted: the gradient will first teach `M` to carry the most
+RECENT pre-sleep context (recency dominates continuation prediction). That is
+still an only-`M` contribution (SSM wiped, prior can't know the text) — the
+bottom rung, fine as a start. Watch the distance-graded eval for plateauing
+at short range; if it plateaus, that's when long-range gist-shaped engineered
+demands (not verbatim codes) earn their way back.
+
+Track the GIST delta (not the exact-code delta) across checkpoints as the
+success criterion.
 
 ## Explicitly considered and rejected
 
