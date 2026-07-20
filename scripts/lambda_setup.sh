@@ -113,6 +113,34 @@ else
   curl -fsSL https://claude.ai/install.sh | bash
 fi
 
+# Pre-answer claude's interactive first-run prompts (onboarding/theme, the
+# per-folder trust dialog, the --dangerously-skip-permissions confirm) — the
+# auto-started experimenter session would otherwise sit blocked on them until
+# a human attaches. Also wire in the status line if lambda_launch.sh uploaded
+# one (it ships statusline.sh but deliberately not settings.json).
+[[ -f "$HOME/.claude/statusline.sh" ]] && ! command -v jq >/dev/null \
+  && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq
+REPO_DIR="$REPO_DIR" python3 - <<'EOF'
+import json, os, pathlib
+home = pathlib.Path.home()
+
+p = home / ".claude/settings.json"
+s = json.loads(p.read_text()) if p.exists() else {}
+s.setdefault("theme", "dark")
+s["skipDangerousModePermissionPrompt"] = True
+if (home / ".claude/statusline.sh").exists():
+    s["statusLine"] = {"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 1}
+p.parent.mkdir(exist_ok=True)
+p.write_text(json.dumps(s, indent=2) + "\n")
+
+cj = home / ".claude.json"
+d = json.loads(cj.read_text()) if cj.exists() else {}
+d["hasCompletedOnboarding"] = True
+d.setdefault("projects", {}).setdefault(os.environ["REPO_DIR"], {})["hasTrustDialogAccepted"] = True
+cj.write_text(json.dumps(d, indent=2) + "\n")
+EOF
+echo "first-run prompts pre-answered (onboarding, trust, skip-permissions confirm)"
+
 EXP_PROMPT="/experimenter You were started automatically by the setup script on a freshly provisioned instance. Your human teammates set this up and may be AFK, so operate autonomously within the brief and the watchdog cost controls: read the prior notes, then start training in the train session and monitor it."
 
 step "Start the 'experimenter' tmux session"
@@ -123,7 +151,12 @@ elif tmux has-session -t experimenter 2>/dev/null; then
   echo "session 'experimenter' already exists — leaving it as-is"
   auto=0
 elif [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && command -v claude >/dev/null 2>&1; then
+  # tmux panes are children of the tmux server, not of this script — they
+  # inherit neither the exported token nor ~/.local/bin on PATH (and Ubuntu's
+  # .bashrc exits before the appended exports in non-interactive shells), so
+  # pass both into the session explicitly.
   tmux new-session -d -s experimenter -c "$REPO_DIR" \
+    -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" -e PATH="$PATH" \
     "claude --dangerously-skip-permissions '$EXP_PROMPT'"
   echo "auto-started claude /experimenter (CLAUDE_CODE_OAUTH_TOKEN present)"
   auto=1

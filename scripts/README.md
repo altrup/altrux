@@ -23,9 +23,11 @@ it bounds what a *hard* crash loses, where no graceful terminate ever happens.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
-on it (clone, `make sync`, data prep, install the Claude Code CLI). Then ssh
-in, run `claude` to authenticate, start training (`cd sft && make resume`),
-and monitor with a Claude Code session started with `/experimenter`. No
+on it (clone, `make sync`, data prep, install the Claude Code CLI). Launch also
+uploads your global Claude config (`~/.claude/` CLAUDE.md, status line, skills —
+not settings.json, credentials, or history) so the instance session behaves
+like your local one; setup wires the status line into the instance's settings. With `CLAUDE_CODE_OAUTH_TOKEN` set the `/experimenter` session starts
+itself; otherwise ssh in, run `claude` to authenticate, and start it. No
 watchdog, no terminate chain, no API key on the instance.
 
 ## `lambda_launch.sh`

@@ -215,6 +215,20 @@ if [[ -n "${LAMBDA_RESUME_CHECKPOINT:-}" ]]; then
   scp -r "${SSH_OPTS[@]}" "$LAMBDA_RESUME_CHECKPOINT" "$SSH_USER@$ip:resume-staging/"
 fi
 
+# Global Claude config, so the instance's claude behaves like the local one
+# (global CLAUDE.md, status line, skills). settings.json deliberately stays
+# local: its deny rules (git push) would block the experimenter, and setup
+# merges the statusLine entry into the instance's own settings instead.
+# Credentials travel separately via CLAUDE_CODE_OAUTH_TOKEN.
+claude_files=()
+for f in CLAUDE.md statusline.sh keybindings.json skills commands agents; do
+  [[ -e "$HOME/.claude/$f" ]] && claude_files+=(".claude/$f")
+done
+if (( ${#claude_files[@]} )); then
+  echo "Uploading global Claude config (${claude_files[*]#.claude/})..."
+  tar -C "$HOME" -czf - "${claude_files[@]}" | ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "tar -xzf - -C ~"
+fi
+
 echo "Uploading setup + config..."
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SSH_USER@$ip:lambda_setup.sh"
 
