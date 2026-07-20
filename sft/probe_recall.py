@@ -203,6 +203,7 @@ def main() -> None:
     parser.add_argument("--sleep", action="store_true", help="Also score the cross-sleep conditions (backbone wiped after the prefix, memory kept vs replaced) -- see the module docstring")
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
+    parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
     args = parser.parse_args()
 
     import models.mamba2_2_7b_memory as model_mod
@@ -223,9 +224,11 @@ def main() -> None:
     mmod._NeuralMemory.write = _write_no_graph
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = latest_checkpoint()
+    ckpt = Path(args.checkpoint) if args.checkpoint else latest_checkpoint()
     if ckpt is None:
         raise SystemExit("no checkpoint found")
+    if not ckpt.is_dir():
+        raise SystemExit(f"not a checkpoint dir: {ckpt}")
     print(f"probing checkpoint: {ckpt}")
 
     import json

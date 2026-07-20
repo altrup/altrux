@@ -53,7 +53,15 @@ question FIRST" item). Design agreed in the team discussion:
   (baseline, exact-recall delta +0.4), 256/295 (collapsed), 332 (transient
   recovery), 396, 435 (freeze-lora). The trajectory of the *gist* delta
   across these is the payoff — does it track the exact-code delta, or was
-  gist intact all along?
+  gist intact all along? Sweep with `probe_recall.py --checkpoint <step dir>`.
+- **If training later resumes from a NON-latest checkpoint** (e.g. step-180
+  because it has the best gist delta): do NOT try to point resume at it while
+  newer step dirs sit in the same epoch dir — `mv` the newer step dirs into
+  e.g. `checkpoints/archive-<date>/` first (outside the `epoch-*` pattern, so
+  they're ignored but kept probe-able), then plain `make resume` picks it up
+  as latest. Otherwise new saves interleave with the stale higher-numbered
+  dirs: the old lineage gets silently overwritten step by step, and rotation
+  prunes fresh low-numbered saves while keeping stale high-numbered ones.
 
 Before the full sweep (the eval mode is NEW code — validate it first):
 - Sanity-check the implementation against this design: wipe lands
