@@ -37,7 +37,10 @@ git, watchdog touches.
 
 Read the prior `notes/EXPERIMENT_NOTES-*.md` files — they carry what earlier
 runs on this model found (root causes, tuned knobs, open questions), so you
-don't rediscover them or repeat a known-bad change. Then open a fresh notes
+don't rediscover them or repeat a known-bad change. Also read any
+`notes/DISCUSSION-*.md` files — standing direction from between-run team
+discussions (what to try next and why, what's been considered and rejected);
+where they conflict with older run notes, the discussion notes win. Then open a fresh notes
 file for THIS run, named with the current UTC time —
 `notes/EXPERIMENT_NOTES-$(date -u +%Y%m%d-%H%M%S).md` — and write to it as you
 go (see PERSISTENCE). One file per run; never append to a past run's file.
