@@ -236,9 +236,12 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SSH_USER@$ip:lambda_setup.s
 # tokens don't land in the instance's process list. Removed after setup reads it.
 env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
+GIT_USER_NAME="$(git config user.name 2>/dev/null || true)"
+GIT_USER_EMAIL="$(git config user.email 2>/dev/null || true)"
 for v in LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF LAMBDA_MODEL_NAME \
          LAMBDA_SETUP_DATA_CMD LAMBDA_SETUP_DATA_MARKER LAMBDA_RESUME_EPOCH \
-         GITHUB_TOKEN HF_TOKEN CLAUDE_CODE_OAUTH_TOKEN TORCH_BACKEND MAX_JOBS; do
+         GITHUB_TOKEN HF_TOKEN CLAUDE_CODE_OAUTH_TOKEN TORCH_BACKEND MAX_JOBS \
+         GIT_USER_NAME GIT_USER_EMAIL; do
   [[ -n "${!v:-}" ]] && printf 'export %s=%q\n' "$v" "${!v}" >> "$env_file"
 done
 scp "${SSH_OPTS[@]}" "$env_file" "$SSH_USER@$ip:lambda_setup.env"

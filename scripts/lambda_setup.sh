@@ -45,6 +45,10 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   git config --global \
     url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 fi
+# Forwarded by lambda_launch.sh from the local machine's git config, so
+# commits made on the instance carry the same identity.
+[[ -n "${GIT_USER_NAME:-}" ]] && git config --global user.name "$GIT_USER_NAME"
+[[ -n "${GIT_USER_EMAIL:-}" ]] && git config --global user.email "$GIT_USER_EMAIL"
 if [[ -n "${HF_TOKEN:-}" ]]; then
   export HF_TOKEN
   grep -q '^export HF_TOKEN=' "$HOME/.bashrc" 2>/dev/null \
