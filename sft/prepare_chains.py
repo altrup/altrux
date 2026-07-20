@@ -207,7 +207,16 @@ def build_chains(
                         by_dist["within_episode"].append(b)
                     else:
                         by_dist["cross_episode"].append(b)
-                dist = rng.choice([d for d, bs in by_dist.items() if bs])
+                # Only cross_sleep queries actually require the neural memory
+                # (a sleep wipes the SSM between the fact and the query); the
+                # other two distances are SSM-answerable within the wake. With
+                # uniform selection the memory-requiring signal is only ~1/3 of
+                # the queries, so --cross-sleep-bias biases toward it when the
+                # query has a cross_sleep option (0.0 = uniform, backward-compat).
+                if by_dist["cross_sleep"] and rng.random() < args.cross_sleep_bias:
+                    dist = "cross_sleep"
+                else:
+                    dist = rng.choice([d for d, bs in by_dist.items() if bs])
                 dist_counts[dist] += 1
                 q, a, _ = f["templates"]
                 final_v = f["v2"] if f["v2"] is not None else f["v"]
@@ -303,6 +312,8 @@ def main() -> None:
     parser.add_argument("--min-queries", type=int, default=3)
     parser.add_argument("--max-queries", type=int, default=8)
     parser.add_argument("--revise-rate", type=float, default=0.12, help="Fraction of facts later revised to a new value")
+    parser.add_argument("--cross-sleep-bias", type=float, default=0.0,
+                        help="Probability of forcing a query to cross_sleep distance when that option exists (0.0 = uniform over available distances; only cross_sleep queries require the neural memory)")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
 
