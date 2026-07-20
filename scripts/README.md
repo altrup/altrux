@@ -21,10 +21,102 @@ That's the whole local side — the watchdog does a final pull (including
 run by hand at the end. The `--follow` loop is still worth running alongside:
 it bounds what a *hard* crash loses, where no graceful terminate ever happens.
 
-On the **instance**: clone the repo, `make sync`, verify a trivial `git push`
-works, prepare data, then start training (`cd sft && make resume`) —
-monitored by a Claude Code session started with `/experimenter`. No
+To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
+machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
+on it (clone, `make sync`, data prep, install the Claude Code CLI). Then ssh
+in, run `claude` to authenticate, start training (`cd sft && make resume`),
+and monitor with a Claude Code session started with `/experimenter`. No
 watchdog, no terminate chain, no API key on the instance.
+
+## `lambda_launch.sh`
+
+Provisions a Lambda Cloud GPU instance and hands it off to `lambda_setup.sh`.
+Runs on the **local** machine (it needs `LAMBDA_API_KEY`, which by design
+never lives on the instance). Set `LAMBDA_INSTANCE_TYPE` and
+`LAMBDA_SSH_KEY_NAME` in `scripts/.env` (region auto-picks an available one if
+`LAMBDA_REGION` is unset), then:
+
+```bash
+./scripts/lambda_launch.sh            # launch + configure end to end
+./scripts/lambda_launch.sh --dry-run  # resolve region + print payload only
+./scripts/lambda_launch.sh --no-setup # launch + wait for ssh, skip setup
+./scripts/lambda_launch.sh --no-watch # don't auto-start the local watchdog/pull
+```
+
+If the instance type is sold out, launch **polls** every
+`LAMBDA_CAPACITY_POLL_INTERVAL` seconds (default 60) until capacity frees up —
+`LAMBDA_CAPACITY_MAX_WAIT` (default 0 = forever) caps the wait. A 60s poll is
+well within normal API use (the watchdog polls at the same rate all run long).
+
+Unless `--no-watch` is passed, launch also starts the **local billing-protection
+stack** in a tmux session `altrux-watch`: `lambda_pull.sh --follow` plus
+`lambda_watchdog.sh --arm-after-training`, both targeting the instance it just
+launched. So you don't have to remember to start them by hand — the box is
+protected from the moment it's up. `--arm-after-training` keeps the watchdog
+from terminating the box during the minutes-long setup/data-gen before
+`train.py` exists (see below).
+
+Set `LAMBDA_RESUME_CHECKPOINT` to a local checkpoint step dir (e.g.
+`../models/mamba2_2_7b_memory/checkpoints/epoch-1/step-168`) to warm-start from
+it — launch scp's it up to a staging dir and setup drops it into
+`models/<model>/checkpoints/<epoch>/` so `make resume` finds it. Checkpoints
+are gitignored and too big for GitHub (a single `optimizer.pt` exceeds the
+100MB file limit), so this direct copy is the only sane transfer. Unset →
+training starts fresh.
+
+It waits for the instance to boot and accept ssh, then runs `lambda_setup.sh`
+inside a tmux session named `train` and attaches you to it live — so setup
+survives a dropped connection and leaves you in a persistent shell on the box.
+Setup also creates a second session, `experimenter`. **Training runs in
+`train`; the Claude Code `/experimenter` session runs in `experimenter` and
+drives training in `train` via `tmux send-keys`** — so the run survives the
+monitoring session ending, and monitoring never blocks on the run. Reattach to
+either with `ssh … -t tmux attach -t <train|experimenter>`. The result is a box
+that only needs `claude` auth and `/experimenter` to start. Region selection uses `regions_with_capacity_available` from the API,
+so a launch fails fast with a clear message when there's no capacity rather
+than erroring mid-launch.
+
+Config (`GITHUB_TOKEN`, `HF_TOKEN`, `TORCH_BACKEND`, `MAX_JOBS`, and the
+`LAMBDA_REPO_*` / `LAMBDA_SETUP_*` overrides) is forwarded to the instance via a
+temporary env file, not the command line, so tokens don't appear in its process
+list. `TORCH_BACKEND=cu128` is needed on GH200, where uv's `auto` backend
+guesses the wrong torch wheel.
+
+## `lambda_setup.sh`
+
+Configures a freshly-launched instance: install `uv` if absent, wire up
+`GITHUB_TOKEN` / `HF_TOKEN` if provided, clone-or-pull the repo at `~/altrux`,
+write `sft/.env` (`MODEL_NAME=mamba2_2_7b_memory` — it's gitignored, so a clone
+has none), `make sync` (and verify torch sees a CUDA GPU), run data prep
+(default `make data data-memory prepare-chains` → `train_chains.pt`, skipped if
+it already exists), verify `git push` auth, and install the Claude Code CLI.
+Runs **on the instance** — either invoked automatically by `lambda_launch.sh`,
+or by hand after ssh-ing in:
+
+```bash
+ssh ubuntu@<ip> 'bash lambda_setup.sh'   # after scp-ing it up
+```
+
+Idempotent, so a half-failed run is just re-run. Config is via `LAMBDA_REPO_*`
+/ `LAMBDA_SETUP_*` env vars (see `scripts/.env.example`).
+
+**Experimenter startup** depends on `CLAUDE_CODE_OAUTH_TOKEN`:
+
+- **Set** (generate with `claude setup-token` on a logged-in machine — works on
+  a Pro/Max subscription): setup auto-starts an autonomous Claude Code
+  `/experimenter` session in the `experimenter` tmux, with a preamble noting the
+  teammates may be AFK. It reads past notes, starts training, and monitors.
+  Runs with `--dangerously-skip-permissions` (no human to approve tool calls);
+  the watchdog bounds cost, the brief bounds behaviour.
+- **Unset**: the `experimenter` session is created empty — attach, run `claude`,
+  authenticate interactively, and invoke `/experimenter` by hand. No long-lived
+  credential on the box.
+
+Caveat: an interactive `claude` session runs its first turn then waits — the
+auto-start *bootstraps* the run (notes → training → first health check)
+unattended, but continuous hours-long monitoring still needs the session
+driven (a human attaching, or a self-scheduling loop). `claude -p` is not used
+because it exits after one turn.
 
 ## `lambda_terminate.sh`
 
@@ -103,8 +195,14 @@ forgotten instance still dies within half an hour). Keeping it local means
 the Lambda API key never exists on the instance at all — nothing running
 there (including an autonomous monitoring session) holds credentials to
 launch, resize, or terminate instances. The tradeoff: this machine must stay
-awake and online for the whole run, or nothing stops the billing. Run it
-alongside the pull loop:
+awake and online for the whole run, or nothing stops the billing.
+
+`--arm-after-training` holds the idle countdown until `train.py` is first seen
+(bounded by `--arm-cap` minutes, default 120, 0 = forever), so the watchdog can
+be started *before* training exists — during a long setup/data-gen — without
+terminating the box prematurely. `lambda_launch.sh` uses this when it
+auto-starts the watchdog; a plain manual `lambda_watchdog.sh` alongside an
+already-training run doesn't need it. Run it alongside the pull loop:
 
 ```bash
 ./scripts/lambda_watchdog.sh &

@@ -78,6 +78,8 @@ pull=1
 pull_timeout=900
 mem_state=1
 mem_state_timeout=3600
+arm_after_training=0
+arm_cap=120
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout="$2"; shift 2 ;;
@@ -88,6 +90,12 @@ while [[ $# -gt 0 ]]; do
     --pull-timeout) pull_timeout="$2"; shift 2 ;;
     --no-mem-state) mem_state=0; shift ;;
     --mem-state-timeout) mem_state_timeout="$2"; shift 2 ;;
+    # Wait for --pattern to appear once before starting the idle countdown, so
+    # arming the watchdog during a long setup (before training exists) can't
+    # terminate the box. --arm-cap minutes bounds the wait (0 = forever) so a
+    # setup that never starts training is still cleaned up.
+    --arm-after-training) arm_after_training=1; shift ;;
+    --arm-cap) arm_cap="$2"; shift 2 ;;
     # Override what runs on timeout -- e.g. `--terminate-cmd "echo boom"`
     # to dry-run the countdown without a real terminate.
     --terminate-cmd) terminate_cmd="$2"; shift 2 ;;
@@ -190,6 +198,23 @@ instance_still_active() {
 last_active=""      # in REMOTE clock terms; set by the first successful probe (grace window)
 watch_start=""      # remote epoch of the first successful probe; older terminate touches are stale
 unreachable_since=""
+
+if [[ "$arm_after_training" -eq 1 ]]; then
+  echo "watchdog: waiting for '$pattern' to start before arming the idle countdown (cap: ${arm_cap}min, 0=forever)"
+  arm_deadline=$(( $(date +%s) + arm_cap * 60 ))
+  while true; do
+    if timeout "$interval" "${SSH_CMD[@]}" "pgrep -f '$neutralized' >/dev/null" 2>/dev/null; then
+      echo "watchdog: '$pattern' detected — arming"
+      break
+    fi
+    if (( arm_cap > 0 && $(date +%s) >= arm_deadline )); then
+      echo "watchdog: '$pattern' never started within ${arm_cap}min — arming anyway (a failed setup will now be cleaned up)"
+      break
+    fi
+    echo "watchdog: [$(date +%H:%M:%S)] no '$pattern' yet — waiting ${interval}s (setup/data-gen in progress)"
+    sleep "$interval"
+  done
+fi
 
 while true; do
   # The timeout wrap is the hard staleness bound: a probe that somehow
