@@ -1,16 +1,25 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
 
+# uv's torch backend for `sync`. `auto` detects the local accelerator, which
+# works on the ROCm dev box but NOT on every CUDA host (e.g. GH200/aarch64
+# needs an explicit wheel) -- override per machine, e.g. TORCH_BACKEND=cu128.
+TORCH_BACKEND ?= auto
+# Parallel compile jobs for the from-source builds (mamba-ssm, causal-conv1d).
+# Defaults to all cores; each nvcc/hipcc job is RAM-heavy, so cap it on a
+# low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
+MAX_JOBS ?= $(shell nproc)
+
 .PHONY: sync data data-memory prepare prepare-interference prepare-chains probe-recall train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
-	UV_TORCH_BACKEND=auto uv pip install torch --reinstall
+	UV_TORCH_BACKEND=$(TORCH_BACKEND) uv pip install torch --reinstall
 	uv pip install wheel
-	MAX_JOBS=12 uv pip install mamba-ssm --no-build-isolation
+	MAX_JOBS=$(MAX_JOBS) uv pip install mamba-ssm --no-build-isolation
 	@if uv run --no-sync python -c "import torch, sys; sys.exit(0 if (torch.cuda.is_available() and torch.version.hip is None) else 1)"; then \
 		echo "CUDA (non-ROCm) GPU detected -- installing causal-conv1d for the fused kernel path"; \
-		MAX_JOBS=12 uv pip install causal-conv1d --no-build-isolation; \
+		MAX_JOBS=$(MAX_JOBS) uv pip install causal-conv1d --no-build-isolation; \
 	else \
 		echo "No CUDA (non-ROCm) GPU detected -- skipping causal-conv1d (broken on this project's ROCm gfx1102 dev box, see root CLAUDE.md); models fall back to the manual per-token loop"; \
 	fi

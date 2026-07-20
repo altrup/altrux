@@ -12,6 +12,15 @@ make sync
 
 Installs torch (ROCm/CUDA auto-detected) plus `causal-conv1d` and `mamba-ssm` from source.
 
+Two overrides for machines where the defaults don't fit:
+
+- `TORCH_BACKEND` (default `auto`) — uv's torch wheel selector. `auto` works on
+  the ROCm dev box but guesses wrong on some CUDA hosts; GH200 needs
+  `make sync TORCH_BACKEND=cu128`.
+- `MAX_JOBS` (default: all cores) — parallel compile jobs for the from-source
+  builds. Each job is RAM-heavy; cap it (`make sync MAX_JOBS=12`) if the
+  compile OOMs on a low-memory box.
+
 ## Data
 
 The default dataset is [`HuggingFaceH4/ultrachat_200k`](https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k) — the same dataset used by the original mamba-chat fine-tunes. Download and tokenize 20k examples with:
