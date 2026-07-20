@@ -65,6 +65,13 @@ if [[ -n "${LAMBDA_RESUME_CHECKPOINT:-}" && "$LAMBDA_RESUME_CHECKPOINT" != /* ]]
   LAMBDA_RESUME_CHECKPOINT="$(cd "$SCRIPT_DIR/.." && pwd)/$LAMBDA_RESUME_CHECKPOINT"
 fi
 
+notify() {
+  # Best-effort desktop popup (notify-send, if a desktop session is present),
+  # always followed by a terminal bell — so a long unattended wait still pings.
+  command -v notify-send >/dev/null 2>&1 && notify-send "lambda_launch" "$1" 2>/dev/null || true
+  printf '\a' >&2
+}
+
 resolve_region() {
   # stdout: a region name with capacity (empty if none). exit 3: unknown type.
   curl -sf -u "${LAMBDA_API_KEY}:" "$API/instance-types" \
@@ -99,10 +106,12 @@ if [[ "$DRY_RUN" == 1 ]]; then
   exit 0
 fi
 
-start_ts="$(date +%s)"
+start_ts="$(date +%s)"; polled=0
 while [[ -z "$region" ]]; do
+  polled=1
   waited=$(( $(date +%s) - start_ts ))
   if (( max_wait > 0 && waited >= max_wait )); then
+    notify "gave up: no $LAMBDA_INSTANCE_TYPE capacity after ${waited}s"
     echo "error: no capacity for $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION} after ${waited}s" >&2
     exit 1
   fi
@@ -110,6 +119,7 @@ while [[ -z "$region" ]]; do
   sleep "$poll_interval"
   try_region
 done
+[[ "$polled" == 1 ]] && notify "$LAMBDA_INSTANCE_TYPE capacity found in $region — launching"
 echo "Region: $region"
 
 echo "Launching..."
@@ -129,7 +139,7 @@ for _ in $(seq 1 120); do
   sleep 10
 done
 echo
-[[ -n "$ip" ]] || { echo "error: instance never became active — check the Lambda UI (id $instance_id)" >&2; exit 1; }
+[[ -n "$ip" ]] || { notify "instance never became active (id $instance_id)"; echo "error: instance never became active — check the Lambda UI (id $instance_id)" >&2; exit 1; }
 echo "Active at $ip"
 
 echo -n "Waiting for ssh"
@@ -139,6 +149,7 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 echo
+notify "instance ready at $ip — setup starting"
 
 # Local billing-protection stack: pull --follow (rescues artifacts) + watchdog
 # (terminates the instance once training stops). --arm-after-training holds the
