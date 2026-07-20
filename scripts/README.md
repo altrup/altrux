@@ -58,10 +58,12 @@ protected from the moment it's up. `--arm-after-training` keeps the watchdog
 from terminating the box during the minutes-long setup/data-gen before
 `train.py` exists (see below).
 
-Set `LAMBDA_RESUME_CHECKPOINT` to a local checkpoint step dir (e.g.
-`../models/mamba2_2_7b_memory/checkpoints/epoch-1/step-168`) to warm-start from
-it — launch scp's it up to a staging dir and setup drops it into
-`models/<model>/checkpoints/<epoch>/` so `make resume` finds it. Checkpoints
+Set `LAMBDA_RESUME_CHECKPOINT` to one or more local checkpoint step dirs
+(space-separated, e.g.
+`../models/mamba2_2_7b_memory/checkpoints/epoch-1/step-168` — several when the
+plan evals across checkpoints) — launch scp's them up to a staging dir and
+setup drops them into `models/<model>/checkpoints/<epoch>/` so `make resume`
+and the probes find them. Checkpoints
 are gitignored and too big for GitHub (a single `optimizer.pt` exceeds the
 100MB file limit), so this direct copy is the only sane transfer. Unset →
 training starts fresh.

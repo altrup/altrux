@@ -59,11 +59,15 @@ INSTANCE_NAME="${LAMBDA_INSTANCE_NAME:-altrux-train}"
 SESSION=train
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i "$SSH_KEY_PATH")
 
-# Resolve a relative resume-checkpoint path against the repo root, so it works
-# regardless of the directory launch is invoked from.
-if [[ -n "${LAMBDA_RESUME_CHECKPOINT:-}" && "$LAMBDA_RESUME_CHECKPOINT" != /* ]]; then
-  LAMBDA_RESUME_CHECKPOINT="$(cd "$SCRIPT_DIR/.." && pwd)/$LAMBDA_RESUME_CHECKPOINT"
-fi
+# LAMBDA_RESUME_CHECKPOINT: space-separated checkpoint step dirs (one or
+# more — several when the plan probes/evals across checkpoints). Resolve
+# relative paths against the repo root, so it works regardless of the
+# directory launch is invoked from.
+resume_ckpts=()
+for p in ${LAMBDA_RESUME_CHECKPOINT:-}; do
+  [[ "$p" != /* ]] && p="$(cd "$SCRIPT_DIR/.." && pwd)/$p"
+  resume_ckpts+=("$p")
+done
 
 notify() {
   # Best-effort desktop popup (notify-send, if a desktop session is present),
@@ -207,12 +211,14 @@ if [[ "$RUN_SETUP" == 0 ]]; then
   exit 0
 fi
 
-if [[ -n "${LAMBDA_RESUME_CHECKPOINT:-}" ]]; then
-  [[ -d "$LAMBDA_RESUME_CHECKPOINT" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT is not a directory: $LAMBDA_RESUME_CHECKPOINT" >&2; exit 1; }
-  export LAMBDA_RESUME_EPOCH="$(basename "$(dirname "$LAMBDA_RESUME_CHECKPOINT")")"
-  echo "Uploading resume checkpoint $(basename "$LAMBDA_RESUME_CHECKPOINT") ($(du -sh "$LAMBDA_RESUME_CHECKPOINT" | cut -f1)) to staging..."
+if (( ${#resume_ckpts[@]} )); then
+  for p in "${resume_ckpts[@]}"; do
+    [[ -d "$p" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT entry is not a directory: $p" >&2; exit 1; }
+  done
+  export LAMBDA_RESUME_EPOCH="$(basename "$(dirname "${resume_ckpts[0]}")")"
+  echo "Uploading ${#resume_ckpts[@]} checkpoint(s) ($(du -shc "${resume_ckpts[@]}" | tail -1 | cut -f1)) to staging..."
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
-  scp -r "${SSH_OPTS[@]}" "$LAMBDA_RESUME_CHECKPOINT" "$SSH_USER@$ip:resume-staging/"
+  scp -r "${SSH_OPTS[@]}" "${resume_ckpts[@]}" "$SSH_USER@$ip:resume-staging/"
 fi
 
 # Global Claude config, so the instance's claude behaves like the local one
