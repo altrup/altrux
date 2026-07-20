@@ -169,7 +169,7 @@ scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/, notes/). Therefore:
 While training runs: check every ~5 min for the first hour of a
 run (early failures — OOM, shape bugs, pathological loss — show up in the
 first minutes, and catching them early is cheap), then every ~15 min once
-it's proven stable. To hold this cadence unattended — no human types to prompt
+it's proven stable. To hold this cadence unattended — no teammate types to prompt
 your next check — pace yourself with a backgrounded timer: after each check,
 start a background `sleep <interval>` (a background task, not foreground) so the
 session is re-invoked when it elapses instead of idling. Tail the newest

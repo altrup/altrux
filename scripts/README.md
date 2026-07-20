@@ -108,7 +108,7 @@ Idempotent, so a half-failed run is just re-run. Config is via `LAMBDA_REPO_*`
   a Pro/Max subscription): setup auto-starts an autonomous Claude Code
   `/experimenter` session in the `experimenter` tmux, with a preamble noting the
   teammates may be AFK. It reads past notes, starts training, and monitors.
-  Runs with `--dangerously-skip-permissions` (no human to approve tool calls);
+  Runs with `--dangerously-skip-permissions` (no teammate to approve tool calls);
   the watchdog bounds cost, the brief bounds behaviour.
 - **Unset**: the `experimenter` session is created empty — attach, run `claude`,
   authenticate interactively, and invoke `/experimenter` by hand. No long-lived
@@ -117,7 +117,7 @@ Idempotent, so a half-failed run is just re-run. Config is via `LAMBDA_REPO_*`
 Caveat: an interactive `claude` session runs its first turn then waits — the
 auto-start *bootstraps* the run (notes → training → first health check)
 unattended, but continuous hours-long monitoring still needs the session
-driven (a human attaching, or a self-scheduling loop). `claude -p` is not used
+driven (a teammate attaching, or a self-scheduling loop). `claude -p` is not used
 because it exits after one turn.
 
 ## `lambda_terminate.sh`
