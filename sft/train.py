@@ -638,6 +638,11 @@ def run_training(
                             sleep_slot_fn(model, batched_state, slot.slot_idx)
                             slot.last_reset = slot.pos
                             slot.sleep_i += 1
+                            print(
+                                f"  [sleep] slot {slot.slot_idx}: backbone wiped at token "
+                                f"{slot.pos}/{slot.seqlen} (example {slot.example_idx}, "
+                                f"sleep {slot.sleep_i}/{len(slot.sleeps)}; memory persists)"
+                            )
                     end = min(slot.pos + chunk_len, slot.seqlen - 1)
                     actual = end - slot.pos
                     inp = slot.ids[slot.pos:end]
