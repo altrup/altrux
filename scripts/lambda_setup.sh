@@ -145,7 +145,7 @@ cj.write_text(json.dumps(d, indent=2) + "\n")
 EOF
 echo "first-run prompts pre-answered (onboarding, trust, skip-permissions confirm)"
 
-EXP_PROMPT="/experimenter You were started automatically by the setup script on a freshly provisioned instance. Your teammates set this up and may be AFK, so operate autonomously within the brief and the watchdog cost controls: read the prior notes, then start training in the train session and monitor it."
+EXP_PROMPT="/experimenter You were started automatically by the setup script on a freshly provisioned instance. Your teammates set this up and may be AFK, so operate autonomously within the brief and the watchdog cost controls: read the prior notes and any DISCUSSION notes, decide what this session should do first (that may be evals/probes rather than training — the DISCUSSION notes carry the current plan), and execute it in the train session."
 
 step "Start the 'experimenter' tmux session"
 if ! command -v tmux >/dev/null 2>&1; then

@@ -17,9 +17,11 @@ what to try next within whatever standing instructions your teammate left.
 | Hold off the watchdog | `touch scripts/.watchdog-delay` (at least every 25 min while training is stopped) |
 | End the run (irreversible) | `touch scripts/.watchdog-terminate` — only after the shutdown checklist |
 
-The current baseline resume command (stated once here — everywhere else that
-says "restart training" means this, with whatever args YOU are currently
-running if you've changed them since):
+Whether this session even starts with training is decided by the notes (see
+"Before you begin") — a session may exist to run evals/probes first, or
+instead. When the plan does call for training, the baseline resume command
+(stated once here — everywhere else that says "restart training" means this,
+with whatever args YOU are currently running if you've changed them since):
 
     tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="--data data/train_chains.pt --eos-weight 32 --batch-size 8 --chunk-len 48 --memory-window 8 --accum-tokens 1536 --ckpt-every-tokens 147456"' Enter
 
