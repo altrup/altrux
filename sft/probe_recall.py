@@ -258,6 +258,12 @@ def main() -> None:
                 abl_state.last_o_t.zero_()
                 abl_state.last_surprise.zero_()
                 ablated = score_targets(model, query, target, abl_state, f"{tag} ablated")
+                # Each condition's state (a full batched clone plus a ~1.5 GB
+                # neural-memory copy) is scored sequentially, never together, so
+                # free each before building the next -- holding all of them at
+                # once OOMs at high --n-probes.
+                del abl_state
+                torch.cuda.empty_cache()
 
                 floor = score_targets(model, query, target, None, f"{tag} floor")
 
@@ -269,6 +275,8 @@ def main() -> None:
                     sleep_scores["sleep-intact"] = score_targets(
                         model, query, target, slept, f"{tag} sleep-intact"
                     )
+                    del slept
+                    torch.cuda.empty_cache()
                     slept_abl = clone_state(mmod, state)
                     for b in range(args.n_probes):
                         model.sleep_slot(slept_abl, b)
@@ -276,6 +284,8 @@ def main() -> None:
                     sleep_scores["sleep-ablated"] = score_targets(
                         model, query, target, slept_abl, f"{tag} sleep-ablated"
                     )
+                    del slept_abl
+                    torch.cuda.empty_cache()
 
                 diff = intact - ablated
                 results.append((gap, n_facts, intact, ablated, floor, diff, sleep_scores))
