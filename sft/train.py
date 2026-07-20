@@ -914,6 +914,7 @@ def main() -> None:
     parser.add_argument("--recall-weight", type=float, default=8.0, help="Loss weight multiplier for tokens marked True in the dataset's optional recall_masks tensors (prepare_chains.py/prepare_interference.py mark their spliced query-answer tokens) -- amplifies the recall training signal, which is otherwise a tiny fraction (~0.1%%) of all tokens. 1.0 reproduces the unweighted objective. No-op on datasets without recall_masks.")
     parser.add_argument("--head-weight", type=float, default=4.0, help="Loss weight multiplier at the first token after each backbone reset (example start, and each sleep for datasets with sleep_positions), decaying linearly to 1.0 over --head-tokens -- emphasises the empty-state regime, which is otherwise underweighted because most tokens sit deep inside long examples. 1.0 reproduces the unweighted objective.")
     parser.add_argument("--head-tokens", type=int, default=1024, help="Length of the --head-weight linear decay ramp, in tokens from each backbone reset")
+    parser.add_argument("--freeze-lora", action="store_true", help="Freeze the parametric LoRA weights and optimize only the memory subsystem (front_end + injection modules). Isolates whether the memory can carry recall on its own when the parametric path can no longer re-absorb the niche. Checkpoints stay complete (LoRA held at its resumed values).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for everything not covered by the per-epoch data-shuffle seed (see run_training) -- LoRA init/dropout, and for models with per-sequence random state (e.g. mamba2_2_7b_memory's neural-memory init/reset) -- fixed by default so a run (or a crash) is reproducible; pass a different value to sample a different random init.")
     parser.add_argument("--detect-anomaly", action="store_true", help="Enable torch.autograd.set_detect_anomaly -- when a chunk's gradient comes back non-finite (the run's existing per-chunk check, see run_training), instead of just discarding it and continuing, autograd raises immediately with a traceback pointing at the exact forward op responsible, and the run stops there. Diagnostic only: real, not-small overhead (extra bookkeeping on every op during forward), and turns the normally-recoverable non-finite-gradient path into a hard stop -- use a dedicated short run to localize a real crash, not the long unattended one. See `make detect-anomaly`.")
     args = parser.parse_args()
@@ -933,6 +934,19 @@ def main() -> None:
 
     print(f"loading {args.model} ...")
     model, trainable_params = hooks.setup_training(device, args.lora_rank, args.lora_alpha, args.lora_dropout)
+
+    if args.freeze_lora:
+        # Freeze the parametric (LoRA) path and train only the memory subsystem
+        # (front_end projections + injection modules): removes the parametric
+        # re-absorption route so the memory alone must carry cross-sleep recall.
+        # requires_grad stays True on everything so checkpoints remain complete
+        # (save_checkpoint keys off requires_grad); only the optimizer's param
+        # set shrinks, so LoRA values are held fixed at the resumed checkpoint.
+        name_by_id = {id(p): n for n, p in model.named_parameters()}
+        trainable_params = [p for p in trainable_params
+                            if "lora" not in name_by_id.get(id(p), "").lower()]
+        print(f"--freeze-lora: optimizing {len(trainable_params)} memory params "
+              f"(front_end + injections); LoRA held fixed")
 
     optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=0.01)
 
