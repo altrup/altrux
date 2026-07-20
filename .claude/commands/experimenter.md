@@ -25,7 +25,13 @@ running if you've changed them since):
 
 TRAINING RUNS IN A SEPARATE TMUX SESSION named `train`, NOT in your session —
 so it survives your session ending and you can monitor without blocking. Drive
-it with `tmux send-keys`, never run `make resume` inline.
+it with `tmux send-keys`, never run `make resume` inline. The same rule covers
+EVERY GPU or long-running command — probes (e.g. `make probe-recall`), evals,
+data regeneration: send it to the `train` tmux (tee output to a file under
+sft/logs/ if you need to parse it), don't run it in your own shell. Inline, it
+blocks your session, dies with it, and is invisible to a teammate attaching to
+the box. Your own shell is for quick commands only — log tails, file edits,
+git, watchdog touches.
 
 ## Before you begin
 
