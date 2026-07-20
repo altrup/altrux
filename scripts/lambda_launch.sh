@@ -246,12 +246,11 @@ for v in LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF LAMBDA_MODEL_NAME \
 done
 scp "${SSH_OPTS[@]}" "$env_file" "$SSH_USER@$ip:lambda_setup.env"
 
-echo "Running setup in tmux session '$SESSION' (attaching live)."
-echo "Detach with Ctrl-b d; reattach later: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t $SESSION"
-ssh -t "${SSH_OPTS[@]}" "$SSH_USER@$ip" \
-  "command -v tmux >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq tmux; }; tmux new-session -A -s $SESSION 'set -a; . ~/lambda_setup.env 2>/dev/null; set +a; rm -f ~/lambda_setup.env; bash lambda_setup.sh; exec bash -l'"
+echo "Starting setup in detached tmux session '$SESSION'."
+ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" \
+  "command -v tmux >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq tmux; }; tmux new-session -d -s $SESSION 'set -a; . ~/lambda_setup.env 2>/dev/null; set +a; rm -f ~/lambda_setup.env; bash lambda_setup.sh; exec bash -l'"
 
 echo
-echo "Instance $instance_id is at $ip."
-echo "Two tmux sessions on it: '$SESSION' (training runs here) and 'experimenter'"
-echo "(attach with 'tmux attach -t experimenter', run claude, then /experimenter)."
+echo "Launched. Instance $instance_id is at $ip; setup is running in tmux '$SESSION'."
+echo "Watch setup / training: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t $SESSION"
+echo "Claude session (once setup finishes): ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t experimenter"

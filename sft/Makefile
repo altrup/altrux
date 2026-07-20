@@ -120,8 +120,9 @@ prepare-chains:
 # time). Isolates the Titans memory's contribution from Mamba's own SSM
 # state. Safe to run alongside training (second model instance, ~10 GB).
 probe-recall:
+	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u probe_recall.py $(ARGS)
+	uv run --no-sync python -u probe_recall.py $(ARGS) 2>&1 | tee logs/probe-$(shell date +%Y%m%d-%H%M%S).log
 
 # Gradient-wiring check on a synthetic dataset, driven through train.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults

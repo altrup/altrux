@@ -66,10 +66,10 @@ are gitignored and too big for GitHub (a single `optimizer.pt` exceeds the
 100MB file limit), so this direct copy is the only sane transfer. Unset →
 training starts fresh.
 
-It waits for the instance to boot and accept ssh, then runs `lambda_setup.sh`
-inside a tmux session named `train` and attaches you to it live — so setup
-survives a dropped connection and leaves you in a persistent shell on the box.
-Setup also creates a second session, `experimenter`. **Training runs in
+It waits for the instance to boot and accept ssh, then starts `lambda_setup.sh`
+inside a detached tmux session named `train` and returns immediately, printing
+the attach commands — so setup survives a dropped connection without holding
+your terminal. Setup also creates a second session, `experimenter`. **Training runs in
 `train`; the Claude Code `/experimenter` session runs in `experimenter` and
 drives training in `train` via `tmux send-keys`** — so the run survives the
 monitoring session ending, and monitoring never blocks on the run. Reattach to
