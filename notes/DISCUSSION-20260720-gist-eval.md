@@ -55,6 +55,20 @@ question FIRST" item). Design agreed in the team discussion:
   across these is the payoff — does it track the exact-code delta, or was
   gist intact all along?
 
+Before the full sweep (the eval mode is NEW code — validate it first):
+- Sanity-check the implementation against this design: wipe lands
+  mid-conversation of continuous text at a between-turn point (NOT an episode
+  boundary), ablation = fresh random `M` (same as probe_recall), scoring
+  covers post-sleep continuation tokens only.
+- Smoke-run ONE checkpoint at small scale and check the numbers are sane
+  before sweeping: intact and ablated in a plausible log-prob range, nonzero
+  variance across probes, and a positive control — the same continuation
+  scored WITHOUT the wipe should beat both wiped conditions by a clear
+  margin (if it doesn't, the harness is broken, not the memory).
+- Write the eval config (data source, wipe placement, continuation length,
+  n_probes, seed) into the run notes before sweeping, so the sweep is
+  reproducible and a teammate attaching mid-run can review the design.
+
 Decision rule:
 - **Gist delta clearly positive** (esp. where exact-code delta was ~0) →
   `M` works at its designed job; the exact-code emphasis was the wrong ruler
