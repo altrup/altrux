@@ -50,13 +50,19 @@ If the instance type is sold out, launch **polls** every
 `LAMBDA_CAPACITY_MAX_WAIT` (default 0 = forever) caps the wait. A 60s poll is
 well within normal API use (the watchdog polls at the same rate all run long).
 
-Unless `--no-watch` is passed, launch also starts the **local billing-protection
-stack** in a tmux session `altrux-watch`: `lambda_pull.sh --follow` plus
-`lambda_watchdog.sh --arm-after-training`, both targeting the instance it just
-launched. So you don't have to remember to start them by hand — the box is
-protected from the moment it's up. `--arm-after-training` keeps the watchdog
-from terminating the box during the minutes-long setup/data-gen before
-`train.py` exists (see below).
+Unless `--no-watch` is passed, launch also starts a **local tmux session
+`altrux`** with everything in one place:
+
+- window `watch` — the billing-protection stack: `lambda_pull.sh --follow`
+  (top pane) plus `lambda_watchdog.sh --arm-after-training` (bottom pane),
+  both targeting the instance it just launched. So you don't have to remember
+  to start them by hand — the box is protected from the moment it's up.
+  `--arm-after-training` keeps the watchdog from terminating the box during
+  the minutes-long setup before `train.py` exists (see below).
+- window `train` — ssh'd into the remote `train` tmux (training/setup output,
+  live). Waits for the remote session to exist, then attaches.
+- window `claude` — ssh'd into the remote `experimenter` tmux (the Claude
+  session). Same wait-then-attach.
 
 Set `LAMBDA_RESUME_CHECKPOINT` to one or more local checkpoint step dirs
 (space-separated, e.g.

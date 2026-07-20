@@ -23,7 +23,8 @@
 #
 #   --dry-run   resolve region + print the launch payload, then stop
 #   --no-setup  launch and wait for ssh, but don't run lambda_setup.sh
-#   --no-watch  don't auto-start the local watchdog + pull tmux
+#   --no-watch  don't auto-start the local 'altrux' tmux (pull + watchdog +
+#               remote-attach windows)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -195,12 +196,21 @@ notify "instance ready at $ip — setup starting"
 if [[ "$RUN_WATCH" == 1 ]]; then
   if ! command -v tmux >/dev/null 2>&1; then
     echo "note: tmux not found locally — NOT auto-starting watchdog/pull; run scripts/lambda_watchdog.sh yourself or the box bills unbounded"
-  elif tmux has-session -t altrux-watch 2>/dev/null; then
-    echo "local watch tmux 'altrux-watch' already exists — leaving it"
+  elif tmux has-session -t altrux 2>/dev/null; then
+    echo "local tmux session 'altrux' already exists — leaving it"
   else
-    tmux new-session -d -s altrux-watch -n pull "'$SCRIPT_DIR/lambda_pull.sh' --follow '$ip'; exec bash"
-    tmux new-window -t altrux-watch -n watchdog "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training; exec bash"
-    echo "Billing protection up in tmux 'altrux-watch' (pull + watchdog). Attach: tmux attach -t altrux-watch"
+    # One local session, four views: watch = pull (top pane) + watchdog
+    # (bottom pane); train/claude = live attaches to the remote tmux sessions.
+    # The remote sessions don't exist until setup runs, so those windows poll
+    # until theirs appears, then attach.
+    rssh="ssh -o StrictHostKeyChecking=accept-new -i '$SSH_KEY_PATH' $SSH_USER@$ip"
+    tmux new-session -d -s altrux -n watch "'$SCRIPT_DIR/lambda_pull.sh' --follow '$ip'; exec bash"
+    tmux split-window -t altrux:watch "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training; exec bash"
+    tmux new-window -t altrux -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
+    tmux new-window -t altrux -n claude "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
+    tmux select-window -t altrux:watch
+    echo "Local tmux session 'altrux' up — windows: watch (pull + watchdog panes), train (remote train tmux), claude (remote experimenter tmux)."
+    echo "Attach: tmux attach -t altrux"
   fi
 fi
 
@@ -258,5 +268,5 @@ ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" \
 
 echo
 echo "Launched. Instance $instance_id is at $ip; setup is running in tmux '$SESSION'."
-echo "Watch setup / training: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t $SESSION"
-echo "Claude session (once setup finishes): ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t experimenter"
+echo "Everything is viewable locally: tmux attach -t altrux (windows: watch / train / claude)."
+echo "Direct ssh fallback: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t <$SESSION|experimenter>"
