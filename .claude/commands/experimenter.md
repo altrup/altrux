@@ -35,6 +35,74 @@ This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
 catching problems early over maximizing uptime.
 
+THE GOAL you're working toward: get the neural memory `M` to actually earn its
+place — to *contribute* to recall (a positive ablation delta) in the regime the
+Mamba2 SSM structurally can't cover: many competing facts, and recall across
+SSM-state resets. Read `models/mamba2_2_7b_memory/README.md` ("Design goal — a
+three-tier memory hierarchy") for the full picture. Everything you try should
+serve that; how you get there is up to you.
+
+HOW MUCH OF THIS IS YOURS: essentially all of it. The experimental strategy is
+yours — what to probe, what hypotheses to chase, what to change, in what order,
+when to dig in versus move on. That includes STRUCTURAL bets — regenerating the
+training data, re-initializing or reshaping the write/knob projections, changing
+how the memory is wired — if that's where your read of the evidence leads. You
+don't need permission per step; back your own judgment and try the thing you
+think will work, even if nobody asked for it. Don't read the rest of this as a
+flowchart — it's a few guardrails around a wide open field, not a script. The
+guardrails: a stability crash gets a bounded retry then stop (IF TRAINING
+CRASHES); don't grind forever (WHEN TO STOP); don't idle a billed box; no Lambda
+credentials or unilateral hardware/resource changes. Inside those, it's your
+experiment.
+
+THE EXPERIMENT NOT WORKING is different from a crash (that's a bug — see IF
+TRAINING CRASHES). A metric trending wrong — alpha climbing, o_t_norm collapsing
+toward 0, mem-delta stuck at ~0, loss plateaued high — is NOT a reason to shrug
+and keep training unchanged. This is the job: form a hypothesis, then TRY an
+intervention. Accepting a bad trend and continuing as-is requires a positive
+reason (e.g. "alpha rising IS the model learning active forgetting, and recall
+is still improving") — not just "it's plausibly fine." If you can't name why the
+trend is acceptable, treat it as a problem to fix, not an observation to log.
+
+WHEN A TREND NEEDS AN INTERVENTION: whatever you try — a knob (alpha init, loss
+weighting, batch/chunk/window, learning rate), or a structural bet (regenerate
+data, reshape the write/knob projections, rewire the memory) — record what you
+changed and why in your notes before you run it, so a later run can tell what
+produced which result. Bolder is fine; unlogged is not. A structural change that
+would burn many GPU-hours to evaluate is exactly the kind of bet worth taking IF
+your reasoning is sound — just be honest with yourself about the cost and write
+down what outcome would confirm or kill it, so you know when you're done. For
+the biggest bets, whether to just run it now or first write it up and leave it
+for the team to discuss is itself your call: gauge how expensive, how reversible,
+and how confident you are, and decide. Running it is fully within your freedom;
+so is deciding this one is worth a conversation first.
+
+WHEN TO STOP AND HAND OFF (distinct from terminate-on-crash). Several things end
+a run — stop on any of them, don't keep billing past them:
+
+- SUCCESS: the memory is demonstrably earning its place — a clear, repeatable
+  positive ablation delta in the high-fact / cross-reset regime, holding across
+  checkpoints. You've achieved the goal; bank it. Stop, don't keep tinkering for
+  marginal gains on a billed box.
+- TRAINING COMPLETES: the run reaches its natural end (epochs/steps done, loss
+  flat). Nothing more to train.
+- GOING NOWHERE: the failure mode to avoid is grinding — trying thing after
+  thing with no real movement toward the goal. If you've made several honest,
+  well-reasoned attempts and the memory still isn't earning its place — no
+  positive trend across probes, nothing left that you genuinely expect to move
+  the needle — STOP.
+
+In every case, don't keep the box busy just to avoid idling — billing past a
+finished run buys nothing. Reach a clean stopping point: verify the latest
+checkpoint is intact, write a crisp "here's what I tried, what I learned, and
+what I'd want to discuss" section in your notes (for a success, "what worked and
+why" instead), push any commits, then `touch scripts/.watchdog-terminate`.
+There's no cheap way to hold an idle billed GPU until the team is back — the
+checkpoint + notes survive the pull, so the team picks it up from there later.
+Releasing the box IS how you "wait for the team." Judging "several honest
+attempts" versus "give it one more" is yours to make — err toward one more real
+idea, stop when you're out of them.
+
 THE WATCHDOG: a watchdog on your teammate's machine (scripts/lambda_watchdog.sh
 run there, probing this instance over ssh) terminates the instance 30
 minutes after train.py stops, whatever the reason. While you're actively
