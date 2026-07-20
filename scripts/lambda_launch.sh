@@ -94,6 +94,35 @@ else:
 # nonzero (curl/network blip) or an empty result means "no capacity yet".
 try_region() { region="$(resolve_region)" || { [[ $? == 3 ]] && exit 1; region=""; }; }
 
+launch_instance() {
+  # One launch attempt in $region. Success: sets instance_id, returns 0.
+  # Capacity vanished since the check (the launch race): returns 1 to re-poll.
+  # Any other API error (bad ssh key, auth, quota): prints it and exits.
+  local resp rc
+  resp="$(curl -s -u "${LAMBDA_API_KEY}:" "$API/instance-operations/launch" \
+    -H "Content-Type: application/json" \
+    -d "{\"region_name\":\"$region\",\"instance_type_name\":\"$LAMBDA_INSTANCE_TYPE\",\"ssh_key_names\":[\"$LAMBDA_SSH_KEY_NAME\"],\"name\":\"$INSTANCE_NAME\"}")"
+  instance_id="$(resp="$resp" python3 -c "
+import json, os, sys
+raw = os.environ['resp']
+try:
+    d = json.loads(raw)
+except json.JSONDecodeError:
+    sys.stderr.write('non-JSON response from launch API:\n' + raw[:500] + '\n'); sys.exit(2)
+err = d.get('error')
+if err:
+    code, msg = err.get('code', ''), str(err.get('message', err))
+    if 'not-available' in code or 'capacity' in msg.lower():
+        sys.exit(1)
+    sys.stderr.write('launch failed: ' + code + ': ' + msg + '\n'); sys.exit(2)
+ids = d.get('data', {}).get('instance_ids') or []
+if not ids:
+    sys.stderr.write('launch returned no instance_ids:\n' + raw[:500] + '\n'); sys.exit(2)
+print(ids[0])
+")" || { rc=$?; [[ "$rc" == 1 ]] && return 1; exit 1; }
+  return 0
+}
+
 poll_interval="${LAMBDA_CAPACITY_POLL_INTERVAL:-60}"
 max_wait="${LAMBDA_CAPACITY_MAX_WAIT:-0}"   # seconds to keep polling; 0 = forever
 
@@ -107,26 +136,29 @@ if [[ "$DRY_RUN" == 1 ]]; then
 fi
 
 start_ts="$(date +%s)"; polled=0
-while [[ -z "$region" ]]; do
-  polled=1
-  waited=$(( $(date +%s) - start_ts ))
-  if (( max_wait > 0 && waited >= max_wait )); then
-    notify "gave up: no $LAMBDA_INSTANCE_TYPE capacity after ${waited}s"
-    echo "error: no capacity for $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION} after ${waited}s" >&2
-    exit 1
+while :; do
+  if [[ -z "$region" ]]; then
+    polled=1
+    waited=$(( $(date +%s) - start_ts ))
+    if (( max_wait > 0 && waited >= max_wait )); then
+      notify "gave up: no $LAMBDA_INSTANCE_TYPE capacity after ${waited}s"
+      echo "error: no capacity for $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION} after ${waited}s" >&2
+      exit 1
+    fi
+    echo "no capacity yet (${waited}s elapsed) — retrying in ${poll_interval}s (Ctrl-C to stop)"
+    sleep "$poll_interval"
+    try_region
+    continue
   fi
-  echo "no capacity yet (${waited}s elapsed) — retrying in ${poll_interval}s (Ctrl-C to stop)"
-  sleep "$poll_interval"
-  try_region
+  echo "Region: $region"
+  echo "Launching..."
+  launch_instance && break
+  # The launch lost the capacity race — scarce types can sell out in the
+  # seconds between the capacity check and the launch call. Resume polling.
+  echo "capacity in $region vanished before launch — back to polling"
+  region=""
 done
-[[ "$polled" == 1 ]] && notify "$LAMBDA_INSTANCE_TYPE capacity found in $region — launching"
-echo "Region: $region"
-
-echo "Launching..."
-instance_id="$(curl -sf -u "${LAMBDA_API_KEY}:" "$API/instance-operations/launch" \
-  -H "Content-Type: application/json" \
-  -d "{\"region_name\":\"$region\",\"instance_type_name\":\"$LAMBDA_INSTANCE_TYPE\",\"ssh_key_names\":[\"$LAMBDA_SSH_KEY_NAME\"],\"name\":\"$INSTANCE_NAME\"}" \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['instance_ids'][0])")"
+[[ "$polled" == 1 ]] && notify "$LAMBDA_INSTANCE_TYPE launched in $region"
 echo "Instance: $instance_id"
 
 echo -n "Waiting for boot"
