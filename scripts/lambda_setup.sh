@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # Configures a freshly-launched Lambda Cloud GPU instance for a training run:
-# clone/pull the repo, `make sync` (+ verify CUDA torch), prepare data, and
-# install the Claude Code CLI so a `/experimenter` session can take over.
+# clone/pull the repo, `make sync` (+ verify CUDA torch), and install the
+# Claude Code CLI so a `/experimenter` session can take over. Data prep is
+# deliberately NOT done here — which data (and with what flags) is an
+# experimental decision the experimenter makes from the notes.
 #
 # Runs ON the instance (not the local machine — it holds no Lambda API key and
 # needs none). Either run it by hand after ssh-ing in, or let lambda_launch.sh
 # scp it up and run it automatically. Idempotent: safe to re-run after a
-# partial failure (clone-or-pull, sync re-runs cleanly, data prep skips if its
-# output already exists).
+# partial failure (clone-or-pull, sync re-runs cleanly).
 #
 # Config (all optional, via environment):
 #   LAMBDA_REPO_URL        git URL to clone       (default: repo's origin)
 #   LAMBDA_REMOTE_REPO     dir name under $HOME   (default: altrux)
 #   LAMBDA_REPO_REF        branch/tag/commit      (default: repo default)
-#   LAMBDA_SETUP_DATA_CMD  data-prep make target  (default: make data-memory)
-#   LAMBDA_SETUP_DATA_MARKER  skip data prep if this file exists, relative to
-#                             the repo root (default: sft/data/train_memory.pt);
-#                             set empty to always run.
 #   GITHUB_TOKEN           if set, configures git to clone+push over HTTPS
 #   HF_TOKEN               if set, exported for gated/large HF downloads and
 #                          persisted to ~/.bashrc for later sessions
@@ -28,8 +25,6 @@ REPO_URL="${LAMBDA_REPO_URL:-https://github.com/altrup/altrux.git}"
 REPO_DIR="$HOME/${LAMBDA_REMOTE_REPO:-altrux}"
 REPO_REF="${LAMBDA_REPO_REF:-}"
 MODEL_NAME="${LAMBDA_MODEL_NAME:-mamba2_2_7b_memory}"
-DATA_CMD="${LAMBDA_SETUP_DATA_CMD:-make data data-memory prepare-chains}"
-DATA_MARKER="${LAMBDA_SETUP_DATA_MARKER-sft/data/train_chains.pt}"
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
@@ -93,13 +88,6 @@ if ! uv run --project "$REPO_DIR/sft" --no-sync python -c \
   "import torch, sys; ok = torch.cuda.is_available(); print('torch', torch.__version__, 'cuda', ok); sys.exit(0 if ok else 1)"; then
   echo "error: torch reports no CUDA GPU — sync may have installed a CPU/ROCm build; investigate before training" >&2
   exit 1
-fi
-
-step "Data prep: $DATA_CMD"
-if [[ -n "$DATA_MARKER" && -f "$REPO_DIR/$DATA_MARKER" ]]; then
-  echo "skipping — $DATA_MARKER already exists (set LAMBDA_SETUP_DATA_MARKER= to force)"
-else
-  ( cd "$REPO_DIR/sft" && eval "$DATA_CMD" )
 fi
 
 step "Verify git push auth"

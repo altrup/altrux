@@ -23,7 +23,7 @@ it bounds what a *hard* crash loses, where no graceful terminate ever happens.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
-on it (clone, `make sync`, data prep, install the Claude Code CLI). Launch also
+on it (clone, `make sync`, install the Claude Code CLI). Launch also
 uploads your global Claude config (`~/.claude/` CLAUDE.md, status line, skills —
 not settings.json, credentials, or history) so the instance session behaves
 like your local one; setup wires the status line into the instance's settings. With `CLAUDE_CODE_OAUTH_TOKEN` set the `/experimenter` session starts
@@ -89,9 +89,10 @@ guesses the wrong torch wheel.
 Configures a freshly-launched instance: install `uv` if absent, wire up
 `GITHUB_TOKEN` / `HF_TOKEN` if provided, clone-or-pull the repo at `~/altrux`,
 write `sft/.env` (`MODEL_NAME=mamba2_2_7b_memory` — it's gitignored, so a clone
-has none), `make sync` (and verify torch sees a CUDA GPU), run data prep
-(default `make data data-memory prepare-chains` → `train_chains.pt`, skipped if
-it already exists), verify `git push` auth, and install the Claude Code CLI.
+has none), `make sync` (and verify torch sees a CUDA GPU), verify `git push`
+auth, and install the Claude Code CLI. Data prep is deliberately not part of
+setup — which data to build (and with what flags) is an experimental decision,
+so the experimenter runs it from the notes' plan.
 Runs **on the instance** — either invoked automatically by `lambda_launch.sh`,
 or by hand after ssh-ing in:
 

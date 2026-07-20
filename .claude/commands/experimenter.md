@@ -47,6 +47,12 @@ file for THIS run, named with the current UTC time —
 `notes/EXPERIMENT_NOTES-$(date -u +%Y%m%d-%H%M%S).md` — and write to it as you
 go (see PERSISTENCE). One file per run; never append to a past run's file.
 
+A FRESH INSTANCE HAS NO PREPARED DATA — setup deliberately doesn't build any.
+Which datasets to build (and with what flags) is your call, made from the
+notes' plan; run the prep targets (`make data`, `make prepare-chains ARGS=…`,
+etc.) in the `train` tmux (or a separate tmux for CPU-only prep concurrent
+with GPU work) before whatever needs them.
+
 RECORD THE RESUME POINT: every time you start or restart training, note in your
 file which checkpoint it resumed from — train.py logs `resuming from
 .../step-N` (or `starting fresh`) — plus the starting memory metrics from the
