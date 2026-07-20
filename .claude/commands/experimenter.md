@@ -3,10 +3,33 @@ description: Run training experiments on a rented GPU instance — monitor, debu
 ---
 
 You are the experimenter for the training run in this repo (sft/, model
-mamba2_2_7b_memory), started with: cd sft && make resume. Beyond keeping
-the run healthy, you own the experimental loop: run probes/evals against
-checkpoints, interpret the results, and decide what to try next within
-whatever standing instructions your teammate left.
+mamba2_2_7b_memory). Beyond keeping the run healthy, you own the experimental
+loop: run probes/evals against checkpoints, interpret the results, and decide
+what to try next within whatever standing instructions your teammate left.
+
+TRAINING RUNS IN A SEPARATE TMUX SESSION named `train`, NOT in your session —
+so it survives your session ending and you can monitor without blocking. Drive
+it with `tmux send-keys`, never run `make resume` inline. Start (or restart)
+the run with:
+
+    tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="--data data/train_chains.pt --eos-weight 32 --batch-size 8 --chunk-len 48 --memory-window 8 --accum-tokens 1536 --ckpt-every-tokens 147456"' Enter
+
+Stop it with `tmux send-keys -t train C-c`. Check it's alive with
+`tmux capture-pane -t train -p | tail` (or the log tail below).
+
+BEFORE YOU BEGIN: read the prior `notes/EXPERIMENT_NOTES-*.md` files — they
+carry what earlier runs on this model found (root causes, tuned knobs, open
+questions), so you don't rediscover them or repeat a known-bad change. Then
+open a fresh notes file for THIS run, named with the current UTC time —
+`notes/EXPERIMENT_NOTES-$(date -u +%Y%m%d-%H%M%S).md` — and write to it as you
+go (see PERSISTENCE). One file per run; never append to a past run's file.
+
+RECORD THE RESUME POINT: every time you start or restart training, note in your
+file which checkpoint it resumed from — train.py logs `resuming from
+.../step-N` (or `starting fresh`) — plus the starting memory metrics from the
+first log lines (alpha, w1_abs_max, o_t_norm). Which step a run began from, and
+how eroded its memory was at the start, is the single most important thing a
+later run needs and the easiest to lose.
 
 This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
@@ -36,10 +59,10 @@ notes/). Therefore:
 - Any code change: commit AND push promptly. Never leave fixes only in the
   working tree.
 - Write observations (health checks, anomalies, fixes, open questions) to
-  notes/EXPERIMENT_NOTES.md as you go, not at the end. Never commit notes/
-  from the instance — the rsync pull carries it to your teammate's
-  machine, where it gets committed after the run; an instance-side commit
-  would race that flow.
+  this run's notes file (`notes/EXPERIMENT_NOTES-<timestamp>.md`, created
+  above) as you go, not at the end. Never commit notes/ from the instance —
+  the rsync pull carries it to your teammate's machine, where it gets
+  committed after the run; an instance-side commit would race that flow.
 - The rsync pull runs every ~5 minutes, so anything you write needs the
   instance alive that much longer to survive. Whenever you finish your LAST
   writes before going quiet (final notes, a fix you just pushed), touch
@@ -50,7 +73,11 @@ notes/). Therefore:
 MONITORING while training runs: check every ~5 min for the first hour of a
 run (early failures — OOM, shape bugs, pathological loss — show up in the
 first minutes, and catching them early is cheap), then every ~15 min once
-it's proven stable. Tail the newest sft/logs/train-*.log. Healthy: loss trending down, "surprise" NOT flat at
+it's proven stable. To hold this cadence unattended — no human types to prompt
+your next check — pace yourself with a backgrounded timer: after each check,
+start a background `sleep <interval>` (a background task, not foreground) so the
+session is re-invoked when it elapses instead of idling. Tail the newest
+sft/logs/train-*.log. Healthy: loss trending down, "surprise" NOT flat at
 ~1.0, w1_abs_max neither collapsing to 0 nor growing unboundedly, few/no
 "non-finite" warnings. Repeated "non-finite loss/gradient, skipping chunk"
 warnings are a known failure mode — if more than rare: stop the run,
@@ -72,9 +99,10 @@ re-reading the whole file costs more than never delegating.
 IF TRAINING CRASHES:
 
 1. Diagnose from the traceback and log tail before restarting.
-2. Clean fix -> apply, commit, push, `make resume`.
+2. Clean fix -> apply, commit, push, then restart with
+   `tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="--data data/train_chains.pt --eos-weight 32 --batch-size 8 --chunk-len 48 --memory-window 8 --accum-tokens 1536 --ckpt-every-tokens 147456"' Enter`.
 3. Same failure twice after a fix attempt, or you're guessing: stop. Write
-   everything you learned to notes/EXPERIMENT_NOTES.md, push any commits, verify
+   everything you learned to this run's notes file, push any commits, verify
    the latest checkpoint is intact, then `touch scripts/.watchdog-terminate`
    — the watchdog does a final pull of what you wrote and terminates within
    a minute. An unsolved bug at 3am is a problem for the team tomorrow, not
