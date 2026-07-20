@@ -3,8 +3,9 @@
 # machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/, and
 # notes/ (the experimenter session's observations — committed to git only
 # from this machine after a run; rsync is how they travel off the
-# instance). Whichever of those don't exist yet are skipped; only a
-# missing repo is an error.
+# instance). Whichever of those don't exist yet are skipped. A missing repo
+# is an error in one-shot mode; in --follow mode it's expected at first
+# (launch starts the pull loop before setup clones the repo) and just retried.
 #
 # Run from the LOCAL machine, before terminating the instance — the run's
 # logs live only on the instance and die with it:
@@ -102,12 +103,12 @@ probe_paths() {
   "
 }
 
+# Returns 10 if the repo is missing on the instance, 1 on any other failure.
 pull() {
   local paths rc=0
   paths="$(probe_paths)" || rc=$?
   if [[ "$rc" -eq 10 ]]; then
-    echo "error: no repo at ~/${remote_repo} on ${ip} — set LAMBDA_REMOTE_REPO in scripts/.env if it lives elsewhere" >&2
-    exit 1
+    return 10
   elif [[ "$rc" -ne 0 ]]; then
     return 1
   fi
@@ -123,8 +124,16 @@ pull() {
   done <<< "$paths"
 }
 
+no_repo_msg="no repo at ~/${remote_repo} on ${ip} — set LAMBDA_REMOTE_REPO in scripts/.env if it lives elsewhere"
+
 if [[ "$follow" -eq 0 ]]; then
-  pull
+  rc=0; pull || rc=$?
+  if [[ "$rc" -eq 10 ]]; then
+    echo "error: $no_repo_msg" >&2
+    exit 1
+  elif [[ "$rc" -ne 0 ]]; then
+    exit 1
+  fi
   echo "Done. Terminate the instance with scripts/lambda_terminate.sh (or set LAMBDA_INSTANCE_ID and run it from here)."
   exit 0
 fi
@@ -132,15 +141,21 @@ fi
 echo "Following: pulling every ${interval}s until the instance stops answering (Ctrl-C to stop)..."
 succeeded=0
 while true; do
-  if ! pull; then
+  rc=0; pull || rc=$?
+  if [[ "$rc" -eq 10 ]]; then
+    # Expected right after launch: --follow starts before setup has cloned the
+    # repo. Keep waiting — but if this never clears, LAMBDA_REMOTE_REPO is wrong.
+    echo "[$(date +%H:%M:%S)] $no_repo_msg (expected while setup is still cloning) — retrying in ${interval}s"
+  elif [[ "$rc" -ne 0 ]]; then
     if [[ "$succeeded" -eq 0 ]]; then
-      echo "error: first pull failed — check the IP, ssh access, and LAMBDA_REMOTE_REPO before trusting --follow" >&2
+      echo "error: first pull failed — check the IP and ssh access before trusting --follow" >&2
       exit 1
     fi
     echo "Instance stopped answering — assuming it was terminated. Last successful pull stands."
     exit 0
+  else
+    succeeded=1
+    echo "[$(date +%H:%M:%S)] pull ok — next in ${interval}s"
   fi
-  succeeded=1
-  echo "[$(date +%H:%M:%S)] pull ok — next in ${interval}s"
   sleep "$interval"
 done
