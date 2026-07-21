@@ -208,7 +208,18 @@ the box terminated mid-work). Arm with `persistent: true`, shaped like:
 
     seen=0; beat=0; HB=300   # heartbeat 300s for the first hour, then re-arm with 900
     while true; do
-      log=$(ls -t ~/altrux/sft/logs/train-*.log 2>/dev/null | head -1)
+      # Command-completion wakes: the pane's foreground process returning to
+      # bash means whatever was running in that tmux just finished.
+      for s in train prep; do
+        cur=$(tmux display-message -p -t "$s" '#{pane_current_command}' 2>/dev/null || echo none)
+        prev=$(cat "/tmp/mon-$s" 2>/dev/null || echo none)
+        echo "$cur" > "/tmp/mon-$s"
+        if [ "$cur" = bash ] && [ "$prev" != bash ] && [ "$prev" != none ]; then
+          echo "[$s] command finished (was: $prev); pane tail:"
+          tmux capture-pane -t "$s" -p | grep -v '^ *$' | tail -3
+        fi
+      done
+      log=$(ls -t ~/altrux/sft/logs/*.log 2>/dev/null | head -1)
       if [ -n "$log" ]; then
         n=$(wc -l < "$log"); [ "$n" -lt "$seen" ] && seen=0
         tail -n +"$((seen+1))" "$log" | grep -E "non-finite|Traceback|RuntimeError|out of memory|Killed"
@@ -218,10 +229,13 @@ the box terminated mid-work). Arm with `persistent: true`, shaped like:
         beat=$SECONDS
         echo "heartbeat: $(tail -1 "$log" 2>/dev/null) (log idle $(( $(date +%s) - $(stat -c %Y "$log" 2>/dev/null || date +%s) ))s)"
       fi
-      sleep 30
+      sleep 15
     done
 
-Every event line wakes your session. Error lines → investigate now.
+Every event line wakes your session. Completion lines ("[train] command
+finished") → the thing you were waiting on is done; act on its result now
+(read the probe/prep log, start the next step) instead of waiting for a
+heartbeat. Error lines → investigate now.
 Heartbeats → glance at the carried metrics line; a growing "log idle" on a
 run that should be training means it hung or died without a signature —
 also investigate. On a heartbeat while training is deliberately stopped,
