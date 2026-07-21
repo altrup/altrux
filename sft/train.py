@@ -964,15 +964,20 @@ def main() -> None:
             print(f"resuming from {ckpt}")
             load_checkpoint(model, ckpt)
             opt_path = ckpt / "optimizer.pt"
-            if opt_path.exists() and not args.freeze_lora:
-                optimizer.load_state_dict(
-                    torch.load(opt_path, map_location=device, weights_only=True)
-                )
-            elif opt_path.exists():
-                # --freeze-lora shrinks the optimizer's parameter set, so the
-                # saved AdamW state (over the full trainable set) no longer
-                # matches; start a fresh optimizer over the memory params.
-                print("--freeze-lora: starting a fresh optimizer (saved state covers a different param set)")
+            if opt_path.exists():
+                # A checkpoint saved under --freeze-lora carries AdamW state
+                # over just the memory params; one saved under full training
+                # covers the whole trainable set. Load whenever the saved
+                # state matches the current optimizer's param count -- a
+                # mismatch (e.g. full-training state resumed with
+                # --freeze-lora) falls back to a fresh optimizer.
+                saved = torch.load(opt_path, map_location=device, weights_only=True)
+                n_current = sum(len(g["params"]) for g in optimizer.param_groups)
+                n_saved = sum(len(g["params"]) for g in saved["param_groups"])
+                if n_current == n_saved:
+                    optimizer.load_state_dict(saved)
+                else:
+                    print(f"starting a fresh optimizer (saved state covers {n_saved} params, current set has {n_current})")
             start_step = int(ckpt.name.split("-")[1])
             state_path = ckpt / "state.pt"
             state_batch_size = None
