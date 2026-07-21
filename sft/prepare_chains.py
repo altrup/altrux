@@ -14,6 +14,11 @@ token budget, with three things layered in:
   signal: every ordinary token after that wipe is predicted better iff the
   memory retained the gist of what preceded it, a dense training signal
   with no engineered template to overfit to.
+- **Interleaved continuations** (`--split-episode-rate`): a fraction of
+  long episodes are split at a middle turn boundary and the tail resumes
+  two episodes later behind a forced sleep -- the same natural-continuation
+  signal stretched across an intervening episode, training the memory to
+  retain a conversation's gist through unrelated material.
 - **Fact blocks**: a fraction of episodes host a block of key/value facts
   (heterogeneous kinds and phrasings, shared with prepare_interference.py),
   spliced at the episode's second turn boundary. A fraction of facts are
@@ -96,6 +101,45 @@ def build_chains(
         chains.append(current)
     print(f"planned {len(chains)} chains from {len(order)} episodes")
 
+    # Interleaved continuations: split an eligible episode at a middle-third
+    # turn boundary and resume its tail two episodes later, behind a forced
+    # sleep (added in the sleep-placement pass below via split_tails) -- the
+    # tail's tokens are predicted better iff the memory carried the head's
+    # gist through an intervening episode AND a sleep, so this trains
+    # cross-episode retention with no engineered template.
+    pool_ids = list(pool_ids)
+    pool_masks = list(pool_masks)
+    split_tails: set[int] = set()
+    n_split = 0
+    if getattr(args, "split_episode_rate", 0.0) > 0:
+        for ci, chain in enumerate(chains):
+            out: list[int] = []
+            pending: list[tuple[int, int]] = []  # (due position in out, tail episode)
+            for ep in chain:
+                ids = pool_ids[ep]
+                if len(ids) >= args.mid_sleep_min_len and rng.random() < args.split_episode_rate:
+                    b = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
+                    mid = [x for x in b if len(ids) // 3 <= x <= 2 * len(ids) // 3]
+                    if mid:
+                        cut = rng.choice(mid)
+                        pool_ids.append(ids[:cut])
+                        pool_masks.append(pool_masks[ep][:cut])
+                        out.append(len(pool_ids) - 1)
+                        pool_ids.append(ids[cut:])
+                        pool_masks.append(pool_masks[ep][cut:])
+                        split_tails.add(len(pool_ids) - 1)
+                        pending.append((len(out) + 2, len(pool_ids) - 1))
+                        n_split += 1
+                        continue
+                out.append(ep)
+            # Dues are in pre-insertion coordinates; each earlier-inserted
+            # tail shifts later dues by one.
+            for i, (due, tail) in enumerate(sorted(pending)):
+                out.insert(min(due + i, len(out)), tail)
+            chains[ci] = out
+    if n_split:
+        print(f"split {n_split} episodes into head/tail interleaved continuations")
+
     # Pass 1: plan every chain -- sleeps, fact blocks, revisions, queries --
     # and collect all injected-turn strings for one batched tokenizer call.
     strings: list[str] = []
@@ -132,6 +176,11 @@ def build_chains(
                 sleeps.append(offsets[i + 1])
                 since_sleep = 0
                 wake = rng.randint(args.min_wake, args.max_wake)
+        # Forced sleep at each split tail's start, so resuming the head's
+        # conversation always crosses a sleep.
+        for i, ep in enumerate(chain):
+            if ep in split_tails:
+                sleeps.append(offsets[i])
         # Mid-conversation sleeps in long episodes, at a between-turn
         # boundary in the middle third of the episode.
         for i, ep in enumerate(chain):
@@ -288,7 +337,7 @@ def build_chains(
     dataset = {"ids": out_ids, "masks": out_masks, "recall_masks": out_recall, "sleep_positions": out_sleeps}
     stats = {
         "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
-        "dist_counts": dist_counts,
+        "dist_counts": dist_counts, "n_split": n_split,
     }
     return dataset, stats
 
@@ -304,6 +353,8 @@ def main() -> None:
     parser.add_argument("--max-wake", type=int, default=4, help="Maximum episodes per wake")
     parser.add_argument("--mid-sleep-rate", type=float, default=0.2,
                         help="Fraction of long episodes that get one mid-conversation sleep (the natural-continuation signal)")
+    parser.add_argument("--split-episode-rate", type=float, default=0.0,
+                        help="Fraction of eligible (>= --mid-sleep-min-len) episodes split at a middle turn boundary with the tail resumed two episodes later behind a forced sleep -- trains cross-episode gist retention (interleaved continuation)")
     parser.add_argument("--mid-sleep-min-len", type=int, default=4096,
                         help="Minimum episode length in tokens to be eligible for a mid-conversation sleep")
     parser.add_argument("--fact-rate", type=float, default=0.3, help="Fraction of episodes that host a fact block")

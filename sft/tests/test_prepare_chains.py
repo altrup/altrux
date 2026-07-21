@@ -37,8 +37,9 @@ def _args(**overrides):
     defaults = dict(
         min_budget=300, max_budget=300, min_wake=1, max_wake=2,
         mid_sleep_rate=0.0, mid_sleep_min_len=60,
+        split_episode_rate=0.0,
         fact_rate=1.0, min_facts=2, max_facts=4, min_queries=1, max_queries=3,
-        revise_rate=0.5, seed=0,
+        revise_rate=0.5, cross_sleep_bias=0.0, seed=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -106,6 +107,26 @@ def test_recall_masks_mark_exactly_the_spliced_answer_content():
                 assert ids[i - 1].item() == ASST_ID
     # 3 content tokens per stub answer turn
     assert total_true == 3 * n_queries
+
+
+def test_split_episodes_conserve_content_and_sleep_on_boundaries():
+    n_episodes, n_turns, turn_len = 20, 12, 10
+    dataset, stats = _build(
+        n_episodes=n_episodes, n_turns=n_turns, turn_len=turn_len, fact_rate=0.0,
+        split_episode_rate=1.0, mid_sleep_min_len=100,
+        min_wake=4, max_wake=4, min_budget=500, max_budget=500,
+    )
+    assert stats["n_split"] > 0
+    # Splitting reorders segments but never drops or duplicates tokens.
+    out = torch.cat(dataset["ids"])
+    inp = torch.cat([_episode(n_turns, turn_len)[0] for _ in range(n_episodes)])
+    assert torch.equal(out.sort().values, inp.sort().values)
+    # Every sleep (including each forced pre-tail sleep) is on a turn boundary,
+    # and every chain with a split has at least one sleep.
+    for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
+        assert len(sleeps) > 0
+        for s in sleeps.tolist():
+            assert ids[s].item() in (USER_ID, ASST_ID)
 
 
 def test_mid_sleeps_appear_inside_long_episodes():
