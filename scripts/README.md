@@ -81,10 +81,14 @@ Set `LAMBDA_RESUME_CHECKPOINT` to one or more local checkpoint step dirs
 (space-separated, e.g.
 `../models/mamba2_2_7b_memory/checkpoints/epoch-1/step-168` — several when the
 plan evals across checkpoints) — launch rsyncs them up to a staging dir
-(excluding `optimizer.pt`: probes never read it and `train.py` resume
-tolerates it missing, so it'd be ~2/3 of the bytes for nothing) and
+(excluding `optimizer.pt`: probes never read it, and it'd be ~2/3 of the
+bytes for nothing) and
 setup drops them into `models/<model>/checkpoints/<epoch>/` so `make resume`
-and the probes find them. Checkpoints
+and the probes find them. Put the checkpoint training will resume from in
+`LAMBDA_RESUME_CHECKPOINT_FULL` instead — same format, uploaded *with*
+`optimizer.pt`, so resume keeps its optimizer state instead of starting a
+fresh one (a loss transient). A step dir listed in both gets its optimizer.
+Checkpoints
 are gitignored and too big for GitHub (a single `optimizer.pt` exceeds the
 100MB file limit), so this direct copy is the only sane transfer. Unset →
 training starts fresh.

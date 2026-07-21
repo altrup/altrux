@@ -61,13 +61,22 @@ SESSION=train
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i "$SSH_KEY_PATH")
 
 # LAMBDA_RESUME_CHECKPOINT: space-separated checkpoint step dirs (one or
-# more — several when the plan probes/evals across checkpoints). Resolve
-# relative paths against the repo root, so it works regardless of the
-# directory launch is invoked from.
+# more — several when the plan probes/evals across checkpoints), uploaded
+# WITHOUT optimizer.pt (~2/3 of each checkpoint; probes never read it).
+# LAMBDA_RESUME_CHECKPOINT_FULL: same format, uploaded WITH optimizer.pt —
+# for the checkpoint training resumes from, avoiding the fresh-optimizer
+# loss transient. A step dir listed in both gets its optimizer (FULL wins).
+# Resolve relative paths against the repo root, so it works regardless of
+# the directory launch is invoked from.
 resume_ckpts=()
 for p in ${LAMBDA_RESUME_CHECKPOINT:-}; do
   [[ "$p" != /* ]] && p="$(cd "$SCRIPT_DIR/.." && pwd)/$p"
   resume_ckpts+=("$p")
+done
+resume_ckpts_full=()
+for p in ${LAMBDA_RESUME_CHECKPOINT_FULL:-}; do
+  [[ "$p" != /* ]] && p="$(cd "$SCRIPT_DIR/.." && pwd)/$p"
+  resume_ckpts_full+=("$p")
 done
 
 notify() {
@@ -229,19 +238,24 @@ if [[ "$RUN_SETUP" == 0 ]]; then
   exit 0
 fi
 
-if (( ${#resume_ckpts[@]} )); then
-  for p in "${resume_ckpts[@]}"; do
-    [[ -d "$p" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT entry is not a directory: $p" >&2; exit 1; }
+all_ckpts=("${resume_ckpts[@]}" "${resume_ckpts_full[@]}")
+if (( ${#all_ckpts[@]} )); then
+  for p in "${all_ckpts[@]}"; do
+    [[ -d "$p" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT(_FULL) entry is not a directory: $p" >&2; exit 1; }
   done
-  export LAMBDA_RESUME_EPOCH="$(basename "$(dirname "${resume_ckpts[0]}")")"
-  # optimizer.pt is ~2/3 of each checkpoint and nothing on the box needs it:
-  # probes never read it and train.py resume tolerates it missing (fresh
-  # optimizer). Excluding it keeps the upload to the weights that matter.
-  echo "Uploading ${#resume_ckpts[@]} checkpoint(s) ($(du -shc --exclude=optimizer.pt --exclude=mem_state.pt "${resume_ckpts[@]}" | tail -1 | cut -f1), optimizer.pt+mem_state.pt excluded) to staging..."
+  export LAMBDA_RESUME_EPOCH="$(basename "$(dirname "${all_ckpts[0]}")")"
+  echo "Uploading ${#all_ckpts[@]} checkpoint(s) (${#resume_ckpts_full[@]} with optimizer.pt, mem_state.pt excluded) to staging..."
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
-  rsync -rt --info=progress2 --exclude=optimizer.pt --exclude=mem_state.pt \
-    -e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'" \
-    "${resume_ckpts[@]}" "$SSH_USER@$ip:resume-staging/"
+  RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
+  if (( ${#resume_ckpts[@]} )); then
+    rsync -rt --info=progress2 --exclude=mem_state.pt --exclude=optimizer.pt \
+      "${RSYNC_SSH[@]}" "${resume_ckpts[@]}" "$SSH_USER@$ip:resume-staging/"
+  fi
+  # Full set second, so a step dir listed in both ends up with its optimizer.
+  if (( ${#resume_ckpts_full[@]} )); then
+    rsync -rt --info=progress2 --exclude=mem_state.pt \
+      "${RSYNC_SSH[@]}" "${resume_ckpts_full[@]}" "$SSH_USER@$ip:resume-staging/"
+  fi
 fi
 
 # Global Claude config, so the instance's claude behaves like the local one
