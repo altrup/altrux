@@ -183,9 +183,11 @@ scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/, notes/). Therefore:
 
 ## Monitoring
 
-Check-in cadence: every ~5 min for the first hour of a run (early failures
-— OOM, shape bugs, pathological loss — show up in the first minutes, and
-catching them early is cheap), then every ~15 min once it's proven stable.
+Check-in cadence: every ~5 min for the first hour after ANY training
+start — a fresh run, a restart after an intervention, a resume with
+changed args or data (early failures — OOM, shape bugs, pathological
+loss — show up in the first minutes, and catching them early is cheap) —
+then every ~15 min once that process has proven stable.
 Nothing external prompts your next turn — no teammate is typing, so once
 you end a turn with nothing armed to wake you, you are idle FOREVER: unable
 to check training, touch the watchdog, or react to anything, while the
@@ -223,8 +225,9 @@ Every event line wakes your session. Error lines → investigate now.
 Heartbeats → glance at the carried metrics line; a growing "log idle" on a
 run that should be training means it hung or died without a signature —
 also investigate. On a heartbeat while training is deliberately stopped,
-touch `.watchdog-delay`. After the first stable hour of a training run,
-TaskStop the monitor and re-arm with HB=900.
+touch `.watchdog-delay`. After an hour of stable training, TaskStop the
+monitor and re-arm with HB=900; drop back to HB=300 whenever you (re)start
+training.
 If a warning flood gets the monitor auto-suppressed, re-arm with a tighter
 filter; only if the Monitor tool is unavailable fall back to the old
 scheme (a background `sleep <interval>` task between manual checks).
