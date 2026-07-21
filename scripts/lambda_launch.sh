@@ -277,11 +277,12 @@ env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
 GIT_USER_NAME="$(git config user.name 2>/dev/null || true)"
 GIT_USER_EMAIL="$(git config user.email 2>/dev/null || true)"
-# Mirror the local model choice (settings.json stays local — see above), so
-# the remote claude runs on whatever model this machine's claude is set to.
+# Mirror the local model/effort choices (settings.json stays local — see
+# above), so the remote claude runs like this machine's claude is set to.
 CLAUDE_MODEL="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)"
+CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"
 for v in LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF LAMBDA_MODEL_NAME \
-         LAMBDA_RESUME_EPOCH CLAUDE_MODEL \
+         LAMBDA_RESUME_EPOCH CLAUDE_MODEL CLAUDE_EFFORT \
          GITHUB_TOKEN HF_TOKEN CLAUDE_CODE_OAUTH_TOKEN TORCH_BACKEND MAX_JOBS \
          GIT_USER_NAME GIT_USER_EMAIL; do
   [[ -n "${!v:-}" ]] && printf 'export %s=%q\n' "$v" "${!v}" >> "$env_file"
