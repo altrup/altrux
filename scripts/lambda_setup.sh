@@ -119,7 +119,8 @@ home = pathlib.Path.home()
 p = home / ".claude/settings.json"
 s = json.loads(p.read_text()) if p.exists() else {}
 s.setdefault("theme", "dark")
-s.setdefault("model", "claude-fable-5[1m]")
+if os.environ.get("CLAUDE_MODEL"):
+    s["model"] = os.environ["CLAUDE_MODEL"]
 s["skipDangerousModePermissionPrompt"] = True
 if (home / ".claude/statusline.sh").exists():
     s["statusLine"] = {"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 1}
