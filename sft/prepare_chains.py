@@ -153,7 +153,7 @@ def build_chains(
         return len(strings) - 1
 
     plans = []  # per chain: (episode_idxs, inserts, sleep_offsets_presplice)
-    n_blocks = n_facts_total = n_revised = 0
+    n_blocks = n_facts_total = n_revised = n_mid_sleeps = 0
     dist_counts = {"within_episode": 0, "cross_episode": 0, "cross_sleep": 0}
     for chain in chains:
         offsets = [0]
@@ -195,6 +195,7 @@ def build_chains(
             mid = [b for b in ep_boundaries[i] if lo <= b <= hi]
             if mid:
                 sleeps.append(rng.choice(mid))
+                n_mid_sleeps += 1
         sleeps = sorted(set(sleeps))
         sleep_set = set(sleeps)
         # An insert exactly at a sleep offset would be ambiguous (does the
@@ -341,7 +342,7 @@ def build_chains(
     dataset = {"ids": out_ids, "masks": out_masks, "recall_masks": out_recall, "sleep_positions": out_sleeps}
     stats = {
         "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
-        "dist_counts": dist_counts, "n_split": n_split,
+        "dist_counts": dist_counts, "n_split": n_split, "n_mid_sleeps": n_mid_sleeps,
     }
     return dataset, stats
 
@@ -404,7 +405,8 @@ def main() -> None:
     n_recall = sum(int(r.sum()) for r in dataset["recall_masks"] if r is not None)
     print(
         f"wrote {args.output}: {len(dataset['ids'])} chains, {total / 1e6:.1f}M tokens, "
-        f"{n_sleep} sleeps ({stats['n_blocks']} fact blocks, {stats['n_facts']} facts, "
+        f"{n_sleep} sleeps ({stats['n_mid_sleeps']} mid-conversation, {stats['n_split']} split-tail, "
+        f"{stats['n_blocks']} fact blocks, {stats['n_facts']} facts, "
         f"{stats['n_revised']} revisions, queries {stats['dist_counts']}), "
         f"{n_recall / 1e3:.1f}k recall-answer tokens"
     )
