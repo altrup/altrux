@@ -46,9 +46,12 @@ never lives on the instance). Set `LAMBDA_INSTANCE_TYPE` and
 ```
 
 If the instance type is sold out, launch **polls** every
-`LAMBDA_CAPACITY_POLL_INTERVAL` seconds (default 60) until capacity frees up —
-`LAMBDA_CAPACITY_MAX_WAIT` (default 0 = forever) caps the wait. A 60s poll is
-well within normal API use (the watchdog polls at the same rate all run long).
+`LAMBDA_CAPACITY_POLL_INTERVAL` seconds (default 30) until capacity frees up —
+`LAMBDA_CAPACITY_MAX_WAIT` (default 0 = forever) caps the wait. The poll rate is
+well within normal API use (the watchdog polls at a similar rate all run long).
+When capacity appears but the launch call loses the race (scarce types sell out
+in seconds), launch burst-retries up to 10× at 3s intervals before dropping
+back to slow polling — released capacity often flickers back within that window.
 
 Unless `--no-watch` is passed, launch also starts a **local tmux session
 `altrux`** with everything in one place:

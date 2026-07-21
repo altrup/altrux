@@ -128,7 +128,7 @@ print(ids[0])
   return 0
 }
 
-poll_interval="${LAMBDA_CAPACITY_POLL_INTERVAL:-60}"
+poll_interval="${LAMBDA_CAPACITY_POLL_INTERVAL:-30}"
 max_wait="${LAMBDA_CAPACITY_MAX_WAIT:-0}"   # seconds to keep polling; 0 = forever
 
 echo "Resolving a region with capacity for $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}..."
@@ -157,9 +157,15 @@ while :; do
   fi
   echo "Region: $region"
   echo "Launching..."
-  launch_instance && break
-  # The launch lost the capacity race — scarce types can sell out in the
-  # seconds between the capacity check and the launch call. Resume polling.
+  # Scarce types sell out in the seconds between the capacity check and the
+  # launch call, but released capacity also flickers back within that window —
+  # burst-retry the launch before falling back to slow polling.
+  launched=0
+  for attempt in {1..10}; do
+    if launch_instance; then launched=1; break; fi
+    (( attempt < 10 )) && { echo "  launch raced (attempt $attempt/10) — retrying in 3s"; sleep 3; }
+  done
+  (( launched )) && break
   echo "capacity in $region vanished before launch — back to polling"
   region=""
 done
