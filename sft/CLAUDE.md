@@ -19,3 +19,7 @@ The model is selected via `MODEL_NAME` in `.env`. This controls which package in
 ## Checkpoint format
 
 `state.pt` (written by `train.py`'s `save_checkpoint`) carries a `dataset_fingerprint` (resolved `--data` path + example count) alongside `slot_states`/`next_ptr`, so `main()`'s resume path can tell whether `--data` still points at the dataset those indices were recorded against and reset them instead of silently reindexing into an unrelated dataset. If you touch `state.pt`'s schema again, keep this field — `slot_states`/`next_ptr` are meaningless without it.
+
+## Data-shape gotcha: mid-conversation sleeps need episodes that don't exist
+
+`prepare_chains.py --mid-sleep-rate` only fires on episodes ≥ `--mid-sleep-min-len` (4096) that have a turn boundary in their middle third. With the default corpora that set is **empty** — ultrachat episodes are capped at 1024 tokens by `prepare_data.py`, and LongAlign/babilong episodes are single-QA (turn boundaries only at position 0 and the answer start). Any mid-sleep-rate therefore silently produces zero mid-conversation sleeps; check the regen log's sleep count against the between-episode-only expectation before assuming the signal exists. `--split-episode-rate` (with `--split-min-part`) is the mechanism that actually creates natural-continuation-across-sleep signal from these corpora.
