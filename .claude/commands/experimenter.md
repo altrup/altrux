@@ -183,14 +183,52 @@ scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/, notes/). Therefore:
 
 ## Monitoring
 
-While training runs: check every ~5 min for the first hour of a
-run (early failures — OOM, shape bugs, pathological loss — show up in the
-first minutes, and catching them early is cheap), then every ~15 min once
-it's proven stable. To hold this cadence unattended — no teammate types to prompt
-your next check — pace yourself with a backgrounded timer: after each check,
-start a background `sleep <interval>` (a background task, not foreground) so the
-session is re-invoked when it elapses instead of idling. Tail the newest
-sft/logs/train-*.log. Healthy: loss trending down, "surprise" NOT flat at
+Check-in cadence: every ~5 min for the first hour of a run (early failures
+— OOM, shape bugs, pathological loss — show up in the first minutes, and
+catching them early is cheap), then every ~15 min once it's proven stable.
+Nothing external prompts your next turn — no teammate is typing, so once
+you end a turn with nothing armed to wake you, you are idle FOREVER: unable
+to check training, touch the watchdog, or react to anything, while the
+box bills and the watchdog eventually kills it. A wake source must
+therefore exist at every moment of the session. That is the real job of
+the monitor; the check-in cadence rides on it. Keep ONE persistent Monitor
+(the Monitor tool) running for the WHOLE session — armed at session start,
+before anything else, and re-armed only to change its interval/filter (or
+if it dies: a monitor's termination is itself a wake — re-arm then). Not a
+background `sleep` timer: a timer is blind between ticks (a crash right
+after a check burns a whole interval of billed GPU), while a monitor wakes
+you the moment a failure signature hits the log, at the same wake cost.
+And not only while training: its heartbeat fires with no train log at all,
+and it is the only thing that wakes you to touch `.watchdog-delay` during
+data prep, eval-only sessions, and stopped-for-investigation stretches (the
+watchdog counts all of those as "training stopped"; an idle session gets
+the box terminated mid-work). Arm with `persistent: true`, shaped like:
+
+    seen=0; beat=0; HB=300   # heartbeat 300s for the first hour, then re-arm with 900
+    while true; do
+      log=$(ls -t ~/altrux/sft/logs/train-*.log 2>/dev/null | head -1)
+      if [ -n "$log" ]; then
+        n=$(wc -l < "$log"); [ "$n" -lt "$seen" ] && seen=0
+        tail -n +"$((seen+1))" "$log" | grep -E "non-finite|Traceback|RuntimeError|out of memory|Killed"
+        seen=$n
+      fi
+      if [ $((SECONDS - beat)) -ge $HB ]; then
+        beat=$SECONDS
+        echo "heartbeat: $(tail -1 "$log" 2>/dev/null) (log idle $(( $(date +%s) - $(stat -c %Y "$log" 2>/dev/null || date +%s) ))s)"
+      fi
+      sleep 30
+    done
+
+Every event line wakes your session. Error lines → investigate now.
+Heartbeats → glance at the carried metrics line; a growing "log idle" on a
+run that should be training means it hung or died without a signature —
+also investigate. On a heartbeat while training is deliberately stopped,
+touch `.watchdog-delay`. After the first stable hour of a training run,
+TaskStop the monitor and re-arm with HB=900.
+If a warning flood gets the monitor auto-suppressed, re-arm with a tighter
+filter; only if the Monitor tool is unavailable fall back to the old
+scheme (a background `sleep <interval>` task between manual checks).
+Healthy: loss trending down, "surprise" NOT flat at
 ~1.0, w1_abs_max neither collapsing to 0 nor growing unboundedly, few/no
 "non-finite" warnings. Repeated "non-finite loss/gradient, skipping chunk"
 warnings are a known failure mode — if more than rare: stop the run,
