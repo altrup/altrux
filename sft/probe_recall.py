@@ -47,6 +47,12 @@ log-prob per continuation token under four conditions:
   no-wipe       -- full carried state, no sleep. Positive control: must
                    clearly beat every wiped condition or the harness is
                    broken.
+  no-wipe-ablated -- full carried state, memory replaced fresh. awake-mem =
+                   no-wipe - no-wipe-ablated is the memory's contribution
+                   while the SSM is alive: it should stay small as the
+                   sleep deltas grow -- growth here means the memory is
+                   shadowing the backbone's short-term role instead of
+                   complementing it across sleeps.
   sleep-intact  -- backbone wiped at the boundary, memory kept.
   sleep-recent  -- memory built from ONLY the last --gist-recent prefix
                    tokens (fresh state fed that suffix), backbone wiped.
@@ -252,6 +258,15 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
         per_token["no-wipe"] = score_continuation(model, cont, clone_state(mmod, state), "no-wipe")
         torch.cuda.empty_cache()
 
+        # Memory's contribution while the SSM is alive: large means the memory
+        # is shadowing the backbone's short-term role instead of complementing
+        # it across sleeps (it should stay small as the sleep deltas grow).
+        nw_abl = clone_state(mmod, state)
+        nw_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+        per_token["no-wipe-ablated"] = score_continuation(model, cont, nw_abl, "no-wipe-ablated")
+        del nw_abl
+        torch.cuda.empty_cache()
+
         slept = clone_state(mmod, state)
         for b in range(args.n_probes):
             model.sleep_slot(slept, b)
@@ -319,6 +334,7 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
     print(f"  recency      (recent - ablated): {delta('sleep-recent', 'sleep-ablated')}")
     print(f"  long-range   (intact - recent):  {delta('sleep-intact', 'sleep-recent')}")
     print(f"  wipe cost    (no-wipe - intact): {delta('no-wipe', 'sleep-intact')}")
+    print(f"  awake-mem    (no-wipe - no-wipe-ablated): {delta('no-wipe', 'no-wipe-ablated')}")
     if "dist-intact" in rows:
         print(f"  dist-delta   (dist-intact - dist-ablated): {delta('dist-intact', 'dist-ablated')}")
         dd = (rows["sleep-intact"] - rows["sleep-ablated"]) - (rows["dist-intact"] - rows["dist-ablated"])
