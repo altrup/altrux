@@ -35,11 +35,37 @@ One salient fact sits comfortably in Mamba's SSM state, so the memory only
 has a measurable job once the fact load exceeds SSM capacity -- sweep until
 ablated recall degrades and see whether intact holds up.
 
+--gist DATA.pt replaces the engineered fact/query machinery entirely with a
+natural-continuation eval: the memory is a gist mechanism, and the
+exact-code conditions above are blind to any fuzzier trace it carries. Each
+probe row takes one real long conversation from DATA.pt (a prepare_data.py
+output), places the wipe at the between-turn boundary nearest the
+conversation's middle, feeds the preceding --gist-prefix tokens as prefix,
+then teacher-forces the conversation's actual continuation and scores mean
+log-prob per continuation token under four conditions:
+
+  no-wipe       -- full carried state, no sleep. Positive control: must
+                   clearly beat every wiped condition or the harness is
+                   broken.
+  sleep-intact  -- backbone wiped at the boundary, memory kept.
+  sleep-recent  -- memory built from ONLY the last --gist-recent prefix
+                   tokens (fresh state fed that suffix), backbone wiped.
+                   Distance-grades the intact result: sleep-intact at or
+                   near sleep-recent means the memory is only a
+                   last-few-turns buffer, not an episodic gist store.
+  sleep-ablated -- backbone wiped AND memory replaced fresh: the floor.
+
+gist-delta = sleep-intact - sleep-ablated. Any retained signal -- topic,
+entities, style, facts -- shows up; this is the most permissive detector of
+"the memory stored *something*" across a sleep.
+
 Run via `make probe-recall` (defaults) or directly:
   uv run --no-sync python probe_recall.py --gaps 1024 --n-facts 64,128,256
+  uv run --no-sync python probe_recall.py --gist data/train_memory_longalign.pt
 """
 
 import argparse
+import math
 import random
 import sys
 from pathlib import Path
@@ -141,6 +167,116 @@ def build_probe_rows(
     return prefix, query, target
 
 
+def build_gist_rows(
+    data_path: str, user_id: int, asst_id: int, n_probes: int, prefix_len: int, cont_len: int, rng: random.Random
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Returns (prefix, continuation), each (n_probes, L), cut from real
+    conversations in `data_path`: for each eligible conversation, the wipe
+    boundary is the between-turn marker nearest the conversation's middle
+    with >= prefix_len tokens before it and >= cont_len after. Rows are
+    equal-length by construction (fixed cuts around the boundary)."""
+    data = torch.load(data_path, map_location="cpu", weights_only=True)
+    candidates: list[tuple[torch.Tensor, int]] = []
+    for ids in data["ids"]:
+        if len(ids) < prefix_len + cont_len:
+            continue
+        bounds = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
+        valid = [b for b in bounds if b >= prefix_len and len(ids) - b >= cont_len]
+        if not valid:
+            continue
+        mid = len(ids) // 2
+        candidates.append((ids, min(valid, key=lambda b: abs(b - mid))))
+    if len(candidates) < n_probes:
+        raise SystemExit(
+            f"only {len(candidates)} conversations in {data_path} have a turn boundary with "
+            f">={prefix_len} tokens before and >={cont_len} after; need {n_probes}"
+        )
+    picks = rng.sample(candidates, n_probes)
+    prefix = torch.stack([ids[b - prefix_len : b] for ids, b in picks])
+    cont = torch.stack([ids[b : b + cont_len] for ids, b in picks])
+    return prefix, cont
+
+
+def score_continuation(model, cont: torch.Tensor, state, label: str) -> torch.Tensor:
+    """Per-token teacher-forced log-probs for cont[:, 1:], shape
+    (n_probes, cont_len - 1). The first continuation token has no prediction
+    (the prefix pass's final logits are discarded) and is skipped."""
+    logits, _ = run_chunks(model, cont, state, label)
+    logprobs = torch.log_softmax(logits.float(), dim=-1)
+    return logprobs[:, :-1].gather(2, cont[:, 1:].unsqueeze(-1)).squeeze(-1).cpu()
+
+
+def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -> None:
+    rng = random.Random(args.seed)
+    prefix_len = args.gist_prefix - args.gist_prefix % CHUNK_LEN
+    recent_len = args.gist_recent - args.gist_recent % CHUNK_LEN
+    prefix, cont = build_gist_rows(args.gist, user_id, asst_id, args.n_probes, prefix_len, args.gist_cont, rng)
+    prefix, cont = prefix.to(device), cont.to(device)
+    print(
+        f"gist eval: {args.n_probes} conversations from {args.gist}, "
+        f"prefix {prefix_len} tokens, continuation {cont.shape[1]}, recent window {recent_len}"
+    )
+
+    mem_dtype = model.front_end.q_proj.weight.dtype
+    per_token: dict[str, torch.Tensor] = {}
+    with torch.no_grad():
+        _, state = run_chunks(model, prefix, None, "prefix", keep_logits=False)
+
+        per_token["no-wipe"] = score_continuation(model, cont, clone_state(mmod, state), "no-wipe")
+        torch.cuda.empty_cache()
+
+        slept = clone_state(mmod, state)
+        for b in range(args.n_probes):
+            model.sleep_slot(slept, b)
+        per_token["sleep-intact"] = score_continuation(model, cont, slept, "sleep-intact")
+        del slept
+        torch.cuda.empty_cache()
+
+        # Fresh state over only the prefix's tail: the memory this builds is
+        # what a pure "last few turns" buffer would hold at the wipe.
+        _, rstate = run_chunks(model, prefix[:, -recent_len:], None, "recent prefix", keep_logits=False)
+        for b in range(args.n_probes):
+            model.sleep_slot(rstate, b)
+        per_token["sleep-recent"] = score_continuation(model, cont, rstate, "sleep-recent")
+        del rstate
+        torch.cuda.empty_cache()
+
+        slept_abl = clone_state(mmod, state)
+        for b in range(args.n_probes):
+            model.sleep_slot(slept_abl, b)
+        slept_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+        per_token["sleep-ablated"] = score_continuation(model, cont, slept_abl, "sleep-ablated")
+        del slept_abl, state
+        torch.cuda.empty_cache()
+
+    rows = {k: v.mean(dim=1) for k, v in per_token.items()}  # (n_probes,) per condition
+
+    def delta(a: str, b: str) -> str:
+        d = rows[a] - rows[b]
+        return f"{d.mean():+.4f} (SEM {d.std() / math.sqrt(args.n_probes):.4f})"
+
+    print("\nsummary (gist: mean log-prob per continuation token; row-paired deltas):")
+    for k, v in rows.items():
+        print(f"  {k:>13}: {v.mean():.4f}")
+    print(f"  gist-delta   (intact - ablated): {delta('sleep-intact', 'sleep-ablated')}")
+    print(f"  recency      (recent - ablated): {delta('sleep-recent', 'sleep-ablated')}")
+    print(f"  long-range   (intact - recent):  {delta('sleep-intact', 'sleep-recent')}")
+    print(f"  wipe cost    (no-wipe - intact): {delta('no-wipe', 'sleep-intact')}")
+
+    n_bins = 3
+    print("\nby distance into the continuation (thirds):")
+    T = per_token["no-wipe"].shape[1]
+    for i in range(n_bins):
+        lo, hi = i * T // n_bins, (i + 1) * T // n_bins
+        seg = {k: v[:, lo:hi].mean(dim=1) for k, v in per_token.items()}
+        d = seg["sleep-intact"] - seg["sleep-ablated"]
+        lr = seg["sleep-intact"] - seg["sleep-recent"]
+        print(
+            f"  tokens {lo + 1:>5}-{hi:>5}: gist-delta {d.mean():+.4f} "
+            f"(SEM {d.std() / math.sqrt(args.n_probes):.4f})  long-range {lr.mean():+.4f}"
+        )
+
+
 def clone_state(mmod, state):
     """Deep, storage-independent copy of a MemoryState so two continuations
     can diverge from one prefix without sharing mutable buffers."""
@@ -201,6 +337,10 @@ def main() -> None:
     parser.add_argument("--n-facts", default="64,128", help="Comma-separated fact counts per conversation (interference sweep)")
     parser.add_argument("--n-probes", type=int, default=8, help="Probe conversations per gap (batched together)")
     parser.add_argument("--sleep", action="store_true", help="Also score the cross-sleep conditions (backbone wiped after the prefix, memory kept vs replaced) -- see the module docstring")
+    parser.add_argument("--gist", default=None, help="Natural-continuation gist eval on real conversations from this prepare_data.py .pt file (replaces the fact/query probe; see the module docstring)")
+    parser.add_argument("--gist-prefix", type=int, default=6144, help="Pre-wipe prefix length in tokens (rounded down to a chunk multiple)")
+    parser.add_argument("--gist-cont", type=int, default=1536, help="Post-wipe continuation length in tokens to score")
+    parser.add_argument("--gist-recent", type=int, default=576, help="Suffix length for the sleep-recent recency control")
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
@@ -239,6 +379,15 @@ def main() -> None:
     model.eval()
     model.set_memory_window(args.memory_window)
     tokenizer = build_tokenizer(model_mod)
+
+    if args.gist:
+        run_gist(
+            args, model, mmod, tokenizer,
+            tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
+            tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
+            device,
+        )
+        return
 
     rng = random.Random(args.seed)
     results = []
