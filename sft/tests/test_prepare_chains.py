@@ -38,6 +38,7 @@ def _args(**overrides):
         min_budget=300, max_budget=300, min_wake=1, max_wake=2,
         mid_sleep_rate=0.0, mid_sleep_min_len=60,
         split_episode_rate=0.0, split_min_part=30,
+        sentence_sleep_rate=0.0,
         fact_rate=1.0, min_facts=2, max_facts=4, min_queries=1, max_queries=3,
         revise_rate=0.5, cross_sleep_bias=0.0, seed=0,
     )
@@ -45,14 +46,17 @@ def _args(**overrides):
     return SimpleNamespace(**defaults)
 
 
-def _build(n_episodes=40, n_turns=6, turn_len=10, **overrides):
-    pool = [_episode(n_turns, turn_len) for _ in range(n_episodes)]
+def _build(n_episodes=40, n_turns=6, turn_len=10, pool=None, sent_end_ids=None,
+           space_start_ids=None, **overrides):
+    if pool is None:
+        pool = [_episode(n_turns, turn_len) for _ in range(n_episodes)]
     labels = [f"lbl{i}" for i in range(64)]
     return build_chains(
         [ids for ids, _ in pool], [m for _, m in pool],
         encode=_stub_encode, labels=labels,
         user_open=USER, asst_open=ASST, user_id=USER_ID, asst_id=ASST_ID,
         args=_args(**overrides),
+        sent_end_ids=sent_end_ids, space_start_ids=space_start_ids,
     )
 
 
@@ -125,6 +129,49 @@ def test_split_episodes_conserve_content_and_sleep_on_boundaries():
     # and every chain with a split has at least one sleep.
     for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
         assert len(sleeps) > 0
+        for s in sleeps.tolist():
+            assert ids[s].item() in (USER_ID, ASST_ID)
+
+
+SENT_END, SPACE_START = 30, 31
+
+
+def _single_qa_episode(n_sentences: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """One long user document turn of repeated sentences, then a short answer
+    -- the LongAlign shape whose only turn boundaries are at 0 and the end."""
+    sentence = [5] * 8 + [SENT_END, SPACE_START]
+    ids = [USER_ID] + sentence * n_sentences + [ASST_ID] + [6] * 9
+    mask = [False] * (1 + 10 * n_sentences) + [False] + [True] * 9
+    return torch.tensor(ids), torch.tensor(mask)
+
+
+def test_sentence_sleeps_land_at_sentence_starts_inside_document_turns():
+    pool = [_single_qa_episode(12) for _ in range(20)]
+    dataset, stats = _build(
+        pool=pool, fact_rate=0.0,
+        sentence_sleep_rate=1.0, mid_sleep_min_len=100,
+        sent_end_ids={SENT_END}, space_start_ids={SPACE_START},
+        min_wake=4, max_wake=4, min_budget=500, max_budget=500,
+    )
+    assert stats["n_sentence_sleeps"] > 0
+    found = 0
+    for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
+        for s in sleeps.tolist():
+            if ids[s].item() in (USER_ID, ASST_ID):
+                continue  # between-episode sleep
+            assert ids[s].item() == SPACE_START and ids[s - 1].item() == SENT_END
+            found += 1
+    assert found == stats["n_sentence_sleeps"]
+
+
+def test_sentence_sleep_rate_zero_is_a_noop():
+    pool = [_single_qa_episode(12) for _ in range(20)]
+    dataset, stats = _build(
+        pool=pool, fact_rate=0.0,
+        sent_end_ids={SENT_END}, space_start_ids={SPACE_START},
+    )
+    assert stats["n_sentence_sleeps"] == 0
+    for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
         for s in sleeps.tolist():
             assert ids[s].item() in (USER_ID, ASST_ID)
 

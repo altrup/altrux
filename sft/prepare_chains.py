@@ -73,10 +73,18 @@ def build_chains(
     user_id: int,
     asst_id: int,
     args,
+    sent_end_ids: set[int] | None = None,
+    space_start_ids: set[int] | None = None,
 ) -> tuple[dict, dict]:
     """The whole generator, IO-free: `encode` is a batched
     strings -> list[list[int]] tokenizer callable, `args` the CLI namespace.
-    Returns (dataset dict as written to --output, stats dict)."""
+    Returns (dataset dict as written to --output, stats dict).
+
+    sent_end_ids/space_start_ids feed --sentence-sleep-rate: a sentence
+    boundary is a sent_end token immediately followed by a space_start token."""
+    sentence_sleep_rate = getattr(args, "sentence_sleep_rate", 0.0)
+    sent_end_t = torch.tensor(sorted(sent_end_ids)) if sent_end_ids else None
+    space_start_t = torch.tensor(sorted(space_start_ids)) if space_start_ids else None
 
     def sample_value(kind, rng: random.Random) -> str:
         if kind["value"] == "vocab_word":
@@ -153,7 +161,7 @@ def build_chains(
         return len(strings) - 1
 
     plans = []  # per chain: (episode_idxs, inserts, sleep_offsets_presplice)
-    n_blocks = n_facts_total = n_revised = n_mid_sleeps = 0
+    n_blocks = n_facts_total = n_revised = n_mid_sleeps = n_sentence_sleeps = 0
     dist_counts = {"within_episode": 0, "cross_episode": 0, "cross_sleep": 0}
     for chain in chains:
         offsets = [0]
@@ -196,6 +204,20 @@ def build_chains(
             if mid:
                 sleeps.append(rng.choice(mid))
                 n_mid_sleeps += 1
+        # Sentence-boundary sleeps: for long episodes whose middle third has
+        # no turn boundary (single-QA documents), wipe at the start of a
+        # sentence instead -- trains reading-persistence across a sleep.
+        if sentence_sleep_rate > 0 and sent_end_t is not None and space_start_t is not None:
+            for i, ep in enumerate(chain):
+                if len(pool_ids[ep]) < args.mid_sleep_min_len or rng.random() >= sentence_sleep_rate:
+                    continue
+                lo, hi = len(pool_ids[ep]) // 3, 2 * len(pool_ids[ep]) // 3
+                seg, nxt = pool_ids[ep][lo:hi], pool_ids[ep][lo + 1 : hi + 1]
+                m = torch.isin(seg, sent_end_t) & torch.isin(nxt, space_start_t)
+                cand = (m.nonzero().flatten() + (offsets[i] + lo + 1)).tolist()
+                if cand:
+                    sleeps.append(rng.choice(cand))
+                    n_sentence_sleeps += 1
         sleeps = sorted(set(sleeps))
         sleep_set = set(sleeps)
         # An insert exactly at a sleep offset would be ambiguous (does the
@@ -343,6 +365,7 @@ def build_chains(
     stats = {
         "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
         "dist_counts": dist_counts, "n_split": n_split, "n_mid_sleeps": n_mid_sleeps,
+        "n_sentence_sleeps": n_sentence_sleeps,
     }
     return dataset, stats
 
@@ -364,6 +387,8 @@ def main() -> None:
                         help="Minimum tokens on each side of a split-episode cut boundary")
     parser.add_argument("--mid-sleep-min-len", type=int, default=4096,
                         help="Minimum episode length in tokens to be eligible for a mid-conversation sleep")
+    parser.add_argument("--sentence-sleep-rate", type=float, default=0.0,
+                        help="Fraction of long episodes (>= --mid-sleep-min-len) that get one sleep at a SENTENCE boundary in the middle third -- reaches inside long document turns where no turn boundary exists (reading-persistence signal)")
     parser.add_argument("--fact-rate", type=float, default=0.3, help="Fraction of episodes that host a fact block")
     parser.add_argument("--min-facts", type=int, default=4)
     parser.add_argument("--max-facts", type=int, default=64)
@@ -389,6 +414,19 @@ def main() -> None:
         pool_masks.extend(data["masks"])
         print(f"  {src}: +{len(data['ids'])} episodes")
 
+    sent_end_ids: set[int] = set()
+    space_start_ids: set[int] = set()
+    if args.sentence_sleep_rate > 0:
+        # ponytail: vocab-string heuristic (byte-level BPE: Ġ=space, Ċ=newline);
+        # upgrade to real sentence segmentation if boundary quality matters.
+        for tok, tid in tokenizer.get_vocab().items():
+            if tok.endswith((".", "!", "?")):
+                sent_end_ids.add(tid)
+            if tok.startswith(("Ġ", "Ċ")):
+                space_start_ids.add(tid)
+        print(f"sentence-boundary vocab scan: {len(sent_end_ids)} sentence-end ids, "
+              f"{len(space_start_ids)} space-start ids")
+
     dataset, stats = build_chains(
         pool_ids, pool_masks,
         encode=lambda strings: tokenizer(strings, add_special_tokens=False)["input_ids"],
@@ -397,6 +435,7 @@ def main() -> None:
         user_id=tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
         asst_id=tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
         args=args,
+        sent_end_ids=sent_end_ids, space_start_ids=space_start_ids,
     )
 
     torch.save(dataset, args.output)
@@ -405,7 +444,8 @@ def main() -> None:
     n_recall = sum(int(r.sum()) for r in dataset["recall_masks"] if r is not None)
     print(
         f"wrote {args.output}: {len(dataset['ids'])} chains, {total / 1e6:.1f}M tokens, "
-        f"{n_sleep} sleeps ({stats['n_mid_sleeps']} mid-conversation, {stats['n_split']} split-tail, "
+        f"{n_sleep} sleeps ({stats['n_mid_sleeps']} mid-conversation, "
+        f"{stats['n_sentence_sleeps']} sentence-boundary, {stats['n_split']} split-tail, "
         f"{stats['n_blocks']} fact blocks, {stats['n_facts']} facts, "
         f"{stats['n_revised']} revisions, queries {stats['dist_counts']}), "
         f"{n_recall / 1e3:.1f}k recall-answer tokens"
