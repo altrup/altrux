@@ -54,9 +54,10 @@ in seconds), launch burst-retries `LAMBDA_LAUNCH_BURST_ATTEMPTS` times (default
 10) every `LAMBDA_LAUNCH_BURST_INTERVAL` seconds (default 5) before dropping
 back to slow polling — released capacity often flickers back within that window.
 
-If `.cache/wheels/` (repo root, gitignored) holds any `*.whl` — e.g. the
-`mamba_ssm` wheel harvested from a previous instance's uv cache
-(`find ~/.cache/uv -name 'mamba_ssm*.whl'`) — launch uploads them and setup
+If `.cache/wheels/` (repo root, gitignored) holds any `*.whl` — harvested
+from a running instance's uv cache with `./scripts/lambda_harvest_wheels.sh`
+(grabs the compiled `mamba_ssm` and `causal_conv1d` wheels; run it any time
+after the instance's `make sync` finishes) — launch uploads them and setup
 installs from them via `UV_FIND_LINKS`, skipping the multi-minute CUDA
 compile. A wheel with a mismatched python tag is ignored automatically, but a
 torch major-version bump isn't detectable from the filename — clear the stash
