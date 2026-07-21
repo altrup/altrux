@@ -61,6 +61,44 @@ alongside `DISCUSSION-20260720-gist-eval.md` (its rejected items still stand).
       reproduction question is settled; only ever as an addition to a
       validated recipe, never a substitution.
 
+## North star (agreed): what "memory working" means, and where 435 stands
+
+The end goal is memory that still *remembers you* after a sleep. That
+decomposes into three abilities; judge every run against them, not just
+the next delta:
+
+1. **Gist persistence** (topic, ongoing work, conversation shape). 435:
+   measurable, not usable — gist-delta +0.0285 against a wipe cost of
+   ~0.19–0.22, i.e. M recovers ~13% of what the sleep destroys.
+2. **Specific-fact recall on demand** ("my name is X", post-sleep). 435:
+   zero — the step-180 verbatim ability (+0.4) was traded away as gist
+   grew. Under current training these compete; the end goal needs both.
+3. **Durability across many sleeps/sessions.** 435: retention roughly
+   halves through ONE intervening episode+sleep (dist-delta +0.016).
+
+Staged program: (1) prove the training signal is reproducible (Tests 1–3
+below); (2) find what bounds magnitude; (3) recombine — gist foundation
+first, then engineered recall demands earn their way back
+(DISCUSSION-20260720's phrase), plus multi-sleep durability signals
+(the --split-gap-max knob points that way).
+
+**Capacity is NOT the bottleneck — correct a misreading in the run notes:**
+"218 memory params" is a TENSOR count. The trainable memory machinery is
+40.8M params (front-end q/k/v + per-layer injections; LoRA is a separate
+21.3M), and the memory state M itself is a Titans fast-weight MLP of ~52M
+values per sequence (w1 10240x2560 + w2 2560x10240). Storage is ample.
+The whisper-scale effect and zero fact-recall point instead at:
+- **read-out bandwidth**: retrieval runs through 128-dim bottlenecked
+  injections into alternate layers >= 22, once per memory window, gated —
+  M could hold a fact and be unable to say it through that straw;
+- **write fidelity**: one surprise-driven gradient step per window decides
+  whether a fact lands retrievably or smears into topical bias;
+- **decay**: per-token retain ~0.95, worst-case half-life ~7k writes
+  (~55k tokens, model.py comment); alpha forgetting-gate dead as trained;
+- **the training objective** (everything the erosion regimes showed).
+These are stage-2 suspects, in that order, if Tests 1–3 validate
+reproducibility but magnitude saturates at whisper scale.
+
 ## Standing direction: three tests, in order
 
 ### Test 2 first on the box (probe-only, runs while Test 1's data regens):
