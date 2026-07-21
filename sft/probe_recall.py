@@ -59,6 +59,14 @@ gist-delta = sleep-intact - sleep-ablated. Any retained signal -- topic,
 entities, style, facts -- shows up; this is the most permissive detector of
 "the memory stored *something*" across a sleep.
 
+--gist-distractor N adds two conditions that stretch the same measurement
+across an episode boundary: after the wipe, N tokens of an UNRELATED
+conversation's opening are fed (writing into the memory), the backbone is
+wiped again, and the original continuation is scored (dist-intact /
+dist-ablated). dist-delta measures how much prefix gist survives through an
+intervening episode + sleep; (gist-delta - dist-delta) is the flush cost of
+that episode boundary.
+
 Run via `make probe-recall` (defaults) or directly:
   uv run --no-sync python probe_recall.py --gaps 1024 --n-facts 64,128,256
   uv run --no-sync python probe_recall.py --gist data/train_memory_longalign.pt
@@ -168,13 +176,22 @@ def build_probe_rows(
 
 
 def build_gist_rows(
-    data_path: str, user_id: int, asst_id: int, n_probes: int, prefix_len: int, cont_len: int, rng: random.Random
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Returns (prefix, continuation), each (n_probes, L), cut from real
-    conversations in `data_path`: for each eligible conversation, the wipe
-    boundary is the between-turn marker nearest the conversation's middle
-    with >= prefix_len tokens before it and >= cont_len after. Rows are
-    equal-length by construction (fixed cuts around the boundary)."""
+    data_path: str,
+    user_id: int,
+    asst_id: int,
+    n_probes: int,
+    prefix_len: int,
+    cont_len: int,
+    rng: random.Random,
+    dist_len: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Returns (prefix, continuation, distractor), the first two (n_probes, L),
+    cut from real conversations in `data_path`: for each eligible conversation,
+    the wipe boundary is the between-turn marker nearest the conversation's
+    middle with >= prefix_len tokens before it and >= cont_len after. Rows are
+    equal-length by construction (fixed cuts around the boundary). With
+    dist_len > 0, row i's distractor is the opening dist_len tokens of row
+    (i+1)'s conversation — an unrelated episode start; None otherwise."""
     data = torch.load(data_path, map_location="cpu", weights_only=True)
     candidates: list[tuple[torch.Tensor, int]] = []
     for ids in data["ids"]:
@@ -194,7 +211,11 @@ def build_gist_rows(
     picks = rng.sample(candidates, n_probes)
     prefix = torch.stack([ids[b - prefix_len : b] for ids, b in picks])
     cont = torch.stack([ids[b : b + cont_len] for ids, b in picks])
-    return prefix, cont
+    if not dist_len:
+        return prefix, cont, None
+    assert dist_len <= prefix_len + cont_len, "distractor longer than the eligibility minimum"
+    dist = torch.stack([picks[(i + 1) % n_probes][0][:dist_len] for i in range(n_probes)])
+    return prefix, cont, dist
 
 
 def score_continuation(model, cont: torch.Tensor, state, label: str) -> torch.Tensor:
@@ -210,11 +231,17 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
     rng = random.Random(args.seed)
     prefix_len = args.gist_prefix - args.gist_prefix % CHUNK_LEN
     recent_len = args.gist_recent - args.gist_recent % CHUNK_LEN
-    prefix, cont = build_gist_rows(args.gist, user_id, asst_id, args.n_probes, prefix_len, args.gist_cont, rng)
+    dist_len = args.gist_distractor - args.gist_distractor % CHUNK_LEN
+    prefix, cont, dist = build_gist_rows(
+        args.gist, user_id, asst_id, args.n_probes, prefix_len, args.gist_cont, rng, dist_len
+    )
     prefix, cont = prefix.to(device), cont.to(device)
+    if dist is not None:
+        dist = dist.to(device)
     print(
         f"gist eval: {args.n_probes} conversations from {args.gist}, "
         f"prefix {prefix_len} tokens, continuation {cont.shape[1]}, recent window {recent_len}"
+        + (f", distractor {dist_len}" if dist is not None else "")
     )
 
     mem_dtype = model.front_end.q_proj.weight.dtype
@@ -246,7 +273,37 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
             model.sleep_slot(slept_abl, b)
         slept_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
         per_token["sleep-ablated"] = score_continuation(model, cont, slept_abl, "sleep-ablated")
-        del slept_abl, state
+        del slept_abl
+        torch.cuda.empty_cache()
+
+        if dist is not None:
+            # Interleaved-episode retention: sleep, run an unrelated episode
+            # opening (writing into the kept/fresh memory), sleep again, then
+            # score the original continuation. dist-intact - dist-ablated
+            # measures how much of the prefix gist survives THROUGH an
+            # intervening episode and its sleep.
+            dslept = clone_state(mmod, state)
+            for b in range(args.n_probes):
+                model.sleep_slot(dslept, b)
+            _, dslept = run_chunks(model, dist, dslept, "distractor", keep_logits=False)
+            for b in range(args.n_probes):
+                model.sleep_slot(dslept, b)
+            per_token["dist-intact"] = score_continuation(model, cont, dslept, "dist-intact")
+            del dslept
+            torch.cuda.empty_cache()
+
+            dabl = clone_state(mmod, state)
+            for b in range(args.n_probes):
+                model.sleep_slot(dabl, b)
+            dabl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+            _, dabl = run_chunks(model, dist, dabl, "distractor-abl", keep_logits=False)
+            for b in range(args.n_probes):
+                model.sleep_slot(dabl, b)
+            per_token["dist-ablated"] = score_continuation(model, cont, dabl, "dist-ablated")
+            del dabl
+            torch.cuda.empty_cache()
+
+        del state
         torch.cuda.empty_cache()
 
     rows = {k: v.mean(dim=1) for k, v in per_token.items()}  # (n_probes,) per condition
@@ -262,6 +319,13 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
     print(f"  recency      (recent - ablated): {delta('sleep-recent', 'sleep-ablated')}")
     print(f"  long-range   (intact - recent):  {delta('sleep-intact', 'sleep-recent')}")
     print(f"  wipe cost    (no-wipe - intact): {delta('no-wipe', 'sleep-intact')}")
+    if "dist-intact" in rows:
+        print(f"  dist-delta   (dist-intact - dist-ablated): {delta('dist-intact', 'dist-ablated')}")
+        dd = (rows["sleep-intact"] - rows["sleep-ablated"]) - (rows["dist-intact"] - rows["dist-ablated"])
+        print(
+            f"  flush cost   (gist-delta - dist-delta):    "
+            f"{dd.mean():+.4f} (SEM {dd.std() / math.sqrt(args.n_probes):.4f})"
+        )
 
     n_bins = 3
     print("\nby distance into the continuation (thirds):")
@@ -341,6 +405,7 @@ def main() -> None:
     parser.add_argument("--gist-prefix", type=int, default=6144, help="Pre-wipe prefix length in tokens (rounded down to a chunk multiple)")
     parser.add_argument("--gist-cont", type=int, default=1536, help="Post-wipe continuation length in tokens to score")
     parser.add_argument("--gist-recent", type=int, default=576, help="Suffix length for the sleep-recent recency control")
+    parser.add_argument("--gist-distractor", type=int, default=0, help="If > 0, add two interleaved-episode conditions: after the wipe, feed this many tokens of an unrelated conversation's opening, sleep again, then score the original continuation (dist-intact / dist-ablated). Measures whether the memory's gist survives THROUGH an intervening episode, or is flushed at episode boundaries.")
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
