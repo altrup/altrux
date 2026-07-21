@@ -121,18 +121,27 @@ def build_chains(
     pool_ids = list(pool_ids)
     pool_masks = list(pool_masks)
     split_tails: set[int] = set()
-    n_split = 0
-    if getattr(args, "split_episode_rate", 0.0) > 0:
+    n_split = n_split_qa = 0
+    qa_rate = getattr(args, "split_qa_rate", None)
+    gap_min = getattr(args, "split_gap_min", 2)
+    gap_max = getattr(args, "split_gap_max", 2)
+    if getattr(args, "split_episode_rate", 0.0) > 0 or (qa_rate or 0.0) > 0:
         for ci, chain in enumerate(chains):
             out: list[int] = []
             pending: list[tuple[int, int]] = []  # (due position in out, tail episode)
             for ep in chain:
                 ids = pool_ids[ep]
                 mp = args.split_min_part
-                if len(ids) >= 2 * mp and rng.random() < args.split_episode_rate:
+                if len(ids) >= 2 * mp:
                     b = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
+                    # Single-QA episodes (two turns: document then answer) cut
+                    # at the answer boundary -- answering later depends densely
+                    # on the far-back document, the highest-amplitude natural
+                    # signal -- so they get their own rate.
+                    is_qa = len(b) == 2
+                    rate = qa_rate if (is_qa and qa_rate is not None) else args.split_episode_rate
                     mid = [x for x in b if mp <= x <= len(ids) - mp]
-                    if mid:
+                    if mid and rng.random() < rate:
                         cut = rng.choice(mid)
                         pool_ids.append(ids[:cut])
                         pool_masks.append(pool_masks[ep][:cut])
@@ -140,8 +149,9 @@ def build_chains(
                         pool_ids.append(ids[cut:])
                         pool_masks.append(pool_masks[ep][cut:])
                         split_tails.add(len(pool_ids) - 1)
-                        pending.append((len(out) + 2, len(pool_ids) - 1))
+                        pending.append((len(out) + rng.randint(gap_min, gap_max), len(pool_ids) - 1))
                         n_split += 1
+                        n_split_qa += is_qa
                         continue
                 out.append(ep)
             # Dues are in pre-insertion coordinates; each earlier-inserted
@@ -150,7 +160,7 @@ def build_chains(
                 out.insert(min(due + i, len(out)), tail)
             chains[ci] = out
     if n_split:
-        print(f"split {n_split} episodes into head/tail interleaved continuations")
+        print(f"split {n_split} episodes ({n_split_qa} single-QA) into head/tail interleaved continuations")
 
     # Pass 1: plan every chain -- sleeps, fact blocks, revisions, queries --
     # and collect all injected-turn strings for one batched tokenizer call.
@@ -364,8 +374,8 @@ def build_chains(
     dataset = {"ids": out_ids, "masks": out_masks, "recall_masks": out_recall, "sleep_positions": out_sleeps}
     stats = {
         "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
-        "dist_counts": dist_counts, "n_split": n_split, "n_mid_sleeps": n_mid_sleeps,
-        "n_sentence_sleeps": n_sentence_sleeps,
+        "dist_counts": dist_counts, "n_split": n_split, "n_split_qa": n_split_qa,
+        "n_mid_sleeps": n_mid_sleeps, "n_sentence_sleeps": n_sentence_sleeps,
     }
     return dataset, stats
 
@@ -385,6 +395,12 @@ def main() -> None:
                         help="Fraction of eligible episodes split at a turn boundary (>= --split-min-part tokens on each side) with the tail resumed two episodes later behind a forced sleep -- trains cross-episode gist retention (interleaved continuation)")
     parser.add_argument("--split-min-part", type=int, default=256,
                         help="Minimum tokens on each side of a split-episode cut boundary")
+    parser.add_argument("--split-qa-rate", type=float, default=None,
+                        help="Split rate for single-QA episodes (exactly two turns; the cut lands at the answer boundary -- read the document now, answer it episodes later). Default: --split-episode-rate")
+    parser.add_argument("--split-gap-min", type=int, default=2,
+                        help="Minimum episodes between a split head and its resumed tail")
+    parser.add_argument("--split-gap-max", type=int, default=2,
+                        help="Maximum episodes between a split head and its resumed tail (gap sampled per split)")
     parser.add_argument("--mid-sleep-min-len", type=int, default=4096,
                         help="Minimum episode length in tokens to be eligible for a mid-conversation sleep")
     parser.add_argument("--sentence-sleep-rate", type=float, default=0.0,

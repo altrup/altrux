@@ -38,6 +38,7 @@ def _args(**overrides):
         min_budget=300, max_budget=300, min_wake=1, max_wake=2,
         mid_sleep_rate=0.0, mid_sleep_min_len=60,
         split_episode_rate=0.0, split_min_part=30,
+        split_qa_rate=None, split_gap_min=2, split_gap_max=2,
         sentence_sleep_rate=0.0,
         fact_rate=1.0, min_facts=2, max_facts=4, min_queries=1, max_queries=3,
         revise_rate=0.5, cross_sleep_bias=0.0, seed=0,
@@ -131,6 +132,50 @@ def test_split_episodes_conserve_content_and_sleep_on_boundaries():
         assert len(sleeps) > 0
         for s in sleeps.tolist():
             assert ids[s].item() in (USER_ID, ASST_ID)
+
+
+def _qa_episode(filler: int = 7) -> tuple[torch.Tensor, torch.Tensor]:
+    """Two turns only: a long user document turn, then a long answer --
+    the split cut can only land on the answer boundary."""
+    ids = [USER_ID] + [filler] * 79 + [ASST_ID] + [filler] * 79
+    mask = [False] * 81 + [True] * 79
+    return torch.tensor(ids), torch.tensor(mask)
+
+
+def test_split_qa_rate_splits_only_single_qa_episodes():
+    pool = [_episode(6, 20) for _ in range(10)] + [_qa_episode() for _ in range(10)]
+    dataset, stats = _build(
+        pool=pool, fact_rate=0.0,
+        split_episode_rate=0.0, split_qa_rate=1.0,
+        min_wake=4, max_wake=4, min_budget=10_000, max_budget=10_000,
+    )
+    # Every single-QA episode splits (cut at its answer boundary), no
+    # multi-turn episode does.
+    assert stats["n_split"] == stats["n_split_qa"] == 10
+    for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
+        for s in sleeps.tolist():
+            assert ids[s].item() in (USER_ID, ASST_ID)
+
+
+def test_split_gap_controls_episodes_between_head_and_tail():
+    # One splittable episode (unique filler 100) among short unsplittable
+    # ones (unique fillers 101..130), all in one chain. Enough shorts that
+    # the shuffled head isn't near the chain end (the insert would clamp).
+    pool = [_qa_episode(filler=100)]
+    for k in range(30):
+        ids = [USER_ID] + [101 + k] * 9 + [ASST_ID] + [101 + k] * 9
+        pool.append((torch.tensor(ids), torch.tensor([False] * 20)))
+    dataset, stats = _build(
+        pool=pool, fact_rate=0.0,
+        split_episode_rate=1.0, split_gap_min=3, split_gap_max=3,
+        min_wake=31, max_wake=31, min_budget=10_000, max_budget=10_000,
+    )
+    assert stats["n_split"] == 1
+    ids = torch.cat(dataset["ids"])
+    head_tail = (ids == 100).nonzero().flatten().tolist()
+    gap_slice = ids[head_tail[78] + 1 : head_tail[79]]  # between head's last and tail's first filler
+    intervening = {v for v in gap_slice.tolist() if v > 100}
+    assert len(intervening) == 3
 
 
 SENT_END, SPACE_START = 30, 31
