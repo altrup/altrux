@@ -94,7 +94,7 @@ def main() -> None:
     parser.add_argument("--hf-split", default="train_sft", help="Dataset split (default: train_sft)")
     parser.add_argument("--max-examples", type=int, default=None, help="Cap number of examples loaded")
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
-    parser.add_argument("--max-len", type=int, default=1024, help="Max tokens per example")
+    parser.add_argument("--max-len", type=int, default=32768, help="Max tokens per example (whole-turn truncation; chunked training handles long examples, so this only guards pathological outliers)")
     parser.add_argument("--workers", type=int, default=4, help="Parallel tokenization workers")
     args = parser.parse_args()
 
