@@ -258,6 +258,16 @@ if (( ${#claude_files[@]} )); then
   tar -C "$HOME" -czf - "${claude_files[@]}" | ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "tar -xzf - -C ~"
 fi
 
+# Stashed wheels (e.g. mamba-ssm harvested from a previous instance) save
+# setup a multi-minute CUDA compile — uv falls back to building from source
+# when no stashed wheel matches the box's torch/python combo.
+wheel_dir="$SCRIPT_DIR/../.cache/wheels"
+if compgen -G "$wheel_dir/*.whl" >/dev/null; then
+  echo "Uploading stashed wheels ($(ls "$wheel_dir"))..."
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "mkdir -p ~/wheels"
+  scp "${SSH_OPTS[@]}" "$wheel_dir"/*.whl "$SSH_USER@$ip:wheels/"
+fi
+
 echo "Uploading setup + config..."
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SSH_USER@$ip:lambda_setup.sh"
 

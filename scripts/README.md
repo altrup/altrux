@@ -54,6 +54,14 @@ in seconds), launch burst-retries `LAMBDA_LAUNCH_BURST_ATTEMPTS` times (default
 10) every `LAMBDA_LAUNCH_BURST_INTERVAL` seconds (default 5) before dropping
 back to slow polling — released capacity often flickers back within that window.
 
+If `.cache/wheels/` (repo root, gitignored) holds any `*.whl` — e.g. the
+`mamba_ssm` wheel harvested from a previous instance's uv cache
+(`find ~/.cache/uv -name 'mamba_ssm*.whl'`) — launch uploads them and setup
+installs from them via `UV_FIND_LINKS`, skipping the multi-minute CUDA
+compile. A wheel with a mismatched python tag is ignored automatically, but a
+torch major-version bump isn't detectable from the filename — clear the stash
+when torch changes, or the import will fail at runtime.
+
 Unless `--no-watch` is passed, launch also starts a **local tmux session
 `altrux`** with everything in one place:
 

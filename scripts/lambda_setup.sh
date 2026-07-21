@@ -81,6 +81,13 @@ step "Configure sft/.env (MODEL_NAME=$MODEL_NAME)"
 sed -i "s/^MODEL_NAME=.*/MODEL_NAME=$MODEL_NAME/" "$REPO_DIR/sft/.env"
 
 step "make sync (torch + mamba-ssm — several minutes)"
+# Wheels uploaded by lambda_launch.sh (harvested from a previous instance)
+# spare the mamba-ssm CUDA compile; a stale/mismatched wheel is simply not
+# selected and uv builds from source as usual.
+if ls "$HOME"/wheels/*.whl >/dev/null 2>&1; then
+  echo "using stashed wheels from ~/wheels: $(ls "$HOME"/wheels)"
+  export UV_FIND_LINKS="$HOME/wheels"
+fi
 make -C "$REPO_DIR/sft" sync
 
 step "Verify CUDA torch"
