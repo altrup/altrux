@@ -79,7 +79,7 @@ pull_timeout=900
 mem_state=1
 mem_state_timeout=3600
 arm_after_training=0
-arm_cap=60
+arm_cap=90
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout="$2"; shift 2 ;;

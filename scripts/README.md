@@ -71,7 +71,9 @@ Unless `--no-watch` is passed, launch also starts a **local tmux session
 Set `LAMBDA_RESUME_CHECKPOINT` to one or more local checkpoint step dirs
 (space-separated, e.g.
 `../models/mamba2_2_7b_memory/checkpoints/epoch-1/step-168` — several when the
-plan evals across checkpoints) — launch scp's them up to a staging dir and
+plan evals across checkpoints) — launch rsyncs them up to a staging dir
+(excluding `optimizer.pt`: probes never read it and `train.py` resume
+tolerates it missing, so it'd be ~2/3 of the bytes for nothing) and
 setup drops them into `models/<model>/checkpoints/<epoch>/` so `make resume`
 and the probes find them. Checkpoints
 are gitignored and too big for GitHub (a single `optimizer.pt` exceeds the
@@ -213,7 +215,7 @@ launch, resize, or terminate instances. The tradeoff: this machine must stay
 awake and online for the whole run, or nothing stops the billing.
 
 `--arm-after-training` holds the idle countdown until `train.py` is first seen
-(bounded by `--arm-cap` minutes, default 60, 0 = forever), so the watchdog can
+(bounded by `--arm-cap` minutes, default 90, 0 = forever), so the watchdog can
 be started *before* training exists — during a long setup/data-gen — without
 terminating the box prematurely. `lambda_launch.sh` uses this when it
 auto-starts the watchdog; a plain manual `lambda_watchdog.sh` alongside an
