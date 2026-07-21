@@ -213,7 +213,7 @@ launch, resize, or terminate instances. The tradeoff: this machine must stay
 awake and online for the whole run, or nothing stops the billing.
 
 `--arm-after-training` holds the idle countdown until `train.py` is first seen
-(bounded by `--arm-cap` minutes, default 120, 0 = forever), so the watchdog can
+(bounded by `--arm-cap` minutes, default 60, 0 = forever), so the watchdog can
 be started *before* training exists — during a long setup/data-gen — without
 terminating the box prematurely. `lambda_launch.sh` uses this when it
 auto-starts the watchdog; a plain manual `lambda_watchdog.sh` alongside an
