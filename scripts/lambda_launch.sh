@@ -129,6 +129,8 @@ print(ids[0])
 }
 
 poll_interval="${LAMBDA_CAPACITY_POLL_INTERVAL:-30}"
+burst_attempts="${LAMBDA_LAUNCH_BURST_ATTEMPTS:-10}"
+burst_interval="${LAMBDA_LAUNCH_BURST_INTERVAL:-5}"
 max_wait="${LAMBDA_CAPACITY_MAX_WAIT:-0}"   # seconds to keep polling; 0 = forever
 
 echo "Resolving a region with capacity for $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}..."
@@ -161,9 +163,9 @@ while :; do
   # launch call, but released capacity also flickers back within that window —
   # burst-retry the launch before falling back to slow polling.
   launched=0
-  for attempt in {1..10}; do
+  for (( attempt=1; attempt<=burst_attempts; attempt++ )); do
     if launch_instance; then launched=1; break; fi
-    (( attempt < 10 )) && { echo "  launch raced (attempt $attempt/10) — retrying in 3s"; sleep 3; }
+    (( attempt < burst_attempts )) && { echo "  launch raced (attempt $attempt/$burst_attempts) — retrying in ${burst_interval}s"; sleep "$burst_interval"; }
   done
   (( launched )) && break
   echo "capacity in $region vanished before launch — back to polling"
