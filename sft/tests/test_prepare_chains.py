@@ -37,7 +37,7 @@ def _args(**overrides):
     defaults = dict(
         min_budget=300, max_budget=300, min_wake=1, max_wake=2,
         mid_sleep_rate=0.0, mid_sleep_min_len=60,
-        split_episode_rate=0.0,
+        split_episode_rate=0.0, split_min_part=30,
         fact_rate=1.0, min_facts=2, max_facts=4, min_queries=1, max_queries=3,
         revise_rate=0.5, cross_sleep_bias=0.0, seed=0,
     )
@@ -113,7 +113,7 @@ def test_split_episodes_conserve_content_and_sleep_on_boundaries():
     n_episodes, n_turns, turn_len = 20, 12, 10
     dataset, stats = _build(
         n_episodes=n_episodes, n_turns=n_turns, turn_len=turn_len, fact_rate=0.0,
-        split_episode_rate=1.0, mid_sleep_min_len=100,
+        split_episode_rate=1.0,
         min_wake=4, max_wake=4, min_budget=500, max_budget=500,
     )
     assert stats["n_split"] > 0

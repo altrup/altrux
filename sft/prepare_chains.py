@@ -15,10 +15,13 @@ token budget, with three things layered in:
   memory retained the gist of what preceded it, a dense training signal
   with no engineered template to overfit to.
 - **Interleaved continuations** (`--split-episode-rate`): a fraction of
-  long episodes are split at a middle turn boundary and the tail resumes
-  two episodes later behind a forced sleep -- the same natural-continuation
-  signal stretched across an intervening episode, training the memory to
-  retain a conversation's gist through unrelated material.
+  eligible episodes are split at a turn boundary (>= --split-min-part
+  tokens on each side) and the tail resumes two episodes later behind a
+  forced sleep -- the natural-continuation signal stretched across an
+  intervening episode, training the memory to retain a conversation's gist
+  through unrelated material. For single-QA episodes (a long document turn
+  then its answer) the cut lands at the answer boundary: read the document
+  now, answer it an episode and a sleep later.
 - **Fact blocks**: a fraction of episodes host a block of key/value facts
   (heterogeneous kinds and phrasings, shared with prepare_interference.py),
   spliced at the episode's second turn boundary. A fraction of facts are
@@ -117,9 +120,10 @@ def build_chains(
             pending: list[tuple[int, int]] = []  # (due position in out, tail episode)
             for ep in chain:
                 ids = pool_ids[ep]
-                if len(ids) >= args.mid_sleep_min_len and rng.random() < args.split_episode_rate:
+                mp = args.split_min_part
+                if len(ids) >= 2 * mp and rng.random() < args.split_episode_rate:
                     b = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
-                    mid = [x for x in b if len(ids) // 3 <= x <= 2 * len(ids) // 3]
+                    mid = [x for x in b if mp <= x <= len(ids) - mp]
                     if mid:
                         cut = rng.choice(mid)
                         pool_ids.append(ids[:cut])
@@ -354,7 +358,9 @@ def main() -> None:
     parser.add_argument("--mid-sleep-rate", type=float, default=0.2,
                         help="Fraction of long episodes that get one mid-conversation sleep (the natural-continuation signal)")
     parser.add_argument("--split-episode-rate", type=float, default=0.0,
-                        help="Fraction of eligible (>= --mid-sleep-min-len) episodes split at a middle turn boundary with the tail resumed two episodes later behind a forced sleep -- trains cross-episode gist retention (interleaved continuation)")
+                        help="Fraction of eligible episodes split at a turn boundary (>= --split-min-part tokens on each side) with the tail resumed two episodes later behind a forced sleep -- trains cross-episode gist retention (interleaved continuation)")
+    parser.add_argument("--split-min-part", type=int, default=256,
+                        help="Minimum tokens on each side of a split-episode cut boundary")
     parser.add_argument("--mid-sleep-min-len", type=int, default=4096,
                         help="Minimum episode length in tokens to be eligible for a mid-conversation sleep")
     parser.add_argument("--fact-rate", type=float, default=0.3, help="Fraction of episodes that host a fact block")
