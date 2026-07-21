@@ -59,7 +59,10 @@ question FIRST" item). Design agreed in the team discussion:
   newer step dirs sit in the same epoch dir — `mv` the newer step dirs into
   e.g. `checkpoints/archive-<date>/` first (outside the `epoch-*` pattern, so
   they're ignored but kept probe-able), then plain `make resume` picks it up
-  as latest. Otherwise new saves interleave with the stale higher-numbered
+  as latest. Note the uploaded checkpoints deliberately have NO
+  `optimizer.pt` (launch strips it to shrink the upload; probes don't need
+  it) — resume from one starts with a fresh optimizer, which train.py
+  handles; expect a brief loss transient, not a corrupt checkpoint. Otherwise new saves interleave with the stale higher-numbered
   dirs: the old lineage gets silently overwritten step by step, and rotation
   prunes fresh low-numbered saves while keeping stale high-numbered ones.
 
