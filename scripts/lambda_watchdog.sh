@@ -136,8 +136,10 @@ echo "Watching instance $instance_id at $instance_ip (pattern: '$pattern', timeo
 
 # Neutralize the pattern for pgrep -f on the instance: '[t]rain.py' matches
 # a running train.py but not the probe shell whose own command line
-# contains the (bracketed) pattern text.
-neutralized="$(printf '%s' "$pattern" | sed 's/^\([^[\\^.$]\)/[\1]/')"
+# contains the (bracketed) pattern text. Bracket the first char of EVERY
+# |-alternative — one unbracketed branch would self-match the probe shell
+# and read as permanent activity, disarming the watchdog entirely.
+neutralized="$(printf '%s' "$pattern" | sed 's/\(^\||\)\([^[\\^.$|]\)/\1[\2]/g')"
 
 # One round trip per probe: remote epoch, training yes/no, delay-file
 # mtime, terminate-file mtime.

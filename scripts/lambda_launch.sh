@@ -213,7 +213,7 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     # until theirs appears, then attach.
     rssh="ssh -o StrictHostKeyChecking=accept-new -i '$SSH_KEY_PATH' $SSH_USER@$ip"
     tmux new-session -d -s altrux -n watch "'$SCRIPT_DIR/lambda_pull.sh' --follow '$ip'; exec bash"
-    tmux split-window -t altrux:watch "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training; exec bash"
+    tmux split-window -t altrux:watch "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --pattern 'train.py|probe_recall.py'; exec bash"
     tmux new-window -t altrux -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
     tmux new-window -t altrux -n claude "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
     tmux select-window -t altrux:watch

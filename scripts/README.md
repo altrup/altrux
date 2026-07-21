@@ -238,8 +238,10 @@ link — 8GB of `mem_state.pt` is ~8 min at 130 Mbit/s but ~14 hours at
 1.5 Mbit/s); `--no-pull` skips both. The unreachable path never pulls —
 there's nothing to pull from an instance that won't answer ssh.
 
-"Training" = a process matching `--pattern` (default `train.py`) exists on
-the instance, probed over ssh every `--interval` (60s). An instance that
+"Training" = a process matching `--pattern` (default `train.py`; alternation
+works, e.g. `train.py|probe_recall.py` — what launch's auto-started watchdog
+passes, so eval/probe runs count as activity too) exists on the instance,
+probed over ssh every `--interval` (60s). An instance that
 stops answering ssh while the API reports it active is terminated after
 `--unreachable-timeout` (900s) — unreachable can't be trained on, and
 shouldn't bill. Anyone working interactively on the instance between runs
