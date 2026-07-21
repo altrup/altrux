@@ -237,9 +237,9 @@ if (( ${#resume_ckpts[@]} )); then
   # optimizer.pt is ~2/3 of each checkpoint and nothing on the box needs it:
   # probes never read it and train.py resume tolerates it missing (fresh
   # optimizer). Excluding it keeps the upload to the weights that matter.
-  echo "Uploading ${#resume_ckpts[@]} checkpoint(s) ($(du -shc --exclude=optimizer.pt "${resume_ckpts[@]}" | tail -1 | cut -f1), optimizer.pt excluded) to staging..."
+  echo "Uploading ${#resume_ckpts[@]} checkpoint(s) ($(du -shc --exclude=optimizer.pt --exclude=mem_state.pt "${resume_ckpts[@]}" | tail -1 | cut -f1), optimizer.pt+mem_state.pt excluded) to staging..."
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
-  rsync -rt --info=progress2 --exclude=optimizer.pt \
+  rsync -rt --info=progress2 --exclude=optimizer.pt --exclude=mem_state.pt \
     -e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'" \
     "${resume_ckpts[@]}" "$SSH_USER@$ip:resume-staging/"
 fi
