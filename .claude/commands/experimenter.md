@@ -60,6 +60,13 @@ first log lines (alpha, w1_abs_max, o_t_norm). Which step a run began from, and
 how eroded its memory was at the start, is the single most important thing a
 later run needs and the easiest to lose.
 
+RECORD VERBATIM COMMANDS: every command that produces or transforms an
+artifact — training starts/resumes, data prep, probes/evals — goes into this
+run's notes file EXACTLY as executed (full ARGS, no paraphrase like "baseline
++ --freeze-lora"), at the moment you run it. A later run reproducing your
+result must never have to reconstruct a command from prose; a reconstruction
+that can't be verified taints the comparison it was built for.
+
 This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
 catching problems early over maximizing uptime.
