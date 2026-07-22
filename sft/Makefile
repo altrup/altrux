@@ -124,6 +124,11 @@ probe-recall:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u probe_recall.py $(ARGS) 2>&1 | tee logs/probe-$(shell date +%Y%m%d-%H%M%S).log
 
+read-diagnostic:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u read_diagnostic.py $(ARGS) 2>&1 | tee logs/read-diag-$(shell date +%Y%m%d-%H%M%S).log
+
 # Gradient-wiring check on a synthetic dataset, driven through train.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults
 # as `make train` -- useful for mamba2_2_7b_memory, whose real examples are
