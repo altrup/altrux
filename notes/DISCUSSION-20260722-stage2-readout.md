@@ -180,9 +180,15 @@ box (`--chunk-len 8` mandatory; 48 OOMs):
   proof — the harness A/B remains the real test if/when the front-end
   moves.
 
-**L2. M readout / dream-fidelity probe on 447-T3** (new script, local, ~1 h).
-Tests the precondition for the M→weights consolidation sketch (research
-note): *can M generate/express a faithful dream of what it stored?* Design —
+**L2. M readout / dream-fidelity probe on 447-T3** — `sft/dream_fidelity.py`
+(`make dream-fidelity`), BUILT. Tests the precondition for the M→weights
+consolidation sketch (research note): *can M generate a faithful dream of what
+it stored?* Generation-only (no teacher-forced scoring). **Runs on the BOX,
+not locally** — priming the 2.7B + the memory write's inner gradient needs
+~17 GB (same wall as probe_recall); the 8 GB local card OOMs at the write even
+at batch 1 / prime 64. The overlap metric and wiring are unit-tested locally;
+only the model pass needs the rental. Box run: `--n-probes 4 --prime 2048
+--gen 128` (drop `--chunk-len`; box fits CHUNK_LEN 24). Design —
 the naive "prime, wipe SSM, read M's output" is dominated by generic backbone
 priors, so **contrast, don't inspect**:
 
