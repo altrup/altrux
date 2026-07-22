@@ -133,6 +133,29 @@ the learned gate + front-end-at-21 move; dynamic write-flush
 (accumulate-since-last-fire); widening the 128-dim injection bottleneck
 (shape-changing → can't resume 396, 10–50× costlier to test).
 
+**Two ceiling suspects added this discussion (see
+`RESEARCH-20260722-memory-consolidation-landscape.md` for the literature):**
+
+- **Integration point.** Our SSM-state injection at layers ≥22 is the
+  MAL-analog (Titans' weakest variant; MAC/MAG beat it). Lever: inject the
+  read LOWER (MAC-analog for a mamba stack — more layers compute over it), or
+  a MAG-style separate long-term branch + learned gate instead of fusing M
+  into the SSM state that's already a short-term associative memory.
+- **Compute-depth over the read**, distinct from bandwidth-WIDTH: the
+  ceiling may be too-shallow computation over the read (one gated lookup),
+  not too-narrow a channel. Fix = more passes / inject-lower / longer sleep,
+  not widening. Test the depth story before spending on width.
+
+**Reframed near-term objective for M** (supersedes "beat +0.0344 gist-delta"
+as the north star, though the harness metric stays): M's job is to be a
+faithful, durable STORE (hold gist AND specific facts, across sleeps), NOT to
+do single-shot read-out reasoning — that's a compute-depth problem for the
+architecture/inference, not something to train M harder for. If sleep-time
+weight-consolidation (research note) carries the durable load, M's job
+shrinks further to "generate a faithful dream." The gist-vs-verbatim
+competition (facts collapse as gist rises) is the sharpest near-term target
+and appears novel.
+
 ## Next steps, prioritized
 
 ### Local (this box, before the next rental)
@@ -156,6 +179,25 @@ box (`--chunk-len 8` mandatory; 48 OOMs):
   front-end consumes at 42 is linearly available at 21. Permission, not
   proof — the harness A/B remains the real test if/when the front-end
   moves.
+
+**L2. M readout / dream-fidelity probe on 447-T3** (new script, local, ~1 h).
+Tests the precondition for the M→weights consolidation sketch (research
+note): *can M generate/express a faithful dream of what it stored?* Design —
+the naive "prime, wipe SSM, read M's output" is dominated by generic backbone
+priors, so **contrast, don't inspect**:
+
+- Prime a real text (with specific facts) through 447-T3; wipe SSM
+  (`sleep_slot`), keep M.
+- (a) **Scoring** (reuse probe_recall gist machinery): teacher-force the
+  primed content, per-token logprob M-intact vs M-ablated → did M store it.
+- (b) **Generation = the dream test** (NEW — we have never generated from M,
+  only scored): sample under M-primed vs M-random, same wiped SSM; measure
+  topic/entity/fact overlap with the priming text.
+
+Prediction (from gist-vs-verbatim): topically steered, factually generic
+(gist-faithful, fact-lossy). If so, the consolidation loop needs the
+transcript in the loop → collapses toward the transcript-replay baseline.
+Decision-relevant for whether the M→weights sketch is worth building.
 
 ### Box (next rental, in order)
 

@@ -155,9 +155,109 @@ window-4) — those answer "is the online mechanism improvable," which a hybrid
 needs regardless. This note sits ABOVE that as the "what are we optimizing M
 for" question, to be taken up at the next debrief.
 
+## Integration point: we may be using the weakest variant [V from Titans]
+
+How the memory READ is wired into the backbone, from Titans (2501.00663):
+
+- **MAC (Memory as Context):** retrieved memory concatenated as tokens
+  before the first layer → flows through the WHOLE network, attention
+  chooses relevance. Strongest on long dependencies.
+- **MAG (Memory as Gate):** memory is a parallel branch, blended with a
+  precise-recent branch via a learned gate. Strong; clean short-vs-long
+  separation.
+- **MAL (Memory as Layer):** memory as a stacked layer, contribution baked
+  in before attention. Titans found it WEAKEST.
+
+**Our design = gated-delta merge into the mamba SSM state at layers ≥22 —
+closest in spirit to MAL, the weakest variant.** We get neither MAC's
+full-depth "attention chooses" nor MAG's clean recent-vs-remembered gate.
+The read enters deep, so only the layers above 22 compute over it — least
+room to reason over what was retrieved, i.e. we're on the wrong side of the
+compute-depth axis (below). NOT directly measured (MAC>MAL is transformer,
+not mamba), but suggestive.
+
+Actionable lever: **inject the read LOWER** (nearer the embedding, so it
+propagates through more SSM layers) — the MAC-analog for a mamba stack.
+Separate knob from where q/k/v are GENERATED (the layer-21 front-end move).
+Corollary: since Mamba2's own SSM state is ALREADY a linear associative
+test-time memory (via State Space Duality), injecting M into that same state
+makes two associative memories share one substrate — structurally the
+awake-mem / gist-vs-verbatim competition we observe. A MAG-style *separate
+branch + gate* matches the short/long split better than fusing them.
+(Frozen backbone is NOT essential — an experiment, not load-bearing; the
+Titans-reimpl frozen-insufficiency finding is de-weighted accordingly.)
+
+## Compute over the read, not just bandwidth [V from 2605.26099]
+
+2605.26099's central finding, independently echoing our own north-star note
+("capacity is NOT the bottleneck"): **computation, not storage, is the
+bottleneck.** Vanilla hybrids fail on deep reasoning DESPITE sufficient
+fast-weight capacity — performance drops with reasoning DEPTH at fixed
+length. Storage holds the fact; the model just can't chain operations over
+it. Sleep (N recurrent offline passes) helps precisely by adding compute
+depth over consolidated content (Hope N=1→4 monotonic; e.g. GSM-Infinite
+6-op 0.742→0.812).
+
+Reframes our stage-2 "read-out bandwidth" suspect: the ceiling may be
+compute-DEPTH over the read (one shallow gated lookup per window), not
+bandwidth-WIDTH (128-dim straw). Different fix — more passes / inject-lower
+/ longer sleep, vs. widening. Add "compute-depth-over-the-read" as a
+first-class ceiling suspect, arguably ahead of widening.
+
+## Design sketch: M→weights consolidation via dream + un-write
+
+A teammate proposal (worth recording; NOT for the next run). Move content
+from M into the backbone WEIGHTS (hippocampus→cortex systems consolidation),
+freeing M:
+
+1. **Dream:** generate a sequence with M in place (SSM randomized so the
+   dream can't echo short-term — forces M to be the source), logging every
+   q→v M injects.
+2. **Un-write:** reverse-gradient-descent those logged q→v OUT of M (push
+   M(q) off v) → M emptied of that content.
+3. **Consolidate:** train the trainable weights on the dream with SSM
+   cleared and M emptied → content can't come from M or SSM, so it must
+   land in the weights.
+
+Net: memory MOVED (not copied) M→weights; M freed. Elegant points: the
+un-write is what forces the transfer (else the model keeps reading from M);
+and offloading the durable load to weights (full depth+bandwidth) routes
+AROUND M's read-out ceiling — M's job shrinks to "generate a faithful dream,"
+not "be a queryable long-term store" (the reframing this whole note argues
+for).
+
+**Two potentially-fatal risks the sketch must address:**
+
+1. **Catastrophic forgetting.** Step 3 trains shared weights on dreams with
+   no general-data rehearsal → drifts toward "good at dreams, worse at all
+   else." Every consolidation paper mixes replay. Mitigation: interleave
+   general corpus, or consolidate into an isolated per-user LoRA (reintro-
+   duces storage/routing cost).
+2. **Self-distillation collapse.** The dream is generated from LOSSY M (gist
+   ≫ verbatim at 435) but trained on AS ground truth; looped, errors compound
+   (photocopy-of-photocopy → model collapse). The un-write makes it worse:
+   once M is emptied, the reference is gone.
+
+Also: un-write may not be surgical (distributed store → damages neighbors;
+measure by un-writing a set then probing unrelated recalls).
+
+**Cheap precondition, testable now on 447-T3 (does NOT need the box):** can
+M even generate a faithful dream? Prediction from our gist-vs-verbatim data:
+gist-faithful, fact-lossy. If so, the loop bakes wrong specifics into
+weights and needs the transcript in the loop anyway — collapsing toward the
+transcript-replay baseline. See the "M readout/dream-fidelity probe" local
+item in the stage-2 DISCUSSION. The permanent control for the whole idea is
+**move-through-M vs move-through-transcript** (keep raw data, distill
+directly) — M earns its place only if compression beats the fidelity it
+costs. Where it fits: phase-3 recombination (deployment-time consolidation),
+not a way to train M better now.
+
 ## Caveats on this note
 
-Single search pass + fast fetch of 3 papers (2606.03979, 2511.22367,
-2607.00368) via a summarizer model — not a careful read. [S] items are
-snippet-level. PDFs saved locally this session. Verify [S] claims and extract
-real numbers before any of the above becomes standing direction.
+Single search pass + fast fetch of a handful of papers (2606.03979,
+2511.22367, 2607.00368, 2510.09551, 2605.26099) via a summarizer model —
+not a careful read. [S] items are snippet-level. Integration-variant and
+compute-not-storage claims are [V] at summary level (MAC>MAL is transformer
+evidence, an analogy for our mamba state-injection, not a measurement).
+PDFs saved locally this session. Verify before any of the above becomes
+standing direction.
