@@ -136,7 +136,11 @@ in-distribution.
 `mamba2_780m_memory` (state-injection mode) from scratch on the split
 recipe (same data .pt files — tokenizer is shared across the mamba2 family;
 regen commands verbatim in EXPERIMENT_NOTES-20260723 02:40). Start from the
-2.7B-proven args, scale batch up to the card; probe with the LongAlign gist
+2.7B-proven args, scale batch up to the card — batch is near-free
+throughput here (step time is dominated by sequential per-window ops that
+amortize across rows; GPU util was ~23% at 2.7B batch 8), so expect batch
+32+ at 780M. Fix batch/chunk/accum once at launch, document them, and use
+the IDENTICAL values for BX1 so the A/B stays one knob; probe with the LongAlign gist
 config (prefix 6144 / cont 512 / recent 576 / distractor 1536 / n 16 /
 seed 1234) every few hundred M tokens, BOTH ablation modes.
 
