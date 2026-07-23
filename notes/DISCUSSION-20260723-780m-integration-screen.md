@@ -83,15 +83,27 @@ the top third of the stack computing over the read. The alternative:
 the full stack computes over the retrieval, attacking the integration-point
 and compute-depth suspects at once.
 
-Token-mix spec (agreed):
+Token-mix spec (agreed; revised during this discussion from an
+embedding-level mix to the layer-21/22 boundary):
 
-- Additive gated mixing into the input embedding, NOT inserted memory
-  tokens — preserves sequence length (keeps the internal-thinking roadmap
-  unentangled) and stays resume-compatible in spirit (gate zero-init ⇒ new
-  params start as a no-op).
-- One-token delay accepted: o_t is computed at the read layer for token t,
-  mixes into token t+1's input. (The banked layer-21 front-end result is
-  the eventual fix if the delay ever matters.)
+- **Mix point = the layer-21/22 boundary, front-end at layer 21,
+  same-token.** Token t's layers 0–21 run injection-free; q/k/v form at 21;
+  o_t mixes (additive, gated, gate zero-init) into the same token's
+  layer-22 input. NOT inserted memory tokens — sequence length preserved.
+- Why not the embedding: mixing o_t into token t+1's embedding makes each
+  token's forward depend on the previous token's mid-stack output — a
+  serial dependency that kills the chunked/fused path for the WHOLE stack.
+  Mix-at-21 keeps 0–21 fully fused, batches reads per window (M is fixed
+  within a window), adds o_t to layer-22 inputs, and runs 22+ fused between
+  write boundaries. It also removes the one-token delay.
+- Cost accepted: layers 0–21 never compute over the read (~2/3-depth MAC,
+  not full-depth). L1's result — ~80% of the front-end's directional
+  content is linearly present at 21 — plus from-scratch training at 780M
+  (front-end simply learns at 21; nothing transfers) make this the right
+  trade.
+- Loop alignment: this is the prelude(0–21) / recurrent-core(21→42) /
+  coda(42+) structure of the internal-looping roadmap — the mix point sits
+  at the loop entry, where per-iteration re-read wants to live later.
 - No loops, no per-iteration re-read yet — single pass, one knob vs the
   state-injection arm.
 
