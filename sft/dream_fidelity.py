@@ -91,8 +91,9 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
 
-    # Memory writes need no autograd graph for a read-only probe (matches
-    # probe_recall's eval path); lighter and correct here.
+    # Eval-only: memory writes need no autograd graph. create_graph=True
+    # (the default) would retain a second-order graph every generation step
+    # and OOM the 8 GB box; graph-free is both correct here and much lighter.
     orig_write = mmod._NeuralMemory.write
     mmod._NeuralMemory.write = lambda self, ks, vs, et, th, al, create_graph=True: orig_write(
         self, ks, vs, et, th, al, create_graph=False
@@ -103,7 +104,16 @@ def main() -> None:
     model, _ = train_hooks.setup_training(device, lora_cfg["rank"], lora_cfg["alpha"], 0.0)
     load_trainable(model, ckpt)
     model.eval()
+    # Freeze every param, exactly as the backend's inference path does: the
+    # training-path setup leaves LoRA/memory params trainable, whose retained
+    # state is the ~100 MB that tips the 8 GB card over. The online memory
+    # write still runs frozen (it detaches+re-leafs w1/w2 internally).
+    for p in model.parameters():
+        p.requires_grad_(False)
     model.set_beta_anneal(10**9)
+    # Diagnostic-only write stats allocate a full w1-size temp per write and
+    # OOM the 8 GB box; the probe never reads them.
+    model._accum_write_stats = lambda *a, **k: None
     from models.common import build_tokenizer
 
     tokenizer = build_tokenizer(model_mod)
@@ -126,23 +136,27 @@ def main() -> None:
             counts[t] = counts.get(t, 0) + 1
     common = {t for t, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:200]}
 
-    mem_dtype = model.front_end.q_proj.weight.dtype
+    prime_window = lora_cfg.get("memory_window", 1)
+    seed_tok = prefix[:, -1:].clone()
     with torch.no_grad():
-        model.set_memory_window(lora_cfg.get("memory_window", 1))
+        model.set_memory_window(prime_window)
         _, primed_state = pr.run_chunks(model, prefix, None, "prime", keep_logits=False)
 
-        model.set_memory_window(1)  # inject every generated token
-        seed_tok = prefix[:, -1:].clone()
+        torch.cuda.empty_cache()  # release priming workspace before generating
+        model.set_memory_window(1)  # single-token generation needs window 1
 
-        m_state = pr.clone_state(mmod, primed_state)
+        # No clone -- clone_state briefly doubles M's ~0.6 GB state and OOMs
+        # the 8 GB box. Wipe primed_state's SSM in place and generate on it
+        # directly (we rebuild the control fresh, so nothing needs preserving).
         for b in range(args.n_probes):
-            model.sleep_slot(m_state, b)
-        gen_primed = generate(model, m_state, args.gen, seed_tok, "M-primed")
+            model.sleep_slot(primed_state, b)
+        gen_primed = generate(model, primed_state, args.gen, seed_tok, "M-primed")
+        del primed_state
+        torch.cuda.empty_cache()
 
-        r_state = pr.clone_state(mmod, primed_state)
-        for b in range(args.n_probes):
-            model.sleep_slot(r_state, b)
-        r_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+        # M-random control: a fresh state already has a zeroed SSM + random M,
+        # i.e. exactly the wiped-SSM/ablated-memory condition -- no prime clone.
+        r_state = train_hooks.init_state(model, args.n_probes, device)
         gen_random = generate(model, r_state, args.gen, seed_tok, "M-random")
 
     print("\n=== overlap with priming text (Jaccard, corpus-common tokens excluded) ===")
