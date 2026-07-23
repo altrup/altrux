@@ -311,6 +311,15 @@ def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
     result = model.load_state_dict(state, strict=False)
     loaded = len(state) - len(result.unexpected_keys)
     print(f"loaded {loaded}/{len(state)} trainable tensors from {path}")
+    if result.unexpected_keys:
+        # Partial loads are legitimate (e.g. a --freeze-lora checkpoint holds
+        # only memory params), but unexpected keys usually mean the model was
+        # constructed as a different variant than the checkpoint was trained
+        # as (e.g. MEMORY_INTEGRATION arm mismatch) -- make that loud.
+        print(
+            f"WARNING: {len(result.unexpected_keys)} checkpoint tensors have no home in this model "
+            f"(first: {result.unexpected_keys[0]}) -- wrong model variant/integration arm?"
+        )
     if loaded == 0:
         raise RuntimeError("load_checkpoint loaded 0 tensors -- checkpoint keys don't match model structure")
 
