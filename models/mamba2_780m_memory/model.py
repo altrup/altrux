@@ -60,6 +60,16 @@ def integration_mode() -> str:
     return mode
 
 
+def read_layer_for(mode: str) -> int:
+    """Arm default (state@32 / mix@16), overridable via MEMORY_READ_LAYER
+    for the 2x2 cross cells (state@16, mix@32)."""
+    override = os.getenv("MEMORY_READ_LAYER")
+    layer = int(override) if override else (MIX_READ_LAYER if mode == "mix" else READ_LAYER)
+    if not 0 < layer < N_LAYER:
+        raise ValueError(f"MEMORY_READ_LAYER must be in (0, {N_LAYER}), got {layer}")
+    return layer
+
+
 class Model(_MemoryModel):
     """The shared memory Model bound to this backbone's layer indices, with
     the integration arm chosen by MEMORY_INTEGRATION at construction."""
@@ -68,7 +78,7 @@ class Model(_MemoryModel):
         mode = integration_mode()
         super().__init__(
             mamba_model,
-            read_layer=MIX_READ_LAYER if mode == "mix" else READ_LAYER,
+            read_layer=read_layer_for(mode),
             injected_layers=INJECTED_LAYERS,
             integration=mode,
         )

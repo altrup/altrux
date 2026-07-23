@@ -39,6 +39,10 @@ CUDA, windowed writes, beta anneal, sleep/reset slots) applies unchanged.
 
 ### Integration knob — `MEMORY_INTEGRATION` env var, read at construction
 
+`MEMORY_READ_LAYER` overrides the arm's default read layer (state@32 /
+mix@16) for the 2x2 cross cells — state@16, mix@32. In the mix arm the
+read point is also the mix point (same-token causality).
+
 - `state` (default): the 2.7B design with layer indices scaled by 48/64 to
   the same fractional depths — `READ_LAYER = 32` (2/3 depth, from 42/64),
   `INJECTED_LAYERS = 16..46 step 2` (from 22..62 step 2; 16 injected
