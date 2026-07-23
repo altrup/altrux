@@ -184,11 +184,13 @@ box (`--chunk-len 8` mandatory; 48 OOMs):
 (`make dream-fidelity`), BUILT. Tests the precondition for the M→weights
 consolidation sketch (research note): *can M generate a faithful dream of what
 it stored?* Generation-only (no teacher-forced scoring). **Runs on the BOX,
-not locally** — priming the 2.7B + the memory write's inner gradient needs
-~17 GB (same wall as probe_recall); the 8 GB local card OOMs at the write even
-at batch 1 / prime 64. The overlap metric and wiring are unit-tested locally;
-only the model pass needs the rental. Box run: `--n-probes 4 --prime 2048
---gen 128` (drop `--chunk-len`; box fits CHUNK_LEN 24). Design —
+not locally** — priming the 2.7B + the memory write's transient working set
+needs ~17 GB (same wall as probe_recall); confirmed constant-memory (no leak —
+`state.detach()` cuts the graph each step, M is fixed-size), the 8 GB card is
+just ~100 MB short at the write's fp32 temps. Box defaults already match the
+real run: `make dream-fidelity ARGS="--checkpoint <447-T3 dir>"` (n-probes 4,
+prime 2048, gen 128, temp 0.8; priming uses the trained window + fused path).
+The overlap/sampling logic is unit-tested locally. Design —
 the naive "prime, wipe SSM, read M's output" is dominated by generic backbone
 priors, so **contrast, don't inspect**:
 

@@ -12,10 +12,11 @@ We have only ever *scored* likelihoods from M (probe_recall); this is the
 first probe that *generates* from it. Prediction from the gist-vs-verbatim
 result: topically steered but factually generic (gist-faithful, fact-lossy).
 
-Generation runs at memory-window 1 (inject every token) regardless of the
-checkpoint's trained window -- otherwise single-token autoregressive steps
-never hit a window-close and M never injects. A deliberate train/infer
-mismatch for this readout probe; noted, not a bug.
+Box tool (~17 GB, same class as probe_recall): priming the 2.7B + the memory
+write's transient working set doesn't fit the 8 GB local card. Priming runs at
+the checkpoint's trained memory-window (the fused kernel path engages on CUDA);
+generation drops to window 1 because single-token autoregressive steps can't
+close a larger window.
 
 Usage (from sft/, env vars as in the Makefile):
     make dream-fidelity ARGS="--checkpoint <dir> [--n-probes N] [--prime N] [--gen N]"
@@ -49,15 +50,26 @@ def load_trainable(model, ckpt: Path) -> None:
 
 
 @torch.no_grad()
-def generate(model, state, n_tokens: int, first_token: torch.Tensor, label: str) -> torch.Tensor:
-    """Greedy autoregressive generation from `state` (already primed+wiped).
-    first_token seeds step 0. Returns (n_probes, n_tokens) generated ids."""
+def generate(model, state, n_tokens: int, first_token: torch.Tensor, temperature: float, top_p: float, label: str) -> torch.Tensor:
+    """Autoregressive generation from `state` (already primed+wiped), one token
+    per step (memory-window 1). Nucleus sampling per row; temperature 0 = greedy.
+    Returns (n_probes, n_tokens) generated ids."""
     out = []
     tok = first_token
     for i in range(n_tokens):
         logits, state = model(tok, state=state)
         state = state.detach()
-        tok = logits[:, -1].argmax(dim=-1, keepdim=True)
+        nl = logits[:, -1].float()
+        if temperature <= 0:
+            tok = nl.argmax(dim=-1, keepdim=True)
+        else:
+            probs = torch.softmax(nl / temperature, dim=-1)
+            sp, si = torch.sort(probs, descending=True, dim=-1)
+            drop = (sp.cumsum(-1) - sp) > top_p
+            sp[drop] = 0.0
+            probs = torch.zeros_like(probs).scatter_(-1, si, sp)
+            probs /= probs.sum(-1, keepdim=True)
+            tok = torch.multinomial(probs, num_samples=1)
         out.append(tok)
         print(f"\r  {label}: gen {i + 1}/{n_tokens}", end="", flush=True)
     print()
@@ -81,19 +93,16 @@ def main() -> None:
     parser.add_argument("--n-probes", type=int, default=4)
     parser.add_argument("--prime", type=int, default=2048, help="Priming prefix tokens (default: %(default)s)")
     parser.add_argument("--gen", type=int, default=128, help="Tokens to generate (default: %(default)s)")
+    parser.add_argument("--temperature", type=float, default=0.8, help="Sampling temperature; 0 = greedy (default: %(default)s)")
+    parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--chunk-len", type=int, default=None, help="Override priming chunk size (default: probe_recall's 24; use 8 on the 8GB local box)")
     args = parser.parse_args()
-
-    if args.chunk_len is not None:
-        pr.CHUNK_LEN = args.chunk_len
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
 
-    # Eval-only: memory writes need no autograd graph. create_graph=True
-    # (the default) would retain a second-order graph every generation step
-    # and OOM the 8 GB box; graph-free is both correct here and much lighter.
+    # Memory writes need no autograd graph for a read-only probe (matches
+    # probe_recall's eval path).
     orig_write = mmod._NeuralMemory.write
     mmod._NeuralMemory.write = lambda self, ks, vs, et, th, al, create_graph=True: orig_write(
         self, ks, vs, et, th, al, create_graph=False
@@ -104,16 +113,8 @@ def main() -> None:
     model, _ = train_hooks.setup_training(device, lora_cfg["rank"], lora_cfg["alpha"], 0.0)
     load_trainable(model, ckpt)
     model.eval()
-    # Freeze every param, exactly as the backend's inference path does: the
-    # training-path setup leaves LoRA/memory params trainable, whose retained
-    # state is the ~100 MB that tips the 8 GB card over. The online memory
-    # write still runs frozen (it detaches+re-leafs w1/w2 internally).
-    for p in model.parameters():
-        p.requires_grad_(False)
     model.set_beta_anneal(10**9)
-    # Diagnostic-only write stats allocate a full w1-size temp per write and
-    # OOM the 8 GB box; the probe never reads them.
-    model._accum_write_stats = lambda *a, **k: None
+
     from models.common import build_tokenizer
 
     tokenizer = build_tokenizer(model_mod)
@@ -124,9 +125,13 @@ def main() -> None:
 
     rng = random.Random(args.seed)
     prime_len = args.prime - args.prime % pr.CHUNK_LEN
-    prefix, cont, _ = pr.build_gist_rows(args.data, user_id, asst_id, args.n_probes, prime_len, pr.CHUNK_LEN, rng)
+    prefix, _, _ = pr.build_gist_rows(args.data, user_id, asst_id, args.n_probes, prime_len, pr.CHUNK_LEN, rng)
     prefix = prefix.to(device)
-    print(f"priming {args.n_probes} rows x {prime_len} tokens from {args.data}; generating {args.gen} each")
+    prime_window = lora_cfg.get("memory_window", 1)
+    print(
+        f"priming {args.n_probes} rows x {prime_len} tokens from {args.data} "
+        f"(window {prime_window}); generating {args.gen} each, temp {args.temperature}"
+    )
 
     # Corpus-common token set to discount when scoring overlap (the top ~200
     # most frequent ids across all primes ~ stopwords/punctuation/markup).
@@ -136,28 +141,26 @@ def main() -> None:
             counts[t] = counts.get(t, 0) + 1
     common = {t for t, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:200]}
 
-    prime_window = lora_cfg.get("memory_window", 1)
+    mem_dtype = model.front_end.q_proj.weight.dtype
     seed_tok = prefix[:, -1:].clone()
+    torch.manual_seed(args.seed)
     with torch.no_grad():
         model.set_memory_window(prime_window)
         _, primed_state = pr.run_chunks(model, prefix, None, "prime", keep_logits=False)
 
-        torch.cuda.empty_cache()  # release priming workspace before generating
         model.set_memory_window(1)  # single-token generation needs window 1
 
-        # No clone -- clone_state briefly doubles M's ~0.6 GB state and OOMs
-        # the 8 GB box. Wipe primed_state's SSM in place and generate on it
-        # directly (we rebuild the control fresh, so nothing needs preserving).
+        m_state = pr.clone_state(mmod, primed_state)
         for b in range(args.n_probes):
-            model.sleep_slot(primed_state, b)
-        gen_primed = generate(model, primed_state, args.gen, seed_tok, "M-primed")
-        del primed_state
-        torch.cuda.empty_cache()
+            model.sleep_slot(m_state, b)
+        gen_primed = generate(model, m_state, args.gen, seed_tok, args.temperature, args.top_p, "M-primed")
 
-        # M-random control: a fresh state already has a zeroed SSM + random M,
-        # i.e. exactly the wiped-SSM/ablated-memory condition -- no prime clone.
-        r_state = train_hooks.init_state(model, args.n_probes, device)
-        gen_random = generate(model, r_state, args.gen, seed_tok, "M-random")
+        # Control: same wiped SSM, memory replaced with a fresh random init.
+        r_state = pr.clone_state(mmod, primed_state)
+        for b in range(args.n_probes):
+            model.sleep_slot(r_state, b)
+        r_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+        gen_random = generate(model, r_state, args.gen, seed_tok, args.temperature, args.top_p, "M-random")
 
     print("\n=== overlap with priming text (Jaccard, corpus-common tokens excluded) ===")
     ov_p = [overlap_with_prime(gen_primed[b].cpu(), prefix[b].cpu(), common) for b in range(args.n_probes)]
@@ -168,10 +171,12 @@ def main() -> None:
     print(f"  mean:  M-primed {mp:.3f}  vs  M-random {mr:.3f}   (delta {mp - mr:+.3f})")
     print("  (positive delta = M steers generation toward the primed content)")
 
-    print("\n=== decoded samples (first row) ===")
-    print(f"  PRIME tail : ...{tokenizer.decode(prefix[0, -60:].cpu())!r}")
-    print(f"  M-primed   : {tokenizer.decode(gen_primed[0].cpu())!r}")
-    print(f"  M-random   : {tokenizer.decode(gen_random[0].cpu())!r}")
+    print("\n=== decoded samples ===")
+    for b in range(min(args.n_probes, 2)):
+        print(f"\n row {b}")
+        print(f"  PRIME tail : ...{tokenizer.decode(prefix[b, -60:].cpu())!r}")
+        print(f"  M-primed   : {tokenizer.decode(gen_primed[b].cpu())!r}")
+        print(f"  M-random   : {tokenizer.decode(gen_random[b].cpu())!r}")
 
 
 if __name__ == "__main__":
