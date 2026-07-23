@@ -181,10 +181,12 @@ box (`--chunk-len 8` mandatory; 48 OOMs):
   moves.
 
 **L2. M readout / dream-fidelity probe on 447-T3** — `sft/dream_fidelity.py`
-(`make dream-fidelity`), BUILT. Tests the precondition for the M→weights
-consolidation sketch (research note): *can M generate a faithful dream of what
-it stored?* Generation-only (no teacher-forced scoring). **Runs on the BOX,
-not locally** — priming the 2.7B + the memory write's transient working set
+(`make dream-fidelity`), BUILT. **RUN THIS FIRST on the box** (see Box
+ordering): it's pure inference on a banked checkpoint — minutes, no training —
+so run it right after boot while B1's resume trains, no GPU contention. Tests
+the precondition for the M→weights consolidation sketch (research note): *can M
+generate a faithful dream of what it stored?* Generation-only (no teacher-forced
+scoring). **Runs on the BOX, not locally** — priming the 2.7B + the memory write's transient working set
 needs ~17 GB (same wall as probe_recall); confirmed constant-memory (no leak —
 `state.detach()` cuts the graph each step, M is fixed-size), the 8 GB card is
 just ~100 MB short at the write's fp32 temps. Box defaults already match the
@@ -209,7 +211,15 @@ Decision-relevant for whether the M→weights sketch is worth building.
 
 ### Box (next rental, in order)
 
-**B1. T3 plateau-vs-slow-erosion test** (cheap, independent, first):
+**B0. L2 dream-fidelity probe FIRST** (see L2 above). Pure inference on
+banked 447-T3, minutes: `make dream-fidelity ARGS="--checkpoint <447-T3 dir>"`.
+Eyeball the decoded samples, not just the overlap delta — the read is topic
+vs. fact fidelity, which the number alone won't show. Kick it off at boot
+while B1 trains (no GPU contention). Decision-relevant for the whole M→weights
+direction, so front-loaded.
+
+**B1. T3 plateau-vs-slow-erosion test** (training leg; start its resume at
+boot, let it run while B0 probes):
 resume `archive-20260722-test3-lineage/step-476` on unchanged
 `train_chains_split.pt` (restore lineage dirs to epoch-1 or point resume at
 the archive per the established archive procedure), same verbatim resume
