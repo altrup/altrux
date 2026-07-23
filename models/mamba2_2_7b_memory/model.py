@@ -575,6 +575,45 @@ class _GatedDeltaInjection(nn.Module):
         return p, key, beta, retain
 
 
+class _TokenMixInjection(nn.Module):
+    """The "mix" integration arm (see models/mamba2_780m_memory/README.md):
+    the gated read is ADDED to the residual stream at the read layer,
+    same-token, instead of gated-delta-merged into ssm_state. Deliberately
+    shares _GatedDeltaInjection's bottleneck/gate structure (down 128-dim,
+    beta from the same o_t + sigmoid(surprise) + anneal-offset signals) so
+    the two A/B arms differ ONLY in where the gated read lands.
+
+    o_proj is zero-initialized (weight and bias): the mix is an exact no-op
+    at init, and o_proj still receives gradient from step 0 because beta's
+    sigmoid is nonzero. No fixed mixing ratio anywhere -- the magnitude
+    equilibrium between the memory term and the residual stream is learned
+    via o_proj/beta under the LM loss. (Known subtlety, deliberately not
+    built: residual RMS grows with depth, so the effective ratio of the
+    memory term shrinks as activations grow; if beta saturates compensating,
+    the fix is an RMS-reference normalization in this branch.)"""
+
+    def __init__(self, d_model: int, mem_dim: int = MEM_DIM, r: int = BOTTLENECK_R):
+        super().__init__()
+        self.down = nn.Linear(mem_dim, r)
+        self.beta_proj = nn.Linear(r, 1)
+        self.o_proj = nn.Linear(r, d_model)
+        nn.init.zeros_(self.o_proj.weight)
+        nn.init.zeros_(self.o_proj.bias)
+        # Same startup-suppression mechanism as _GatedDeltaInjection's --
+        # see its beta_anneal_offset comment; updated by Model.set_beta_anneal.
+        self.beta_anneal_offset = 0.0
+
+    def mix_term(self, o_t: torch.Tensor, surprise: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (mix, beta): mix is the gated residual addition, same
+        leading shape as o_t with d_model channels; beta the per-token gate.
+        Works on (B, mem_dim) and (B, L, mem_dim) alike."""
+        z = self.down(o_t)
+        beta = torch.sigmoid(
+            self.beta_proj(z).squeeze(-1) + torch.sigmoid(surprise) + self.beta_anneal_offset
+        )
+        return beta.unsqueeze(-1) * self.o_proj(z), beta
+
+
 class MemoryState:
     """Everything that needs to persist across calls to `Model.forward` for
     a given conversation: the backbone's own per-layer SSM/conv state (which
@@ -651,6 +690,7 @@ class Model(nn.Module):
         mamba_model: MambaLMHeadModel,
         read_layer: int = READ_LAYER,
         injected_layers: tuple[int, ...] = INJECTED_LAYERS,
+        integration: str = "state",
     ):
         super().__init__()
         backbone = mamba_model.backbone
@@ -687,9 +727,13 @@ class Model(nn.Module):
         # other model packages (e.g. models/mamba2_780m_memory). The
         # BOTTLENECK_R=128 read bottleneck is deliberately NOT scaled with
         # d_model (see models/mamba2_780m_memory/README.md).
+        assert integration in ("state", "mix"), integration
         mixer0 = self.layers[0].mixer
+        self.integration = integration
         self.read_layer = read_layer
-        self.injected_layers = tuple(injected_layers)
+        # "mix" has no gated-delta injections by construction -- the read
+        # lands on the residual stream at read_layer instead.
+        self.injected_layers = () if integration == "mix" else tuple(injected_layers)
         self.mem_dim = self.d_model
         self.mem_hidden = 4 * self.d_model
         self.front_end = _TitansFrontEnd(self.d_model, self.mem_dim, self.mem_hidden)
@@ -701,6 +745,7 @@ class Model(nn.Module):
                 for i in self.injected_layers
             }
         )
+        self.mix = _TokenMixInjection(self.d_model, self.mem_dim) if integration == "mix" else None
         # Kill switch for the memory->backbone pathway (used by
         # sft/probe_recall.py's --ablation none): when False, no injection
         # events fire AND the front-end read/write machinery is skipped
@@ -1100,7 +1145,47 @@ class Model(nn.Module):
             token_cos_sims: list[torch.Tensor] = []
             last_surprise_per_slot: torch.Tensor | None = None
             last_o_t_norm_per_slot: torch.Tensor | None = None
+            mix_beta_per_slot: torch.Tensor | None = None
             for i, layer in enumerate(self.layers):
+                # "mix" integration: the read happens on the stream ENTERING
+                # read_layer and lands right back on it, same token, before
+                # this layer's own computation -- so read_layer and everything
+                # above computes over the memory term (see _TokenMixInjection).
+                if self.integration == "mix" and i == self.read_layer and self.injection_enabled:
+                    stream = (h + residual) if residual is not None else h
+                    with torch.enable_grad():
+                        q, k, v, eta, theta, alpha = self.front_end.observe(stream)
+                        o_t = state.neural_memory.read(q)
+                        surprise = state.neural_memory.surprise(k, v)
+                        last_surprise_per_slot = surprise.detach()
+                        last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)
+                        self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean()
+                        self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean()
+                        self._mem_stat_tok_count += 1
+
+                        pending_k.append(k)
+                        pending_v.append(v)
+                        pending_eta.append(eta)
+                        pending_theta.append(theta)
+                        pending_alpha.append(alpha)
+                        if is_window_close:
+                            ks = torch.stack(pending_k, dim=0)
+                            vs = torch.stack(pending_v, dim=0)
+                            etas = torch.stack(pending_eta, dim=0)
+                            thetas = torch.stack(pending_theta, dim=0)
+                            alphas = torch.stack(pending_alpha, dim=0)
+                            _, grad_norm = state.neural_memory.write(ks, vs, etas, thetas, alphas)
+                            last_grad_norm_per_slot = grad_norm.detach()
+                            self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
+                            self._accum_write_stats(state.neural_memory, alphas)
+                            self._mem_stat_write_count += 1
+                            pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
+                        mix, mix_beta = self.mix.mix_term(o_t, surprise)
+                    h = h + mix.to(h.dtype)
+                    mix_beta_per_slot = mix_beta.detach()
+                    self._mem_stat_sums["beta"] += mix_beta_per_slot.mean()
+                    self._mem_stat_inj_count += 1
+
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
                 if i in self.injected_layers and is_window_close and self.injection_enabled:
@@ -1126,7 +1211,7 @@ class Model(nn.Module):
                 if injection_cos_sim is not None:
                     token_cos_sims.append(injection_cos_sim)
 
-                if i == self.read_layer and self.injection_enabled:
+                if i == self.read_layer and self.injection_enabled and self.integration == "state":
                     with torch.enable_grad():
                         q, k, v, eta, theta, alpha = self.front_end.observe(residual)
                         o_t = state.neural_memory.read(q)
@@ -1212,6 +1297,19 @@ class Model(nn.Module):
                     entry["resid_norm"] = residual[b].norm().item()
                     logs.append(entry)
                 self._last_token_logs = logs
+            elif self.integration == "mix" and t == seqlen - 1 and mix_beta_per_slot is not None:
+                self._last_token_logs = [
+                    {
+                        "beta": mix_beta_per_slot[b].item(),
+                        "surprise": last_surprise_per_slot[b].item(),
+                        "o_t_norm": last_o_t_norm_per_slot[b].item(),
+                        "grad_norm": (
+                            last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                        ),
+                        "resid_norm": residual[b].norm().item(),
+                    }
+                    for b in range(batch_size)
+                ]
 
             h = self._apply_norm_f(h, residual)
             all_logits.append(self.lm_head(h))
@@ -1280,8 +1378,50 @@ class Model(nn.Module):
         last_surprise_per_slot: torch.Tensor | None = None
         last_o_t_norm_per_slot: torch.Tensor | None = None
         last_grad_norm_per_slot: torch.Tensor | None = None
+        mix_beta_per_slot: torch.Tensor | None = None
 
         for i, layer in enumerate(self.layers):
+            # "mix" integration hook -- same placement/ordering as
+            # _forward_manual's (stream entering read_layer, same-token
+            # landing), batched over the chunk: the per-window loop below
+            # only touches front-end/M (no backbone state), so every layer
+            # still runs one full-chunk _mixer_span. Reads are against the
+            # window-START M (read_windowed before write), matching the
+            # manual path exactly.
+            if self.integration == "mix" and i == self.read_layer and self.injection_enabled:
+                stream = (h + residual) if residual is not None else h  # (B, L, d_model)
+                o_parts: list[torch.Tensor] = []
+                s_parts: list[torch.Tensor] = []
+                with torch.enable_grad():
+                    for w in range(n_windows):
+                        win = stream[:, w * window : (w + 1) * window, :]
+                        q, k, v, eta, theta, alpha = self.front_end.observe(win)
+                        q_w, k_w, v_w = q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
+                        o_win = state.neural_memory.read_windowed(q_w)                  # (W, B, mem_dim)
+                        surprise_win = state.neural_memory.surprise_windowed(k_w, v_w)  # (W, B)
+                        for wt in range(window):
+                            self._mem_stat_sums["surprise"] += surprise_win[wt].detach().mean()
+                            self._mem_stat_sums["o_t_norm"] += o_win[wt].detach().norm(dim=-1).mean()
+                            self._mem_stat_tok_count += 1
+                        _, grad_norm = state.neural_memory.write(
+                            k_w, v_w, eta.transpose(0, 1), theta.transpose(0, 1), alpha.transpose(0, 1)
+                        )
+                        last_grad_norm_per_slot = grad_norm.detach()
+                        self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
+                        self._accum_write_stats(state.neural_memory, alpha.transpose(0, 1))
+                        self._mem_stat_write_count += 1
+                        o_parts.append(o_win.transpose(0, 1))        # (B, W, mem_dim)
+                        s_parts.append(surprise_win.transpose(0, 1))  # (B, W)
+                    o_all = torch.cat(o_parts, dim=1)
+                    s_all = torch.cat(s_parts, dim=1)
+                    mix, mix_beta = self.mix.mix_term(o_all, s_all)
+                h = h + mix.to(h.dtype)
+                mix_beta_per_slot = mix_beta[:, -1].detach()
+                last_surprise_per_slot = s_all[:, -1].detach()
+                last_o_t_norm_per_slot = o_all[:, -1].detach().norm(dim=-1)
+                self._mem_stat_sums["beta"] += mix_beta.detach().mean()
+                self._mem_stat_inj_count += 1
+
             h, residual = self._prenorm(layer, h, residual)
 
             if i not in self.injected_layers or not self.injection_enabled:
@@ -1397,6 +1537,19 @@ class Model(nn.Module):
                 entry["resid_norm"] = residual[b, -1].norm().item()
                 logs.append(entry)
             self._last_token_logs = logs
+        elif self.integration == "mix" and mix_beta_per_slot is not None:
+            self._last_token_logs = [
+                {
+                    "beta": mix_beta_per_slot[b].item(),
+                    "surprise": last_surprise_per_slot[b].item(),
+                    "o_t_norm": last_o_t_norm_per_slot[b].item(),
+                    "grad_norm": (
+                        last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                    ),
+                    "resid_norm": residual[b, -1].norm().item(),
+                }
+                for b in range(batch_size)
+            ]
 
         h = self._apply_norm_f(h, residual)
         logits = self.lm_head(h)
@@ -1423,6 +1576,8 @@ class Model(nn.Module):
         offset = BETA_BIAS_ANNEAL_START * (1.0 - frac)
         for injection in self.injections.values():
             injection.beta_anneal_offset = offset
+        if self.mix is not None:
+            self.mix.beta_anneal_offset = offset
 
     def last_token_log(self) -> list[dict] | None:
         """Per-slot snapshot of the most recently processed token's memory
@@ -1555,16 +1710,21 @@ class Model(nn.Module):
             return None
         # Single sync here for the whole accumulation window, instead of one
         # per injected layer per token (see the accumulation sites above).
+        # _item: a sum a given integration mode never accumulates (e.g.
+        # retain in "mix") is still the float 0.0 it was initialized as.
+        def _item(x: "float | torch.Tensor") -> float:
+            return x.item() if isinstance(x, torch.Tensor) else float(x)
+
         stats = {
-            "beta": (self._mem_stat_sums["beta"] / max(self._mem_stat_inj_count, 1)).item(),
-            "retain": (self._mem_stat_sums["retain"] / max(self._mem_stat_inj_count, 1)).item(),
-            "surprise": (self._mem_stat_sums["surprise"] / self._mem_stat_tok_count).item(),
-            "o_t_norm": (self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count).item(),
+            "beta": _item(self._mem_stat_sums["beta"] / max(self._mem_stat_inj_count, 1)),
+            "retain": _item(self._mem_stat_sums["retain"] / max(self._mem_stat_inj_count, 1)),
+            "surprise": _item(self._mem_stat_sums["surprise"] / self._mem_stat_tok_count),
+            "o_t_norm": _item(self._mem_stat_sums["o_t_norm"] / self._mem_stat_tok_count),
             # Divided by _mem_stat_write_count, not _mem_stat_tok_count --
             # grad_norm only gets a fresh value on tokens that close a
             # memory-window (see set_memory_window), so at memory_window > 1
             # there are fewer writes than tokens.
-            "grad_norm": (self._mem_stat_sums["grad_norm"] / max(self._mem_stat_write_count, 1)).item(),
+            "grad_norm": _item(self._mem_stat_sums["grad_norm"] / max(self._mem_stat_write_count, 1)),
             # Already plain Python floats (see _mem_stat_sums init) -- a
             # running max, not a sum-to-average, so no division here.
             "w1_abs_max": self._mem_stat_sums["w1_abs_max"],

@@ -466,11 +466,19 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
     args = parser.parse_args()
 
-    import models.mamba2_2_7b_memory as model_mod
+    import importlib
+    import os
+
     from models.common import build_tokenizer
-    from models.mamba2_2_7b_memory import model as mmod
-    from models.mamba2_2_7b_memory import train_hooks
     from train import latest_checkpoint, load_checkpoint
+
+    # train.py's import (above) already ran load_dotenv(), so MODEL_NAME
+    # comes from sft/.env like every other script here. mamba2_780m_memory
+    # re-exports the shared _NeuralMemory/MemoryState this probe touches.
+    model_name = os.getenv("MODEL_NAME", "mamba2_2_7b_memory")
+    model_mod = importlib.import_module(f"models.{model_name}")
+    mmod = importlib.import_module(f"models.{model_name}.model")
+    train_hooks = importlib.import_module(f"models.{model_name}.train_hooks")
 
     # Inference-only probe: write()'s create_graph=True second-order graph
     # exists so training can backprop into the write projections -- pure
