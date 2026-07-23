@@ -646,7 +646,12 @@ class Model(nn.Module):
     back the returned state to continue one.
     """
 
-    def __init__(self, mamba_model: MambaLMHeadModel):
+    def __init__(
+        self,
+        mamba_model: MambaLMHeadModel,
+        read_layer: int = READ_LAYER,
+        injected_layers: tuple[int, ...] = INJECTED_LAYERS,
+    ):
         super().__init__()
         backbone = mamba_model.backbone
 
@@ -675,8 +680,34 @@ class Model(nn.Module):
         for layer in self.layers:
             assert layer.mixer.ngroups == 1, "memory injection assumes ngroups=1"
 
-        self.front_end = _TitansFrontEnd()
-        self.injections = nn.ModuleDict({str(i): _GatedDeltaInjection() for i in INJECTED_LAYERS})
+        # Memory-subsystem geometry is derived from the backbone (nheads/
+        # headdim/d_state from its own mixers, mem dims from d_model), so the
+        # same class wraps any Mamba2 stack -- read_layer/injected_layers
+        # default to this module's 2.7B constants and are overridden by
+        # other model packages (e.g. models/mamba2_780m_memory). The
+        # BOTTLENECK_R=128 read bottleneck is deliberately NOT scaled with
+        # d_model (see models/mamba2_780m_memory/README.md).
+        mixer0 = self.layers[0].mixer
+        self.read_layer = read_layer
+        self.injected_layers = tuple(injected_layers)
+        self.mem_dim = self.d_model
+        self.mem_hidden = 4 * self.d_model
+        self.front_end = _TitansFrontEnd(self.d_model, self.mem_dim, self.mem_hidden)
+        self.injections = nn.ModuleDict(
+            {
+                str(i): _GatedDeltaInjection(
+                    self.mem_dim, BOTTLENECK_R, mixer0.nheads, mixer0.headdim, mixer0.d_state
+                )
+                for i in self.injected_layers
+            }
+        )
+        # Kill switch for the memory->backbone pathway (used by
+        # sft/probe_recall.py's --ablation none): when False, no injection
+        # events fire AND the front-end read/write machinery is skipped
+        # entirely, so forward() is exactly the plain (LoRA'd) backbone and
+        # is invariant to the neural memory's content. Plain attribute, not
+        # checkpointed state, same reasoning as memory_window.
+        self.injection_enabled = True
         # Tokens per memory-subsystem write (see set_memory_window and
         # _NeuralMemory.write) -- 1 reproduces the original exact per-token
         # behavior and is the default so nothing changes unless a caller
@@ -727,7 +758,7 @@ class Model(nn.Module):
         # Injection.signals/_TitansFrontEnd.observe mismatch dtypes against it.
         mem_dtype = self.front_end.q_proj.weight.dtype
         neural_memory = self.front_end.init_memory(batch_size, device, mem_dtype)
-        last_o_t = torch.zeros(batch_size, MEM_DIM, device=device, dtype=mem_dtype)
+        last_o_t = torch.zeros(batch_size, self.mem_dim, device=device, dtype=mem_dtype)
         last_surprise = torch.zeros(batch_size, device=device, dtype=mem_dtype)
         return MemoryState(conv_states, ssm_states, neural_memory, last_o_t, last_surprise)
 
@@ -1072,7 +1103,7 @@ class Model(nn.Module):
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
-                if i in INJECTED_LAYERS and is_window_close:
+                if i in self.injected_layers and is_window_close and self.injection_enabled:
                     gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
                     beta, retain = gated_delta[2], gated_delta[3]
                     beta_per_slot = beta[:, 0, 0, 0].detach()    # (B,)
@@ -1095,7 +1126,7 @@ class Model(nn.Module):
                 if injection_cos_sim is not None:
                     token_cos_sims.append(injection_cos_sim)
 
-                if i == READ_LAYER:
+                if i == self.read_layer and self.injection_enabled:
                     with torch.enable_grad():
                         q, k, v, eta, theta, alpha = self.front_end.observe(residual)
                         o_t = state.neural_memory.read(q)
@@ -1177,7 +1208,7 @@ class Model(nn.Module):
                         entry["grad_norm"] = (
                             last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
                         )
-                    entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in INJECTED_LAYERS)
+                    entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in self.injected_layers)
                     entry["resid_norm"] = residual[b].norm().item()
                     logs.append(entry)
                 self._last_token_logs = logs
@@ -1253,7 +1284,7 @@ class Model(nn.Module):
         for i, layer in enumerate(self.layers):
             h, residual = self._prenorm(layer, h, residual)
 
-            if i not in INJECTED_LAYERS:
+            if i not in self.injected_layers or not self.injection_enabled:
                 h, conv_state, ssm_state = self._mixer_span(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i]
                 )
@@ -1301,7 +1332,7 @@ class Model(nn.Module):
                 if is_last_window:
                     token_cos_sims.append(injection_cos_sim)
 
-                if i == READ_LAYER:
+                if i == self.read_layer:
                     with torch.enable_grad():
                         win_residual = residual[:, start : start + window, :]  # (B, W, d_model)
                         q, k, v, eta, theta, alpha = self.front_end.observe(win_residual)
@@ -1362,7 +1393,7 @@ class Model(nn.Module):
                     entry["grad_norm"] = (
                         last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
                     )
-                entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in INJECTED_LAYERS)
+                entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in self.injected_layers)
                 entry["resid_norm"] = residual[b, -1].norm().item()
                 logs.append(entry)
             self._last_token_logs = logs
@@ -1417,11 +1448,11 @@ class Model(nn.Module):
             state.ssm_states[i][slot_idx].copy_(fresh_ssm[0])
 
         nm = state.neural_memory
-        bound1 = 1.0 / math.sqrt(MEM_DIM)
-        bound2 = 1.0 / math.sqrt(MEM_HIDDEN)
-        nm.w1[slot_idx].copy_((torch.rand(MEM_HIDDEN, MEM_DIM, device=device, dtype=mem_dtype) * 2 - 1) * bound1)
+        bound1 = 1.0 / math.sqrt(self.mem_dim)
+        bound2 = 1.0 / math.sqrt(self.mem_hidden)
+        nm.w1[slot_idx].copy_((torch.rand(self.mem_hidden, self.mem_dim, device=device, dtype=mem_dtype) * 2 - 1) * bound1)
         nm.b1[slot_idx].zero_()
-        nm.w2[slot_idx].copy_((torch.rand(MEM_DIM, MEM_HIDDEN, device=device, dtype=mem_dtype) * 2 - 1) * bound2)
+        nm.w2[slot_idx].copy_((torch.rand(self.mem_dim, self.mem_hidden, device=device, dtype=mem_dtype) * 2 - 1) * bound2)
         nm.b2[slot_idx].zero_()
         if not hasattr(nm, "w1_init"):
             nm.w1_init = nm.w1.detach().clone()

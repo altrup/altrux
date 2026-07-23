@@ -82,6 +82,7 @@ import argparse
 import math
 import random
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
@@ -248,9 +249,9 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
         f"gist eval: {args.n_probes} conversations from {args.gist}, "
         f"prefix {prefix_len} tokens, continuation {cont.shape[1]}, recent window {recent_len}"
         + (f", distractor {dist_len}" if dist is not None else "")
+        + f", ablation {args.ablation}"
     )
 
-    mem_dtype = model.front_end.q_proj.weight.dtype
     per_token: dict[str, torch.Tensor] = {}
     with torch.no_grad():
         _, state = run_chunks(model, prefix, None, "prefix", keep_logits=False)
@@ -262,8 +263,9 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
         # is shadowing the backbone's short-term role instead of complementing
         # it across sleeps (it should stay small as the sleep deltas grow).
         nw_abl = clone_state(mmod, state)
-        nw_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-        per_token["no-wipe-ablated"] = score_continuation(model, cont, nw_abl, "no-wipe-ablated")
+        ablate_memory(model, nw_abl, args, device)
+        with ablation_scope(model, args):
+            per_token["no-wipe-ablated"] = score_continuation(model, cont, nw_abl, "no-wipe-ablated")
         del nw_abl
         torch.cuda.empty_cache()
 
@@ -286,8 +288,9 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
         slept_abl = clone_state(mmod, state)
         for b in range(args.n_probes):
             model.sleep_slot(slept_abl, b)
-        slept_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-        per_token["sleep-ablated"] = score_continuation(model, cont, slept_abl, "sleep-ablated")
+        ablate_memory(model, slept_abl, args, device)
+        with ablation_scope(model, args):
+            per_token["sleep-ablated"] = score_continuation(model, cont, slept_abl, "sleep-ablated")
         del slept_abl
         torch.cuda.empty_cache()
 
@@ -310,11 +313,12 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
             dabl = clone_state(mmod, state)
             for b in range(args.n_probes):
                 model.sleep_slot(dabl, b)
-            dabl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-            _, dabl = run_chunks(model, dist, dabl, "distractor-abl", keep_logits=False)
-            for b in range(args.n_probes):
-                model.sleep_slot(dabl, b)
-            per_token["dist-ablated"] = score_continuation(model, cont, dabl, "dist-ablated")
+            ablate_memory(model, dabl, args, device)
+            with ablation_scope(model, args):
+                _, dabl = run_chunks(model, dist, dabl, "distractor-abl", keep_logits=False)
+                for b in range(args.n_probes):
+                    model.sleep_slot(dabl, b)
+                per_token["dist-ablated"] = score_continuation(model, cont, dabl, "dist-ablated")
             del dabl
             torch.cuda.empty_cache()
 
@@ -355,6 +359,31 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
             f"  tokens {lo + 1:>5}-{hi:>5}: gist-delta {d.mean():+.4f} "
             f"(SEM {d.std() / math.sqrt(args.n_probes):.4f})  long-range {lr.mean():+.4f}"
         )
+
+
+def ablate_memory(model, st, args, device) -> None:
+    """--ablation fresh-m (default, the historical control): replace st's
+    neural memory with a fresh random init; the injection machinery keeps
+    firing on its content-free reads. --ablation none: leave the state
+    untouched -- the paired ablation_scope() disables the memory->backbone
+    pathway entirely instead, so the ablated branch is the plain backbone
+    rather than one injecting a random M's reads (separates "M stores
+    something" from "the backbone can't tolerate junk injections")."""
+    if args.ablation == "fresh-m":
+        mem_dtype = model.front_end.q_proj.weight.dtype
+        st.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
+
+
+@contextmanager
+def ablation_scope(model, args):
+    """Wraps every forward pass of an ablated branch: under --ablation none
+    this turns injection off for exactly that branch's passes."""
+    if args.ablation == "none":
+        model.injection_enabled = False
+    try:
+        yield
+    finally:
+        model.injection_enabled = True
 
 
 def clone_state(mmod, state):
@@ -422,6 +451,16 @@ def main() -> None:
     parser.add_argument("--gist-cont", type=int, default=1536, help="Post-wipe continuation length in tokens to score")
     parser.add_argument("--gist-recent", type=int, default=576, help="Suffix length for the sleep-recent recency control")
     parser.add_argument("--gist-distractor", type=int, default=0, help="If > 0, add two interleaved-episode conditions: after the wipe, feed this many tokens of an unrelated conversation's opening, sleep again, then score the original continuation (dist-intact / dist-ablated). Measures whether the memory's gist survives THROUGH an intervening episode, or is flushed at episode boundaries.")
+    parser.add_argument(
+        "--ablation",
+        choices=["fresh-m", "none"],
+        default="fresh-m",
+        help="What the *-ablated conditions do: fresh-m (default, historical) replaces the neural "
+        "memory with a fresh random init but leaves the injection machinery firing on it; none "
+        "disables the memory->backbone pathway entirely (no injections, no reads), scoring the "
+        "plain backbone. Probes of record run both -- their disagreement measures how much the "
+        "fresh-m control itself perturbs a memory-co-adapted checkpoint.",
+    )
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
@@ -485,12 +524,13 @@ def main() -> None:
                 _, state = run_chunks(model, prefix, None, f"{tag} prefix", keep_logits=False)
                 intact = score_targets(model, query, target, clone_state(mmod, state), f"{tag} intact")
 
-                mem_dtype = model.front_end.q_proj.weight.dtype
                 abl_state = clone_state(mmod, state)
-                abl_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-                abl_state.last_o_t.zero_()
-                abl_state.last_surprise.zero_()
-                ablated = score_targets(model, query, target, abl_state, f"{tag} ablated")
+                ablate_memory(model, abl_state, args, device)
+                if args.ablation == "fresh-m":
+                    abl_state.last_o_t.zero_()
+                    abl_state.last_surprise.zero_()
+                with ablation_scope(model, args):
+                    ablated = score_targets(model, query, target, abl_state, f"{tag} ablated")
                 # Each condition's state (a full batched clone plus a ~1.5 GB
                 # neural-memory copy) is scored sequentially, never together, so
                 # free each before building the next -- holding all of them at
@@ -513,10 +553,11 @@ def main() -> None:
                     slept_abl = clone_state(mmod, state)
                     for b in range(args.n_probes):
                         model.sleep_slot(slept_abl, b)
-                    slept_abl.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-                    sleep_scores["sleep-ablated"] = score_targets(
-                        model, query, target, slept_abl, f"{tag} sleep-ablated"
-                    )
+                    ablate_memory(model, slept_abl, args, device)
+                    with ablation_scope(model, args):
+                        sleep_scores["sleep-ablated"] = score_targets(
+                            model, query, target, slept_abl, f"{tag} sleep-ablated"
+                        )
                     del slept_abl
                     torch.cuda.empty_cache()
 
