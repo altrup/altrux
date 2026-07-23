@@ -238,6 +238,36 @@ be elsewhere.
 ## Housekeeping
 
 - Banked the run: 5a1f8bf (`EXPERIMENT_NOTES-20260723-023554.md`).
-- (pending agreement) L2 `--ablation` flag implementation this session.
-- L1 (780M memory port) and L3 are local work items for a dedicated
-  session, not this debrief.
+- **L2 DONE (3e78b3b):** `probe_recall.py --ablation {fresh-m,none}`.
+  `none` = `Model.injection_enabled` kill switch — skips injections AND the
+  front-end read/write machinery in both forward paths, so the ablated
+  branch is exactly the plain backbone. `fresh-m` stays the default
+  (historical comparability). Probes of record run BOTH modes.
+- **L1 DONE (0703779, + fe4692f):** `models/mamba2_780m_memory/` built on a
+  parameterized shared machinery (memory geometry derived from the
+  backbone; `read_layer`/`injected_layers` ctor params). Integration knob:
+  **`MEMORY_INTEGRATION=state|mix`** env var (in `sft/.env.example`).
+  Full suite green (78 tests incl. tiny-backbone GPU tests: none-mode
+  invariance, mix exact no-op at zero-init, causality); both arms smoked
+  on the real 780M backbone locally (state arm 21.7M trainable, mix 12.3M).
+  Implementation decisions (details in the model README):
+  - Front-end/M/writes IDENTICAL between arms (purity); the 128 bottleneck
+    is the shared `down` projection, `W_o: 128→d_model` zero-init, β from
+    the same o_t+surprise+anneal signals. Bottleneck kept at 128 unscaled.
+  - Scaled indices: state arm READ_LAYER=32, INJECTED_LAYERS=16..46 step 2;
+    mix arm boundary at layer 16. **Known A/B confounds, accepted:** the
+    read point necessarily differs between arms (32 vs 16 — same-token
+    causality forces the mix arm to read where it lands), and parameter
+    count is asymmetric (16 injection modules vs 1 mix module).
+  - Mix cadence: read+mix per token against window-start M; writes per
+    window — write semantics identical to the state arm.
+  - Checkpoints do NOT record their integration arm — set
+    `MEMORY_INTEGRATION` to match when probing/resuming (mismatch now
+    warns loudly via the fe4692f unexpected-key guard).
+- **BX0/BX1 box addendum:** the fused-path mix hook could not execute
+  locally (no causal_conv1d on ROCm) — **first thing on the box, smoke
+  `MEMORY_INTEGRATION=mix` with a short fused-path run** before committing
+  to the BX1 leg. `DEFAULT_CHUNK_LEN=16` in the 780m hooks is a guess;
+  pass `--chunk-len` explicitly.
+- L3 (dream neutral-snapshot mode) remains open — the only unbuilt local
+  item; optional for this rental.
