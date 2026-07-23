@@ -175,13 +175,19 @@ Read the A/B on trajectory shape and peak with long-range structure:
 - Token-mix fails to train (gate stuck at 0, no delta) → diagnose gate
   dynamics before concluding anything; a dead gate is a bug, not a result.
 
-**BX2 (conditional — run only if BX1's mix arm disappoints): read-depth
-disambiguator.** State-injection arm with READ_LAYER=16 (config-only; the
-L1 refactor made read_layer a ctor param), same recipe/args. Separates
-"shallow q/k/v are inadequate" from "the integration mechanism is at
-fault": state@16 ≈ state@32 → depth fine, blame integration; state@16
-degraded → the mix arm's layer-16 front-end is a handicap, revisit before
-condemning token-mix. Related post-BX0 cheap diagnostic: port
+**BX2 (the cross cells — the A/B is a 2×2, adaptively gated).** Full
+design: {state, mix} × {read @16, @32}. BX0 = state@32, BX1 = mix@16 (the
+max-contrast pair, always run in that order). The cross cells — state@16
+and mix@32, both config-only (read_layer is a ctor param; mix boundary
+configurable) — run ONLY if the first pair shows a difference worth
+attributing or a mix failure worth diagnosing; if mix@16 ≈ state@32 the
+headline is "integration point doesn't matter at this scale" and the cross
+cells are optional. What the factorial buys: the known confound (arms
+differ in mechanism AND read point) becomes two separately-measured
+effects; state@16 vs state@32 isolates read depth ("shallow q/k/v
+inadequate" vs "integration at fault"), and mix@32 tests whether the
+bypass property alone helps even with shallow compute-over-the-read.
+Same recipe/args for every cell. Related post-BX0 cheap diagnostic: port
 `read_diagnostic.py` to MODEL_NAME resolution and run ridge res16→res32 in
 the TRAINED state arm's q/k/v space (the 780M parallel of the 2.7B
 layer-21 GO result; needs a trained front-end, so post-BX0 only). No
