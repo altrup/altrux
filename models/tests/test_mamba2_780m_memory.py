@@ -1,8 +1,10 @@
-"""Tests for the mamba2_780m_memory package and the shared "mix" integration
-arm (models/mamba2_2_7b_memory/model.py's _TokenMixInjection + the mix hooks
-in Model.forward). Mix-arm behavior is exercised on a TINY synthetic backbone
+"""Tests for the two 780M memory arm packages (mamba2_780m_memory_state /
+mamba2_780m_memory_mix) and the shared "mix" integration arm
+(models/mamba2_2_7b_memory/model.py's _TokenMixInjection + the mix hooks in
+Model.forward). Mix-arm behavior is exercised on a TINY synthetic backbone
 (same approach/skip condition as test_mamba2_2_7b_memory_integration.py);
-package-level checks (env knob, scaled layer indices) need no model at all.
+package-level checks (layer bindings, the state arm's MEMORY_READ_LAYER
+knob) need no model at all.
 """
 
 import sys
@@ -16,7 +18,8 @@ import models  # noqa: F401  (installs the selective_scan_cuda stub)
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
-import models.mamba2_780m_memory.model as m780
+import models.mamba2_780m_memory_mix.model as m_mix
+import models.mamba2_780m_memory_state.model as m_state
 from models.mamba2_2_7b_memory.model import Model
 
 needs_gpu = pytest.mark.skipif(
@@ -29,27 +32,35 @@ VOCAB, BATCH, SEQ = 96, 2, 4
 # --- package-level (no model construction) ---
 
 
-def test_scaled_layer_constants():
+def test_state_arm_layer_constants():
     # Same fractional depths as the 2.7B constants (42/64, 22..62 step 2).
-    assert m780.N_LAYER == 48
-    assert m780.READ_LAYER == 32
-    assert m780.INJECTED_LAYERS == tuple(range(16, 48, 2))
-    assert m780.MIX_READ_LAYER == 16
+    assert m_state.N_LAYER == 48
+    assert m_state.READ_LAYER == 32
+    assert m_state.INJECTED_LAYERS == tuple(range(16, 48, 2))
 
 
-def test_integration_mode_env_knob(monkeypatch):
-    monkeypatch.delenv("MEMORY_INTEGRATION", raising=False)
-    assert m780.integration_mode() == "state"
-    monkeypatch.setenv("MEMORY_INTEGRATION", "mix")
-    assert m780.integration_mode() == "mix"
-    monkeypatch.setenv("MEMORY_INTEGRATION", "bogus")
+def test_mix_arm_boundary_fixed_at_16():
+    assert m_mix.READ_LAYER == 16
+    # The mix arm deliberately has NO read-layer knob (fixed geometry --
+    # a checkpoint's geometry can never contradict its folder name).
+    assert not hasattr(m_mix, "read_layer")
+
+
+def test_state_arm_read_layer_env_knob(monkeypatch):
+    monkeypatch.delenv("MEMORY_READ_LAYER", raising=False)
+    assert m_state.read_layer() == 32
+    monkeypatch.setenv("MEMORY_READ_LAYER", "16")
+    assert m_state.read_layer() == 16
+    monkeypatch.setenv("MEMORY_READ_LAYER", "99")
     with pytest.raises(ValueError):
-        m780.integration_mode()
+        m_state.read_layer()
 
 
-def test_package_interface():
-    import models.mamba2_780m_memory as pkg
+@pytest.mark.parametrize("pkg_name", ["mamba2_780m_memory_state", "mamba2_780m_memory_mix"])
+def test_package_interface(pkg_name):
+    import importlib
 
+    pkg = importlib.import_module(f"models.{pkg_name}")
     assert pkg.MODEL_ID == "state-spaces/mamba2-780m"
     assert pkg.SPECIAL_TOKENS == [pkg.USER_OPEN, pkg.ASST_OPEN]
     assert callable(pkg.load_base) and callable(pkg.load_inference) and callable(pkg.post_load)

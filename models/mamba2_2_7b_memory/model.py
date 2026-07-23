@@ -576,7 +576,7 @@ class _GatedDeltaInjection(nn.Module):
 
 
 class _TokenMixInjection(nn.Module):
-    """The "mix" integration arm (see models/mamba2_780m_memory/README.md):
+    """The "mix" integration arm (see models/mamba2_780m_memory_mix/README.md):
     the gated read is ADDED to the residual stream at the read layer,
     same-token, instead of gated-delta-merged into ssm_state. Deliberately
     shares _GatedDeltaInjection's bottleneck/gate structure (down 128-dim,
@@ -724,9 +724,9 @@ class Model(nn.Module):
         # headdim/d_state from its own mixers, mem dims from d_model), so the
         # same class wraps any Mamba2 stack -- read_layer/injected_layers
         # default to this module's 2.7B constants and are overridden by
-        # other model packages (e.g. models/mamba2_780m_memory). The
+        # other model packages (e.g. models/mamba2_780m_memory_state). The
         # BOTTLENECK_R=128 read bottleneck is deliberately NOT scaled with
-        # d_model (see models/mamba2_780m_memory/README.md).
+        # d_model (see models/mamba2_780m_memory_state/README.md).
         assert integration in ("state", "mix"), integration
         mixer0 = self.layers[0].mixer
         self.integration = integration

@@ -315,7 +315,8 @@ def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
         # Partial loads are legitimate (e.g. a --freeze-lora checkpoint holds
         # only memory params), but unexpected keys usually mean the model was
         # constructed as a different variant than the checkpoint was trained
-        # as (e.g. MEMORY_INTEGRATION arm mismatch) -- make that loud.
+        # as (e.g. a checkpoint cross-loaded from the other integration-arm
+        # model folder) -- make that loud.
         print(
             f"WARNING: {len(result.unexpected_keys)} checkpoint tensors have no home in this model "
             f"(first: {result.unexpected_keys[0]}) -- wrong model variant/integration arm?"

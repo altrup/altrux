@@ -473,8 +473,9 @@ def main() -> None:
     from train import latest_checkpoint, load_checkpoint
 
     # train.py's import (above) already ran load_dotenv(), so MODEL_NAME
-    # comes from sft/.env like every other script here. mamba2_780m_memory
-    # re-exports the shared _NeuralMemory/MemoryState this probe touches.
+    # comes from sft/.env like every other script here. The 780m memory arm
+    # packages re-export the shared _NeuralMemory/MemoryState this probe
+    # touches.
     model_name = os.getenv("MODEL_NAME", "mamba2_2_7b_memory")
     model_mod = importlib.import_module(f"models.{model_name}")
     mmod = importlib.import_module(f"models.{model_name}.model")
