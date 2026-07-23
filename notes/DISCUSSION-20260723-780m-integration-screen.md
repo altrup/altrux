@@ -122,14 +122,17 @@ loops.
 
 ### Local (this box, before the next rental)
 
-**L1. Build `models/mamba2_780m_memory`** — port the 2.7B memory machinery
+**L1. Build the 780M memory model** (DONE — as two arm folders,
+`models/mamba2_780m_memory_state` + `_mix`; see housekeeping) — port the
+2.7B memory machinery
 (front-end, NeuralMemory, gated-delta injection, manual mixer + fused span
 dispatch) parameterized to the 780M backbone (48 layers, d_model 1536;
 scale READ_LAYER/INJECTED_LAYERS proportionally, document choices in its
-README), with an integration knob selecting **state-injection vs
-input-token-mix** (env/config read at model construction, so both A/B arms
-run from one model dir). Unit tests for shape/causality of both paths;
-smoke locally. This is the gating work item for the next rental.
+README), with **one model folder per integration arm** (state-injection vs
+input-token-mix), selected via MODEL_NAME like any other model — each arm's
+checkpoints live under its own folder, so a checkpoint's location records
+its architecture. Unit tests for shape/causality of both paths; smoke
+locally. This is the gating work item for the next rental.
 
 **L2. `probe_recall.py --ablation {fresh-m,none}`** — `none` skips
 injection entirely (not zero-M: a zeroed M still fires injection events and
@@ -145,8 +148,8 @@ in-distribution.
 ### Box (next rental, in order)
 
 **BX0. 780M calibration = the state-injection arm.** Train
-`mamba2_780m_memory` (state-injection mode) from scratch on the split
-recipe (same data .pt files — tokenizer is shared across the mamba2 family;
+`MODEL_NAME=mamba2_780m_memory_state` (one model folder per arm — see
+housekeeping) from scratch on the split recipe (same data .pt files — tokenizer is shared across the mamba2 family;
 regen commands verbatim in EXPERIMENT_NOTES-20260723 02:40). Start from the
 2.7B-proven args, scale batch up to the card — batch is near-free
 throughput here (step time is dominated by sequential per-window ops that
@@ -164,8 +167,10 @@ seed 1234) every few hundred M tokens, BOTH ablation modes.
   can't express the effect; bank that, revert the program to 2.7B and fund
   the deferred 2.7B items below instead.
 
-**BX1. Token-mix arm.** Same recipe, same probes, integration knob flipped.
-Read the A/B on trajectory shape and peak with long-range structure:
+**BX1. Token-mix arm.** Same recipe, same probes,
+`MODEL_NAME=mamba2_780m_memory_mix` (mix boundary fixed at layer 16 — no
+read-layer knob in that arm, by design). Read the A/B on trajectory shape
+and peak with long-range structure:
 
 - Token-mix clearly better → integration point is (part of) the ceiling;
   next run ports token-mix to 2.7B (resume-compatible via zero-init gate)
@@ -175,33 +180,38 @@ Read the A/B on trajectory shape and peak with long-range structure:
 - Token-mix fails to train (gate stuck at 0, no delta) → diagnose gate
   dynamics before concluding anything; a dead gate is a bug, not a result.
 
-**BX2 (the cross cells — the A/B is a 2×2, adaptively gated).** Full
-design: {state, mix} × {read @16, @32}. BX0 = state@32, BX1 = mix@16 (the
-max-contrast pair, always run in that order). The cross cells — state@16
-and mix@32, both config-only (read_layer is a ctor param; mix boundary
-configurable) — run ONLY if the first pair shows a difference worth
-attributing or a mix failure worth diagnosing; if mix@16 ≈ state@32 the
-headline is "integration point doesn't matter at this scale" and the cross
-cells are optional. What the factorial buys: the known confound (arms
-differ in mechanism AND read point) becomes two separately-measured
-effects; state@16 vs state@32 isolates read depth ("shallow q/k/v
-inadequate" vs "integration at fault"), and mix@32 tests whether the
-bypass property alone helps even with shallow compute-over-the-read.
-Same recipe/args for every cell. Related post-BX0 cheap diagnostic: port
+**BX2 (the third cell — UNCONDITIONAL; the design is THREE cells, not a
+2×2).** BX0 = state@32 (calibration + baseline), BX1 = mix@16 (the bet),
+BX2 = **state@16**, via the state arm's `MEMORY_READ_LAYER=16` override
+(note it in the run log; checkpoints don't record it) — run in that order,
+all three regardless of intermediate outcomes (team decision: no BX1
+outcome leaves the third cell worthless, so don't gate it). What each
+pairwise contrast gives: state@16 vs mix@16 is the MATCHED-FRONT-END
+mechanism contrast (both read+write @16, both delay-free — remaining
+difference is the landing package: persistent gated-deltas at 16–46 vs
+transient per-token add at 16); state@16 vs state@32 is the read-depth
+effect within one mechanism ("shallow q/k/v at 1/3 depth inadequate" iff
+state@16 degrades); mix@16 vs state@32 is the max-contrast headline. Same
+recipe/args for every cell. Related post-BX0 cheap diagnostic: port
 `read_diagnostic.py` to MODEL_NAME resolution and run ridge res16→res32 in
 the TRAINED state arm's q/k/v space (the 780M parallel of the 2.7B
 layer-21 GO result; needs a trained front-end, so post-BX0 only). No
 smaller-model shortcut: nothing below 780M in the family fits this, and
 780M diagnostics run on the local 8 GB card anyway.
 
-**F1 (filler, 2.7B, probe-only — runs alongside 780M training; a 780M train
+**SCOPE (team decision at close): the next run is the 780M screen ONLY.**
+F1/F2 below are DEFERRED to a later run, not fillers alongside this one —
+accepted cost: dependence-vs-achievement and the 2.7B deliverable
+selection stay open meanwhile; nothing downstream blocks on them.
+
+**F1 (deferred, 2.7B, probe-only — runs alongside 780M training; a 780M train
 job + 2.7B probe should coexist on 96 GB, verify before relying on it).**
 Re-probe `archive-20260723-b1-extension/{step-518,step-544,step-557}` with
 `--ablation none` AND `--ablation fresh-m`, LongAlign + held-out ultrachat
 configs. This settles dependence-vs-achievement (#2 above) and picks the
 lineage deliverable.
 
-**F2 (filler, probe-only).** Held-out-first harvest: sweep the held-out
+**F2 (deferred, probe-only).** Held-out-first harvest: sweep the held-out
 ultrachat config across the banked `archive-20260723-b1-extension`
 checkpoints (~480→557). 557 was never SELECTED on held-out; the argmax may
 be elsewhere.
@@ -219,8 +229,18 @@ be elsewhere.
   with LoRA unfrozen, so the freeze is not established as load-bearing.
 - Dream neutral-snapshot rerun at 2.7B (after L3).
 - 2.7B split-lineage extension past +161 (was still rising on both rulers).
-- Window-1 leg; purist B2a rerun at batch 8 / chunk 24 (only if the
-  invariance result is ever doubted).
+- Window-1 leg as a CEILING test stays dead (B2a: cadence moves the clock,
+  not the peak). But a short window-1 ADAPTATION leg at the end of a
+  state-arm training run is a live deferred item: the train/serve mismatch
+  is real (sanity-gen 2026-07-23: window-1 serving from a window-8-trained
+  checkpoint degenerates into role-marker loops on question-shaped
+  prompts), and a brief window-1 tail teaches the beta gates raw per-token
+  reads before serving sees them. Cheap at 780M; probe with the standard
+  harness after. Note: the mix arm should have less serve mismatch by
+  construction (its gates already see per-token reads in training — only
+  write cadence/staleness change at serve time).
+- Purist B2a rerun at batch 8 / chunk 24 (only if the invariance result is
+  ever doubted).
 
 ## Explicitly considered and rejected (this discussion)
 
@@ -244,6 +264,29 @@ be elsewhere.
   near-term prototype stays single-pass so the A/B is one knob.
 - **Screening below 780M (370M/130M)** — backbone too weak; the
   continuation-prediction task changes character.
+- **The mix@32 cross cell (2×2 factorial)** — dropped as least
+  decision-relevant: we'd never ship mix-at-2/3-depth (the arm's thesis is
+  early entry), and its only value — matched-depth mechanism attribution —
+  was imperfect anyway, since the state arm's landing is smeared across
+  injected layers 16..46 regardless of where the read happens. The
+  three-cell design (BX0/BX1 + unconditional state@16) answers the
+  attribution question that matters. Correspondingly, the mix arm has NO
+  read-layer knob at all (boundary hardcoded at 16): removing it prevents
+  checkpoints whose geometry contradicts their folder name.
+- **Mix variant reading @32 but landing @16** — can't be built same-token
+  (t's layer-32 read can't land at t's already-computed layer 16). Its
+  PER-TOKEN form is dead: a cross-token mid-stack dependency at every
+  position, no fusable spans above 16 (the state arm's own below-read
+  landings are fine because its dependency lands once per WINDOW at span
+  boundaries — cadence, not delay, is what breaks fusion). A
+  WINDOW-CADENCED form (pool the window's reads, mix into the next
+  window's layer-16 inputs) WOULD be fused-compatible, and B2a's cadence
+  invariance suggests the coarser cadence is cheap — so the surviving
+  objections are only the split front-end geometry (writes@16/reads@32)
+  and contingent relevance. Named CONTINGENCY, not a cell: worth pricing
+  only if mix@16 fails AND state@16 shows shallow front-ends are the
+  culprit — and the 2.7B ridge diagnostic (~80% of front-end content
+  present at 1/3 depth) is prior evidence against that diagnosis.
 - **Consolidation/transcript-replay baseline this run** — B0 (as measured)
   plus B2a both point at read-out/integration as the binding constraint;
   replay doesn't touch it. Revisit after the dream neutral-snapshot rerun.
@@ -262,13 +305,19 @@ be elsewhere.
   front-end read/write machinery in both forward paths, so the ablated
   branch is exactly the plain backbone. `fresh-m` stays the default
   (historical comparability). Probes of record run BOTH modes.
-- **L1 DONE (0703779, + fe4692f):** `models/mamba2_780m_memory/` built on a
+- **L1 DONE (0703779 + fe4692f, restructured in 1667e93):** built on a
   parameterized shared machinery (memory geometry derived from the
-  backbone; `read_layer`/`injected_layers` ctor params). Integration knob:
-  **`MEMORY_INTEGRATION=state|mix`** env var (in `sft/.env.example`).
-  Full suite green (78 tests incl. tiny-backbone GPU tests: none-mode
-  invariance, mix exact no-op at zero-init, causality); both arms smoked
-  on the real 780M backbone locally (state arm 21.7M trainable, mix 12.3M).
+  backbone; `read_layer`/`injected_layers`/`integration` ctor params).
+  **One model folder per arm** — `MODEL_NAME=mamba2_780m_memory_state` or
+  `mamba2_780m_memory_mix` (the earlier `MEMORY_INTEGRATION` env knob is
+  GONE): each arm's checkpoints live under its own `checkpoints/`, so a
+  checkpoint's folder records its architecture. The mix arm's boundary is
+  HARDCODED at 16 (no read-layer knob, by design); the state arm keeps
+  `MEMORY_READ_LAYER` for the state@16 cell (BX2) — note it in
+  the run log when set, checkpoints don't record it. Full suite green
+  (80 tests incl. tiny-backbone GPU tests: none-mode invariance, mix exact
+  no-op at zero-init, causality); both arms smoked on the real 780M
+  backbone locally (state arm 21.7M trainable, mix 12.3M).
   Implementation decisions (details in the model README):
   - Front-end/M/writes IDENTICAL between arms (purity); the 128 bottleneck
     is the shared `down` projection, `W_o: 128→d_model` zero-init, β from
@@ -279,14 +328,34 @@ be elsewhere.
     causality forces the mix arm to read where it lands), and parameter
     count is asymmetric (16 injection modules vs 1 mix module).
   - Mix cadence: read+mix per token against window-start M; writes per
-    window — write semantics identical to the state arm.
-  - Checkpoints do NOT record their integration arm — set
-    `MEMORY_INTEGRATION` to match when probing/resuming (mismatch now
-    warns loudly via the fe4692f unexpected-key guard).
+    window — write semantics identical to the state arm. The LANDING
+    cadence deliberately differs per arm (state: per-window; mix:
+    per-token) and must NOT be equalized: cadence is coupled to landing
+    persistence — a state injection persists in ssm_state (one event
+    colors all later tokens, ~0.976 retain), a residual mix is transient
+    (one forward pass, no carried trace), so per-token repetition IS the
+    mix's equivalent of the state arm's persistence. Per-window mix would
+    touch one token in eight and vanish (crippled channel, not a control);
+    per-token state is the ~6–8× window-1 leg B2a mooted. Each arm runs
+    its mechanism-native cadence; the matched quantity is effective
+    persistence of influence, not event count.
+    CONDITIONAL ATTRIBUTION CELL (fund only if mix@16 WINS): "pooled mix"
+    — surprise-weight-pool the window's reads exactly as the state arm
+    does, broadcast-add the pooled vector to every token of the NEXT
+    window at layer 16 (constant over the span → fused-friendly; applied
+    per token → influence doesn't vanish). This matches the state arm's
+    read content/cadence exactly, differing only in landing mechanism —
+    it separates "mix won because of the landing" from "mix won because
+    per-token same-token reads are fresher/personalized." pooled-mix ≈
+    mix@16 → mechanism is the payer; pooled-mix ≈ state@32 → freshness
+    was. Small code variant; the pooling machinery already exists.
+  - The integration arm is now structural (folder = arm), so cross-loading
+    a checkpoint into the wrong arm requires pointing at the wrong folder —
+    and warns loudly via the fe4692f unexpected-key guard if attempted.
 - **BX0/BX1 box addendum:** the fused-path mix hook could not execute
   locally (no causal_conv1d on ROCm) — **first thing on the box, smoke
-  `MEMORY_INTEGRATION=mix` with a short fused-path run** before committing
-  to the BX1 leg. `DEFAULT_CHUNK_LEN=16` in the 780m hooks is a guess;
+  `MODEL_NAME=mamba2_780m_memory_mix` with a short fused-path run** before
+  committing to the BX1 leg. `DEFAULT_CHUNK_LEN=16` in the 780m hooks is a guess;
   pass `--chunk-len` explicitly.
 - L3 (dream neutral-snapshot mode) remains open — the only unbuilt local
   item; optional for this rental.
