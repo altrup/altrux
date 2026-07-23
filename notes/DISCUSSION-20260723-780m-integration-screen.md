@@ -175,6 +175,19 @@ Read the A/B on trajectory shape and peak with long-range structure:
 - Token-mix fails to train (gate stuck at 0, no delta) → diagnose gate
   dynamics before concluding anything; a dead gate is a bug, not a result.
 
+**BX2 (conditional — run only if BX1's mix arm disappoints): read-depth
+disambiguator.** State-injection arm with READ_LAYER=16 (config-only; the
+L1 refactor made read_layer a ctor param), same recipe/args. Separates
+"shallow q/k/v are inadequate" from "the integration mechanism is at
+fault": state@16 ≈ state@32 → depth fine, blame integration; state@16
+degraded → the mix arm's layer-16 front-end is a handicap, revisit before
+condemning token-mix. Related post-BX0 cheap diagnostic: port
+`read_diagnostic.py` to MODEL_NAME resolution and run ridge res16→res32 in
+the TRAINED state arm's q/k/v space (the 780M parallel of the 2.7B
+layer-21 GO result; needs a trained front-end, so post-BX0 only). No
+smaller-model shortcut: nothing below 780M in the family fits this, and
+780M diagnostics run on the local 8 GB card anyway.
+
 **F1 (filler, 2.7B, probe-only — runs alongside 780M training; a 780M train
 job + 2.7B probe should coexist on 96 GB, verify before relying on it).**
 Re-probe `archive-20260723-b1-extension/{step-518,step-544,step-557}` with
