@@ -43,7 +43,7 @@ act on.
 
 5. **Housekeeping last, by mutual consent.** After the direction is agreed,
    propose any small local changes that fell out of the discussion (script
-   fixes, experimenter/debrief command updates, data-prep tweaks). Implement
+   fixes, altrux-experimenter/altrux-debrief command updates, data-prep tweaks). Implement
    only what you both agree to, commit them, and record them in the notes'
    housekeeping section.
 
