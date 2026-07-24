@@ -128,7 +128,7 @@ def main() -> None:
             train.CKPT_DIR = Path(tmp_dir)
             train.run_training(
                 train.hooks, model, optimizer, trainable_params, train_ids, train_masks,
-                [None] * len(train_ids), device, run_args,
+                [None] * len(train_ids), [None] * len(train_ids), device, run_args,
                 start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
                 start_total_tokens=0.0, start_last_ckpt_tokens=0.0, start_full_state=None,
             )
