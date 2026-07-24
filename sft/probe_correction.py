@@ -59,7 +59,7 @@ SCENARIOS = [
 ]
 
 
-def build_prefix(tokenizer, corrected: str, wrong: str, device) -> torch.Tensor:
+def build_prefix(tokenizer, corrected: str, wrong: str, device, filler: bool = True) -> torch.Tensor:
     messages = [
         {"role": "user", "content": QUESTION},
         {"role": "assistant", "content": f"{ANSWER_STEM} {wrong}."},
@@ -67,9 +67,15 @@ def build_prefix(tokenizer, corrected: str, wrong: str, device) -> torch.Tensor:
          f" recent election. The current president is {corrected}, not {wrong}."},
         {"role": "assistant", "content": f"Thanks for the correction. I will remember that"
          f" the current president is {corrected} now, and that {wrong} is no longer the president."},
-        {"role": "user", "content": "While I have you, could you also write me a short piece about autumn?"},
-        {"role": "assistant", "content": FILLER_ANSWER},
     ]
+    # The filler both pushes the correction past a write boundary and is the
+    # likeliest thing to evict it under the delta rule -- run both arms to
+    # tell "never written" apart from "written then overwritten".
+    if filler:
+        messages += [
+            {"role": "user", "content": "While I have you, could you also write me a short piece about autumn?"},
+            {"role": "assistant", "content": FILLER_ANSWER},
+        ]
     ids, _ = format_conversation(messages, tokenizer, max_len=1 << 30)
     keep = len(ids) - len(ids) % pr.CHUNK_LEN  # truncate, don't pad: pad ids would pollute the state
     return torch.tensor(ids[:keep], device=device).unsqueeze(0)
@@ -86,6 +92,8 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
     parser.add_argument("--chunk-len", type=int, default=24, help="Forward chunk length (8 fits 2.7B on an 8 GB card)")
     parser.add_argument("--memory-window", type=int, default=8)
+    parser.add_argument("--no-filler", action="store_true",
+                        help="Sleep immediately after the correction, with no intervening filler turn")
     args = parser.parse_args()
 
     pr.CHUNK_LEN = args.chunk_len
@@ -177,7 +185,7 @@ def main() -> None:
         results["parametric (no context)"] = {"scores": score_names(None, "parametric"),
                                               "top": topk_after_query(None, "parametric")}
         for scen, corrected, wrong in SCENARIOS:
-            prefix = build_prefix(tokenizer, corrected, wrong, device)
+            prefix = build_prefix(tokenizer, corrected, wrong, device, filler=not args.no_filler)
             print(f"\n=== {scen} (prefix {prefix.shape[1]} tokens) ===", flush=True)
             rows: dict[str, dict] = {}
             rows["no-sleep"] = {"scores": score_names(prefix, "no-sleep")}
