@@ -66,18 +66,53 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i "$SSH_KEY_
 # LAMBDA_RESUME_CHECKPOINT_FULL: same format, uploaded WITH optimizer.pt —
 # for the checkpoint training resumes from, avoiding the fresh-optimizer
 # loss transient. A step dir listed in both gets its optimizer (FULL wins).
-# Resolve relative paths against the repo root, so it works regardless of
-# the directory launch is invoked from.
+# Uploaded path-preserving (rsync --relative from the repo root), so each
+# checkpoint lands on the instance under the same models/<model>/checkpoints/
+# path it has here — the path itself records which model it belongs to, and
+# checkpoints for several models can ship in one run. Paths must therefore
+# live under the repo root; relative ones resolve against it.
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+resolve_ckpt() {
+  # stdout: absolute path with rsync's /./ relative-anchor at the repo root.
+  local p="$1"
+  [[ "$p" != /* ]] && p="$ROOT/$p"
+  [[ "$p" == "$ROOT"/* ]] || { echo "error: checkpoint not under repo root: $p" >&2; exit 1; }
+  echo "$ROOT/./${p#"$ROOT"/}"
+}
 resume_ckpts=()
-for p in ${LAMBDA_RESUME_CHECKPOINT:-}; do
-  [[ "$p" != /* ]] && p="$(cd "$SCRIPT_DIR/.." && pwd)/$p"
-  resume_ckpts+=("$p")
-done
+for p in ${LAMBDA_RESUME_CHECKPOINT:-}; do resume_ckpts+=("$(resolve_ckpt "$p")"); done
 resume_ckpts_full=()
-for p in ${LAMBDA_RESUME_CHECKPOINT_FULL:-}; do
-  [[ "$p" != /* ]] && p="$(cd "$SCRIPT_DIR/.." && pwd)/$p"
-  resume_ckpts_full+=("$p")
-done
+for p in ${LAMBDA_RESUME_CHECKPOINT_FULL:-}; do resume_ckpts_full+=("$(resolve_ckpt "$p")"); done
+all_ckpts=("${resume_ckpts[@]}" "${resume_ckpts_full[@]}")
+
+# Validate + confirm the run config BEFORE launching, while aborting is
+# still free (no instance billing yet).
+if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
+  [[ -f "$SSH_KEY_PATH" ]] || { echo "error: ssh private key not found: $SSH_KEY_PATH (LAMBDA_SSH_KEY_PATH)" >&2; exit 1; }
+  for p in "${all_ckpts[@]}"; do
+    [[ -d "$p" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT(_FULL) entry is not a directory: $p" >&2; exit 1; }
+  done
+  echo "Instance: $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}"
+  echo "SSH key: $LAMBDA_SSH_KEY_NAME (private key: $SSH_KEY_PATH)"
+  echo "Repo ref: ${LAMBDA_REPO_REF:-(default branch)}"
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    echo "Experimenter: auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
+  else
+    echo "Experimenter: MANUAL — no CLAUDE_CODE_OAUTH_TOKEN; box idles (billing) until you attach and auth"
+  fi
+  if (( ${#all_ckpts[@]} )); then
+    echo "Checkpoints to upload ($(du -shc "${all_ckpts[@]}" | tail -1 | cut -f1) before exclusions; from"
+    echo "LAMBDA_RESUME_CHECKPOINT(_FULL) in scripts/.env, landing at the same repo-relative path):"
+    for p in "${resume_ckpts[@]}"; do echo "  ${p#*/./}"; done
+    for p in "${resume_ckpts_full[@]}"; do echo "  ${p#*/./} (with optimizer.pt)"; done
+  else
+    echo "Checkpoints to upload: none (fresh run)"
+  fi
+  if [[ -t 0 ]]; then
+    read -r -p "Proceed? [Y/n] " reply
+    [[ "$reply" =~ ^[Nn] ]] && { echo "aborted — edit scripts/.env and relaunch"; exit 1; }
+  fi
+fi
 
 notify() {
   # Best-effort desktop popup (notify-send, if a desktop session is present),
@@ -243,22 +278,17 @@ if [[ "$RUN_SETUP" == 0 ]]; then
   exit 0
 fi
 
-all_ckpts=("${resume_ckpts[@]}" "${resume_ckpts_full[@]}")
 if (( ${#all_ckpts[@]} )); then
-  for p in "${all_ckpts[@]}"; do
-    [[ -d "$p" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT(_FULL) entry is not a directory: $p" >&2; exit 1; }
-  done
-  export LAMBDA_RESUME_EPOCH="$(basename "$(dirname "${all_ckpts[0]}")")"
   echo "Uploading ${#all_ckpts[@]} checkpoint(s) (${#resume_ckpts_full[@]} with optimizer.pt, mem_state.pt excluded) to staging..."
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
   RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
   if (( ${#resume_ckpts[@]} )); then
-    rsync -rt --info=progress2 --exclude=mem_state.pt --exclude=optimizer.pt \
+    rsync -rtR --info=progress2 --exclude=mem_state.pt --exclude=optimizer.pt \
       "${RSYNC_SSH[@]}" "${resume_ckpts[@]}" "$SSH_USER@$ip:resume-staging/"
   fi
   # Full set second, so a step dir listed in both ends up with its optimizer.
   if (( ${#resume_ckpts_full[@]} )); then
-    rsync -rt --info=progress2 --exclude=mem_state.pt \
+    rsync -rtR --info=progress2 --exclude=mem_state.pt \
       "${RSYNC_SSH[@]}" "${resume_ckpts_full[@]}" "$SSH_USER@$ip:resume-staging/"
   fi
 fi
@@ -300,8 +330,8 @@ GIT_USER_EMAIL="$(git config user.email 2>/dev/null || true)"
 # above), so the remote claude runs like this machine's claude is set to.
 CLAUDE_MODEL="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)"
 CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"
-for v in LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF LAMBDA_MODEL_NAME \
-         LAMBDA_RESUME_EPOCH CLAUDE_MODEL CLAUDE_EFFORT \
+for v in LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF \
+         CLAUDE_MODEL CLAUDE_EFFORT \
          GITHUB_TOKEN HF_TOKEN CLAUDE_CODE_OAUTH_TOKEN TORCH_BACKEND MAX_JOBS \
          GIT_USER_NAME GIT_USER_EMAIL; do
   [[ -n "${!v:-}" ]] && printf 'export %s=%q\n' "$v" "${!v}" >> "$env_file"

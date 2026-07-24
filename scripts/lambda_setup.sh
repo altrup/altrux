@@ -24,7 +24,6 @@ set -euo pipefail
 REPO_URL="${LAMBDA_REPO_URL:-https://github.com/altrup/altrux.git}"
 REPO_DIR="$HOME/${LAMBDA_REMOTE_REPO:-altrux}"
 REPO_REF="${LAMBDA_REPO_REF:-}"
-MODEL_NAME="${LAMBDA_MODEL_NAME:-mamba2_2_7b_memory}"
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
@@ -65,20 +64,24 @@ else
   [[ -n "$REPO_REF" ]] && git -C "$REPO_DIR" checkout "$REPO_REF"
 fi
 
-step "Stage resume checkpoint"
+step "Stage resume checkpoints"
+# lambda_launch.sh uploads checkpoints path-preserving (repo-relative), so
+# staging already mirrors models/<model>/checkpoints/... — merge it verbatim.
 if [[ -d "$HOME/resume-staging" && -n "$(ls -A "$HOME/resume-staging" 2>/dev/null)" ]]; then
-  dest="$REPO_DIR/models/$MODEL_NAME/checkpoints/${LAMBDA_RESUME_EPOCH:-epoch-1}"
-  mkdir -p "$dest"
-  mv "$HOME"/resume-staging/* "$dest"/
-  rmdir "$HOME/resume-staging" 2>/dev/null || true
-  echo "placed $(ls "$dest") in $dest — training will resume from it"
+  find "$HOME/resume-staging" -mindepth 1 -maxdepth 4 -type d -name 'step-*' -printf 'placing %P\n'
+  cp -a "$HOME/resume-staging/." "$REPO_DIR/"
+  rm -rf "$HOME/resume-staging"
 else
   echo "no checkpoint staged — training will start fresh"
 fi
 
-step "Configure sft/.env (MODEL_NAME=$MODEL_NAME)"
+step "Configure sft/.env"
 [[ -f "$REPO_DIR/sft/.env" ]] || cp "$REPO_DIR/sft/.env.example" "$REPO_DIR/sft/.env"
-sed -i "s/^MODEL_NAME=.*/MODEL_NAME=$MODEL_NAME/" "$REPO_DIR/sft/.env"
+# Blank MODEL_NAME so a run without an explicit choice fails at import
+# instead of silently training the example default. The experimenter sets it
+# per training leg from the DISCUSSION notes.
+sed -i "s/^MODEL_NAME=.*/MODEL_NAME=/" "$REPO_DIR/sft/.env"
+echo "MODEL_NAME left blank — set it in sft/.env before each training leg"
 
 step "make sync (torch + mamba-ssm — several minutes)"
 # Wheels uploaded by lambda_launch.sh (harvested from a previous instance)
