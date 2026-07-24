@@ -69,3 +69,16 @@ When editing a `CLAUDE.md`, also check whether the entry you're touching (or a n
 ## Live progress logs
 
 Any operation that takes more than a few seconds must print live progress so it's clear something is happening. This includes data preparation, evaluation, model loading, and any other blocking step. A `\r`-based counter or periodic print is fine — silence is not. Never leave a long operation running with no output.
+
+## Sanity-check the artifact, not just the counts
+
+Every data generator must print **structural invariants and a decoded sample**, not only quantities, and no dataset goes to a training run until someone has read that sample.
+
+This is not a style preference. `prepare_chains.py` shipped episode splices that left `[USER]` turns with no answer and `[ASSISTANT]` turns answering a question 32k tokens back — 9% of all role transitions malformed — through several runs. Every count in every regen log was correct and reproducible the whole time (`2753 chains, 230.9M tokens, 15857 sleeps, 5498 split-tails`), because counts confirm the generator did what it was told, never that what it was told was right. Only decoding the tokens at a join exposed it.
+
+So a generator's log needs:
+
+- **Invariant counts that can fail** — malformed role adjacencies, unaddressed turns, silent boundaries. Numbers whose correct value is zero, so a regression is visible.
+- **Decoded text** — a few hundred characters either side of one instance of every structural event the generator creates (each join type, each splice, each boundary). Three samples read in ten seconds beats any aggregate.
+
+The same applies to probes: a probe that reports a number without ever showing the tokens it scored can be measuring something other than what its name says.
