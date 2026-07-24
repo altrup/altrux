@@ -118,6 +118,8 @@ def main() -> None:
         keep_full_state=0,
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
+        lr=args.lr,
+        warmup_steps=0,
         max_len=math.inf,
         memory_window=args.memory_window,
     )
