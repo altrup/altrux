@@ -161,11 +161,16 @@ seed 1234) every few hundred M tokens, BOTH ablation modes.
 
 - Decision rule: a clearly positive gist-delta with long-range-dominant
   structure emerges (any magnitude — do not compare to 2.7B numbers) →
-  **SCREEN VALID**, proceed to BX1. Optional strengthener if time: an
-  xs-data leg reproducing the erosion signature as contrast.
-- No such signature after a solid training budget → **SCREEN DEAD**: 780M
-  can't express the effect; bank that, revert the program to 2.7B and fund
-  the deferred 2.7B items below instead.
+  **SCREEN VALID**. Optional strengthener if time: an xs-data leg
+  reproducing the erosion signature as contrast.
+- **A null BX0 does NOT kill the screen or gate BX1/BX2** — all three
+  cells run regardless (a state@32 null could be the arm, not the scale;
+  the mix arm is the test of which). **SCREEN DEAD** is a verdict rendered
+  only after all three cells: no cell shows the signature after a solid
+  training budget (experimenter's judgment — no pre-registered number, but
+  anchor on the 2.7B transient-peak horizon scaled by B2a's clock finding
+  before calling it) → 780M can't express the effect; bank that, revert
+  the program to 2.7B and fund the deferred 2.7B items below instead.
 
 **BX1. Token-mix arm.** Same recipe, same probes,
 `MODEL_NAME=mamba2_780m_memory_mix` (mix boundary fixed at layer 16 — no
