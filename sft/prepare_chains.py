@@ -121,7 +121,7 @@ def build_chains(
     pool_ids = list(pool_ids)
     pool_masks = list(pool_masks)
     split_tails: set[int] = set()
-    n_split = n_split_qa = 0
+    n_split = n_split_qa = max_pending = 0
     qa_rate = getattr(args, "split_qa_rate", None)
     gap_min = getattr(args, "split_gap_min", 2)
     gap_max = getattr(args, "split_gap_max", 2)
@@ -149,6 +149,10 @@ def build_chains(
                         pool_ids.append(ids[cut:])
                         pool_masks.append(pool_masks[ep][cut:])
                         split_tails.add(len(pool_ids) - 1)
+                        # How many earlier heads are still awaiting their tail
+                        # here -- a deep interleave stacks several unanswered
+                        # turns at once, much worse than a single suspension.
+                        max_pending = max(max_pending, 1 + sum(1 for due, _ in pending if due > len(out)))
                         pending.append((len(out) + rng.randint(gap_min, gap_max), len(pool_ids) - 1))
                         n_split += 1
                         n_split_qa += is_qa
@@ -376,8 +380,59 @@ def build_chains(
         "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
         "dist_counts": dist_counts, "n_split": n_split, "n_split_qa": n_split_qa,
         "n_mid_sleeps": n_mid_sleeps, "n_sentence_sleeps": n_sentence_sleeps,
+        "max_pending": max_pending,
     }
     return dataset, stats
+
+
+def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2, ctx: int = 90) -> int:
+    """Report structural invariants and decode a sample of each event, per the
+    root CLAUDE.md rule. Returns the malformed-adjacency count.
+
+    A well-formed stream alternates [USER] -> [ASSISTANT]; anything else means
+    a splice left a turn unanswered or an answer unaddressed. Counts alone
+    cannot catch this -- every count in every regen log was correct while the
+    splices were malformed -- so this also prints the tokens.
+    """
+    kinds = {"USER->USER": (user_id, user_id), "ASST->ASST": (asst_id, asst_id)}
+    counts = dict.fromkeys(kinds, 0)
+    silent = dict.fromkeys(kinds, 0)
+    samples: dict[str, list[str]] = {k: [] for k in kinds}
+    sleep_samples: list[str] = []
+    ok = 0
+
+    for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
+        marks = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
+        sl = sleeps.tolist()
+        for a, b in zip(marks, marks[1:]):
+            pair = (int(ids[a]), int(ids[b]))
+            kind = next((k for k, v in kinds.items() if v == pair), None)
+            if kind is None:
+                ok += 1
+                continue
+            counts[kind] += 1
+            slept = any(a < s <= b for s in sl)
+            silent[kind] += not slept
+            if len(samples[kind]) < n_samples:
+                samples[kind].append(f"gap {b - a} tokens, sleep between: {slept}\n"
+                                     f"    {tokenizer.decode(ids[max(0, b - ctx):b + ctx])!r}")
+        for s in sl[:1]:
+            if len(sleep_samples) < n_samples:
+                sleep_samples.append(f"offset {s}\n    {tokenizer.decode(ids[max(0, s - ctx):s + ctx])!r}")
+
+    bad = sum(counts.values())
+    print(f"\nstructural validation ({ok + bad} role transitions):")
+    for kind in kinds:
+        print(f"  {kind}: {counts[kind]}  (of which silent -- no sleep between: {silent[kind]})")
+    if bad:
+        print(f"  ** {bad} malformed ({100 * bad / (ok + bad):.1f}%) -- every one of these is a turn "
+              f"whose addressee is not in the stream; expected value is 0 **")
+    for kind, exs in samples.items():
+        for i, ex in enumerate(exs):
+            print(f"\n  [{kind} sample {i + 1}] {ex}")
+    for i, ex in enumerate(sleep_samples):
+        print(f"\n  [sleep sample {i + 1}] {ex}")
+    return bad
 
 
 def main() -> None:
@@ -414,6 +469,8 @@ def main() -> None:
     parser.add_argument("--cross-sleep-bias", type=float, default=0.0,
                         help="Probability of forcing a query to cross_sleep distance when that option exists (0.0 = uniform over available distances; only cross_sleep queries require the neural memory)")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--validate-samples", type=int, default=2,
+                        help="Decoded samples printed per structural event kind")
     args = parser.parse_args()
 
     import models.mamba2_2_7b_memory as model_mod
@@ -466,6 +523,11 @@ def main() -> None:
         f"{stats['n_revised']} revisions, queries {stats['dist_counts']}), "
         f"{n_recall / 1e3:.1f}k recall-answer tokens"
     )
+    print(f"max concurrent suspended episodes: {stats['max_pending']}")
+    validate(dataset, tokenizer,
+             tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
+             tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
+             n_samples=args.validate_samples)
 
 
 if __name__ == "__main__":
