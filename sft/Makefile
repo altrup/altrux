@@ -124,6 +124,11 @@ probe-recall:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u probe_recall.py $(ARGS) 2>&1 | tee logs/probe-$(shell date +%Y%m%d-%H%M%S).log
 
+probe-correction:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u probe_correction.py $(ARGS) 2>&1 | tee logs/probe-correction-$(shell date +%Y%m%d-%H%M%S).log
+
 read-diagnostic:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
