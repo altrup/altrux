@@ -59,7 +59,7 @@ SCENARIOS = [
 ]
 
 
-def build_prefix(tokenizer, corrected: str, wrong: str, device, filler: bool = True) -> torch.Tensor:
+def build_prefix(tokenizer, markers: tuple[str, str], corrected: str, wrong: str, device, filler: bool = True) -> torch.Tensor:
     messages = [
         {"role": "user", "content": QUESTION},
         {"role": "assistant", "content": f"{ANSWER_STEM} {wrong}."},
@@ -76,14 +76,14 @@ def build_prefix(tokenizer, corrected: str, wrong: str, device, filler: bool = T
             {"role": "user", "content": "While I have you, could you also write me a short piece about autumn?"},
             {"role": "assistant", "content": FILLER_ANSWER},
         ]
-    ids, _ = format_conversation(messages, tokenizer, max_len=1 << 30)
+    ids, _, _ = format_conversation(messages, tokenizer, 1 << 30, *markers)
     keep = len(ids) - len(ids) % pr.CHUNK_LEN  # truncate, don't pad: pad ids would pollute the state
     return torch.tensor(ids[:keep], device=device).unsqueeze(0)
 
 
-def build_query(tokenizer, asst_open: str, device) -> torch.Tensor:
-    ids, _ = format_conversation([{"role": "user", "content": QUESTION}], tokenizer, max_len=1 << 30)
-    ids += tokenizer.encode(f"{asst_open} {ANSWER_STEM}", add_special_tokens=False)
+def build_query(tokenizer, markers: tuple[str, str], device) -> torch.Tensor:
+    ids, _, _ = format_conversation([{"role": "user", "content": QUESTION}], tokenizer, 1 << 30, *markers)
+    ids += tokenizer.encode(f"{markers[1]} {ANSWER_STEM}", add_special_tokens=False)
     return torch.tensor(ids, device=device).unsqueeze(0)
 
 
@@ -130,7 +130,8 @@ def main() -> None:
     model.eval()
     model.set_memory_window(args.memory_window)
     tokenizer = build_tokenizer(model_mod)
-    query = build_query(tokenizer, model_mod.ASST_OPEN, device)
+    markers = (model_mod.USER_OPEN, model_mod.ASST_OPEN)
+    query = build_query(tokenizer, markers, device)
 
     # One resident MemoryState at a time (an 8 GB card fits exactly one at
     # 2.7B): each scoring pass recomputes the short prefix instead of cloning.
@@ -185,7 +186,7 @@ def main() -> None:
         results["parametric (no context)"] = {"scores": score_names(None, "parametric"),
                                               "top": topk_after_query(None, "parametric")}
         for scen, corrected, wrong in SCENARIOS:
-            prefix = build_prefix(tokenizer, corrected, wrong, device, filler=not args.no_filler)
+            prefix = build_prefix(tokenizer, markers, corrected, wrong, device, filler=not args.no_filler)
             print(f"\n=== {scen} (prefix {prefix.shape[1]} tokens) ===", flush=True)
             rows: dict[str, dict] = {}
             rows["no-sleep"] = {"scores": score_names(prefix, "no-sleep")}
