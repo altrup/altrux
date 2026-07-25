@@ -46,8 +46,12 @@ VERDICTS = ("pass", "fail_leak", "fail_a", "fail_b", "fail_c", "fail_margin")
 def interference_stream(ids: torch.Tensor, items: list[dict]):
     """The block with every item's source span removed, plus a position remap
     into it. Cues and answers stay in place, so one pass over this stream
-    scores every item's B test at its own position."""
-    cuts = sorted((it["source_start"], it["source_end"]) for it in items)
+    scores every item's B test at its own position.
+
+    Deduplicated: a group of cram items shares one source passage, and remap
+    would otherwise subtract that span once per member.
+    """
+    cuts = sorted({(it["source_start"], it["source_end"]) for it in items})
     keep, prev = [], 0
     for a, b in cuts:
         keep.append(ids[prev:a])

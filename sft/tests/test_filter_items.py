@@ -209,3 +209,15 @@ def test_rescore_leak_only_reinstates_scored_failures():
     rescore_dataset(dataset, _args(leak_only=True))
     assert item["filter"]["verdict"] == "pass"
     assert dataset["recall_masks"][0][item["span_start"]:item["span_end"]].all()
+
+
+def test_a_source_shared_by_two_items_is_cut_once_and_remapped_once():
+    """prepare_cram emits one passage for a whole group of items, so the same
+    (source_start, source_end) arrives once per member."""
+    ids, _, items = _block()
+    it = items[0]
+    stream, remap = interference_stream(ids, [it, dict(it)])
+    assert len(stream) == len(ids) - (it["source_end"] - it["source_start"])
+    assert _Tok().decode(stream[remap(it["span_start"]):remap(it["span_end"])]) == "Zorblat"
+    assert _Tok().decode(stream[remap(it["cue_start"]):remap(it["cue_end"])]) == \
+        "The capital is ____ in the north."
