@@ -135,8 +135,13 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
                         f"    [cue]    ...{tokenizer.decode(ids[max(0, it['cue_start'] - 160):it['cue_end']])}\n"
                         f"    [scored] {tokenizer.decode(ids[it['answer_start']:it['span_start']])}"
                         f"<<{tokenizer.decode(ids[it['span_start']:it['span_end']])}>>")
+                    # Printed immediately, not held for the end-of-run report: a
+                    # degenerate scoring run should be recognizable at item one,
+                    # not after the full pass.
+                    print(f"\n  [scored sample {len(samples)}] {samples[-1]}")
+        comp = " ".join(f"{v.removeprefix('fail_')} {counts[v]}" for v in VERDICTS[1:] if counts[v])
         print(f"\r  filtered {bi + 1}/{n_blocks} blocks, {sum(counts.values())} items, "
-              f"{counts['pass']} kept", end="", flush=True)
+              f"{counts['pass']} kept" + (f" ({comp})" if comp else ""), end="", flush=True)
     print()
 
     n_items = sum(counts.values())
@@ -152,8 +157,6 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
         print(f"  {v}: {counts[v]} ({share:.1f}% of discards)")
     print("  (mostly fail_a -> the cloze construction is bad; mostly fail_b -> entity substitution "
           "isn't biting; mostly fail_c -> gaps are too short for the interference to defeat the SSM)")
-    for i, s in enumerate(samples):
-        print(f"\n  [scored sample {i + 1}] {s}")
     return stats
 
 
