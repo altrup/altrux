@@ -111,6 +111,11 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
             recall[it["span_start"]:it["span_end"]] = False
             counts["fail_leak"] += 1
 
+        if getattr(args, "leak_only", False):
+            for it in scored:
+                it["filter"] = {"verdict": "pass"}
+                counts["pass"] += 1
+            scored = []
         if scored:
             spans = [(it["span_start"], it["span_end"]) for it in scored]
             cs = scorer.span_logprobs(ids, spans, "C")
@@ -170,10 +175,16 @@ def rescore_dataset(dataset: dict, args) -> dict:
             rec = it.get("filter")
             if rec is None:
                 continue
-            if "a" not in rec:
+            if rec["verdict"] == "fail_leak":
+                counts["fail_leak"] += 1
+                continue
+            if getattr(args, "leak_only", False):
+                v = "pass"
+            elif "a" not in rec:
                 counts[rec["verdict"]] += 1
                 continue
-            v = verdict(rec["a"], rec["b"], rec["c"], args)
+            else:
+                v = verdict(rec["a"], rec["b"], rec["c"], args)
             rec["verdict"] = v
             counts[v] += 1
             recall[it["span_start"]:it["span_end"]] = v == "pass"
@@ -243,6 +254,12 @@ def main() -> None:
                              "its own absolute bar, and requiring a large A-C gap double-counts it, "
                              "killing items that are near-certain with the source and dead in-stream. "
                              "4.0 calibrated on the pilot (pass margins median ~6.4, ill-posed below ~3)")
+    parser.add_argument("--leak-only", action="store_true",
+                        help="Skip the A/B/C scoring; only the string leak-check gates credit. For the "
+                             "needle slice: bAbI items are well-posed and leak-proof by construction, "
+                             "and the base backbone cannot express bare-entity answers in the marker "
+                             "format at all (pilot: A -12..-18 in every context, so scoring measures "
+                             "format competence, not item quality)")
     parser.add_argument("--rescore", action="store_true",
                         help="Re-verdict a previously-scored artifact from its stored per-item scores "
                              "-- no model load, no GPU. Threshold sweeps cost seconds instead of a "

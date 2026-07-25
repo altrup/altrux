@@ -187,3 +187,25 @@ def test_rescore_leaves_leak_verdicts_alone():
     rescore_dataset(dataset, _args(a_min=-99.0, b_max=99.0, c_max=99.0, min_margin=-99.0))
     assert item["filter"]["verdict"] == "fail_leak"
     assert not dataset["recall_masks"][0][item["span_start"]:item["span_end"]].any()
+
+
+def test_leak_only_keeps_unleaked_items_without_scoring():
+    dataset = _dataset(_block("Zorblat"), _block("Quovix", stray="Quovix"))
+    scorer = _Scorer({})
+    stats = filter_dataset(dataset, scorer, _Tok(), _args(leak_only=True))
+    assert scorer.calls == []
+    assert stats["verdicts"] == {"pass": 1, "fail_a": 0, "fail_b": 0, "fail_c": 0,
+                                 "fail_margin": 0, "fail_leak": 1}
+    assert dataset["items"][0][0]["filter"]["verdict"] == "pass"
+    assert dataset["recall_masks"][0].any()
+    assert not dataset["recall_masks"][1].any()
+
+
+def test_rescore_leak_only_reinstates_scored_failures():
+    dataset, _, _ = _run({"A": -12.0, "B": -13.0, "C": -12.5})
+    item = dataset["items"][0][0]
+    assert item["filter"]["verdict"] == "fail_a"
+
+    rescore_dataset(dataset, _args(leak_only=True))
+    assert item["filter"]["verdict"] == "pass"
+    assert dataset["recall_masks"][0][item["span_start"]:item["span_end"]].all()

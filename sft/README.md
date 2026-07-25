@@ -122,6 +122,8 @@ plus `--min-margin` (default 4.0 nats/token): A − B must clear it. The margin 
 
 Before scoring, an explicit string check drops any item whose credited answer (or a word of it ≥4 characters, so a surname counts) is already visible in the interference before the cue — those cost no forward pass.
 
+The A/B/C battery is a **cram-slice instrument**. Needle artifacts get `--leak-only` (string check gates credit, no scoring): bAbI items are well-posed and leak-proof by construction, and the base backbone cannot express their bare-entity answer format at all — the 2026-07-25 pilot scored A between −12 and −18 in *every* context, so the tests measure format competence rather than item quality there. If per-item SSM-solvability verification for needles ever matters, the recorded option is rescoring in a base-model-native `Q:/A:` prompt format.
+
 B and C are one pass over the block each, not one per item: the cues and answers already sit in the stream in order, so a single teacher-forced pass reads every item's span at its own position. B's stream is the block with every item's source cut out; C's is the block verbatim. Only A is per-item, and its context is short.
 
 Discarded items **keep their tokens** — passages stay as carrier/interference, only the credit is dropped — so a high discard rate costs probes, not tokens. Oversample candidates rather than raising the slice's token share. The composition is the diagnostic: mostly `fail_a` means the cloze construction is bad, mostly `fail_b` means entity substitution isn't biting, mostly `fail_c` means the gaps are too short for the interference to defeat the SSM.
