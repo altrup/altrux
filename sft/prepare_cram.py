@@ -90,37 +90,69 @@ def split_articles(titles, heldout_frac: float, seed: int) -> tuple[set[str], se
     return set(uniq) - heldout, heldout
 
 
-def make_item(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
-              min_sentence_words: int = 8) -> dict | None:
-    """One cram item from one passage, or None if the passage yields none.
+def make_items(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
+               min_sentence_words: int = 8, max_items: int = 1) -> list[dict]:
+    """A *group* of up to `max_items` cram items sharing one passage, or [].
 
     `ents` are NER spans over `passage["text"]`; `pool` maps entity type to
-    candidate replacement surfaces (from other articles). Every occurrence of
-    the chosen entity in the passage is replaced by the same-type candidate,
-    one sentence containing it becomes the cue with the entity blanked, and
-    that sentence with the entity intact is the answer.
+    candidate replacement surfaces (from other articles). Up to `max_items`
+    entities are swapped for same-type candidates in a single pass, and each
+    gets its own host sentence -- blanked it is that item's cue, intact it is
+    the answer. Hosts are distinct and carry exactly one of the group's
+    replacements, so no member's answer reveals another member's entity.
+
+    One source passage answering several items is the interference-density
+    knob: the block's tokens-per-item falls with the group size, and the
+    tokens between any item's source and its cue are cue/answer turns rather
+    than plain prose.
     """
     text = passage["text"]
+    sents = [text[a:b] for a, b in split_sentences(text)]
+    usable = [i for i, s in enumerate(sents)
+              if len(s.split()) >= min_sentence_words and s[:1].isupper()
+              and s.endswith((".", "!", "?"))]
     eligible = [e for e in ents if e["label"] in ENTITY_TYPES and is_clean_surface(e["text"])]
     rng.shuffle(eligible)
+
+    def occurrences(s: str, word: str) -> int:
+        # Word-boundary, not substring: "Principal" does not occur in
+        # "Principality", and the substitution below will not touch it there.
+        return len(re.findall(rf"(?<!\w){re.escape(word)}(?!\w)", s))
+
+    chosen: list[tuple[str, str, str, int]] = []
     for ent in eligible:
-        original = ent["text"]
-        candidates = [s for s in pool.get(ent["label"], []) if s != original and s not in text]
-        if not candidates:
+        if len(chosen) >= max_items:
+            break
+        original, taken = ent["text"], {x for o, r, _, _ in chosen for x in (o, r)}
+        if original in taken or any(occurrences(sents[h], original) for *_, h in chosen):
             continue
-        replacement = rng.choice(candidates)
-        # Word-boundary only: a bare str.replace turns "Principality" into
-        # "<swap>ity" when the entity is "Principal".
-        swapped = re.sub(rf"(?<!\w){re.escape(original)}(?!\w)", replacement.replace("\\", ""), text)
-        sents = [swapped[a:b] for a, b in split_sentences(swapped)]
-        hosts = [s for s in sents
-                 if s.count(replacement) == 1 and len(s.split()) >= min_sentence_words
-                 and s[:1].isupper() and s.endswith((".", "!", "?"))]
-        if not hosts:
-            continue
-        answer = rng.choice(hosts)
+        hosts = [i for i in usable
+                 if i not in {h for *_, h in chosen} and occurrences(sents[i], original) == 1
+                 and not any(occurrences(sents[i], o) for o, *_ in chosen)]
+        candidates = [s for s in pool.get(ent["label"], [])
+                      if s != original and s not in text and s not in taken]
+        if hosts and candidates:
+            chosen.append((original, rng.choice(candidates), ent["label"], rng.choice(hosts)))
+    if not chosen:
+        return []
+
+    # Word-boundary only, longest original first, one pass: a bare str.replace
+    # turns "Principality" into "<swap>ity" when the entity is "Principal", and
+    # substituting one entity at a time lets an earlier replacement be rewritten
+    # by a later original.
+    swaps = {o: r for o, r, _, _ in chosen}
+    pattern = re.compile(r"(?<!\w)(" + "|".join(
+        re.escape(o) for o in sorted(swaps, key=len, reverse=True)) + r")(?!\w)")
+
+    def substitute(s: str) -> str:
+        return pattern.sub(lambda m: swaps[m.group(1)], s)
+
+    swapped = substitute(text)
+    items = []
+    for original, replacement, label, host in chosen:
+        answer = substitute(sents[host])
         at = answer.index(replacement)
-        return {
+        items.append({
             "source": swapped,
             "cue": answer.replace(replacement, BLANK),
             "answer": answer,
@@ -128,11 +160,11 @@ def make_item(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
             "meta": {
                 "article": passage["article"],
                 "entity": replacement,
-                "entity_type": ent["label"],
+                "entity_type": label,
                 "original_entity": original,
             },
-        }
-    return None
+        })
+    return items
 
 
 def _resolve_span(full: list[int], enc, answer: str, span: tuple[int, int], entity: str):
@@ -159,13 +191,25 @@ def _sample_gap(rng: random.Random, lo: int, hi: int) -> int:
     return int(round(math.exp(rng.uniform(math.log(lo), math.log(max(hi, 1))))))
 
 
-def build_blocks(items: list[dict], fillers: list[str], encode, *,
+def _items_per_source(progress: float, args) -> int:
+    """How many of a source's items a block at `progress` through the supply
+    takes. Falls from `--items-per-source-start` to `--items-per-source-end`:
+    low-ceiling blocks need their short gaps packed with cue/answer turns,
+    high-ceiling ones get their interference from distance and volume."""
+    a, b = args.items_per_source_start, args.items_per_source_end
+    return max(1, int(round(a + (b - a) * progress)))
+
+
+def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
                  user_id: int, asst_id: int, sep_id: int, nl_id: int, args) -> tuple[dict, dict]:
     """The generator, IO-free: `encode` is a batched strings -> list[list[int]]
     callable, `args` the CLI namespace. Returns (dataset, stats).
 
-    Items are consumed in order; the block's ceiling is a function of how far
-    through the item supply it starts, so emission order *is* the curriculum.
+    A group is the items sharing one source passage (see `make_items`); its
+    passage is emitted once and every member takes its gap from that one
+    span. Groups are consumed in order; the block's ceiling and its
+    items-per-source are functions of how far through the supply it starts,
+    so emission order *is* the curriculum.
     """
     strings: list[str] = []
     index: dict[str, int] = {}
@@ -176,6 +220,7 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
             strings.append(s)
         return index[s]
 
+    items = [it for g in groups for it in g]
     for it in items:
         it["_i_src"], it["_i_cue"], it["_i_ans"] = add(it["source"]), add(it["cue"]), add(it["answer"])
         start, end = it["span"]
@@ -184,19 +229,27 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
                 add(it["answer"][:s])
                 add(it["answer"][s:end])
     filler_idx = [add(f) for f in fillers]
-    print(f"tokenizing {len(strings)} strings ({len(items)} items, {len(fillers)} fillers) ...")
+    print(f"tokenizing {len(strings)} strings ({len(items)} items in {len(groups)} groups, "
+          f"{len(fillers)} fillers) ...")
     enc = encode(strings) if strings else []
 
     def enc_of(s: str) -> list[int]:
         return enc[index[s]]
 
-    resolved: list[dict] = []
-    for it in items:
-        span = _resolve_span(enc[it["_i_ans"]], enc_of, it["answer"], it["span"], it["meta"]["entity"])
-        if span is not None:
-            it["_span"] = span
-            resolved.append(it)
-    n_unresolved = len(items) - len(resolved)
+    resolved: list[list[dict]] = []
+    n_resolved = 0
+    for group in groups:
+        keep = []
+        for it in group:
+            span = _resolve_span(enc[it["_i_ans"]], enc_of, it["answer"], it["span"],
+                                 it["meta"]["entity"])
+            if span is not None:
+                it["_span"] = span
+                keep.append(it)
+        if keep:
+            resolved.append(keep)
+            n_resolved += len(keep)
+    n_unresolved = len(items) - n_resolved
 
     rng = random.Random(args.seed)
     rng.shuffle(resolved)
@@ -215,6 +268,7 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
     while ip < len(resolved):
         progress = ip / len(resolved)
         ceiling = int(round(args.ceiling_start * (args.ceiling_end / args.ceiling_start) ** progress))
+        per_source = _items_per_source(progress, args)
         budget = min(args.max_block_tokens, max(args.min_block_tokens, int(ceiling * args.block_gap_ratio)))
         ids: list[int] = []
         recall: list[bool] = []
@@ -230,14 +284,19 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
         def can_emit() -> bool:
             return can_take_item() or bool(order)
 
+        def take_group() -> list[dict]:
+            nonlocal ip, introduced
+            ip += 1
+            group = resolved[ip - 1][:per_source]
+            introduced += len(group)
+            return group
+
         def next_unit():
-            nonlocal ip, fp, introduced
+            nonlocal fp
             can_item = can_take_item()
             can_filler = bool(order)
             if can_item and (not can_filler or rng.random() < args.item_rate):
-                ip += 1
-                introduced += 1
-                return "item", resolved[ip - 1]
+                return "item", take_group()
             if can_filler:
                 # The filler pool wraps rather than running out: exhausting it
                 # would silently cut the artifact short of its items. The cycle
@@ -245,9 +304,7 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
                 fp += 1
                 return "filler", enc[order[(fp - 1) % len(order)]]
             if can_item:
-                ip += 1
-                introduced += 1
-                return "item", resolved[ip - 1]
+                return "item", take_group()
             return None
 
         while len(ids) < budget and (ip < len(resolved) or pending):
@@ -288,13 +345,15 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
                 kind, payload = unit
                 sep = [nl_id] if len(turn) > 2 else []
                 if kind == "item":
-                    it = payload
-                    unit_ids = enc[it["_i_src"]]
-                    it["source_start"] = len(ids) + len(turn) + len(sep)
-                    it["source_end"] = it["source_start"] + len(unit_ids)
-                    it["target_gap"] = _sample_gap(rng, args.gap_min, ceiling)
-                    it["ceiling"] = ceiling
-                    pending.append(it)
+                    group = payload
+                    unit_ids = enc[group[0]["_i_src"]]
+                    start = len(ids) + len(turn) + len(sep)
+                    for it in group:
+                        it["source_start"] = start
+                        it["source_end"] = start + len(unit_ids)
+                        it["target_gap"] = _sample_gap(rng, args.gap_min, ceiling)
+                        it["ceiling"] = ceiling
+                    pending += group
                 else:
                     unit_ids = payload
                 turn += sep + unit_ids
@@ -396,8 +455,12 @@ def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
          "stray_entity_occurrences", "credit_outside_recorded_spans"), 0)
     gaps: list[int] = []
     samples: list[str] = []
+    density: list[tuple[int, int]] = []
 
     for ids, recall, block in zip(dataset["ids"], dataset["recall_masks"], dataset["items"]):
+        cues = sorted(it["cue_start"] for it in block)
+        density += [(it["gap"], sum(it["source_end"] <= c < it["cue_start"] for c in cues))
+                    for it in block]
         marks = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
         for a, b in zip(marks, marks[1:]):
             report["malformed_adjacency"] += int(ids[a]) == int(ids[b])
@@ -435,6 +498,12 @@ def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
         print(f"  gap tokens: min {gaps_sorted[0]}, median {gaps_sorted[len(gaps_sorted) // 2]}, "
               f"max {gaps_sorted[-1]}; {sum(g < 192 for g in gaps_sorted)} below the 192-token "
               f"SSM-interference floor (RESEARCH-20260724-local-diagnostics.md 1)")
+        n_tokens = sum(len(t) for t in dataset["ids"])
+        short = sorted(n for g, n in density if g <= 512)
+        print(f"  interference density: {n_tokens / len(gaps):.0f} tokens per item; "
+              f"median {sorted(n for _, n in density)[len(density) // 2]} cue/answer turns inside a gap"
+              + (f", {short[len(short) // 2]} inside the {len(short)} gaps at or below 512 tokens"
+                 if short else ", no gaps at or below 512 tokens"))
     for i, s in enumerate(samples):
         print(f"\n  [item sample {i + 1}] {s}")
     return report
@@ -497,8 +566,10 @@ def annotate(texts: list[str], args) -> list[list[dict]]:
 
 
 def build_items(passages: list[dict], ents: list[list[dict]], seed: int,
-                min_sentence_words: int) -> tuple[list[dict], list[str]]:
-    """Items plus the passages that yielded none (kept as filler/interference).
+                min_sentence_words: int, max_items_per_source: int = 1,
+                ) -> tuple[list[list[dict]], list[str]]:
+    """Item groups (one per usable passage) plus the passages that yielded
+    none (kept as filler/interference).
 
     Replacement surfaces are drawn without replacement so no two items in the
     artifact share a fabricated entity.
@@ -513,19 +584,23 @@ def build_items(passages: list[dict], ents: list[list[dict]], seed: int,
         pool[label] = sorted(set(pool[label]))
         rng.shuffle(pool[label])
 
-    items, leftover = [], []
+    groups, leftover, n_items = [], [], 0
     for i, (p, es) in enumerate(zip(passages, ents)):
-        item = make_item(p, es, pool, rng, min_sentence_words=min_sentence_words)
-        if item is None:
+        group = make_items(p, es, pool, rng, min_sentence_words=min_sentence_words,
+                           max_items=max_items_per_source)
+        if not group:
             leftover.append(p["text"])
         else:
-            items.append(item)
-            used = item["meta"]["entity"]
-            pool[item["meta"]["entity_type"]] = [s for s in pool[item["meta"]["entity_type"]] if s != used]
+            groups.append(group)
+            n_items += len(group)
+            for it in group:
+                used = it["meta"]["entity"]
+                pool[it["meta"]["entity_type"]] = [s for s in pool[it["meta"]["entity_type"]] if s != used]
         if i % 200 == 0:
-            print(f"\r  {i + 1}/{len(passages)} passages, {len(items)} items", end="", flush=True)
-    print(f"\r  {len(passages)}/{len(passages)} passages, {len(items)} items")
-    return items, leftover
+            print(f"\r  {i + 1}/{len(passages)} passages, {n_items} items", end="", flush=True)
+    print(f"\r  {len(passages)}/{len(passages)} passages, {n_items} items in {len(groups)} groups "
+          f"({n_items / max(len(groups), 1):.2f} per source)")
+    return groups, leftover
 
 
 def add_block_args(parser) -> None:
@@ -549,6 +624,20 @@ def add_block_args(parser) -> None:
                         help="Probability a fresh unit is a probed item source rather than plain filler")
     parser.add_argument("--max-pending", type=int, default=64,
                         help="Cap on items awaiting their cue at once")
+    parser.add_argument("--items-per-source-start", type=int, default=3,
+                        help="Items a source passage answers in the FIRST (lowest-ceiling) block -- the "
+                             "interference-density knob. A turn costs one passage plus one cue/answer "
+                             "pair, so sharing a passage across k items cuts the block's tokens per item "
+                             "and packs that many more fabricated entities into every token of gap. 3 is "
+                             "where Wikipedia's yield flattens: 1.69 items/passage measured, 251 -> 191 "
+                             "tokens per item and 1.7 -> 2.25 cue/answer turns inside a 512-token gap, "
+                             "for +47% items off the same articles; 4 buys 2% more density for 84% more "
+                             "credit lost to entity leaks")
+    parser.add_argument("--items-per-source-end", type=int, default=1,
+                        help="Items a source passage answers in the LAST (highest-ceiling) block, "
+                             "interpolated linearly from --items-per-source-start across the artifact. "
+                             "Long-gap items get their interference from distance and volume, so density "
+                             "relaxes and the item supply goes further")
     parser.add_argument("--max-items-per-block", type=int, default=0,
                         help="Close the block after this many answered items (0 = fill the budget). Needles "
                              "use 1: bAbI stories share a six-name vocabulary, so a second story in the same "
@@ -633,9 +722,10 @@ def main() -> None:
                                ("cram-heldout", heldout_titles, args.heldout_output)):
         sel = [i for i, p in enumerate(passages) if p["article"] in titles]
         print(f"\n== {name}: {len(sel)} passages from {len(titles)} articles ==")
-        items, leftover = build_items([passages[i] for i in sel], [ents[i] for i in sel],
-                                      args.seed, args.min_sentence_words)
-        dataset, stats = build_blocks(items, leftover, encode, user_id=user_id, asst_id=asst_id,
+        groups, leftover = build_items([passages[i] for i in sel], [ents[i] for i in sel],
+                                       args.seed, args.min_sentence_words,
+                                       max(args.items_per_source_start, args.items_per_source_end))
+        dataset, stats = build_blocks(groups, leftover, encode, user_id=user_id, asst_id=asst_id,
                                       sep_id=sep[0], nl_id=nl[0], args=args)
         emit(dataset, stats, path, tokenizer, user_id, asst_id, name, sorted(heldout_titles), args)
 

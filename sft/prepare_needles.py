@@ -114,7 +114,10 @@ def main() -> None:
         sel = [it for it in items if it["meta"]["article"] in keep_items]
         fillers = [p["text"] for p in passages if p["article"] in keep_titles]
         print(f"\n== {name}: {len(sel)} needles, {len(fillers)} filler passages ==")
-        dataset, stats = build_blocks(sel, fillers, encode, user_id=user_id, asst_id=asst_id,
+        # One bAbI story answers one question, so every group is a singleton and
+        # the items-per-source density knob is inert on this slice.
+        dataset, stats = build_blocks([[it] for it in sel], fillers, encode,
+                                      user_id=user_id, asst_id=asst_id,
                                       sep_id=sep[0], nl_id=nl[0], args=args)
         # Both halves of the reservation: held-out needles and the held-out
         # articles their filler comes from.
