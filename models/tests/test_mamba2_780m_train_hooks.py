@@ -121,3 +121,35 @@ def test_chunking_matches_single_call():
 
     diff = (logits_one - logits_chunked).abs().max().item()
     assert diff < 1e-3, f"chunking diverges from single-call forward: {diff}"
+
+
+def test_marker_delta_wired_into_forward_and_receives_gradient():
+    # marker_token_ids stamped pre-wrap, like load_base/extend_embeddings does.
+    torch.manual_seed(0)
+    cfg = MambaConfig(d_model=64, n_layer=4, vocab_size=50, ssm_cfg=dict(layer="Mamba2", headdim=16, ngroups=1, d_state=16))
+    mamba = MambaLMHeadModel(cfg, device=DEVICE, dtype=torch.float32)
+    mamba.marker_token_ids = [48, 49]
+    mamba = apply_lora(mamba, ["in_proj", "out_proj"], rank=4, alpha=8.0, dropout=0.0)
+    model = M780.Model(mamba).to(DEVICE)
+    assert model.marker_delta is not None
+
+    # setup_training's name-based selection must catch the delta parameter.
+    trainable_names = [n for n, _ in model.named_parameters() if "lora_A" in n or "lora_B" in n or "marker_delta" in n]
+    assert any("marker_delta" in n for n in trainable_names)
+
+    ids = torch.tensor([[3, 48, 7, 49, 11]], device=DEVICE)
+    with torch.no_grad():
+        logits_zero, _ = model(ids)
+        model.marker_delta.delta += 0.1
+        logits_moved, _ = model(ids)
+    assert not torch.equal(logits_zero, logits_moved), "delta does not reach the forward pass"
+
+    with torch.no_grad():
+        model.marker_delta.delta.zero_()
+    target_ids = torch.tensor([[48, 7, 49, 11, 2]], device=DEVICE)
+    mask_slice = torch.ones(5, dtype=torch.bool, device=DEVICE)
+    loss_sum, weight_sum, _ = hooks.chunk_loss(model, ids, target_ids, mask_slice, None, eos_weight=1.0)
+    (loss_sum / weight_sum).backward()
+    grad = model.marker_delta.delta.grad
+    assert grad is not None and grad.abs().sum() > 0
+    assert model.embedding.weight.grad is None  # the frozen table stays frozen

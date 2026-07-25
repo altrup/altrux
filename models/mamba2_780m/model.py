@@ -6,6 +6,8 @@ from einops import rearrange
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
+from ..common import MarkerDelta
+
 MODEL_ID = "state-spaces/mamba2-780m"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 TARGET_LORA_MODULES = ["in_proj", "out_proj"]
@@ -77,6 +79,16 @@ class Model(nn.Module):
         self.layers = nn.ModuleList(list(backbone.layers))
         self.norm_f = backbone.norm_f
         self.lm_head = mamba_model.lm_head
+
+        # Trainable delta for the frozen role-marker embedding/lm_head rows
+        # (see MarkerDelta); marker_token_ids is stamped by extend_embeddings,
+        # absent on raw models (e.g. the tiny test fixtures).
+        marker_ids = getattr(mamba_model, "marker_token_ids", None)
+        self.marker_delta = (
+            MarkerDelta(marker_ids, self.d_model, device=self.embedding.weight.device, dtype=self.embedding.weight.dtype)
+            if marker_ids
+            else None
+        )
 
         for layer in self.layers:
             assert layer.mixer.ngroups == 1, "manual mixer step assumes ngroups=1"
@@ -182,6 +194,8 @@ class Model(nn.Module):
         all_logits = []
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])
+            if self.marker_delta is not None:
+                h = self.marker_delta.embed(h, input_ids[:, t])
             residual = None
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
@@ -190,7 +204,10 @@ class Model(nn.Module):
                 state.ssm_states[i] = ssm_state
 
             h = self._apply_norm_f(h, residual)
-            all_logits.append(self.lm_head(h))
+            logits = self.lm_head(h)
+            if self.marker_delta is not None:
+                logits = self.marker_delta.head(logits, h)
+            all_logits.append(logits)
 
         return torch.stack(all_logits, dim=1), state
 
@@ -211,7 +228,7 @@ def load_base(device: str) -> MambaLMHeadModel:
 
     model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
-    extend_embeddings(model, len(tokenizer))
+    extend_embeddings(model, len(tokenizer), tokenizer)
     return model
 
 

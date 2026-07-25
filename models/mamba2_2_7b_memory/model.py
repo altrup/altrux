@@ -42,6 +42,8 @@ except ImportError:
 
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
+
+from ..common import MarkerDelta
 # Importing this is always safe even where causal_conv1d/Triton are broken
 # (this repo's ROCm dev box, see root CLAUDE.md) -- it only hangs/segfaults
 # if actually *called*, and `_fused_path_available` gates every call site.
@@ -717,6 +719,17 @@ class Model(nn.Module):
         for p in self.lm_head.parameters():
             p.requires_grad_(False)
 
+        # Trainable delta for the frozen role-marker embedding/lm_head rows
+        # (see MarkerDelta); marker_token_ids is stamped by extend_embeddings,
+        # absent on raw models (e.g. the tiny test fixtures). Created after
+        # the freeze block above, so it stays trainable.
+        marker_ids = getattr(mamba_model, "marker_token_ids", None)
+        self.marker_delta = (
+            MarkerDelta(marker_ids, self.d_model, device=self.embedding.weight.device, dtype=self.embedding.weight.dtype)
+            if marker_ids
+            else None
+        )
+
         for layer in self.layers:
             assert layer.mixer.ngroups == 1, "memory injection assumes ngroups=1"
 
@@ -1134,6 +1147,8 @@ class Model(nn.Module):
         last_grad_norm_per_slot: torch.Tensor | None = None
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])
+            if self.marker_delta is not None:
+                h = self.marker_delta.embed(h, input_ids[:, t])
             residual = None
             # True on exactly one token per window -- the one that closes
             # it, per set_memory_window's contract. Both the write and the
@@ -1312,7 +1327,10 @@ class Model(nn.Module):
                 ]
 
             h = self._apply_norm_f(h, residual)
-            all_logits.append(self.lm_head(h))
+            logits = self.lm_head(h)
+            if self.marker_delta is not None:
+                logits = self.marker_delta.head(logits, h)
+            all_logits.append(logits)
 
         return torch.stack(all_logits, dim=1), state
 
@@ -1364,6 +1382,8 @@ class Model(nn.Module):
         n_windows = seqlen // window
 
         h = self.embedding(input_ids)
+        if self.marker_delta is not None:
+            h = self.marker_delta.embed(h, input_ids)
         residual: torch.Tensor | None = None
 
         # Diagnostics are only ever materialized for the chunk's LAST
@@ -1553,6 +1573,8 @@ class Model(nn.Module):
 
         h = self._apply_norm_f(h, residual)
         logits = self.lm_head(h)
+        if self.marker_delta is not None:
+            logits = self.marker_delta.head(logits, h)
         return logits, state
 
     def set_memory_window(self, window: int) -> None:
@@ -1771,7 +1793,7 @@ def load_base(device: str) -> MambaLMHeadModel:
 
     model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
-    extend_embeddings(model, len(tokenizer))
+    extend_embeddings(model, len(tokenizer), tokenizer)
     return model
 
 

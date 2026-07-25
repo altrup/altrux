@@ -30,7 +30,7 @@ The memory subsystem itself (front-end, gate projections) stays outside LoRA eit
 
 ## Special tokens
 
-`USER_OPEN`/`ASST_OPEN` (`"[USER]"`/`"[ASSISTANT]"`), registered as tokenizer special tokens the same way as the other models in this repo, so each role marker is a single atomic token id. Bare, no trailing space — callers append a literal `" "` separator explicitly.
+`USER_OPEN`/`ASST_OPEN` (`"[USER]"`/`"[ASSISTANT]"`), registered as tokenizer special tokens the same way as the other models in this repo, so each role marker is a single atomic token id. Bare, no trailing space — callers append a literal `" "` separator explicitly. Their embedding rows are initialized to the mean of their BPE-spelling rows and trained through the wrapper's `MarkerDelta` while the rest of the tied embedding/`lm_head` table stays frozen — see `models/common.py` and `models/mamba2_780m/README.md` for the mechanism.
 
 ## `Model` wrapper quirks
 

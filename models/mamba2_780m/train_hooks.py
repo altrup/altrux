@@ -53,7 +53,7 @@ def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: floa
         param.requires_grad_(False)
     trainable_params = []
     for name, param in model.named_parameters():
-        if "lora_A" in name or "lora_B" in name:
+        if "lora_A" in name or "lora_B" in name or "marker_delta" in name:
             param.requires_grad_(True)
             trainable_params.append(param)
     print(f"trainable params: {sum(p.numel() for p in trainable_params):,}")

@@ -163,3 +163,30 @@ def test_set_beta_anneal_covers_the_mix_gate():
     assert m.mix.beta_anneal_offset == pytest.approx(-3.0)
     m.set_beta_anneal(10_000)
     assert m.mix.beta_anneal_offset == 0.0
+
+
+@needs_gpu
+def test_marker_delta_wired_into_memory_forward():
+    torch.manual_seed(0)
+    cfg = MambaConfig(
+        d_model=64,
+        n_layer=8,
+        vocab_size=VOCAB,
+        ssm_cfg={"layer": "Mamba2", "headdim": 16, "d_state": 16, "expand": 2, "ngroups": 1},
+        rms_norm=True,
+        fused_add_norm=False,
+        tie_embeddings=True,
+    )
+    base = MambaLMHeadModel(cfg, device="cuda", dtype=torch.float32)
+    base.marker_token_ids = [VOCAB - 2, VOCAB - 1]
+    m = Model(base, read_layer=3, injected_layers=(3, 5, 7), integration="mix").to("cuda")
+    assert m.marker_delta is not None
+    assert m.marker_delta.delta.requires_grad  # created after the freeze block
+
+    ids = _ids()
+    ids[0, 1] = VOCAB - 2
+    with torch.no_grad():
+        logits_zero, _ = m(ids)
+        m.marker_delta.delta += 0.1
+        logits_moved, _ = m(ids)
+    assert not torch.equal(logits_zero, logits_moved), "delta does not reach the memory forward path"

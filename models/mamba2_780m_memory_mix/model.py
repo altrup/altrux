@@ -59,7 +59,7 @@ def load_base(device: str) -> MambaLMHeadModel:
 
     model = MambaLMHeadModel.from_pretrained(MODEL_ID, device=device, dtype=torch.bfloat16)
     tokenizer = build_tokenizer(sys.modules[__name__])
-    extend_embeddings(model, len(tokenizer))
+    extend_embeddings(model, len(tokenizer), tokenizer)
     return model
 
 
