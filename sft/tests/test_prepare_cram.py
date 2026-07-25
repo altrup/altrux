@@ -5,6 +5,7 @@ against synthetic items and a character-level stub tokenizer, no downloads
 and no model import.
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from prepare_cram import build_blocks, make_items, split_articles, split_sentences, validate_blocks
+from prepare_cram import add_block_args, build_blocks, make_items, split_articles, split_sentences, validate_blocks
 
 USER_ID, ASST_ID = 1, 2
 SEP_ID, NL_ID = ord(" "), ord("\n")
@@ -433,3 +434,11 @@ def test_needle_style_items_with_a_whole_answer_span_still_build():
     report = validate_blocks(dataset, _Tok(), user_id=USER_ID, asst_id=ASST_ID, n_samples=0)
     assert report["span_text_mismatch"] == 0
     assert len(_all_items(dataset)) > 10
+
+
+def test_block_args_parse(capsys):
+    parser = argparse.ArgumentParser()
+    add_block_args(parser)
+    assert parser.parse_args([]).items_per_source_start >= 1
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--help"])  # argparse rejects an unescaped % in a help string

@@ -631,7 +631,7 @@ def add_block_args(parser) -> None:
                              "and packs that many more fabricated entities into every token of gap. 3 is "
                              "where Wikipedia's yield flattens: 1.69 items/passage measured, 251 -> 191 "
                              "tokens per item and 1.7 -> 2.25 cue/answer turns inside a 512-token gap, "
-                             "for +47% items off the same articles; 4 buys 2% more density for 84% more "
+                             "for +47%% items off the same articles; 4 buys 2%% more density for 84%% more "
                              "credit lost to entity leaks")
     parser.add_argument("--items-per-source-end", type=int, default=1,
                         help="Items a source passage answers in the LAST (highest-ceiling) block, "
