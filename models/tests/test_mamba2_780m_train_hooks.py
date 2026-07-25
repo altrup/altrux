@@ -32,17 +32,21 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a r
 DEVICE = "cuda"
 
 
-def _build_tiny_model():
+def _build_tiny_model(marker_ids=None):
     torch.manual_seed(0)
     cfg = MambaConfig(d_model=64, n_layer=4, vocab_size=50, ssm_cfg=dict(layer="Mamba2", headdim=16, ngroups=1, d_state=16))
     mamba = MambaLMHeadModel(cfg, device=DEVICE, dtype=torch.float32)
+    if marker_ids is not None:
+        mamba.marker_token_ids = marker_ids  # what load_base/extend_embeddings stamps
     mamba = apply_lora(mamba, ["in_proj", "out_proj"], rank=4, alpha=8.0, dropout=0.0)
     model = M780.Model(mamba).to(DEVICE)
+    # Same freeze/unfreeze selection as train_hooks.setup_training (which we
+    # can't call here -- it downloads the real 780m).
     for p in model.parameters():
         p.requires_grad_(False)
     trainable_params = []
     for name, p in model.named_parameters():
-        if "lora_A" in name or "lora_B" in name:
+        if "lora_A" in name or "lora_B" in name or "marker_delta" in name:
             p.requires_grad_(True)
             trainable_params.append(p)
     return model, trainable_params
@@ -124,18 +128,10 @@ def test_chunking_matches_single_call():
 
 
 def test_marker_delta_wired_into_forward_and_receives_gradient():
-    # marker_token_ids stamped pre-wrap, like load_base/extend_embeddings does.
-    torch.manual_seed(0)
-    cfg = MambaConfig(d_model=64, n_layer=4, vocab_size=50, ssm_cfg=dict(layer="Mamba2", headdim=16, ngroups=1, d_state=16))
-    mamba = MambaLMHeadModel(cfg, device=DEVICE, dtype=torch.float32)
-    mamba.marker_token_ids = [48, 49]
-    mamba = apply_lora(mamba, ["in_proj", "out_proj"], rank=4, alpha=8.0, dropout=0.0)
-    model = M780.Model(mamba).to(DEVICE)
+    model, trainable_params = _build_tiny_model(marker_ids=[48, 49])
     assert model.marker_delta is not None
-
     # setup_training's name-based selection must catch the delta parameter.
-    trainable_names = [n for n, _ in model.named_parameters() if "lora_A" in n or "lora_B" in n or "marker_delta" in n]
-    assert any("marker_delta" in n for n in trainable_names)
+    assert any(p is model.marker_delta.delta for p in trainable_params)
 
     ids = torch.tensor([[3, 48, 7, 49, 11]], device=DEVICE)
     with torch.no_grad():
