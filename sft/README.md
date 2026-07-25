@@ -114,11 +114,11 @@ MODEL_NAME=mamba2_780m make filter-items ARGS="--data data/train_cram.pt"
 
 | test | context | must |
 |------|---------|------|
-| A (well-posed) | source + cue | answer (`--a-min`, default −0.7) |
+| A (well-posed) | source + cue | answer (`--a-min`, default −2.0) |
 | B (memory-required) | interference + cue, source absent | fail (`--b-max`, default −1.5) |
 | C (SSM-insufficient) | source + interference + cue, in-stream | fail (`--c-max`, default −1.5) |
 
-plus `--min-margin` (default 1.5 nats/token): A − max(B, C) must clear it. The margin is what does the work where the absolute thresholds cannot — a common-word answer scores high in every context, so its *difference* is the signal. All four are mean log-probs per credited token, and all four are **guesses until calibrated**: run the filter on a pilot artifact, read the printed scored samples, then set them.
+plus `--min-margin` (default 4.0 nats/token): A − B must clear it. The margin is what does the work where the absolute thresholds cannot — a common-word answer scores high in every context, so its *difference* is the signal. A's floor is deliberately loose: entity substitution makes the span implausible on purpose, so the backbone's prior fights the copy even with the source in view; demanding near-certainty there discards exactly the items substitution was built to create. The margin is over B only — C has its own bar, and a large required A − C gap would double-count it. All four are mean log-probs per credited token, calibrated on the 2026-07-25 pilot (401 items: strict-A defaults kept 26%; these keep 48% with every fail category doing its designed job). Re-calibrating is free: `--rescore` re-verdicts a scored artifact from its stored per-item scores without a model or GPU.
 
 Before scoring, an explicit string check drops any item whose credited answer (or a word of it ≥4 characters, so a surname counts) is already visible in the interference before the cue — those cost no forward pass.
 

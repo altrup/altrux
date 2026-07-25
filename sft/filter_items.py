@@ -85,7 +85,7 @@ def verdict(a: float, b: float, c: float, args) -> str:
         return "fail_b"
     if c > args.c_max:
         return "fail_c"
-    if a - max(b, c) < args.min_margin:
+    if a - b < args.min_margin:
         return "fail_margin"
     return "pass"
 
@@ -157,6 +157,38 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
     return stats
 
 
+def rescore_dataset(dataset: dict, args) -> dict:
+    """Recomputes verdicts and recall credit from the scores a previous
+    filter run stored on each item -- no model, no GPU. fail_leak items were
+    never scored and stay failed. Mutates `dataset` in place; returns stats."""
+    counts = Counter()
+    for recall, items in zip(dataset["recall_masks"], dataset["items"]):
+        for it in items:
+            rec = it.get("filter")
+            if rec is None:
+                continue
+            if "a" not in rec:
+                counts[rec["verdict"]] += 1
+                continue
+            v = verdict(rec["a"], rec["b"], rec["c"], args)
+            rec["verdict"] = v
+            counts[v] += 1
+            recall[it["span_start"]:it["span_end"]] = v == "pass"
+
+    n_items = sum(counts.values())
+    stats = {
+        "n_items": n_items,
+        "verdicts": {v: counts[v] for v in VERDICTS},
+        "discard_rate": (n_items - counts["pass"]) / n_items if n_items else 0.0,
+    }
+    print(f"rescore: {n_items} items, {counts['pass']} kept, "
+          f"discard rate {100 * stats['discard_rate']:.1f}%")
+    for v in VERDICTS[1:]:
+        share = 100 * counts[v] / max(n_items - counts["pass"], 1)
+        print(f"  {v}: {counts[v]} ({share:.1f}% of discards)")
+    return stats
+
+
 class BackboneScorer:
     """Teacher-forced span scoring with the repo's own chunked state-carrying
     forward (the same pattern as probe_recall.run_chunks), so a 32k-token
@@ -190,38 +222,50 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--data", required=True, help="A prepare_cram.py/prepare_needles.py artifact")
     parser.add_argument("--output", default=None, help="Default: <data> with -filtered before the suffix")
-    parser.add_argument("--a-min", type=float, default=-0.7,
-                        help="Test A passes at or above this mean log-prob per credited token. The span is "
-                             "copied verbatim from a cue two sentences back, so a well-posed item should be "
-                             "near-certain; -0.7 (~0.5/token) is deliberately loose")
+    parser.add_argument("--a-min", type=float, default=-2.0,
+                        help="Test A passes at or above this mean log-prob per credited token. A loose "
+                             "sanity floor only: entity substitution makes the span deliberately "
+                             "implausible, so the backbone's prior fights the copy even with the source "
+                             "in view (pilot: fail_a median A -1.4 at margins of 6+ nats). The margin "
+                             "rule carries the real discrimination")
     parser.add_argument("--b-max", type=float, default=-1.5,
                         help="Test B passes at or below this. -1.5 (~0.22/token) sits just above bAbI's "
                              "~6-way chance level, so closed-vocabulary guessing still passes and the "
                              "margin rule does the real work there")
     parser.add_argument("--c-max", type=float, default=-1.5, help="Test C passes at or below this")
-    parser.add_argument("--min-margin", type=float, default=1.5,
-                        help="Required A - max(B, C) in nats/token (~4.5x odds). Scale-free where the "
-                             "absolute thresholds are not: a common-word answer scores high everywhere")
+    parser.add_argument("--min-margin", type=float, default=4.0,
+                        help="Required A - B in nats/token: the source, not inferability, must carry "
+                             "the answer. Scale-free where the absolute thresholds are not: a "
+                             "common-word answer scores high everywhere. Margin is over B only -- C has "
+                             "its own absolute bar, and requiring a large A-C gap double-counts it, "
+                             "killing items that are near-certain with the source and dead in-stream. "
+                             "4.0 calibrated on the pilot (pass margins median ~6.4, ill-posed below ~3)")
+    parser.add_argument("--rescore", action="store_true",
+                        help="Re-verdict a previously-scored artifact from its stored per-item scores "
+                             "-- no model load, no GPU. Threshold sweeps cost seconds instead of a "
+                             "scoring pass")
     parser.add_argument("--chunk-len", type=int, default=256, help="Forward chunk for the scoring pass")
     parser.add_argument("--samples", type=int, default=3, help="Decoded scored items printed")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
-    import importlib
-    import os
-
-    from models.common import build_tokenizer
-
-    model_name = os.getenv("MODEL_NAME", "mamba2_780m")
-    model_mod = importlib.import_module(f"models.{model_name}")
-    tokenizer = build_tokenizer(model_mod)
-    print(f"loading {model_name} on {args.device} (the plain backbone IS the M-ablated model) ...")
-    model = model_mod.load_inference(args.device)
-    model.eval()
-
     dataset = torch.load(args.data, map_location="cpu", weights_only=False)
-    stats = filter_dataset(dataset, BackboneScorer(model, args.device, args.chunk_len),
-                           tokenizer, args)
+    if args.rescore:
+        stats = rescore_dataset(dataset, args)
+    else:
+        import importlib
+        import os
+
+        from models.common import build_tokenizer
+
+        model_name = os.getenv("MODEL_NAME", "mamba2_780m")
+        model_mod = importlib.import_module(f"models.{model_name}")
+        tokenizer = build_tokenizer(model_mod)
+        print(f"loading {model_name} on {args.device} (the plain backbone IS the M-ablated model) ...")
+        model = model_mod.load_inference(args.device)
+        model.eval()
+        stats = filter_dataset(dataset, BackboneScorer(model, args.device, args.chunk_len),
+                               tokenizer, args)
     dataset["filter"] = {"thresholds": {"a_min": args.a_min, "b_max": args.b_max,
                                         "c_max": args.c_max, "min_margin": args.min_margin},
                          **stats}

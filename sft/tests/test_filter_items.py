@@ -10,7 +10,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from filter_items import filter_dataset, interference_stream
+from filter_items import filter_dataset, interference_stream, rescore_dataset
 
 USER_ID, ASST_ID = 1, 2
 
@@ -154,3 +154,36 @@ def test_discard_composition_is_reported_per_test():
     assert stats["verdicts"] == {"pass": 1, "fail_a": 1, "fail_b": 0, "fail_c": 0,
                                  "fail_margin": 0, "fail_leak": 0}
     assert stats["discard_rate"] == 0.5
+
+
+def test_rescore_reverdicts_from_stored_scores_and_rebuilds_credit():
+    dataset, _, _ = _run({"A": -1.8, "B": -9.0, "C": -6.5})
+    item = dataset["items"][0][0]
+    assert item["filter"]["verdict"] == "fail_a"
+    assert not dataset["recall_masks"][0].any()
+
+    stats = rescore_dataset(dataset, _args(a_min=-2.0, min_margin=4.0))
+    assert item["filter"]["verdict"] == "pass"
+    assert dataset["recall_masks"][0][item["span_start"]:item["span_end"]].all()
+    assert stats["verdicts"]["pass"] == 1
+
+
+def test_rescore_can_also_revoke_credit_and_never_scores():
+    dataset, _, _ = _run({"A": -0.2, "B": -9.0, "C": -4.0})
+    item = dataset["items"][0][0]
+    assert item["filter"]["verdict"] == "pass"
+
+    stats = rescore_dataset(dataset, _args(min_margin=20.0))
+    assert item["filter"]["verdict"] == "fail_margin"
+    assert not dataset["recall_masks"][0][item["span_start"]:item["span_end"]].any()
+    assert stats["verdicts"]["pass"] == 0
+
+
+def test_rescore_leaves_leak_verdicts_alone():
+    dataset, _, _ = _run({"A": -0.2, "B": -9.0, "C": -4.0}, stray="Zorblat")
+    item = dataset["items"][0][0]
+    assert item["filter"]["verdict"] == "fail_leak"
+
+    rescore_dataset(dataset, _args(a_min=-99.0, b_max=99.0, c_max=99.0, min_margin=-99.0))
+    assert item["filter"]["verdict"] == "fail_leak"
+    assert not dataset["recall_masks"][0][item["span_start"]:item["span_end"]].any()
