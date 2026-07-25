@@ -785,7 +785,7 @@ def run_training(
         # batch_size).
         accum_steps = max(1, round(args.accum_tokens / chunk_len))
         if set_grad_ckpt_fn is not None:
-            set_grad_ckpt_fn(model, cfg.grad_checkpoint)
+            set_grad_ckpt_fn(model, cfg.grad_checkpoint, args.grad_ckpt_block)
 
         order = orders[gi]
         n_valid = len(order)
@@ -1254,6 +1254,7 @@ def main() -> None:
     parser.add_argument("--recall-ramp-start", type=float, default=1.0, help="Recall-mask multiplier at step 0, ramping to --recall-weight over --recall-ramp-steps. Equal to --recall-weight to disable the ramp.")
     parser.add_argument("--recall-ramp-steps", type=int, default=32, help="Optimizer steps over which the recall multiplier ramps from --recall-ramp-start to --recall-weight, then holds. Keep this aligned with the model's beta-anneal window (mamba2_2_7b_memory's BETA_BIAS_ANNEAL_STEPS, 32): the anneal window is where the gradient decides whether the memory path is useful or gets suppressed, and a full-strength recall multiplier landing in it amplifies the loss spike rather than the signal. 0 disables the ramp (constant --recall-weight from step 0).")
     parser.add_argument("--recall-ramp-shape", choices=("linear", "geometric"), default="linear", help="Interpolation between --recall-ramp-start and --recall-weight: linear in the multiplier, or linear in its log (geometric), which spends more of the window near the low end.")
+    parser.add_argument("--grad-ckpt-block", type=int, default=None, help="Checkpoint block size in tokens for slices with grad-checkpoint=1 (default: the model's own, currently 64). The backward pass recomputes one block's live graph at a time, so block must stay under what the card can hold as a live graph -- this box's ~52-token ceiling means local grad-checkpointed runs need 48 or less, while the default is sized for a rented card. Snapped down to a multiple of --memory-window by the model.")
     parser.add_argument("--mix-segment-tokens", type=int, default=1_000_000, help="Tokens one config group trains for before the mix hands over to whichever group is furthest behind its share. Only applies when --data slices disagree on chunk-len/batch-size/grad-checkpoint (slices that agree share a batch and interleave example-by-example instead); with a single config the budget is unbounded and the loop is the single-dataset one. Smaller mixes more finely but pays a slot drain per handover.")
     parser.add_argument("--head-weight", type=float, default=4.0, help="Loss weight multiplier at the first token after each backbone reset (example start, and each sleep for datasets with sleep_positions), decaying linearly to 1.0 over --head-tokens -- emphasises the empty-state regime, which is otherwise underweighted because most tokens sit deep inside long examples. 1.0 reproduces the unweighted objective.")
     parser.add_argument("--head-tokens", type=int, default=1024, help="Length of the --head-weight linear decay ramp, in tokens from each backbone reset")
