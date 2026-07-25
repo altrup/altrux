@@ -17,6 +17,7 @@ from prepare_chains import build_chains, validate
 
 USER, ASST = "[U]", "[A]"
 USER_ID, ASST_ID = 1, 2
+SEP_ID = 3  # the literal-" " separator token re-emitted before a moved question
 
 
 def _episode(n_turns: int, turn_len: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -49,7 +50,7 @@ def _args(**overrides):
 
 
 def _build(n_episodes=40, n_turns=6, turn_len=10, pool=None, sent_end_ids=None,
-           space_start_ids=None, **overrides):
+           space_start_ids=None, pool_qoffs=None, **overrides):
     if pool is None:
         pool = [_episode(n_turns, turn_len) for _ in range(n_episodes)]
     labels = [f"lbl{i}" for i in range(64)]
@@ -59,6 +60,7 @@ def _build(n_episodes=40, n_turns=6, turn_len=10, pool=None, sent_end_ids=None,
         user_open=USER, asst_open=ASST, user_id=USER_ID, asst_id=ASST_ID,
         args=_args(**overrides),
         sent_end_ids=sent_end_ids, space_start_ids=space_start_ids,
+        pool_qoffs=pool_qoffs, sep_id=SEP_ID,
     )
 
 
@@ -135,27 +137,90 @@ def test_split_episodes_conserve_content_and_sleep_on_boundaries():
             assert ids[s].item() in (USER_ID, ASST_ID)
 
 
-def _qa_episode(filler: int = 7) -> tuple[torch.Tensor, torch.Tensor]:
-    """Two turns only: a long user document turn, then a long answer --
-    the split cut can only land on the answer boundary."""
-    ids = [USER_ID] + [filler] * 79 + [ASST_ID] + [filler] * 79
+QOFF = 70  # question starts at token 70 of the 80-token user turn
+
+
+def _qa_episode(filler: int = 7, qfiller: int | None = None, afiller: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+    """Two turns only: a long user document turn whose last 10 tokens are the
+    question (starting at QOFF), then a long answer."""
+    qfiller = filler if qfiller is None else qfiller
+    afiller = filler if afiller is None else afiller
+    ids = [USER_ID] + [filler] * (QOFF - 1) + [qfiller] * 10 + [ASST_ID] + [afiller] * 79
     mask = [False] * 81 + [True] * 79
     return torch.tensor(ids), torch.tensor(mask)
 
 
-def test_split_qa_rate_splits_only_single_qa_episodes():
+def test_split_qa_rate_splits_only_single_qa_episodes_with_metadata():
     pool = [_episode(6, 20) for _ in range(10)] + [_qa_episode() for _ in range(10)]
     dataset, stats = _build(
-        pool=pool, fact_rate=0.0,
+        pool=pool, pool_qoffs=[None] * 10 + [QOFF] * 10, fact_rate=0.0,
         split_episode_rate=0.0, split_qa_rate=1.0,
         min_wake=4, max_wake=4, min_budget=10_000, max_budget=10_000,
     )
-    # Every single-QA episode splits (cut at its answer boundary), no
-    # multi-turn episode does.
+    # Every question-bearing single-QA episode splits (cut at its question
+    # start), no multi-turn episode does.
     assert stats["n_split"] == stats["n_split_qa"] == 10
     for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
         for s in sleeps.tolist():
             assert ids[s].item() in (USER_ID, ASST_ID)
+
+
+def test_qa_episodes_without_question_metadata_never_split():
+    pool = [_qa_episode() for _ in range(10)]
+    _, stats = _build(
+        pool=pool, fact_rate=0.0,
+        split_episode_rate=1.0, split_qa_rate=1.0,
+        min_wake=4, max_wake=4, min_budget=10_000, max_budget=10_000,
+    )
+    assert stats["n_split"] == 0
+
+
+def test_split_qa_moves_question_to_tail_behind_fresh_marker():
+    doc, qf, af = 42, 40, 41
+    pool = [_qa_episode(filler=doc, qfiller=qf, afiller=af) for _ in range(8)]
+    dataset, stats = _build(
+        pool=pool, pool_qoffs=[QOFF] * 8, fact_rate=0.0,
+        split_qa_rate=1.0, min_wake=4, max_wake=4,
+        min_budget=10_000, max_budget=10_000,
+    )
+    assert stats["n_split"] == stats["n_split_qa"] == 8
+
+    flat = torch.cat(dataset["ids"]).tolist()
+    # Tail: fresh user marker + separator + the 10 question tokens verbatim,
+    # then the untouched answer turn.
+    tails = [i for i in range(len(flat) - 1) if flat[i] == USER_ID and flat[i + 1] == SEP_ID]
+    assert len(tails) == 8
+    for t in tails:
+        assert flat[t + 2 : t + 12] == [qf] * 10
+        assert flat[t + 12] == ASST_ID
+        assert flat[t + 13 : t + 18] == [af] * 5
+    # Head keeps the document only: no document token runs into a question token.
+    assert not any(flat[i] == doc and flat[i + 1] == qf for i in range(len(flat) - 1))
+
+    for ids_t, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
+        chain = ids_t.tolist()
+        sl = set(sleeps.tolist())
+        # Forced sleep at each tail's start (resuming crosses a sleep) ...
+        for i in range(len(chain) - 1):
+            if chain[i] == USER_ID and chain[i + 1] == SEP_ID:
+                assert i in sl
+        # ... and a suspension sleep at each head's end (doc runs straight
+        # into the next episode's marker), marking the suspended user turn.
+        for i in range(len(chain) - 1):
+            if chain[i] == doc and chain[i + 1] == USER_ID:
+                assert i + 1 in sl
+
+
+def test_validate_passes_on_split_qa_output():
+    pool = [_qa_episode(filler=42, qfiller=40, afiller=41) for _ in range(8)]
+    dataset, _ = _build(
+        pool=pool, pool_qoffs=[QOFF] * 8, fact_rate=0.0,
+        split_qa_rate=1.0, min_wake=4, max_wake=4,
+        min_budget=10_000, max_budget=10_000,
+    )
+    # Suspended heads create USER->USER adjacencies, every one sleep-marked --
+    # legal suspensions, so validate reports zero malformed transitions.
+    assert validate(dataset, _FakeTokenizer(), USER_ID, ASST_ID) == 0
 
 
 def test_split_gap_controls_episodes_between_head_and_tail():
@@ -167,14 +232,15 @@ def test_split_gap_controls_episodes_between_head_and_tail():
         ids = [USER_ID] + [101 + k] * 9 + [ASST_ID] + [101 + k] * 9
         pool.append((torch.tensor(ids), torch.tensor([False] * 20)))
     dataset, stats = _build(
-        pool=pool, fact_rate=0.0,
+        pool=pool, pool_qoffs=[QOFF] + [None] * 30, fact_rate=0.0,
         split_episode_rate=1.0, split_gap_min=3, split_gap_max=3,
         min_wake=31, max_wake=31, min_budget=10_000, max_budget=10_000,
     )
     assert stats["n_split"] == 1
     ids = torch.cat(dataset["ids"])
     head_tail = (ids == 100).nonzero().flatten().tolist()
-    gap_slice = ids[head_tail[78] + 1 : head_tail[79]]  # between head's last and tail's first filler
+    # Head holds QOFF-1 fillers; the tail's first filler is the question start.
+    gap_slice = ids[head_tail[QOFF - 2] + 1 : head_tail[QOFF - 1]]
     intervening = {v for v in gap_slice.tolist() if v > 100}
     assert len(intervening) == 3
 

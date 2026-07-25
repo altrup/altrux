@@ -18,15 +18,17 @@ def main() -> None:
 
     all_ids: list[torch.Tensor] = []
     all_masks: list[torch.Tensor] = []
+    all_qoffs: list[int | None] = []
     for path in args.inputs:
         data = torch.load(path, map_location="cpu", weights_only=False)
         all_ids.extend(data["ids"])
         all_masks.extend(data["masks"])
+        all_qoffs.extend(data.get("question_offsets") or [None] * len(data["ids"]))
         print(f"  {path}: +{len(data['ids'])} examples")
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"ids": all_ids, "masks": all_masks}, out)
+    torch.save({"ids": all_ids, "masks": all_masks, "question_offsets": all_qoffs}, out)
     print(f"Merged {len(all_ids)} examples total into {out}")
 
 

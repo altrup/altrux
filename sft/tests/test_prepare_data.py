@@ -46,7 +46,8 @@ def test_format_conversation_markers_are_single_special_ids(tokenizer):
         {"role": "user", "content": "And at night?"},
         {"role": "assistant", "content": "Black."},
     ]
-    ids, mask = format_conversation(messages, tokenizer, 4096, USER_OPEN, ASST_OPEN)
+    ids, mask, qoff = format_conversation(messages, tokenizer, 4096, USER_OPEN, ASST_OPEN)
+    assert qoff is None
 
     assert ids.count(user_id) == 2
     assert ids.count(asst_id) == 2
@@ -56,6 +57,41 @@ def test_format_conversation_markers_are_single_special_ids(tokenizer):
         assert len(spelled) > 1  # sanity: the spelling really is multi-token
         assert not _contains(ids, spelled)
     assert len(ids) == len(mask)
+
+
+def test_question_message_records_offset_with_identical_tokens(tokenizer):
+    doc = "The ball is in the garden. Mary went to the office."
+    q = "Where is the ball?"
+    target = "garden"
+    plain_ids, _, plain_qoff = format_conversation(
+        [{"role": "user", "content": f"{doc}\n{q}"}, {"role": "assistant", "content": target}],
+        tokenizer, 4096, USER_OPEN, ASST_OPEN,
+    )
+    split_ids, split_mask, qoff = format_conversation(
+        [{"role": "user", "content": doc, "question": q}, {"role": "assistant", "content": target}],
+        tokenizer, 4096, USER_OPEN, ASST_OPEN,
+    )
+
+    assert plain_qoff is None
+    # The question-bearing shape tokenizes identically to today's joined shape;
+    # only the metadata is new.
+    assert split_ids == plain_ids
+    assert len(split_mask) == len(split_ids)
+    assert qoff is not None
+    assert tokenizer.decode(split_ids[qoff:]).startswith(q)
+    # The token right before the question is the tail of the document, so a
+    # cut at qoff separates document from question with no token invented.
+    assert tokenizer.decode(split_ids[:qoff]).endswith("office.\n")
+
+
+def test_question_dropped_by_max_len_truncation_yields_no_offset(tokenizer):
+    ids, _, qoff = format_conversation(
+        [{"role": "user", "content": "word " * 100, "question": "Where?"},
+         {"role": "assistant", "content": "there"}],
+        tokenizer, 10, USER_OPEN, ASST_OPEN,
+    )
+    assert ids == []
+    assert qoff is None
 
 
 def test_batched_injected_turn_encoding_uses_special_ids(tokenizer):

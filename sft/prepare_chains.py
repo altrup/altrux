@@ -19,9 +19,13 @@ token budget, with three things layered in:
   tokens on each side) and the tail resumes two episodes later behind a
   forced sleep -- the natural-continuation signal stretched across an
   intervening episode, training the memory to retain a conversation's gist
-  through unrelated material. For single-QA episodes (a long document turn
-  then its answer) the cut lands at the answer boundary: read the document
-  now, answer it an episode and a sleep later.
+  through unrelated material. Single-QA episodes (a long document turn then
+  its answer) instead cut at the *question start* recorded by
+  prepare_data.py (`--split-qa-rate`): the head keeps the document only
+  (suspended behind a sleep), and the tail re-emits a fresh [USER] marker +
+  " " before the dataset's own question and answer -- read the document
+  now, get asked about it an episode and a sleep later, with every content
+  token dataset-authored. Episodes without a recorded question never split.
 - **Fact blocks**: a fraction of episodes host a block of key/value facts
   (heterogeneous kinds and phrasings, shared with prepare_interference.py),
   spliced at the episode's second turn boundary. A fraction of facts are
@@ -75,13 +79,21 @@ def build_chains(
     args,
     sent_end_ids: set[int] | None = None,
     space_start_ids: set[int] | None = None,
+    pool_qoffs: list[int | None] | None = None,
+    sep_id: int | None = None,
 ) -> tuple[dict, dict]:
     """The whole generator, IO-free: `encode` is a batched
     strings -> list[list[int]] tokenizer callable, `args` the CLI namespace.
     Returns (dataset dict as written to --output, stats dict).
 
     sent_end_ids/space_start_ids feed --sentence-sleep-rate: a sentence
-    boundary is a sent_end token immediately followed by a space_start token."""
+    boundary is a sent_end token immediately followed by a space_start token.
+
+    pool_qoffs (aligned with pool_ids) carries each episode's question token
+    offset from prepare_data.py, or None; sep_id is the token id of a literal
+    " ". Both feed split-QA: single-QA episodes with an offset are cut at the
+    question start, and the tail re-emits [user_id, sep_id] before the
+    verbatim question tokens. Episodes without an offset never split."""
     sentence_sleep_rate = getattr(args, "sentence_sleep_rate", 0.0)
     sent_end_t = torch.tensor(sorted(sent_end_ids)) if sent_end_ids else None
     space_start_t = torch.tensor(sorted(space_start_ids)) if space_start_ids else None
@@ -120,7 +132,9 @@ def build_chains(
     # cross-episode retention with no engineered template.
     pool_ids = list(pool_ids)
     pool_masks = list(pool_masks)
+    pool_qoffs = list(pool_qoffs) if pool_qoffs is not None else [None] * len(pool_ids)
     split_tails: set[int] = set()
+    split_qa_heads: set[int] = set()
     n_split = n_split_qa = max_pending = 0
     qa_rate = getattr(args, "split_qa_rate", None)
     gap_min = getattr(args, "split_gap_min", 2)
@@ -135,19 +149,36 @@ def build_chains(
                 if len(ids) >= 2 * mp:
                     b = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
                     # Single-QA episodes (two turns: document then answer) cut
-                    # at the answer boundary -- answering later depends densely
-                    # on the far-back document, the highest-amplitude natural
-                    # signal -- so they get their own rate.
+                    # at the question start recorded by prepare_data.py: head
+                    # keeps the document only, the tail re-emits a fresh user
+                    # marker before the dataset's own question + answer. No
+                    # recorded question -> never split (fail closed; e.g.
+                    # LongAlign, whose question isn't mechanically
+                    # extractable, stays whole as carrier data).
                     is_qa = len(b) == 2
                     rate = qa_rate if (is_qa and qa_rate is not None) else args.split_episode_rate
-                    mid = [x for x in b if mp <= x <= len(ids) - mp]
+                    if is_qa:
+                        qoff = pool_qoffs[ep]
+                        splittable = qoff is not None and sep_id is not None and mp <= qoff <= len(ids) - mp
+                        mid = [qoff] if splittable else []
+                    else:
+                        mid = [x for x in b if mp <= x <= len(ids) - mp]
                     if mid and rng.random() < rate:
                         cut = rng.choice(mid)
                         pool_ids.append(ids[:cut])
                         pool_masks.append(pool_masks[ep][:cut])
+                        pool_qoffs.append(None)
                         out.append(len(pool_ids) - 1)
-                        pool_ids.append(ids[cut:])
-                        pool_masks.append(pool_masks[ep][cut:])
+                        if is_qa:
+                            split_qa_heads.add(len(pool_ids) - 1)
+                            tail_ids = torch.cat([torch.tensor([user_id, sep_id], dtype=ids.dtype), ids[cut:]])
+                            tail_masks = torch.cat([torch.zeros(2, dtype=torch.bool), pool_masks[ep][cut:]])
+                        else:
+                            tail_ids = ids[cut:]
+                            tail_masks = pool_masks[ep][cut:]
+                        pool_ids.append(tail_ids)
+                        pool_masks.append(tail_masks)
+                        pool_qoffs.append(None)
                         split_tails.add(len(pool_ids) - 1)
                         # How many earlier heads are still awaiting their tail
                         # here -- a deep interleave stacks several unanswered
@@ -207,6 +238,13 @@ def build_chains(
         for i, ep in enumerate(chain):
             if ep in split_tails:
                 sleeps.append(offsets[i])
+            # Suspension sleep at a split-QA head's end: the head is a
+            # document turn suspended without its question, so the sleep marks
+            # the suspension (making the head->next USER->USER adjacency a
+            # legal suspension for validate) and forces the document out of
+            # the SSM immediately -- retention must live in the memory.
+            if ep in split_qa_heads and offsets[i + 1] < offsets[-1]:
+                sleeps.append(offsets[i + 1])
         # Mid-conversation sleeps in long episodes, at a between-turn
         # boundary in the middle third of the episode.
         for i, ep in enumerate(chain):
@@ -385,19 +423,26 @@ def build_chains(
     return dataset, stats
 
 
+SUSPENDED = "USER->USER suspended (sleep between: a split-QA head awaiting its question)"
+UU_SILENT = "USER->USER silent (no sleep between)"
+AA = "ASST->ASST"
+
+
 def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2, ctx: int = 90) -> int:
     """Report structural invariants and decode a sample of each event, per the
     root CLAUDE.md rule. Returns the malformed-adjacency count.
 
-    A well-formed stream alternates [USER] -> [ASSISTANT]; anything else means
-    a splice left a turn unanswered or an answer unaddressed. Counts alone
-    cannot catch this -- every count in every regen log was correct while the
+    A well-formed stream alternates [USER] -> [ASSISTANT]. One exception:
+    USER->USER across a sleep is a legal *suspension* -- a split-QA head's
+    document turn suspended before its question, sleep-marked at the seam,
+    resumed later behind a fresh user marker. USER->USER with no sleep means
+    a splice left a turn unanswered, and ASST->ASST (an answer whose question
+    is not in the stream) is malformed sleep or no sleep. Counts alone cannot
+    catch this -- every count in every regen log was correct while the
     splices were malformed -- so this also prints the tokens.
     """
-    kinds = {"USER->USER": (user_id, user_id), "ASST->ASST": (asst_id, asst_id)}
-    counts = dict.fromkeys(kinds, 0)
-    silent = dict.fromkeys(kinds, 0)
-    samples: dict[str, list[str]] = {k: [] for k in kinds}
+    counts = dict.fromkeys((SUSPENDED, UU_SILENT, AA), 0)
+    samples: dict[str, list[str]] = {k: [] for k in counts}
     sleep_samples: list[str] = []
     ok = 0
 
@@ -430,13 +475,15 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
         sl = sleeps.tolist()
         for a, b in zip(marks, marks[1:]):
             pair = (int(ids[a]), int(ids[b]))
-            kind = next((k for k, v in kinds.items() if v == pair), None)
-            if kind is None:
+            if pair not in ((user_id, user_id), (asst_id, asst_id)):
                 ok += 1
                 continue
-            counts[kind] += 1
             slept = any(a < s <= b for s in sl)
-            silent[kind] += not slept
+            if pair == (user_id, user_id):
+                kind = SUSPENDED if slept else UU_SILENT
+            else:
+                kind = AA
+            counts[kind] += 1
             if len(samples[kind]) < n_samples:
                 samples[kind].append(f"gap {b - a} tokens, sleep between: {slept}\n"
                                      f"    {tokenizer.decode(ids[max(0, b - ctx):b + ctx])!r}")
@@ -444,18 +491,19 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
             if len(sleep_samples) < n_samples:
                 sleep_samples.append(f"offset {s}\n    {tokenizer.decode(ids[max(0, s - ctx):s + ctx])!r}")
 
-    bad = sum(counts.values())
+    bad = counts[UU_SILENT] + counts[AA]
+    total = ok + sum(counts.values())
     n_chains = len(dataset["ids"])
-    print(f"\nstructural validation ({ok + bad} role transitions):")
+    print(f"\nstructural validation ({total} role transitions):")
     print(f"  marker ids: {n_marker[user_id]} user, {n_marker[asst_id]} assistant "
           f"(~{(n_marker[user_id] + n_marker[asst_id]) / max(n_chains, 1):.1f}/chain); "
           f"chains with no markers: {chains_no_marker}")
     print(f"  BPE-spelled markers (expected 0): "
           + ", ".join(f"{marker}: {n}" for marker, n in n_bpe.items()))
-    for kind in kinds:
-        print(f"  {kind}: {counts[kind]}  (of which silent -- no sleep between: {silent[kind]})")
+    for kind in counts:
+        print(f"  {kind}: {counts[kind]}")
     if bad:
-        print(f"  ** {bad} malformed ({100 * bad / (ok + bad):.1f}%) -- every one of these is a turn "
+        print(f"  ** {bad} malformed ({100 * bad / total:.1f}%) -- every one of these is a turn "
               f"whose addressee is not in the stream; expected value is 0 **")
     for kind, exs in samples.items():
         for i, ex in enumerate(exs):
@@ -486,7 +534,7 @@ def main() -> None:
     parser.add_argument("--split-min-part", type=int, default=256,
                         help="Minimum tokens on each side of a split-episode cut boundary")
     parser.add_argument("--split-qa-rate", type=float, default=None,
-                        help="Split rate for single-QA episodes (exactly two turns; the cut lands at the answer boundary -- read the document now, answer it episodes later). Default: --split-episode-rate")
+                        help="Split rate for single-QA episodes (exactly two turns). The cut lands at the question start recorded by prepare_data.py; the tail resumes behind a fresh [USER] marker with the question moved verbatim. Episodes without a recorded question never split. Default: --split-episode-rate")
     parser.add_argument("--split-gap-min", type=int, default=2,
                         help="Minimum episodes between a split head and its resumed tail")
     parser.add_argument("--split-gap-max", type=int, default=2,
@@ -516,11 +564,14 @@ def main() -> None:
 
     pool_ids: list[torch.Tensor] = []
     pool_masks: list[torch.Tensor] = []
+    pool_qoffs: list[int | None] = []
     for src in args.sources:
         data = torch.load(src, map_location="cpu", weights_only=True)
         pool_ids.extend(data["ids"])
         pool_masks.extend(data["masks"])
-        print(f"  {src}: +{len(data['ids'])} episodes")
+        qoffs = data.get("question_offsets") or [None] * len(data["ids"])
+        pool_qoffs.extend(qoffs)
+        print(f"  {src}: +{len(data['ids'])} episodes ({sum(q is not None for q in qoffs)} with question offsets)")
 
     sent_end_ids: set[int] = set()
     space_start_ids: set[int] = set()
@@ -535,6 +586,9 @@ def main() -> None:
         print(f"sentence-boundary vocab scan: {len(sent_end_ids)} sentence-end ids, "
               f"{len(space_start_ids)} space-start ids")
 
+    sep = tokenizer.encode(" ", add_special_tokens=False)
+    assert len(sep) == 1, f'expected " " to be a single token, got {sep}'
+
     dataset, stats = build_chains(
         pool_ids, pool_masks,
         encode=lambda strings: tokenizer(strings, add_special_tokens=False)["input_ids"],
@@ -544,6 +598,7 @@ def main() -> None:
         asst_id=tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
         args=args,
         sent_end_ids=sent_end_ids, space_start_ids=space_start_ids,
+        pool_qoffs=pool_qoffs, sep_id=sep[0],
     )
 
     torch.save(dataset, args.output)

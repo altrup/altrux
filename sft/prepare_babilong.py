@@ -47,9 +47,14 @@ def main() -> None:
                 if args.max_per_split:
                     ds = ds.select(range(min(args.max_per_split, len(ds))))
                 for ex in ds:
+                    # The question rides in its own field, not joined into
+                    # content: prepare_data.py appends it to the same user turn
+                    # (token-identical to the joined form) but records its
+                    # token offset, so prepare_chains.py's split-QA can move
+                    # the dataset's own question verbatim to the resumed tail.
                     record = {
                         "messages": [
-                            {"role": "user", "content": f"{ex['input']}\n{ex['question']}"},
+                            {"role": "user", "content": ex["input"], "question": ex["question"]},
                             {"role": "assistant", "content": ex["target"]},
                         ]
                     }
