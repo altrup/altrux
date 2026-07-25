@@ -71,6 +71,29 @@ MODEL_NAME=mamba2_2_7b_memory make data-memory
 
 `--max-len 100000` here is intentionally far above any real example (LongAlign-10k's longest is ~65k tokens) — it only controls what gets written to disk, which is nearly free. A too-tight `--max-len` truncates trailing turns, which can drop a conversation entirely if a long turn precedes the assistant turn (a `--max-len 16384` once dropped roughly half of LongAlign-10k this way). Bounding training-time RAM belongs in chunked/truncated-BPTT training (`Model.forward`'s `state` param — see `models/mamba2_2_7b_memory/README.md`), not in dropping data at prep time.
 
+### Retention data: cram blocks, needles, and the solvability filter
+
+The memory run's retention pressure comes from purpose-built slices, generated separately and consumed as separate `--data` artifacts (the file split *is* the slice tag). Design and rationale: `notes/DISCUSSION-20260724-next-run-plan.md` §1.3, `notes/DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md` §6–7.
+
+```bash
+make prepare-cram               # data/train_cram.pt + data/eval_cram.pt
+```
+
+`prepare_cram.py` streams Wikipedia, runs NER over each passage, and emits alternating-turn cram blocks:
+
+- `[USER]` carries a few fresh passages plus one *earlier* passage's sentence re-shown with its entity blanked (`____`, the only text this repo writes — everything else is dataset-authored); `[ASSISTANT]` is that sentence completed. The cue sits at a varied position inside the turn, with fresh passages after it, so "answer the last thing" is not a learnable policy.
+- **Entity substitution**: the blanked entity is swapped for a same-type entity (PER/ORG/LOC) from another article at word boundaries, so the association exists only in this block's passages and cannot be recalled from pretrained weights.
+- **Recall credit on the entity span only** — `recall_masks` (train.py's `--recall-weight`) is True on the entity tokens of the answer and nothing else. The rest of the completed sentence is copied from the visible cue and earns nothing.
+- **Gap curriculum, encoded data-side**: each block's ceiling is `--ceiling-start * (--ceiling-end/--ceiling-start)^p` where `p` is how far through the item supply the block starts, and each item's gap is drawn log-uniform in `[--gap-min, ceiling]`. Blocks are emitted in ceiling order, so *consuming the artifact in order is the curriculum*. Every item also records `gap`/`target_gap`/`ceiling`, so a consumer that shuffles can restore it by sorting blocks on `ceiling`.
+- Defaults `--gap-min 192` / `--ceiling-start 448` come from the measured SSM interference capacity (`notes/RESEARCH-20260724-local-diagnostics.md` §1: plain-backbone recall is dead by ~192 tokens of dense interference) and the 512-token BPTT window the trainer uses on cram slices.
+- **Held-out articles** (`--heldout-frac`, default 5%) never appear in `train_cram.pt`; their blocks go to `data/eval_cram.pt` and the title list is stored in both files as `heldout_articles`.
+- Masks are True on **every** token, carrier passages included (plan §1.4: weight 1.0 everywhere, no zero-on-carrier mask), including the role markers themselves — the run trains those two embedding rows and needs the model to learn to *emit* them.
+- No EOS is emitted inside a cram block; a block is one continuous stream of turns, not a sequence of conversation ends, and `--eos-weight 32` would otherwise put large weight on a token appearing once per short turn.
+
+NER runs through `transformers`' CoNLL-03 token classifier (`--ner-model`, default `dslim/bert-base-NER`), not spaCy as the plan proposed: spaCy publishes no wheels for this venv's Python 3.14, so it would mean a source build of thinc/blis plus the documented risk that any `uv` install clobbers the ROCm torch build. `transformers` is already a dependency and gives the PER/ORG/LOC types the same-type swap needs.
+
+Every generator run ends with a structural validation block: counts whose correct value is zero (malformed role adjacency, credited span text mismatch, the credited entity visible between its source and its cue, credit outside a recorded span) plus decoded text around the source, the cue and the credited answer span of a sample item. Read the sample before using the artifact — counts confirm the generator did what it was told, never that what it was told was right.
+
 ## Training
 
 ```bash

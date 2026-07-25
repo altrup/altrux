@@ -10,7 +10,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory prepare prepare-interference prepare-chains probe-recall train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -120,6 +120,16 @@ prepare-interference:
 prepare-chains:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u prepare_chains.py $(ARGS)
+
+# Wikipedia IMR cram blocks -> data/train_cram.pt (+ data/eval_cram.pt from
+# held-out articles): alternating turns of fresh passages and one earlier
+# passage's sentence re-shown with its NER entity blanked, answered by the
+# same sentence completed. Gap curriculum encoded in emission order; recall
+# credit on the entity span only. Streams Wikipedia and runs a NER pass, so
+# this one takes a while -- see sft/README.md's data-generation section.
+prepare-cram:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u prepare_cram.py $(ARGS)
 
 # Long-gap recall probe against the latest checkpoint: states a random code,
 # runs thousands of filler tokens, queries it back, and compares the code's
