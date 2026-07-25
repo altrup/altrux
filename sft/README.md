@@ -92,6 +92,19 @@ make prepare-cram               # data/train_cram.pt + data/eval_cram.pt
 
 NER runs through `transformers`' CoNLL-03 token classifier (`--ner-model`, default `dslim/bert-base-NER`), not spaCy as the plan proposed: spaCy publishes no wheels for this venv's Python 3.14, so it would mean a source build of thinc/blis plus the documented risk that any `uv` install clobbers the ROCm torch build. `transformers` is already a dependency and gives the PER/ORG/LOC types the same-type swap needs.
 
+```bash
+make prepare-needles            # data/train_needles.pt + data/eval_needles.pt
+```
+
+`prepare_needles.py` is the RMT-proven needle form under the identical curriculum and block assembly (it calls `prepare_cram.build_blocks`; only the items differ): the source is a bAbI story from `RMT-team/babilong`'s `0k` config — the task text with no filler, so the gap is ours to control rather than the benchmark's — the cue is the dataset's own question, and the credited answer is its own target. Wikipedia passages fill the gap.
+
+Two deliberate differences from the cram slice, both forced by bAbI's six-name vocabulary:
+
+- **One story per block** (`--max-items-per-block 1`). A second story in the same block re-states where the apple is, which silently invalidates the first question's target. This was visible only in the decoded sample; the counts were all correct.
+- **`--allow-repeated-credit`**: a target like `kitchen` recurs across stories by construction, while the binding the question asks about does not, so the string-uniqueness rule that protects fabricated cram entities would discard the whole slice. Test B of the filter decides solvability here instead.
+
+The filler pool wraps rather than running out, and both generators report how many times it was cycled — if that number is far above 1, stream more articles (`--articles`), because one needle per block at long gaps consumes a lot of interference.
+
 Every generator run ends with a structural validation block: counts whose correct value is zero (malformed role adjacency, credited span text mismatch, the credited entity visible between its source and its cue, credit outside a recorded span) plus decoded text around the source, the cue and the credited answer span of a sample item. Read the sample before using the artifact — counts confirm the generator did what it was told, never that what it was told was right.
 
 ## Training

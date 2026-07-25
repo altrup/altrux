@@ -69,7 +69,7 @@ def _args(**overrides):
     defaults = dict(
         seed=0, gap_min=40, ceiling_start=80, ceiling_end=400,
         block_gap_ratio=4, min_block_tokens=400, max_block_tokens=8000,
-        max_tail_units=2, item_rate=1.0, max_pending=32,
+        max_tail_units=2, item_rate=1.0, max_pending=32, max_items_per_block=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -287,6 +287,16 @@ def test_make_item_declines_without_a_same_type_replacement():
     text = "The delegates met in Vienna for a week of talks about the treaty and its terms."
     ents = [{"text": "Vienna", "label": "LOC", "start": text.index("Vienna"), "end": text.index("Vienna") + 6}]
     assert make_item(_passage(text), ents, {"LOC": ["Vienna"]}, _Rng(), min_sentence_words=6) is None
+
+
+def test_one_item_per_block_keeps_a_single_source_in_the_block():
+    dataset, _ = _build(max_items_per_block=1)
+    assert len(dataset["ids"]) > 3
+    for ids, block in zip(dataset["ids"], dataset["items"]):
+        assert len(block) == 1
+        # No second item source may ride along as carrier either -- it would
+        # answer the block's own question.
+        assert _Tok().decode(ids).count("The regional capital is") == 3  # source, cue, answer
 
 
 def test_needle_style_items_with_a_whole_answer_span_still_build():

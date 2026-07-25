@@ -221,21 +221,32 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
         metas: list[dict] = []
         pending: list[dict] = []
 
+        cap = getattr(args, "max_items_per_block", 0)
+        introduced = 0
+
+        def can_take_item() -> bool:
+            return ip < len(resolved) and len(pending) < args.max_pending and not (cap and introduced >= cap)
+
         def can_emit() -> bool:
-            return (ip < len(resolved) and len(pending) < args.max_pending) or fp < len(order)
+            return can_take_item() or bool(order)
 
         def next_unit():
-            nonlocal ip, fp
-            can_item = ip < len(resolved) and len(pending) < args.max_pending
-            can_filler = fp < len(order)
+            nonlocal ip, fp, introduced
+            can_item = can_take_item()
+            can_filler = bool(order)
             if can_item and (not can_filler or rng.random() < args.item_rate):
                 ip += 1
+                introduced += 1
                 return "item", resolved[ip - 1]
             if can_filler:
+                # The filler pool wraps rather than running out: exhausting it
+                # would silently cut the artifact short of its items. The cycle
+                # count in the summary says whether to stream more articles.
                 fp += 1
-                return "filler", enc[order[fp - 1]]
+                return "filler", enc[order[(fp - 1) % len(order)]]
             if can_item:
                 ip += 1
+                introduced += 1
                 return "item", resolved[ip - 1]
             return None
 
@@ -297,8 +308,6 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
             turn += [asst_id, sep_id] + answer_ids
             s, e = cue_item["_span"]
             span_start = answer_start + 2 + s
-            n_buried += cue_item["cue_end"] < answer_start
-
             ids += turn
             recall += [False] * (len(ids) - len(recall))
             for i in range(span_start, answer_start + 2 + e):
@@ -312,6 +321,8 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
                 "credit_text": cue_item["answer"][cue_item["span"][0]:cue_item["span"][1]],
                 **cue_item["meta"],
             })
+            if cap and len(metas) >= cap:
+                break
 
         if not metas:
             break
@@ -325,11 +336,12 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
             span = ids_t[it["span_start"]:it["span_end"]]
             stray = [at for at in _find(ids_t, span)
                      if at != it["span_start"] and not (it["source_start"] <= at < it["source_end"])]
-            if stray:
+            if stray and not getattr(args, "allow_repeated_credit", False):
                 recall_t[it["span_start"]:it["span_end"]] = False
                 n_leaked += 1
             else:
                 kept.append(it)
+                n_buried += it["cue_end"] < it["answer_start"]
         metas = kept
         if not metas:
             continue
@@ -357,6 +369,7 @@ def build_blocks(items: list[dict], fillers: list[str], encode, *,
         "n_span_unresolved": n_unresolved, "n_forced_cues": n_forced,
         "n_buried_cues": n_buried, "n_leaked_dropped": n_leaked,
         "n_tokens": sum(len(t) for t in out_ids),
+        "filler_cycles": fp / len(order) if order else 0.0,
     }
     return dataset, stats
 
@@ -372,7 +385,7 @@ def _find(ids: torch.Tensor, pat: torch.Tensor) -> list[int]:
 
 
 def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
-                    n_samples: int = 2, ctx: int = 220) -> dict:
+                    n_samples: int = 2, ctx: int = 220, unique_credit: bool = True) -> dict:
     """Structural invariants (every count below is correct only at zero) plus
     decoded text around one instance of each structural event, per the root
     CLAUDE.md rule. Counts confirm the generator did what it was told; only
@@ -413,9 +426,11 @@ def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
         report["credit_outside_recorded_spans"] += int((recall & ~credited).sum())
 
     gaps_sorted = sorted(gaps)
+    informational = set() if unique_credit else {"stray_entity_occurrences", "credit_visible_before_cue"}
     print(f"\nstructural validation ({len(gaps)} items in {len(dataset['ids'])} blocks):")
     for k, v in report.items():
-        print(f"  {k} (expected 0): {v}")
+        note = "informational: closed-vocabulary answers recur" if k in informational else "expected 0"
+        print(f"  {k} ({note}): {v}")
     if gaps_sorted:
         print(f"  gap tokens: min {gaps_sorted[0]}, median {gaps_sorted[len(gaps_sorted) // 2]}, "
               f"max {gaps_sorted[-1]}; {sum(g < 192 for g in gaps_sorted)} below the 192-token "
@@ -534,6 +549,15 @@ def add_block_args(parser) -> None:
                         help="Probability a fresh unit is a probed item source rather than plain filler")
     parser.add_argument("--max-pending", type=int, default=64,
                         help="Cap on items awaiting their cue at once")
+    parser.add_argument("--max-items-per-block", type=int, default=0,
+                        help="Close the block after this many answered items (0 = fill the budget). Needles "
+                             "use 1: bAbI stories share a six-name vocabulary, so a second story in the same "
+                             "block re-answers the first one's question and the credited target goes stale")
+    parser.add_argument("--allow-repeated-credit", action="store_true",
+                        help="Keep items whose credited answer also occurs elsewhere in their block. Off for "
+                             "cram (a fabricated entity that recurs really is readable without memory); on "
+                             "for needles, whose closed-vocabulary answers recur by construction while the "
+                             "binding the question asks about does not")
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--validate-samples", type=int, default=2)
 
@@ -552,9 +576,14 @@ def emit(dataset: dict, stats: dict, path: str, tokenizer, user_id: int, asst_id
           f"{stats['n_span_unresolved']} items dropped on span misalignment, "
           f"{stats['n_leaked_dropped']} on an entity visible elsewhere in the block, "
           f"{stats['n_forced_cues']} cues forced early, "
-          f"{stats['n_buried_cues']}/{stats['n_items']} cues followed by more passages in their turn")
+          f"{stats['n_buried_cues']}/{stats['n_items']} cues followed by more passages in their turn, "
+          f"filler pool used {stats['filler_cycles']:.1f}x (stream more articles if that is far above 1)")
+    unique_credit = not getattr(args, "allow_repeated_credit", False)
     report = validate_blocks(dataset, tokenizer, user_id=user_id, asst_id=asst_id,
-                             n_samples=args.validate_samples)
+                             n_samples=args.validate_samples, unique_credit=unique_credit)
+    if not unique_credit:
+        for k in ("stray_entity_occurrences", "credit_visible_before_cue"):
+            report.pop(k)
     if any(report.values()):
         print(f"  ** {sum(report.values())} structural violations -- expected 0 **")
 

@@ -131,6 +131,13 @@ prepare-cram:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u prepare_cram.py $(ARGS)
 
+# babilong-style needle blocks -> data/train_needles.pt (+ data/eval_needles.pt):
+# one bAbI story per block, Wikipedia passages as the interference in the gap,
+# same curriculum and recall weighting as the cram slice.
+prepare-needles:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u prepare_needles.py $(ARGS)
+
 # Long-gap recall probe against the latest checkpoint: states a random code,
 # runs thousands of filler tokens, queries it back, and compares the code's
 # log-prob with the neural memory intact vs ablated (fresh random M at query
