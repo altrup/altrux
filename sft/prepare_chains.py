@@ -164,7 +164,7 @@ def build_chains(
             for ep in chain:
                 ids = pool_ids[ep]
                 mp = args.split_min_part
-                if len(ids) >= 2 * mp:
+                if len(ids) > mp:
                     b = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
                     # Single-QA episodes (two turns: document then answer) cut
                     # at the question start recorded by prepare_data.py: head
@@ -176,8 +176,13 @@ def build_chains(
                     is_qa = len(b) == 2
                     rate = qa_rate if (is_qa and qa_rate is not None) else args.split_episode_rate
                     if is_qa:
+                        # --split-min-part constrains the head (the retained
+                        # document) only: a QA tail is the dataset's own
+                        # question + answer, ~10 tokens in babilong, and
+                        # requiring 256 of them silently disqualified every
+                        # episode in the pool.
                         qoff = pool_qoffs[ep]
-                        splittable = qoff is not None and sep_id is not None and mp <= qoff <= len(ids) - mp
+                        splittable = qoff is not None and sep_id is not None and mp <= qoff < len(ids)
                         mid = [qoff] if splittable else []
                     else:
                         mid = [x for x in b if mp <= x <= len(ids) - mp]
@@ -643,10 +648,13 @@ def main() -> None:
         f"{n_recall / 1e3:.1f}k recall-answer tokens"
     )
     print(f"max concurrent suspended episodes: {stats['max_pending']}")
-    validate(dataset, tokenizer,
-             tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
-             tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
-             n_samples=args.validate_samples)
+    bad = validate(dataset, tokenizer,
+                   tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
+                   tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
+                   n_samples=args.validate_samples)
+    if bad:
+        # The artifact is already on disk -- inspect it, then regenerate.
+        sys.exit(f"\n{args.output} has {bad} malformed role transitions; expected 0")
 
 
 if __name__ == "__main__":

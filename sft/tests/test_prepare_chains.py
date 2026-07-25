@@ -165,6 +165,22 @@ def test_split_qa_rate_splits_only_single_qa_episodes_with_metadata():
             assert ids[s].item() in (USER_ID, ASST_ID)
 
 
+def test_split_qa_ignores_min_part_on_the_dataset_authored_tail():
+    # babilong shape: a long document, then a question + answer of ~10 tokens
+    # total. --split-min-part constrains the head (the retained document);
+    # the tail's length is the dataset's, not ours to require.
+    doc, qf, af = 42, 40, 41
+    ids = [USER_ID] + [doc] * 299 + [qf] * 8 + [ASST_ID] + [af] * 2
+    mask = torch.tensor([False] * 308 + [True] * 2)
+    pool = [(torch.tensor(ids), mask) for _ in range(8)]
+    _, stats = _build(
+        pool=pool, pool_qoffs=[300] * 8, fact_rate=0.0,
+        split_qa_rate=1.0, split_min_part=256, min_wake=4, max_wake=4,
+        min_budget=10_000, max_budget=10_000,
+    )
+    assert stats["n_split"] == stats["n_split_qa"] == 8
+
+
 def test_qa_episodes_without_question_metadata_never_split():
     pool = [_qa_episode() for _ in range(10)]
     _, stats = _build(
