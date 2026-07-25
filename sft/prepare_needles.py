@@ -116,7 +116,10 @@ def main() -> None:
         print(f"\n== {name}: {len(sel)} needles, {len(fillers)} filler passages ==")
         dataset, stats = build_blocks(sel, fillers, encode, user_id=user_id, asst_id=asst_id,
                                       sep_id=sep[0], nl_id=nl[0], args=args)
-        emit(dataset, stats, path, tokenizer, user_id, asst_id, name, sorted(heldout_titles), args)
+        # Both halves of the reservation: held-out needles and the held-out
+        # articles their filler comes from.
+        emit(dataset, stats, path, tokenizer, user_id, asst_id, name,
+             sorted(heldout_titles | heldout_ids), args)
 
 
 if __name__ == "__main__":
