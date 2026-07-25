@@ -39,6 +39,14 @@ forward+backward call per chunk, so the GPU sees a (B, chunk_len) tensor at
 every step rather than (1, chunk_len). This is the primary mechanism for
 saturating GPU utilisation on large memory models like mamba2_2_7b_memory
 whose per-token step prevents parallel-scan kernel exploitation.
+
+Several dataset slices can train at once (--data, repeated), each with its
+own token share and its own chunk length / batch size / gradient-checkpoint
+setting -- long-gap recall supervision needs a BPTT window wide enough to
+reach the writes it should credit, which the cheaper conversational slices
+don't. Slices whose config matches share a batch and interleave
+example-by-example; slices whose config differs take turns in segments. See
+DataSpec and run_training.
 """
 
 import argparse
@@ -50,6 +58,7 @@ import os
 import shutil
 import sys
 import warnings
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -217,6 +226,196 @@ def dataset_fingerprint(data_path: str, n_examples: int) -> dict:
     return {"path": str(Path(data_path).resolve()), "n_examples": n_examples}
 
 
+@dataclass
+class DataSpec:
+    """One --data slice: where it lives, what share of the training token
+    budget it should receive, and the training config it runs under.
+
+    chunk_len/batch_size/grad_checkpoint are per-slice because the plan's
+    cram/needle slices need a chunk long enough for recall loss to reach the
+    writes that produced it (notes/DISCUSSION-20260724-next-run-plan.md 2.1)
+    while chains/ballast keep the cheaper locked constants. shuffle=False
+    consumes the artifact in the order it was written, which is how a
+    generator-side curriculum (the cram slices' growing gap ceiling) is
+    realized. lo/hi are this slice's half-open range in the concatenated
+    example lists (see load_datasets)."""
+
+    path: str
+    share: float | None = None
+    chunk_len: int | None = None
+    batch_size: int = 1
+    grad_checkpoint: bool = False
+    shuffle: bool = True
+    lo: int = 0
+    hi: int = 0
+
+    @property
+    def group_key(self) -> tuple:
+        return (self.chunk_len, self.batch_size, self.grad_checkpoint)
+
+
+_SPEC_BOOLS = {"1": True, "0": False, "true": True, "false": False, "yes": True, "no": False, "on": True, "off": False}
+
+
+def _spec_value(conv, key: str, value: str):
+    try:
+        return conv(value)
+    except (KeyError, ValueError):
+        raise ValueError(f"bad value for --data option {key}: {value!r}") from None
+
+
+def parse_data_spec(text: str, default_chunk_len: int | None, default_batch_size: int) -> DataSpec:
+    """Parses one --data argument: a path, optionally followed by
+    comma-separated key=value overrides, e.g.
+
+        data/train_cram.pt,share=35,chunk-len=512,batch-size=6,grad-checkpoint=1,shuffle=0
+
+    A bare path keeps the run-wide --chunk-len/--batch-size, so the
+    single-dataset form is unchanged."""
+    path, *fields = text.split(",")
+    spec = DataSpec(path=path.strip(), chunk_len=default_chunk_len, batch_size=default_batch_size)
+    for field in fields:
+        if not field.strip():
+            continue
+        key, sep, value = field.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep:
+            raise ValueError(f"--data option {key!r} in {text!r} needs a value (key=value)")
+        if key == "share":
+            spec.share = _spec_value(float, key, value)
+        elif key == "chunk-len":
+            spec.chunk_len = _spec_value(int, key, value)
+        elif key == "batch-size":
+            spec.batch_size = _spec_value(int, key, value)
+        elif key == "grad-checkpoint":
+            spec.grad_checkpoint = _spec_value(lambda v: _SPEC_BOOLS[v.lower()], key, value)
+        elif key == "shuffle":
+            spec.shuffle = _spec_value(lambda v: _SPEC_BOOLS[v.lower()], key, value)
+        else:
+            raise ValueError(
+                f"unknown --data option {key!r} in {text!r} "
+                "(known: share, chunk-len, batch-size, grad-checkpoint, shuffle)"
+            )
+    return spec
+
+
+def check_shares(specs: list[DataSpec]) -> None:
+    """A share is only meaningful relative to the other slices' shares, so a
+    partially-specified set has no defensible reading -- reject it rather
+    than mixing explicit shares with token-count-derived ones."""
+    given = [s.share is not None for s in specs]
+    if any(given) and not all(given):
+        missing = [s.path for s in specs if s.share is None]
+        raise ValueError(f"--data share= must be given for every dataset or none; missing for {missing}")
+    if any(s.share is not None and s.share <= 0 for s in specs):
+        raise ValueError("--data share= must be positive")
+
+
+def load_datasets(specs: list[DataSpec]):
+    """Loads every slice into one flat set of example lists, recording each
+    slice's index range on its spec. Slices that omit an optional field
+    (masks/recall_masks/sleep_positions) contribute Nones, so the flat lists
+    stay index-aligned with ids."""
+    ids: list[torch.Tensor] = []
+    masks: list = []
+    recall: list = []
+    sleeps: list = []
+    for spec in specs:
+        data = torch.load(spec.path, map_location="cpu", weights_only=False)
+        d_ids = data["ids"]
+        n = len(d_ids)
+        spec.lo, spec.hi = len(ids), len(ids) + n
+        ids.extend(d_ids)
+        masks.extend(data.get("masks") or [None] * n)
+        recall.extend(data.get("recall_masks") or [None] * n)
+        sleeps.extend(data.get("sleep_positions") or [None] * n)
+        print(f"  {spec.path}: {n} examples, {sum(int(t.numel()) for t in d_ids):,} tokens")
+    return ids, masks, recall, sleeps
+
+
+def group_specs(specs: list[DataSpec]) -> list[list[DataSpec]]:
+    """Slices that share a training config can share a batch, so they're
+    trained together as one group; slices whose config differs cannot and
+    are interleaved at segment granularity instead (see run_training)."""
+    groups: list[list[DataSpec]] = []
+    keys: list = []
+    for spec in specs:
+        if spec.group_key in keys:
+            groups[keys.index(spec.group_key)].append(spec)
+        else:
+            keys.append(spec.group_key)
+            groups.append([spec])
+    return groups
+
+
+def resolve_share(spec: DataSpec, train_ids: list[torch.Tensor]) -> float:
+    """A slice's share, defaulting to its own token count -- which makes an
+    unshared multi-dataset run one evenly-interleaved pass over everything."""
+    if spec.share is not None:
+        return spec.share
+    return max(1.0, float(sum(int(train_ids[i].numel()) for i in range(spec.lo, spec.hi))))
+
+
+def _pick_deficit(consumed: list[float], shares: list[float], available: list[int]) -> int:
+    """The slice furthest behind its share, by tokens. Used at both mixing
+    levels (examples within a group, segments across groups) so the realized
+    token mix tracks the requested shares from the first tokens onward
+    rather than only in aggregate."""
+    return min(available, key=lambda i: consumed[i] / shares[i])
+
+
+def build_order(specs: list[DataSpec], train_ids: list[torch.Tensor], epoch: int, keep) -> list[int]:
+    """The example order one config group consumes this epoch: each member
+    contributes its own examples in its own order (per-epoch shuffle unless
+    shuffle=0), and members are interleaved by token share."""
+    lists: list[list[int]] = []
+    for i, spec in enumerate(specs):
+        n = spec.hi - spec.lo
+        if spec.shuffle:
+            local = torch.randperm(n, generator=torch.Generator().manual_seed(epoch + 977 * i)).tolist()
+        else:
+            local = range(n)
+        lists.append([spec.lo + j for j in local if keep(spec.lo + j)])
+    if len(lists) == 1:
+        return lists[0]
+
+    shares = [resolve_share(s, train_ids) for s in specs]
+    ptrs = [0] * len(lists)
+    consumed = [0.0] * len(lists)
+    order: list[int] = []
+    while True:
+        available = [i for i in range(len(lists)) if ptrs[i] < len(lists[i])]
+        if not available:
+            return order
+        i = _pick_deficit(consumed, shares, available)
+        idx = lists[i][ptrs[i]]
+        ptrs[i] += 1
+        order.append(idx)
+        consumed[i] += int(train_ids[idx].numel())
+
+
+def recall_weight_at(step: int, start: float, end: float, ramp_steps: int, shape: str = "linear") -> float:
+    """The recall-mask loss multiplier at a given optimizer step. Ramped
+    rather than constant so the retention pressure doesn't peak while the
+    beta anneal is opening -- that window is where the gradient decides
+    whether the memory path is useful or gets suppressed
+    (notes/DISCUSSION-20260724-next-run-plan.md 2.2)."""
+    if ramp_steps <= 0 or step >= ramp_steps:
+        return end
+    frac = step / ramp_steps
+    if shape == "geometric":
+        return start * (end / start) ** frac
+    return start + (end - start) * frac
+
+
+def datasets_fingerprint(specs: list[DataSpec]):
+    """A single slice keeps the plain dict fingerprint older checkpoints
+    carry; several produce one per slice."""
+    if len(specs) == 1:
+        return dataset_fingerprint(specs[0].path, specs[0].hi - specs[0].lo)
+    return [dataset_fingerprint(s.path, s.hi - s.lo) for s in specs]
+
+
 def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -230,6 +429,9 @@ def save_checkpoint(
     batched_state=None,
     dataset_fingerprint: dict | None = None,
     memory_window: int | None = None,
+    group_idx: int | None = None,
+    group_ptrs: list[int] | None = None,
+    group_tokens: list[float] | None = None,
 ) -> Path:
     """Saves every trainable parameter -- not just LoRA adapters, since a
     model like mamba2_2_7b_memory has an additional full-gradient subsystem
@@ -266,7 +468,15 @@ def save_checkpoint(
     the backend never reads it back (inference always runs with
     memory_window=1 regardless of what a checkpoint was trained with -- see
     the design spec). Omitted from the JSON entirely when None, so
-    checkpoints for models without this concept are unaffected."""
+    checkpoints for models without this concept are unaffected.
+
+    group_idx/group_ptrs/group_tokens describe where a multi-dataset run is
+    in its mix: which config group was training, how far each group's
+    example order has been consumed, and how many tokens each has received
+    (the deficit the segment scheduler resumes against -- without it a
+    resumed run re-derives the mix from zero and over-serves whichever group
+    happened to be behind at the start). Omitted entirely for single-dataset
+    runs, whose next_ptr alone already says everything."""
     path = CKPT_DIR / f"epoch-{epoch + 1}" / f"step-{step}"
     # Written to a sibling temp dir and published with one atomic rename, so a
     # checkpoint is never observed half-written -- a crash mid-save would
@@ -295,6 +505,10 @@ def save_checkpoint(
         "total_tokens": total_tokens,
         "last_ckpt_tokens": total_tokens,
     }
+    if group_ptrs is not None:
+        state_dict["group_idx"] = group_idx
+        state_dict["group_ptrs"] = list(group_ptrs)
+        state_dict["group_tokens"] = list(group_tokens or [])
     if batched_state is not None:
         state_dict["state_batch_size"] = len(slots)
         torch.save(batched_state, tmp / "mem_state.pt")
@@ -415,6 +629,10 @@ def run_training(
     start_total_tokens: float,
     start_last_ckpt_tokens: float,
     start_full_state=None,
+    specs: list[DataSpec] | None = None,
+    start_group_idx: int = 0,
+    start_group_ptrs: list[int] | None = None,
+    start_group_tokens: list[float] | None = None,
 ) -> None:
     """Owns the entire training loop: slot-based batching, shuffling, chunk
     iteration, gradient-accumulation counting, checkpoint cadence/rotation
@@ -425,6 +643,18 @@ def run_training(
     loading the next. All B slots are processed in one batched
     forward+backward per chunk step.
 
+    `specs` names the dataset slices and their per-slice training config
+    (see DataSpec); omitted, the whole flat example list is treated as one
+    slice under the run-wide --chunk-len/--batch-size. Slices whose config
+    matches share a group and interleave example-by-example inside one
+    batch; slices whose config differs cannot share a batch at all, so
+    groups take turns in segments of --mix-segment-tokens, each segment
+    going to whichever group is furthest behind its token share. A segment
+    stops assigning new examples once it's over budget and then drains, so
+    switching costs a shrinking tail rather than a cut example. With one
+    group the budget is infinite and the loop is exactly the single-dataset
+    one.
+
     `args` needs: epochs, eos_weight, recall_weight, head_weight,
     head_tokens, accum_tokens, chunk_len,
     ckpt_every_tokens, keep_ckpts, keep_full_state, lora_rank, lora_alpha,
@@ -432,29 +662,25 @@ def run_training(
     defaults).
 
     start_full_state, if given, is a Path to a checkpoint's mem_state.pt
-    (already confirmed by main() to exist and match args.batch_size) --
-    loaded here, not by main(), and only for as long as it takes to seed
-    the resumed epoch's batched_state, so every slot continues exactly
-    instead of restarting its example from the beginning. Deliberately not
-    loaded eagerly in main() and handed over as an already-materialized
-    tensor: main()'s own stack frame stays alive for this entire (very
-    long) call, so any local variable it held bound to the loaded state
-    would pin that whole extra copy in VRAM for the whole run, alongside
-    the live copy batched_state diverges into after the first chunk's
-    detach() -- see rotate_full_state for how checkpoints keep this file
-    only for the most recent few."""
-    chunk_len = args.chunk_len or hooks.DEFAULT_CHUNK_LEN
-    batch_size = args.batch_size
-    # accum_steps (how many chunks to accumulate before an optimizer step)
-    # is derived from accum_tokens (how many real tokens per slot that
-    # should represent), not taken directly from the CLI -- a raw step
-    # count would silently mean a different amount of real training every
-    # time --chunk-len changes (same reasoning as --ckpt-every-tokens being
-    # token-based rather than step-based: see this module's docstring).
-    # chunk_len is fixed for the whole run, so this only needs computing
-    # once. Total tokens per optimizer step end up ~accum_tokens * batch_size
-    # (each slot contributes accum_tokens, not accum_tokens / batch_size).
-    accum_steps = max(1, round(args.accum_tokens / chunk_len))
+    (already confirmed by main() to exist and match the resumed group's
+    batch size) -- loaded here, not by main(), and only for as long as it
+    takes to seed the resumed segment's batched_state, so every slot
+    continues exactly instead of restarting its example from the beginning.
+    Deliberately not loaded eagerly in main() and handed over as an
+    already-materialized tensor: main()'s own stack frame stays alive for
+    this entire (very long) call, so any local variable it held bound to
+    the loaded state would pin that whole extra copy in VRAM for the whole
+    run, alongside the live copy batched_state diverges into after the
+    first chunk's detach() -- see rotate_full_state for how checkpoints keep
+    this file only for the most recent few."""
+    if specs is None:
+        specs = [DataSpec(path=str(args.data), chunk_len=args.chunk_len,
+                          batch_size=args.batch_size, lo=0, hi=len(train_ids))]
+    for spec in specs:
+        if spec.chunk_len is None:
+            spec.chunk_len = hooks.DEFAULT_CHUNK_LEN
+    groups = group_specs(specs)
+    data_fp = datasets_fingerprint(specs)
     # memory_window (models that define set_memory_window only -- currently
     # just mamba2_2_7b_memory) decouples how often that model's memory
     # subsystem consolidates a write from chunk_len's own VRAM/BPTT-window
@@ -462,15 +688,19 @@ def run_training(
     # model.py and the design spec at docs/superpowers/specs/2026-07-02-
     # chunked-memory-injection-design.md. A window can't span across
     # forward() calls (each call is exactly one chunk_len-token chunk), so
-    # chunk_len must be an exact multiple of it -- enforced here rather than
-    # left to fail deep inside forward() with a less obvious error.
+    # every slice's chunk_len must be an exact multiple of it -- enforced
+    # here rather than left to fail deep inside forward() with a less
+    # obvious error.
     set_memory_window_fn = getattr(model, "set_memory_window", None)
+    memory_window = None
     if set_memory_window_fn is not None:
         memory_window = getattr(args, "memory_window", None) or getattr(hooks, "DEFAULT_MEMORY_WINDOW", 1)
-        if chunk_len % memory_window != 0:
-            raise ValueError(
-                f"--chunk-len ({chunk_len}) must be an exact multiple of --memory-window ({memory_window})"
-            )
+        for spec in specs:
+            if spec.chunk_len % memory_window != 0:
+                raise ValueError(
+                    f"chunk-len ({spec.chunk_len}, for {spec.path}) must be an exact multiple "
+                    f"of --memory-window ({memory_window})"
+                )
         set_memory_window_fn(memory_window)
     extra_log_fn = getattr(hooks, "extra_log", None)
     chunk_extra_log_fn = getattr(hooks, "chunk_extra_log", None)
@@ -478,9 +708,19 @@ def run_training(
     reset_slot_fn = getattr(hooks, "reset_slot", None)
     sleep_slot_fn = getattr(hooks, "sleep_slot", None)
     init_state_fn = getattr(hooks, "init_state", None)
+    set_grad_ckpt_fn = getattr(hooks, "set_grad_checkpoint", None)
+    if set_grad_ckpt_fn is None and any(s.grad_checkpoint for s in specs):
+        print(
+            f"warning: grad-checkpoint requested for {[s.path for s in specs if s.grad_checkpoint]} "
+            f"but {MODEL_NAME}'s train_hooks defines no set_grad_checkpoint -- ignored"
+        )
 
-    n = len(train_ids)
-    data_fp = dataset_fingerprint(args.data, n)
+    recall_end = args.recall_weight
+    recall_start = getattr(args, "recall_ramp_start", 1.0)
+    recall_ramp_steps = getattr(args, "recall_ramp_steps", 0)
+    recall_ramp_shape = getattr(args, "recall_ramp_shape", "linear")
+    segment_budget = math.inf if len(groups) == 1 else getattr(args, "mix_segment_tokens", 1_000_000)
+
     global_step = start_step
     total_tokens = start_total_tokens
     last_ckpt_tokens = start_last_ckpt_tokens
@@ -511,30 +751,72 @@ def run_training(
     set_lr(global_step)
 
     trained_any = False
+    orders: list[list[int]] = []
+    ptrs: list[int] = []
+    group_tokens: list[float] = []
+    final_save: dict = {}
 
-    for epoch in range(start_epoch, args.epochs):
-        # deterministic shuffle per epoch so resume can reproduce the same order
-        order = torch.randperm(n, generator=torch.Generator().manual_seed(epoch)).tolist()
-
-        # Pre-filter: skip examples that are too short, too long, or fully masked.
-        valid_order = [
-            idx for idx in order
-            if train_ids[idx].numel() >= 2
+    def keep(idx: int) -> bool:
+        """Examples too short, too long, or fully masked are dropped."""
+        return (
+            train_ids[idx].numel() >= 2
             and train_ids[idx].numel() <= args.max_len
             and (train_masks[idx] is None or train_masks[idx].any())
-        ]
-        n_valid = len(valid_order)
-        if n_valid == 0:
-            continue
+        )
 
-        skip = start_next_ptr if epoch == start_epoch else 0
-        next_ptr = skip
+    def run_segment(gi: int, epoch: int, budget: float, resume_slot_states, resume_full_state) -> None:
+        """Trains one config group for up to `budget` tokens, continuing
+        that group's example order from ptrs[gi]."""
+        nonlocal global_step, total_tokens, last_ckpt_tokens, trained_any
+
+        group = groups[gi]
+        cfg = group[0]
+        chunk_len = cfg.chunk_len
+        batch_size = cfg.batch_size
+        # accum_steps (how many chunks to accumulate before an optimizer
+        # step) is derived from accum_tokens (how many real tokens per slot
+        # that should represent), not taken directly from the CLI -- a raw
+        # step count would silently mean a different amount of real training
+        # every time chunk_len changes (same reasoning as
+        # --ckpt-every-tokens being token-based rather than step-based: see
+        # this module's docstring), which now includes changing between
+        # slices. Total tokens per optimizer step end up ~accum_tokens *
+        # batch_size (each slot contributes accum_tokens, not accum_tokens /
+        # batch_size).
+        accum_steps = max(1, round(args.accum_tokens / chunk_len))
+        if set_grad_ckpt_fn is not None:
+            set_grad_ckpt_fn(model, cfg.grad_checkpoint)
+
+        order = orders[gi]
+        n_valid = len(order)
+        next_ptr = ptrs[gi]
+        segment_tokens = 0.0
+        base_tokens = group_tokens[gi]
+
+        def group_state() -> dict:
+            if len(groups) == 1:
+                return {}
+            return {
+                "group_idx": gi,
+                "group_ptrs": [next_ptr if i == gi else p for i, p in enumerate(ptrs)],
+                "group_tokens": [base_tokens + segment_tokens if i == gi else t
+                                 for i, t in enumerate(group_tokens)],
+            }
+
+        if len(groups) > 1:
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(
+                f"[{ts}]  segment: {', '.join(s.path for s in group)}  "
+                f"chunk_len {chunk_len}  batch {batch_size}  "
+                f"grad_ckpt {'on' if cfg.grad_checkpoint else 'off'}  "
+                f"examples {next_ptr}/{n_valid}  budget {budget:,.0f} tok"
+            )
 
         # Assign initial examples to slots.
         slots: list[_Slot | None] = []
         for b in range(batch_size):
             if next_ptr < n_valid:
-                idx = valid_order[next_ptr]
+                idx = order[next_ptr]
                 next_ptr += 1
                 ids = train_ids[idx].to(device)
                 mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
@@ -544,9 +826,10 @@ def run_training(
                 slots.append(None)
 
         if all(s is None for s in slots):
-            continue
+            ptrs[gi] = next_ptr
+            return
 
-        # Whether this epoch will resume from an exactly-saved internal
+        # Whether this segment will resume from an exactly-saved internal
         # state (mem_state.pt) -- if so, initializing a fresh batched state
         # below would just be immediately discarded in favor of it, and for
         # a model with a sizeable per-layer/per-slot state (e.g.
@@ -555,9 +838,7 @@ def run_training(
         # is already tightest (model + optimizer + mem_state.pt have all
         # just landed on the GPU) -- exactly the moment this project's dev
         # GPU has been observed to OOM. Skip it entirely on this path.
-        use_full_state = (
-            epoch == start_epoch and start_slot_states is not None and start_full_state is not None
-        )
+        use_full_state = resume_slot_states is not None and resume_full_state is not None
 
         # Initialize batched model state (batch_size slots).
         if use_full_state:
@@ -567,8 +848,8 @@ def run_training(
             # holding it alive is batched_state itself, exactly like a
             # freshly-initialized state, so it's collected the same way
             # once the first chunk's detach() replaces it.
-            batched_state = torch.load(start_full_state, map_location=device, weights_only=False)
-            del start_full_state
+            batched_state = torch.load(resume_full_state, map_location=device, weights_only=False)
+            del resume_full_state
         elif init_state_fn is not None:
             batched_state = init_state_fn(model, batch_size, device)
         else:
@@ -577,13 +858,12 @@ def run_training(
         # On resume: restore each slot's example/position from the checkpoint
         # first -- needed regardless of how (or whether) internal state is
         # recovered below.
-        if epoch == start_epoch and start_slot_states is not None:
-            for b, saved in enumerate(start_slot_states):
+        if resume_slot_states is not None:
+            for b, saved in enumerate(resume_slot_states):
                 if saved is None or b >= len(slots) or slots[b] is None:
                     continue
                 example_idx, pos = saved
-                idx_in_order = next((i for i, v in enumerate(valid_order) if v == example_idx), None)
-                if idx_in_order is None:
+                if example_idx not in order:
                     continue  # example was filtered out -- start slot fresh
                 ids = train_ids[example_idx].to(device)
                 mask = train_masks[example_idx].to(device) if train_masks[example_idx] is not None else None
@@ -625,6 +905,8 @@ def run_training(
         prev_n_lines = 0
 
         while any(s is not None for s in slots):
+            recall_w = recall_weight_at(global_step, recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
+
             # Build the batched chunk: gather next chunk_len tokens from each slot.
             batch_inputs: list[torch.Tensor] = []
             batch_targets: list[torch.Tensor] = []
@@ -675,11 +957,11 @@ def run_training(
                             device=device, dtype=torch.float32,
                         )
                         wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(min=0.0)
-                    if slot.recall is not None and args.recall_weight != 1.0:
+                    if slot.recall is not None and recall_w != 1.0:
                         rm = slot.recall[slot.pos + 1:end + 1]
                         if actual < chunk_len:
                             rm = F.pad(rm, (0, chunk_len - actual))
-                        wt = torch.where(rm, wt * args.recall_weight, wt)
+                        wt = torch.where(rm, wt * recall_w, wt)
                     batch_inputs.append(inp)
                     batch_targets.append(tgt)
                     batch_weights.append(wt)
@@ -741,6 +1023,11 @@ def run_training(
                         model, chunk_extra_log_fn, slots, chunk_actual_lens, loss_sum, weight_sum, prev_n_lines
                     )
 
+            # The segment/mix budget counts tokens fed, finite or not -- it
+            # schedules work rather than accounting for training, and a
+            # segment whose chunks all came back non-finite still has to end.
+            segment_tokens += sum(chunk_actual_lens)
+
             batched_state = batched_state.detach() if batched_state is not None else None
 
             if chunk_was_non_finite:
@@ -797,13 +1084,15 @@ def run_training(
                         slots[b].pos = slots[b].seqlen
 
             # Advance slot positions; assign next example to any that finished.
+            # A slot goes idle instead once the segment is over budget, so
+            # the group hands over after a drain rather than mid-example.
             for b, slot in enumerate(slots):
                 if slot is None:
                     continue
                 slot.pos += chunk_actual_lens[b]
                 if slot.is_done():
-                    if next_ptr < n_valid:
-                        idx = valid_order[next_ptr]
+                    if next_ptr < n_valid and segment_tokens < budget:
+                        idx = order[next_ptr]
                         next_ptr += 1
                         ids = train_ids[idx].to(device)
                         mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
@@ -821,10 +1110,6 @@ def run_training(
                 if chunk_extra_log_fn is not None:
                     _clear_live(prev_n_lines)
                     prev_n_lines = 0
-
-                if accum_count == 0:
-                    window_loss_sum = window_tokens = 0.0
-                    continue
 
                 for p in trainable_params:
                     if p.grad is not None:
@@ -844,7 +1129,8 @@ def run_training(
                 if on_step_fn is not None:
                     on_step_fn(model, global_step)
 
-                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}")
+                ramping = f"  recall_w {recall_w:.2f}" if recall_w != recall_end else ""
+                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}{ramping}")
                 if extra_log_fn is not None:
                     line = extra_log_fn(model)
                     if line is not None:
@@ -862,7 +1148,8 @@ def run_training(
                         total_tokens, args.lora_rank, args.lora_alpha,
                         batched_state=batched_state if args.keep_full_state > 0 else None,
                         dataset_fingerprint=data_fp,
-                        memory_window=memory_window if set_memory_window_fn is not None else None,
+                        memory_window=memory_window,
+                        **group_state(),
                     )
                     last_ckpt_tokens = total_tokens
                     rotate_checkpoints(args.keep_ckpts, epoch)
@@ -873,7 +1160,9 @@ def run_training(
         if chunk_extra_log_fn is not None:
             _clear_live(prev_n_lines)
 
-        # Step on any remaining accumulated gradient at epoch end.
+        # Step on any remaining accumulated gradient before handing the
+        # batch over to the next segment, whose slots and chunk length are
+        # different ones.
         if accum_count > 0:
             for p in trainable_params:
                 if p.grad is not None:
@@ -882,20 +1171,60 @@ def run_training(
             optimizer.step()
             optimizer.zero_grad()
             global_step += 1
-            accum_count = 0
+            set_lr(global_step)
+            if on_step_fn is not None:
+                on_step_fn(model, global_step)
+
+        ptrs[gi] = next_ptr
+        group_tokens[gi] = base_tokens + segment_tokens
+        final_save.update(epoch=epoch, slots=slots, next_ptr=next_ptr,
+                          batched_state=batched_state, group_state=group_state())
+
+    for epoch in range(start_epoch, args.epochs):
+        orders = [build_order(g, train_ids, epoch, keep) for g in groups]
+        shares = [sum(resolve_share(s, train_ids) for s in g) for g in groups]
+        ptrs = [0] * len(groups)
+        group_tokens = [0.0] * len(groups)
+
+        resume_slot_states = None
+        resume_full_state = None
+        resume_group = None
+        if epoch == start_epoch and start_slot_states is not None:
+            resume_slot_states = start_slot_states
+            resume_full_state = start_full_state
+            resume_group = min(start_group_idx, len(groups) - 1)
+            if start_group_ptrs is not None and len(start_group_ptrs) == len(groups):
+                ptrs = list(start_group_ptrs)
+                group_tokens = list(start_group_tokens or [0.0] * len(groups))
+            else:
+                ptrs[resume_group] = start_next_ptr
+        elif epoch == start_epoch:
+            ptrs[min(start_group_idx, len(groups) - 1)] = start_next_ptr
+
+        while any(ptrs[i] < len(orders[i]) for i in range(len(groups))):
+            available = [i for i in range(len(groups)) if ptrs[i] < len(orders[i])]
+            if resume_group is not None and resume_group in available:
+                gi = resume_group
+            else:
+                # The resumed group is already finished, so its saved slot
+                # positions have nothing to restore into.
+                gi, resume_slot_states, resume_full_state = _pick_deficit(group_tokens, shares, available), None, None
+            run_segment(gi, epoch, segment_budget, resume_slot_states, resume_full_state)
+            resume_slot_states = resume_full_state = resume_group = None
 
     if not trained_any:
         print("nothing to train -- already at or past the requested epochs. Pass a larger --epochs to continue.")
         return
 
     path = save_checkpoint(
-        model, optimizer, global_step, epoch, slots, next_ptr,
+        model, optimizer, global_step, final_save["epoch"], final_save["slots"], final_save["next_ptr"],
         total_tokens, args.lora_rank, args.lora_alpha,
-        batched_state=batched_state if args.keep_full_state > 0 else None,
+        batched_state=final_save["batched_state"] if args.keep_full_state > 0 else None,
         dataset_fingerprint=data_fp,
-        memory_window=memory_window if set_memory_window_fn is not None else None,
+        memory_window=memory_window,
+        **final_save["group_state"],
     )
-    rotate_checkpoints(args.keep_ckpts, epoch)
+    rotate_checkpoints(args.keep_ckpts, final_save["epoch"])
     rotate_full_state(args.keep_full_state)
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}]  done. final checkpoint: {path}")
@@ -905,7 +1234,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=f"SFT for {MODEL_NAME}")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
     parser.add_argument("--model", default=MODEL_ID, help="Model ID (informational; actual ID comes from models/ file)")
-    parser.add_argument("--data", default="data/train.pt", help="Tokenized dataset from prepare_data.py")
+    parser.add_argument("--data", action="append", default=None, help="Tokenized dataset from prepare_data.py (default: data/train.pt). Repeat to train on several slices at once; each may carry comma-separated per-slice overrides, e.g. --data 'data/train_cram.pt,share=35,chunk-len=512,batch-size=6,grad-checkpoint=1,shuffle=0'. share= is that slice's requested fraction of trained tokens (any units -- shares are normalised; give it for every slice or none, in which case each slice's own token count is used); chunk-len/batch-size/grad-checkpoint override --chunk-len/--batch-size/off for this slice only; shuffle=0 consumes the artifact in the order it was written, which is how a generator-side curriculum survives training.")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--warmup-steps", type=int, default=32, help="Linearly ramp the learning rate from 0 to --lr over this many optimizer steps, then hold at --lr -- 0 to disable. A pure function of global_step, so it resumes correctly with no extra checkpoint state.")
@@ -922,6 +1251,10 @@ def main() -> None:
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--eos-weight", type=float, default=5.0, help="Loss weight for EOS tokens (>1 to emphasise stopping)")
     parser.add_argument("--recall-weight", type=float, default=8.0, help="Loss weight multiplier for tokens marked True in the dataset's optional recall_masks tensors (prepare_chains.py/prepare_interference.py mark their spliced query-answer tokens) -- amplifies the recall training signal, which is otherwise a tiny fraction (~0.1%%) of all tokens. 1.0 reproduces the unweighted objective. No-op on datasets without recall_masks.")
+    parser.add_argument("--recall-ramp-start", type=float, default=1.0, help="Recall-mask multiplier at step 0, ramping to --recall-weight over --recall-ramp-steps. Equal to --recall-weight to disable the ramp.")
+    parser.add_argument("--recall-ramp-steps", type=int, default=32, help="Optimizer steps over which the recall multiplier ramps from --recall-ramp-start to --recall-weight, then holds. Keep this aligned with the model's beta-anneal window (mamba2_2_7b_memory's BETA_BIAS_ANNEAL_STEPS, 32): the anneal window is where the gradient decides whether the memory path is useful or gets suppressed, and a full-strength recall multiplier landing in it amplifies the loss spike rather than the signal. 0 disables the ramp (constant --recall-weight from step 0).")
+    parser.add_argument("--recall-ramp-shape", choices=("linear", "geometric"), default="linear", help="Interpolation between --recall-ramp-start and --recall-weight: linear in the multiplier, or linear in its log (geometric), which spends more of the window near the low end.")
+    parser.add_argument("--mix-segment-tokens", type=int, default=1_000_000, help="Tokens one config group trains for before the mix hands over to whichever group is furthest behind its share. Only applies when --data slices disagree on chunk-len/batch-size/grad-checkpoint (slices that agree share a batch and interleave example-by-example instead); with a single config the budget is unbounded and the loop is the single-dataset one. Smaller mixes more finely but pays a slot drain per handover.")
     parser.add_argument("--head-weight", type=float, default=4.0, help="Loss weight multiplier at the first token after each backbone reset (example start, and each sleep for datasets with sleep_positions), decaying linearly to 1.0 over --head-tokens -- emphasises the empty-state regime, which is otherwise underweighted because most tokens sit deep inside long examples. 1.0 reproduces the unweighted objective.")
     parser.add_argument("--head-tokens", type=int, default=1024, help="Length of the --head-weight linear decay ramp, in tokens from each backbone reset")
     parser.add_argument("--freeze-lora", action="store_true", help="Freeze the parametric LoRA weights and optimize only the memory subsystem (front_end + injection modules). Isolates whether the memory can carry recall on its own when the parametric path can no longer re-absorb the niche. Checkpoints stay complete (LoRA held at its resumed values).")
@@ -929,6 +1262,17 @@ def main() -> None:
     parser.add_argument("--detect-anomaly", action="store_true", help="Enable torch.autograd.set_detect_anomaly -- when a chunk's gradient comes back non-finite (the run's existing per-chunk check, see run_training), instead of just discarding it and continuing, autograd raises immediately with a traceback pointing at the exact forward op responsible, and the run stops there. Diagnostic only: real, not-small overhead (extra bookkeeping on every op during forward), and turns the normally-recoverable non-finite-gradient path into a hard stop -- use a dedicated short run to localize a real crash, not the long unattended one. See `make detect-anomaly`.")
     args = parser.parse_args()
     args.max_len = args.max_len if args.max_len is not None else math.inf
+    args.data = args.data or ["data/train.pt"]
+    if args.recall_ramp_shape == "geometric" and args.recall_ramp_start <= 0:
+        parser.error("--recall-ramp-start must be > 0 for a geometric ramp")
+    try:
+        specs = [parse_data_spec(text, args.chunk_len, args.batch_size) for text in args.data]
+        check_shares(specs)
+    except ValueError as e:
+        parser.error(str(e))
+    for spec in specs:
+        if spec.chunk_len is None:
+            spec.chunk_len = hooks.DEFAULT_CHUNK_LEN
     torch.manual_seed(args.seed)
     if args.detect_anomaly:
         torch.autograd.set_detect_anomaly(True)
@@ -968,6 +1312,10 @@ def main() -> None:
     start_last_ckpt_tokens = 0.0
     start_full_state = None
     start_dataset_fingerprint = None
+    start_group_idx = 0
+    start_group_ptrs = None
+    start_group_tokens = None
+    groups = group_specs(specs)
     if args.resume:
         ckpt = latest_checkpoint()
         if ckpt is not None:
@@ -1000,6 +1348,9 @@ def main() -> None:
                 start_total_tokens = state.get("total_tokens", 0.0)
                 start_last_ckpt_tokens = state.get("last_ckpt_tokens", 0.0)
                 state_batch_size = state.get("state_batch_size")
+                start_group_idx = state.get("group_idx", 0) or 0
+                start_group_ptrs = state.get("group_ptrs")
+                start_group_tokens = state.get("group_tokens")
                 # Legacy checkpoint format (single-example, no slot_states):
                 # map old example_idx/chunk_pos to a single-slot slot_states.
                 if start_slot_states is None:
@@ -1020,33 +1371,36 @@ def main() -> None:
             # them VRAM-resident for the whole run).
             mem_state_path = ckpt / "mem_state.pt"
             if mem_state_path.exists():
-                if state_batch_size == args.batch_size:
+                resume_batch_size = groups[min(start_group_idx, len(groups) - 1)][0].batch_size
+                if state_batch_size == resume_batch_size:
                     start_full_state = mem_state_path
                 else:
                     print(
                         f"mem_state.pt batch size ({state_batch_size}) doesn't match "
-                        f"--batch-size ({args.batch_size}) -- ignoring it, restarting mid-example slots from the beginning"
+                        f"the resumed slice's batch size ({resume_batch_size}) -- ignoring it, restarting mid-example slots from the beginning"
                     )
             print(f"resumed at step {start_step}, epoch {start_epoch + 1}, next_ptr {start_next_ptr}")
         else:
             print("no checkpoint found, starting fresh")
 
-    data = torch.load(args.data, map_location="cpu", weights_only=False)
-    all_ids: list[torch.Tensor] = data["ids"]
-    all_masks: list[torch.Tensor] = data.get("masks") or [None] * len(all_ids)
-    all_recall: list[torch.Tensor | None] = data.get("recall_masks") or [None] * len(all_ids)
-    if args.recall_weight != 1.0 and all(r is None for r in all_recall):
-        print(f"warning: --recall-weight {args.recall_weight} given but {args.data} has no recall_masks -- it will have no effect")
-    all_sleeps: list[torch.Tensor | None] = data.get("sleep_positions") or [None] * len(all_ids)
-    if any(s is not None and len(s) for s in all_sleeps) and getattr(hooks, "sleep_slot", None) is None:
-        print(f"warning: {args.data} has sleep_positions but {MODEL_NAME}'s train_hooks defines no sleep_slot -- sleeps will be ignored")
+    print(f"loading {len(specs)} dataset slice(s) ...")
+    train_ids, train_masks, train_recall, train_sleeps = load_datasets(specs)
+    if args.recall_weight != 1.0 and all(r is None for r in train_recall):
+        print(f"warning: --recall-weight {args.recall_weight} given but no slice has recall_masks -- it will have no effect")
+    if any(s is not None and len(s) for s in train_sleeps) and getattr(hooks, "sleep_slot", None) is None:
+        print(f"warning: a slice has sleep_positions but {MODEL_NAME}'s train_hooks defines no sleep_slot -- sleeps will be ignored")
 
-    train_ids, train_masks, train_recall, train_sleeps = all_ids, all_masks, all_recall, all_sleeps
     n = len(train_ids)
-    print(f"train: {n}  epochs: {args.epochs}  batch_size: {args.batch_size}")
+    print(f"train: {n}  epochs: {args.epochs}")
+    for group in groups:
+        cfg = group[0]
+        print(
+            f"  config group: {', '.join(s.path for s in group)}  chunk_len {cfg.chunk_len}  "
+            f"batch {cfg.batch_size}  grad_ckpt {'on' if cfg.grad_checkpoint else 'off'}"
+        )
 
     if args.resume and start_slot_states is not None:
-        current_fp = dataset_fingerprint(args.data, n)
+        current_fp = datasets_fingerprint(specs)
         discard = False
         if start_dataset_fingerprint is None:
             # Older checkpoint format, saved before dataset_fingerprint
@@ -1054,7 +1408,7 @@ def main() -> None:
             # ambiguous (could be the same dataset that was always in use,
             # or a swap that just happens to predate fingerprinting), so
             # ask rather than silently guessing either way.
-            print(f"resume: checkpoint has no dataset fingerprint (older format) -- current --data is {current_fp['path']} ({current_fp['n_examples']} examples)")
+            print(f"resume: checkpoint has no dataset fingerprint (older format) -- current --data is {current_fp}")
             try:
                 answer = input("Is this the same dataset the checkpoint was trained on? [Y/n] ").strip().lower()
             except EOFError:
@@ -1073,11 +1427,15 @@ def main() -> None:
             start_slot_states = None
             start_next_ptr = 0
             start_full_state = None
+            start_group_idx = 0
+            start_group_ptrs = None
+            start_group_tokens = None
 
     run_training(
         hooks, model, optimizer, trainable_params, train_ids, train_masks, train_recall, train_sleeps, device, args,
         start_epoch, start_slot_states, start_next_ptr, start_step, start_total_tokens, start_last_ckpt_tokens,
-        start_full_state,
+        start_full_state, specs=specs, start_group_idx=start_group_idx,
+        start_group_ptrs=start_group_ptrs, start_group_tokens=start_group_tokens,
     )
 
 
