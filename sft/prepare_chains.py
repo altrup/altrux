@@ -35,6 +35,11 @@ token budget, with three things layered in:
   episode in the same wake (no sleep between -- the SSM's legitimate job),
   or from beyond a sleep (answerable only through the neural memory).
 
+Only a `--sleep-chain-rate` fraction of chains carries any of that
+apparatus; the rest are plain multi-episode concatenations with silent
+joins. Chains are the deployment shape -- retention pressure belongs to the
+cram slices (notes/DISCUSSION-20260724-next-run-plan.md §1.3).
+
 Everything operates on token ids -- carrier conversations are never
 re-tokenized, only the short injected turns are (one batched call).
 Fact keys use the vocab-scan slice [1024, 2048), disjoint from
@@ -122,7 +127,18 @@ def build_chains(
             budget = sample_log_uniform(rng, args.min_budget, args.max_budget)
     if current:
         chains.append(current)
-    print(f"planned {len(chains)} chains from {len(order)} episodes")
+
+    # Retention pressure lives in the cram slices; chains are deployment
+    # shape, so only a fraction of them carry the engineered apparatus
+    # (sleeps, splits, fact blocks). The rest are plain concatenations with
+    # silent joins. Drawing nothing at rate 1.0 keeps the RNG stream --
+    # and so the output -- identical to an ungated run.
+    sleep_rate = getattr(args, "sleep_chain_rate", 1.0)
+    sleeping = ([True] * len(chains) if sleep_rate >= 1.0
+                else [rng.random() < sleep_rate for _ in chains])
+    n_sleep_chains = sum(sleeping)
+    print(f"planned {len(chains)} chains from {len(order)} episodes "
+          f"({n_sleep_chains} sleeping, {100 * n_sleep_chains / max(len(chains), 1):.1f}%)")
 
     # Interleaved continuations: split an eligible episode at a middle-third
     # turn boundary and resume its tail two episodes later, behind a forced
@@ -141,6 +157,8 @@ def build_chains(
     gap_max = getattr(args, "split_gap_max", 2)
     if getattr(args, "split_episode_rate", 0.0) > 0 or (qa_rate or 0.0) > 0:
         for ci, chain in enumerate(chains):
+            if not sleeping[ci]:
+                continue
             out: list[int] = []
             pending: list[tuple[int, int]] = []  # (due position in out, tail episode)
             for ep in chain:
@@ -208,7 +226,10 @@ def build_chains(
     plans = []  # per chain: (episode_idxs, inserts, sleep_offsets_presplice)
     n_blocks = n_facts_total = n_revised = n_mid_sleeps = n_sentence_sleeps = 0
     dist_counts = {"within_episode": 0, "cross_episode": 0, "cross_sleep": 0}
-    for chain in chains:
+    for chain, sleeps_on in zip(chains, sleeping):
+        if not sleeps_on:
+            plans.append((chain, [], []))
+            continue
         offsets = [0]
         for ep in chain:
             offsets.append(offsets[-1] + len(pool_ids[ep]))
@@ -418,7 +439,7 @@ def build_chains(
         "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
         "dist_counts": dist_counts, "n_split": n_split, "n_split_qa": n_split_qa,
         "n_mid_sleeps": n_mid_sleeps, "n_sentence_sleeps": n_sentence_sleeps,
-        "max_pending": max_pending,
+        "max_pending": max_pending, "n_sleep_chains": n_sleep_chains,
     }
     return dataset, stats
 
@@ -494,7 +515,10 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
     bad = counts[UU_SILENT] + counts[AA]
     total = ok + sum(counts.values())
     n_chains = len(dataset["ids"])
+    n_sleeping = sum(1 for s in dataset["sleep_positions"] if len(s))
     print(f"\nstructural validation ({total} role transitions):")
+    print(f"  chains carrying sleeps: {n_sleeping}/{n_chains} "
+          f"({100 * n_sleeping / max(n_chains, 1):.1f}%); the rest are plain concatenations")
     print(f"  marker ids: {n_marker[user_id]} user, {n_marker[asst_id]} assistant "
           f"(~{(n_marker[user_id] + n_marker[asst_id]) / max(n_chains, 1):.1f}/chain); "
           f"chains with no markers: {chains_no_marker}")
@@ -527,6 +551,8 @@ def main() -> None:
     parser.add_argument("--max-budget", type=int, default=130_000, help="Per-chain token budget, log-uniform upper bound")
     parser.add_argument("--min-wake", type=int, default=1, help="Minimum episodes per wake (between sleeps)")
     parser.add_argument("--max-wake", type=int, default=4, help="Maximum episodes per wake")
+    parser.add_argument("--sleep-chain-rate", type=float, default=0.1,
+                        help="Fraction of chains carrying the sleep apparatus at all (sleeps, splits, fact blocks). The rest are plain multi-episode concatenations with silent joins -- chains are deployment shape, retention pressure lives in the cram slices; 1.0 restores the fully-engineered dataset")
     parser.add_argument("--mid-sleep-rate", type=float, default=0.2,
                         help="Fraction of long episodes that get one mid-conversation sleep (the natural-continuation signal)")
     parser.add_argument("--split-episode-rate", type=float, default=0.0,
@@ -606,7 +632,10 @@ def main() -> None:
     n_sleep = sum(len(s) for s in dataset["sleep_positions"])
     n_recall = sum(int(r.sum()) for r in dataset["recall_masks"] if r is not None)
     print(
-        f"wrote {args.output}: {len(dataset['ids'])} chains, {total / 1e6:.1f}M tokens, "
+        f"wrote {args.output}: {len(dataset['ids'])} chains "
+        f"({stats['n_sleep_chains']} planned sleeping, "
+        f"{100 * stats['n_sleep_chains'] / max(len(dataset['ids']), 1):.1f}%), "
+        f"{total / 1e6:.1f}M tokens, "
         f"{n_sleep} sleeps ({stats['n_mid_sleeps']} mid-conversation, "
         f"{stats['n_sentence_sleeps']} sentence-boundary, {stats['n_split']} split-tail, "
         f"{stats['n_blocks']} fact blocks, {stats['n_facts']} facts, "

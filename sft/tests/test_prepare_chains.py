@@ -43,7 +43,7 @@ def _args(**overrides):
         split_qa_rate=None, split_gap_min=2, split_gap_max=2,
         sentence_sleep_rate=0.0,
         fact_rate=1.0, min_facts=2, max_facts=4, min_queries=1, max_queries=3,
-        revise_rate=0.5, cross_sleep_bias=0.0, seed=0,
+        revise_rate=0.5, cross_sleep_bias=0.0, sleep_chain_rate=1.0, seed=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -318,6 +318,57 @@ def test_validate_asserts_on_bpe_spelled_marker():
     dataset["ids"][0] = torch.cat([dataset["ids"][0], torch.tensor([7, 8, 10, 10])])
     with pytest.raises(AssertionError, match="BPE"):
         validate(dataset, _FakeTokenizer(), USER_ID, ASST_ID)
+
+
+def _all_machinery(**overrides):
+    """Every sleep/split/fact knob on, in a pool where each is eligible."""
+    pool = ([_qa_episode() for _ in range(24)]
+            + [_episode(24, 10) for _ in range(24)]
+            + [_single_qa_episode(12) for _ in range(24)])
+    return _build(
+        pool=pool, pool_qoffs=[QOFF] * 24 + [None] * 48,
+        mid_sleep_rate=1.0, mid_sleep_min_len=100, sentence_sleep_rate=1.0,
+        sent_end_ids={SENT_END}, space_start_ids={SPACE_START},
+        split_episode_rate=1.0, split_qa_rate=1.0, split_min_part=30,
+        fact_rate=1.0, min_wake=1, max_wake=1, min_budget=500, max_budget=500,
+        **overrides,
+    )
+
+
+def test_sleep_chain_rate_zero_leaves_plain_concatenations():
+    dataset, stats = _all_machinery(sleep_chain_rate=0.0)
+    assert stats["n_sleep_chains"] == 0
+    assert (stats["n_split"], stats["n_blocks"], stats["n_mid_sleeps"],
+            stats["n_sentence_sleeps"]) == (0, 0, 0, 0)
+    assert sum(stats["dist_counts"].values()) == 0
+    assert all(len(s) == 0 for s in dataset["sleep_positions"])
+    assert all(r is None for r in dataset["recall_masks"])
+    assert validate(dataset, _FakeTokenizer(), USER_ID, ASST_ID) == 0
+
+
+def test_sleep_chain_rate_one_keeps_every_mechanism():
+    dataset, stats = _all_machinery(sleep_chain_rate=1.0)
+    assert stats["n_sleep_chains"] == len(dataset["ids"])
+    assert stats["n_split"] > 0 and stats["n_split_qa"] > 0
+    assert stats["n_blocks"] > 0 and stats["n_mid_sleeps"] > 0 and stats["n_sentence_sleeps"] > 0
+    assert sum(len(s) for s in dataset["sleep_positions"]) > 0
+
+
+def test_sleep_chain_rate_gates_per_chain_and_is_reported():
+    dataset, stats = _all_machinery(sleep_chain_rate=0.5)
+    n_chains = len(dataset["ids"])
+    with_sleeps = [s for s in dataset["sleep_positions"] if len(s)]
+    assert 0 < len(with_sleeps) < n_chains, "both gated-on and gated-off chains present"
+    # min_wake=1 makes a sleep certain in every multi-episode gated chain, so
+    # the reported count is exactly the realized one.
+    assert stats["n_sleep_chains"] == len(with_sleeps)
+    assert 0.25 <= stats["n_sleep_chains"] / n_chains <= 0.75
+
+    quiet = {
+        "ids": [i for i, s in zip(dataset["ids"], dataset["sleep_positions"]) if not len(s)],
+        "sleep_positions": [s for s in dataset["sleep_positions"] if not len(s)],
+    }
+    assert validate(quiet, _FakeTokenizer(), USER_ID, ASST_ID) == 0
 
 
 def test_mid_sleeps_appear_inside_long_episodes():
