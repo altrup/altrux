@@ -309,6 +309,15 @@ Two modes on the trained model:
 6. Held-out-article discipline for all Wikipedia-derived eval items.
 7. Locality control (§6.5 of the prior note) — recall must not be bought
    with general-knowledge collapse, especially under entity substitution.
+8. **NaN watch on the box run** — local diagnostics
+   (`RESEARCH-20260724-local-diagnostics.md` §3) found fresh-random-M under
+   the trained write knobs goes non-finite at inference in ~1/3 of
+   fresh-state passes on the BX1 checkpoint. Every training sequence starts
+   from exactly that combination. First hours of the box run: watch
+   `GRAD_NORM` and `[nonfinite-write]` in the logs, and treat any
+   non-finite event as a stop-and-diagnose, not noise. If the new run
+   changes eta/theta/alpha dynamics, re-check before committing the full
+   budget.
 
 ## 7. Housekeeping
 
