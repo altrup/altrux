@@ -160,6 +160,13 @@ smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u smoke_test.py $(ARGS)
 
+# --data is repeatable, and each slice can carry its own token share and its
+# own chunk-len/batch-size/gradient-checkpointing. Quote each slice so the
+# commas survive the shell:
+#   make train ARGS="--data 'data/train_chains.pt,share=35' \
+#                    --data 'data/train_cram.pt,share=35,chunk-len=512,grad-checkpoint=1,shuffle=0'"
+# See sft/README.md's "Training on several dataset slices at once".
+#
 # train.py is generic across every model in models/ -- it dispatches to
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to
 # load the model, how to run forward+backward for one example). For
