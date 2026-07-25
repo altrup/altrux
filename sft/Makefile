@@ -25,18 +25,25 @@ sync:
 	fi
 
 test:
-	PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest tests ../models/tests
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest tests ../models/tests
 
+# --max-len far above any real conversation: ultrachat trains UNCAPPED (the
+# old 1024 cap only ever lived in a stale train.pt artifact; see
+# notes/DISCUSSION-20260724-next-run-plan.md 1.3) -- explicit here so the
+# no-cap intent is visible rather than riding on prepare_data.py's default.
 data:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python prepare_data.py \
 		--hf-dataset HuggingFaceH4/ultrachat_200k \
-		--max-examples 20000
+		--max-examples 20000 \
+		--max-len 100000
 
 # Long-context training data for mamba2_2_7b_memory: THUDM/LongAlign-10k
-# (real long multi-turn conversations) mixed with RMT-team/babilong (synthetic
-# needle-in-haystack recall QA, so the memory gates get genuine long-range
-# recall pressure, not just long text -- see models/mamba2_2_7b_memory/README.md).
+# (long-document carrier data: single-exchange episodes, one long document
+# turn and its answer -- NOT multi-turn conversation) mixed with
+# RMT-team/babilong (synthetic needle-in-haystack recall QA, so the memory
+# gates get genuine long-range recall pressure, not just long text -- see
+# models/mamba2_2_7b_memory/README.md).
 #
 # --max-len here is deliberately way above any real example (LongAlign-10k's
 # longest is ~65k tokens) -- this --max-len only controls what gets written to
