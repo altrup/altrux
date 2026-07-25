@@ -16,27 +16,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.common import build_tokenizer
 
-_model_mod = importlib.import_module(f"models.{os.getenv('MODEL_NAME', 'mamba2_780m')}")
-USER_OPEN = _model_mod.USER_OPEN
-ASST_OPEN = _model_mod.ASST_OPEN
-
 _worker_tokenizer = None
 _worker_max_len = None
+_worker_markers: tuple[str, str] | None = None
 
 
 def _worker_init(model_name: str, max_len: int) -> None:
-    global _worker_tokenizer, _worker_max_len
+    global _worker_tokenizer, _worker_max_len, _worker_markers
+    # Imported here, not at module top: importing a model package pulls in
+    # mamba_ssm, which needs a working GPU even to import -- keeping it lazy
+    # keeps format_conversation importable (and testable) without one.
     mod = importlib.import_module(f"models.{model_name}")
     _worker_tokenizer = build_tokenizer(mod)
     _worker_max_len = max_len
+    _worker_markers = (mod.USER_OPEN, mod.ASST_OPEN)
 
 
 def _worker_format(record: dict) -> tuple[list[int], list[bool]]:
-    return format_conversation(record.get("messages", []), _worker_tokenizer, _worker_max_len)
+    return format_conversation(record.get("messages", []), _worker_tokenizer, _worker_max_len, *_worker_markers)
 
 
 def format_conversation(
-    messages: list[dict], tokenizer, max_len: int
+    messages: list[dict], tokenizer, max_len: int, user_open: str, asst_open: str
 ) -> tuple[list[int], list[bool]]:
     ids: list[int] = []
     mask: list[bool] = []
@@ -46,11 +47,11 @@ def format_conversation(
         content = msg["content"]
 
         if role == "user":
-            text = USER_OPEN + " " + content + "\n"
+            text = user_open + " " + content + "\n"
             turn_ids = tokenizer.encode(text, add_special_tokens=False)
             turn_mask = [False] * len(turn_ids)
         elif role == "assistant":
-            text = ASST_OPEN + " " + content
+            text = asst_open + " " + content
             toks = tokenizer.encode(text, add_special_tokens=False)
             turn_ids = toks + [tokenizer.eos_token_id]
             # "train": false keeps the turn as context but excludes it from the
@@ -104,6 +105,7 @@ def main() -> None:
 
     records = iter_records(args)
     model_name = os.getenv("MODEL_NAME", "mamba2_780m")
+    model_mod = importlib.import_module(f"models.{model_name}")
 
     if args.workers > 1:
         with multiprocessing.Pool(
@@ -119,10 +121,12 @@ def main() -> None:
                 all_ids.append(torch.tensor(ids, dtype=torch.long))
                 all_masks.append(torch.tensor(mask, dtype=torch.bool))
     else:
-        tokenizer = build_tokenizer(_model_mod)
+        tokenizer = build_tokenizer(model_mod)
         for i, record in enumerate(records, 1):
             print(f"\r{i}/{len(records)}", end="", flush=True)
-            ids, mask = format_conversation(record.get("messages", []), tokenizer, args.max_len)
+            ids, mask = format_conversation(
+                record.get("messages", []), tokenizer, args.max_len, model_mod.USER_OPEN, model_mod.ASST_OPEN
+            )
             if not any(mask):
                 skipped += 1
                 continue

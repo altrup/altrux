@@ -8,11 +8,12 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from prepare_chains import build_chains
+from prepare_chains import build_chains, validate
 
 USER, ASST = "[U]", "[A]"
 USER_ID, ASST_ID = 1, 2
@@ -219,6 +220,38 @@ def test_sentence_sleep_rate_zero_is_a_noop():
     for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
         for s in sleeps.tolist():
             assert ids[s].item() in (USER_ID, ASST_ID)
+
+
+class _FakeTokenizer:
+    """Only what validate() touches: marker token names, BPE spellings of
+    those names, and decode. BPE spellings here are [7, 8] / [7, 9] -- token
+    ids the synthetic episode pool never produces."""
+
+    _bpe = {USER: [7, 8], ASST: [7, 9]}
+
+    def convert_ids_to_tokens(self, token_id: int) -> str:
+        return {USER_ID: USER, ASST_ID: ASST}[token_id]
+
+    def __call__(self, text: str, add_special_tokens: bool = True, split_special_tokens: bool = False):
+        assert split_special_tokens, "validate must bypass special-token matching to get the BPE spelling"
+        return {"input_ids": self._bpe[text]}
+
+    def decode(self, ids) -> str:
+        return " ".join(str(i) for i in ids.tolist())
+
+
+def test_validate_passes_on_clean_generator_output():
+    dataset, _ = _build(fact_rate=0.0)
+    assert validate(dataset, _FakeTokenizer(), USER_ID, ASST_ID) == 0
+
+
+def test_validate_asserts_on_bpe_spelled_marker():
+    dataset, _ = _build(fact_rate=0.0)
+    # Splice a BPE-spelled user marker into one chain, as if an episode had
+    # been tokenized without the special tokens registered.
+    dataset["ids"][0] = torch.cat([dataset["ids"][0], torch.tensor([7, 8, 10, 10])])
+    with pytest.raises(AssertionError, match="BPE"):
+        validate(dataset, _FakeTokenizer(), USER_ID, ASST_ID)
 
 
 def test_mid_sleeps_appear_inside_long_episodes():

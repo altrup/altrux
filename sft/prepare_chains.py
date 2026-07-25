@@ -401,7 +401,31 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
     sleep_samples: list[str] = []
     ok = 0
 
+    # The single special-token id is the only legal encoding of a role marker;
+    # its multi-token BPE spelling means an episode was tokenized without the
+    # special tokens registered (a stale pre-registration artifact).
+    bpe_spellings = {
+        tokenizer.convert_ids_to_tokens(mid): tokenizer(
+            tokenizer.convert_ids_to_tokens(mid), add_special_tokens=False, split_special_tokens=True
+        )["input_ids"]
+        for mid in (user_id, asst_id)
+    }
+    n_bpe = dict.fromkeys(bpe_spellings, 0)
+    n_marker = {user_id: 0, asst_id: 0}
+    chains_no_marker = 0
+
     for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
+        n_u, n_a = int((ids == user_id).sum()), int((ids == asst_id).sum())
+        n_marker[user_id] += n_u
+        n_marker[asst_id] += n_a
+        chains_no_marker += n_u + n_a == 0
+        for marker, pat in bpe_spellings.items():
+            if len(ids) < len(pat):
+                continue
+            hit = ids[: len(ids) - len(pat) + 1] == pat[0]
+            for j in range(1, len(pat)):
+                hit &= ids[j : len(ids) - len(pat) + 1 + j] == pat[j]
+            n_bpe[marker] += int(hit.sum())
         marks = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
         sl = sleeps.tolist()
         for a, b in zip(marks, marks[1:]):
@@ -421,7 +445,13 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
                 sleep_samples.append(f"offset {s}\n    {tokenizer.decode(ids[max(0, s - ctx):s + ctx])!r}")
 
     bad = sum(counts.values())
+    n_chains = len(dataset["ids"])
     print(f"\nstructural validation ({ok + bad} role transitions):")
+    print(f"  marker ids: {n_marker[user_id]} user, {n_marker[asst_id]} assistant "
+          f"(~{(n_marker[user_id] + n_marker[asst_id]) / max(n_chains, 1):.1f}/chain); "
+          f"chains with no markers: {chains_no_marker}")
+    print(f"  BPE-spelled markers (expected 0): "
+          + ", ".join(f"{marker}: {n}" for marker, n in n_bpe.items()))
     for kind in kinds:
         print(f"  {kind}: {counts[kind]}  (of which silent -- no sleep between: {silent[kind]})")
     if bad:
@@ -432,6 +462,11 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
             print(f"\n  [{kind} sample {i + 1}] {ex}")
     for i, ex in enumerate(sleep_samples):
         print(f"\n  [sleep sample {i + 1}] {ex}")
+    assert not any(n_bpe.values()), (
+        f"BPE-spelled role markers found ({n_bpe}); the single special-token id is the only "
+        f"legal marker encoding -- a source episode pool was tokenized without the special "
+        f"tokens registered (regenerate it via prepare_data.py)"
+    )
     return bad
 
 
