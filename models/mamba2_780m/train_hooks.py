@@ -60,6 +60,17 @@ def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: floa
     return model, trainable_params
 
 
+def set_grad_checkpoint(model, enabled: bool, block: int | None = None) -> None:
+    """Optional hook -- train.py calls this (if defined) at the start of every
+    config-group segment with that slice's `grad_checkpoint` setting, so a
+    long-chunk slice can pay the recompute tax while the short-chunk slices in
+    the same run don't. See Model.set_grad_checkpoint."""
+    if block is None:
+        model.set_grad_checkpoint(enabled)
+    else:
+        model.set_grad_checkpoint(enabled, block)
+
+
 def chunk_loss(
     model,
     input_ids: torch.Tensor,

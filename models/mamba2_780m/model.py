@@ -6,7 +6,7 @@ from einops import rearrange
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
-from ..common import MarkerDelta
+from ..common import MarkerDelta, blockwise_checkpoint
 
 MODEL_ID = "state-spaces/mamba2-780m"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
@@ -19,6 +19,16 @@ TARGET_LORA_MODULES = ["in_proj", "out_proj"]
 USER_OPEN = "[USER]"
 ASST_OPEN = "[ASSISTANT]"
 SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN]
+
+# Default tokens per gradient-checkpointing block (see
+# Model.set_grad_checkpoint). This backbone carries no fast-weight memory, so
+# the boundary state is just the per-layer conv+ssm state -- ~19.5M values,
+# ~39 MB per batch slot in bf16 at this model's shape (48 layers, d_state
+# 128) -- against a per-token activation graph the manual mixer step holds
+# for every one of those layers. 64 matches the memory arms' default (see
+# models/mamba2_2_7b_memory/model.py's GRAD_CHECKPOINT_BLOCK for the
+# arithmetic), keeping one number to reason about across the models.
+GRAD_CHECKPOINT_BLOCK = 64
 
 
 class MixerState:
@@ -37,6 +47,16 @@ class MixerState:
 
     def detach(self) -> "MixerState":
         return MixerState([c.detach() for c in self.conv_states], [s.detach() for s in self.ssm_states])
+
+    def flatten(self) -> tuple[torch.Tensor, ...]:
+        """Every carried tensor, in a fixed order, for crossing a
+        torch.utils.checkpoint boundary (see models.common.
+        blockwise_checkpoint)."""
+        return (*self.conv_states, *self.ssm_states)
+
+    def unflatten(self, tensors: tuple[torch.Tensor, ...]) -> "MixerState":
+        n = len(self.conv_states)
+        return MixerState(list(tensors[:n]), list(tensors[n:]))
 
 
 class Model(nn.Module):
@@ -92,6 +112,10 @@ class Model(nn.Module):
 
         for layer in self.layers:
             assert layer.mixer.ngroups == 1, "manual mixer step assumes ngroups=1"
+
+        # Tokens per gradient-checkpointing block; 0 disables it entirely
+        # (see set_grad_checkpoint). Plain attribute, never checkpointed.
+        self.grad_checkpoint_block = 0
 
     def _init_state(self, batch_size: int, dtype) -> MixerState:
         conv_states, ssm_states = [], []
@@ -191,6 +215,21 @@ class Model(nn.Module):
         if state is None:
             state = self._init_state(batch_size, dtype)
 
+        block = self.grad_checkpoint_block if torch.is_grad_enabled() else 0
+        if 0 < block < seqlen:
+            return blockwise_checkpoint(self._forward_tokens, input_ids, state, block)
+        return self._forward_tokens(input_ids, state)
+
+    def set_grad_checkpoint(self, enabled: bool, block: int = GRAD_CHECKPOINT_BLOCK) -> None:
+        """Turn block-wise gradient checkpointing on or off for subsequent
+        forward() calls (see GRAD_CHECKPOINT_BLOCK for the block size).
+        Disabled is an exact no-op: forward() takes the same single-call path
+        it always did, so inference, evaluation and any no_grad() call are
+        untouched, and nothing about this reaches a checkpoint file."""
+        self.grad_checkpoint_block = block if enabled else 0
+
+    def _forward_tokens(self, input_ids: torch.Tensor, state: MixerState) -> tuple[torch.Tensor, MixerState]:
+        seqlen = input_ids.shape[1]
         all_logits = []
         for t in range(seqlen):
             h = self.embedding(input_ids[:, t])

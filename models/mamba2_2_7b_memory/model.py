@@ -43,7 +43,7 @@ except ImportError:
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
-from ..common import MarkerDelta
+from ..common import MarkerDelta, blockwise_checkpoint
 # Importing this is always safe even where causal_conv1d/Triton are broken
 # (this repo's ROCm dev box, see root CLAUDE.md) -- it only hangs/segfaults
 # if actually *called*, and `_fused_path_available` gates every call site.
@@ -159,6 +159,27 @@ GRAD_SCALE = 300.0
 # docs/superpowers/specs/2026-07-17-episodic-chains-design.md.
 ALPHA_CAP = 1e-4
 
+# Default tokens per gradient-checkpointing block (see
+# Model.set_grad_checkpoint). What dominates this model's activation memory
+# is M, not the backbone: every memory-window close produces a fresh
+# (w1, b1, w2, b2), a fresh momentum, and a gradient of the same shape, so
+# at the 780m arms' geometry (d_model 1536, MEM_HIDDEN 4*d_model) an
+# un-checkpointed chunk retains ~225 MB per batch slot per window -- at
+# chunk-len 512 / memory-window 8 that is 64 windows, ~14 GB per slot, which
+# is what makes chunk-512 unaffordable in the first place. Checkpointing
+# retains only per-block boundary state: one M snapshot (~151 MB per slot)
+# plus the backbone's per-layer conv+ssm state (~39 MB per slot in bf16),
+# ~190 MB. So retained scales as (chunk / block) * 190 MB while the backward
+# recompute peak scales as (block / window) * 225 MB; equating them at chunk
+# 512 / window 8 gives block ~59, hence 64 -- the nearest power of two, and a
+# multiple of every memory-window in use. That is ~1.5 GB retained + ~1.8 GB
+# peak per slot against ~14 GB. The same arithmetic reproduces the measured
+# optimum on a scaled-down model (32 windows, best at block 32, peak 2.31 ->
+# 0.79 GiB), and the curve is flat enough around it that being a factor of
+# two out costs little. Snapped down to a multiple of memory_window at use (a
+# window may never straddle a forward() call).
+GRAD_CHECKPOINT_BLOCK = 64
+
 
 _NONFINITE_DUMP_LIMIT = 5
 
@@ -244,6 +265,45 @@ class _NeuralMemory:
         pred = self._apply(k, self.w1, self.b1, self.w2, self.b2)
         return ((pred - v) ** 2).mean(dim=-1)
 
+    @staticmethod
+    def _write_grads(ks: torch.Tensor, vs: torch.Tensor, w1, b1, w2, b2):
+        """The write step's loss and its gradient w.r.t. (w1, b1, w2, b2),
+        in closed form. Returns (pred, per_token_loss, [gw1, gb1, gw2, gb2]),
+        with the gradient summed over the window and batch exactly as
+        `torch.autograd.grad(per_token_loss.sum(), params)` would produce it
+        -- tests/test_grad_checkpoint.py pins that equivalence, including
+        through a second differentiation.
+
+        Written out rather than obtained from autograd because a nested
+        `autograd.grad` runs as its own autograd graph task, and an enclosing
+        `torch.utils.checkpoint` frame (see Model.set_grad_checkpoint) can
+        only serve a foreign graph task by recomputing itself in full. That
+        made every window's write replay its whole block during the FORWARD
+        pass, so checkpointing raised both peak memory and runtime instead of
+        lowering them (measured both ways before this was written). Here the
+        gradient is just six more einsums in the ordinary graph, so
+        checkpointing frees and recomputes it like anything else, and what
+        used to be a second-order path is now first-order: `grads` stay
+        differentiable w.r.t. ks/vs/w* by construction.
+
+        M is a 2-layer MLP, L = sum over window and batch of
+        mean_d((M(k) - v)^2), so the derivation is the textbook one.
+        """
+        h = torch.tanh(torch.einsum("bhd,wbd->wbh", w1, ks) + b1)
+        pred = torch.einsum("bdh,wbh->wbd", w2, h) + b2
+        resid = pred - vs
+        per_token_loss = (resid ** 2).mean(dim=-1)  # (W, batch)
+        # d per_token_loss / d pred, with the mean's 1/D folded in.
+        dpred = (2.0 / pred.shape[-1]) * resid
+        dpre1 = torch.einsum("bdh,wbd->wbh", w2, dpred) * (1 - h * h)
+        grads = [
+            torch.einsum("wbh,wbd->bhd", dpre1, ks),
+            dpre1.sum(dim=0),
+            torch.einsum("wbd,wbh->bdh", dpred, h),
+            dpred.sum(dim=0),
+        ]
+        return pred, per_token_loss, grads
+
     def write(self, ks: torch.Tensor, vs: torch.Tensor, etas: torch.Tensor, thetas: torch.Tensor, alphas: torch.Tensor, create_graph: bool = True):
         """One test-time gradient step, consolidated over a window of W>=1
         tokens: ks/vs/etas/thetas/alphas are (W, ...) stacks -- one entry per
@@ -256,7 +316,7 @@ class _NeuralMemory:
         other.
 
         Loss is summed over both the window and the batch before the single
-        autograd.grad call, so W tokens' worth of gradient signal lands in
+        gradient step, so W tokens' worth of gradient signal lands in
         one update instead of W sequential ones -- the approximation this
         trades away is that every token in the window computes its own loss
         against the window-START M rather than a continuously-updated one
@@ -266,12 +326,12 @@ class _NeuralMemory:
         momentum/decay step -- at W=1 this is just that token's own value,
         identical to the un-windowed case.
 
-        `params`/`momentum` are still fully detached and re-leafed once per
-        *window* (not per token) before the gradient step, bounding the
-        backward graph to O(1) windows of chain depth rather than O(T)
-        tokens -- without this, chain depth would grow with total tokens
-        processed and the backward graph would never be freed. `create_graph`
-        and the GRAD_SCALE soft-clip below still operate per window: `eta`
+        `params`/`momentum` are fully detached once per *window* (not per
+        token) before the gradient step, bounding the backward graph to O(1)
+        windows of chain depth rather than O(T) tokens -- without this, chain
+        depth would grow with total tokens processed and the backward graph
+        would never be freed. `create_graph` and the GRAD_SCALE soft-clip
+        below still operate per window: `eta`
         caps the momentum recurrence's decay but doesn't bound the gradient
         that feeds it, which can spike large enough (especially early in
         training, before eta/theta are learned) to push the memory
@@ -283,16 +343,16 @@ class _NeuralMemory:
         signal, independent of this method). grad_norm is (batch,), the one
         gradient norm for this window's single step.
         """
-        params = [p.detach().requires_grad_(True) for p in (self.w1, self.b1, self.w2, self.b2)]
+        params = [p.detach() for p in (self.w1, self.b1, self.w2, self.b2)]
         momentum = [s.detach() for s in self.momentum]
 
-        pred = self._apply_windowed(ks, *params)
-        per_token_loss = ((pred - vs) ** 2).mean(dim=-1)  # (W, batch)
+        # create_graph=True: g must stay differentiable w.r.t. ks/vs so
+        # k_proj/v_proj receive gradient from the outer loss. Under no_grad
+        # otherwise, which is what the inference-only probes ask for.
+        with torch.enable_grad() if create_graph else torch.no_grad():
+            pred, per_token_loss, grads = self._write_grads(ks, vs, *params)
         if not per_token_loss.detach().isfinite().all():
             _dump_nonfinite_write(self, ks, vs, etas, thetas, alphas, pred, per_token_loss)
-        # create_graph=True: g must stay differentiable w.r.t. params so
-        # k_proj/v_proj/knob_proj receive gradient from the outer loss.
-        grads = torch.autograd.grad(per_token_loss.sum(), params, create_graph=create_graph)
 
         # Soft-clip g's combined norm across (w1,b1,w2,b2) with tanh, from a
         # detached copy so it doesn't add a second-order term to the
@@ -436,7 +496,7 @@ class _TitansFrontEnd(nn.Module):
         Grad tracking must stay enabled here regardless of whether the
         *caller* is in a torch.no_grad() block: k/v/knobs need to remain
         part of the same differentiable chain that `_NeuralMemory.write`
-        eventually backprops through (via create_graph=True) so
+        eventually differentiates through (see _write_grads) so
         q_proj/k_proj/v_proj/knob_proj actually receive gradient from the
         outer loss -- this isn't optional training-time machinery, it has to
         run even during eval/inference, same reasoning as write() itself.
@@ -637,6 +697,40 @@ class MemoryState:
         self.last_o_t = last_o_t
         self.last_surprise = last_surprise
 
+    def flatten(self) -> tuple[torch.Tensor, ...]:
+        """Every carried tensor, in a fixed order, for crossing a
+        torch.utils.checkpoint boundary (see models.common.
+        blockwise_checkpoint). w1_init/w2_init are deliberately absent: they
+        are constant drift baselines read only by the detached write stats,
+        so unflatten carries them over unchanged rather than routing them
+        through autograd."""
+        nm = self.neural_memory
+        return (
+            *self.conv_states,
+            *self.ssm_states,
+            nm.w1, nm.b1, nm.w2, nm.b2,
+            *nm.momentum,
+            self.last_o_t,
+            self.last_surprise,
+        )
+
+    def unflatten(self, tensors: tuple[torch.Tensor, ...]) -> "MemoryState":
+        """Inverse of flatten(), taking this state's shape (layer count,
+        drift baselines) as the template."""
+        n = len(self.conv_states)
+        nm = _NeuralMemory.__new__(_NeuralMemory)
+        nm.w1, nm.b1, nm.w2, nm.b2 = tensors[2 * n : 2 * n + 4]
+        nm.momentum = list(tensors[2 * n + 4 : 2 * n + 8])
+        nm.w1_init = getattr(self.neural_memory, "w1_init", nm.w1)
+        nm.w2_init = getattr(self.neural_memory, "w2_init", nm.w2)
+        return MemoryState(
+            conv_states=list(tensors[:n]),
+            ssm_states=list(tensors[n : 2 * n]),
+            neural_memory=nm,
+            last_o_t=tensors[-2],
+            last_surprise=tensors[-1],
+        )
+
     def detach(self) -> "MemoryState":
         """Returns a copy with every tensor detached from the autograd graph.
 
@@ -776,6 +870,10 @@ class Model(nn.Module):
         # was trained with (see the design spec for why train/inference
         # windows are intentionally decoupled).
         self.memory_window = 1
+        # Tokens per gradient-checkpointing block; 0 disables checkpointing
+        # entirely (see set_grad_checkpoint). Plain attribute, not checkpointed
+        # state -- same reasoning as memory_window.
+        self.grad_checkpoint_block = 0
         # Running sums for pop_memory_stats() -- accumulated as detached
         # tensors (all inputs are already .detach()'d at the accumulation
         # sites, so this never holds a reference into any autograd graph)
@@ -802,6 +900,13 @@ class Model(nn.Module):
         # signals, for live per-slot logging (overwritten every token).
         # List of dicts, one per batch element -- see last_token_log().
         self._last_token_logs: list[dict] = []
+        # forward()'s copy of the above, taken once the whole call has run.
+        # Under gradient checkpointing backward recomputes blocks in reverse
+        # order, each overwriting _last_token_logs, so by the time the caller
+        # reads the log it would otherwise hold the FIRST block's last token
+        # rather than the chunk's; this pin keeps last_token_log() reporting
+        # the same token it reports without checkpointing.
+        self._pinned_token_logs: list[dict] = []
 
     def _init_state(self, batch_size: int, device, dtype) -> MemoryState:
         conv_states, ssm_states = [], []
@@ -1106,9 +1211,28 @@ class Model(nn.Module):
         if state is None:
             state = self._init_state(batch_size, device, dtype)
 
+        block = self._grad_checkpoint_block_len()
+        if 0 < block < seqlen:
+            logits, state = blockwise_checkpoint(self._forward_path, input_ids, state, block)
+        else:
+            logits, state = self._forward_path(input_ids, state)
+        self._pinned_token_logs = self._last_token_logs
+        return logits, state
+
+    def _forward_path(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
         if self._fused_path_available():
             return self._forward_fused(input_ids, state)
         return self._forward_manual(input_ids, state)
+
+    def _grad_checkpoint_block_len(self) -> int:
+        """Effective checkpoint block size for this call: 0 when disabled or
+        when there's no backward to save anything for, else
+        grad_checkpoint_block snapped DOWN to a multiple of memory_window
+        (a memory-window is buffered locally within one forward() call and
+        can never straddle two, see forward()'s docstring)."""
+        if not self.grad_checkpoint_block or not torch.is_grad_enabled():
+            return 0
+        return max(1, self.grad_checkpoint_block // self.memory_window) * self.memory_window
 
     def _forward_manual(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
         """All-manual per-token fallback: processes `input_ids` one token at
@@ -1587,6 +1711,22 @@ class Model(nn.Module):
         assert window >= 1, f"memory_window must be >= 1, got {window}"
         self.memory_window = window
 
+    def set_grad_checkpoint(self, enabled: bool, block: int = GRAD_CHECKPOINT_BLOCK) -> None:
+        """Turn block-wise gradient checkpointing on or off for subsequent
+        forward() calls (see GRAD_CHECKPOINT_BLOCK for the block-size
+        arithmetic). Disabled is an exact no-op: forward() takes the same
+        single-call path it always did, so inference, evaluation and any
+        no_grad() call are untouched, and nothing about this reaches a
+        checkpoint file.
+
+        The memory stats (pop_memory_stats) stay correct under checkpointing
+        without special handling: backward's recompute re-runs every
+        accumulation site with identical values, which doubles each running
+        sum together with its own divisor and leaves the running max/min
+        idempotent -- so every reported average is unchanged.
+        """
+        self.grad_checkpoint_block = block if enabled else 0
+
     def set_beta_anneal(self, global_step: int) -> None:
         """Updates every injected layer's beta_anneal_offset for the given
         global optimizer-step count (see BETA_BIAS_ANNEAL_START/_STEPS).
@@ -1610,7 +1750,7 @@ class Model(nn.Module):
         layer's actual similarity, surprise/o_t_norm from the front-end
         read). None until forward() has run at least once. Never resets --
         meant for live per-token logging, not a per-step average."""
-        return list(self._last_token_logs) if self._last_token_logs else None
+        return list(self._pinned_token_logs) if self._pinned_token_logs else None
 
     def reset_slot(self, state: "MemoryState", slot_idx: int) -> None:
         """Reset slot slot_idx to a fresh random init in-place, leaving all
@@ -1672,8 +1812,8 @@ class Model(nn.Module):
             # meant to help confirm/rule out unbounded w1/w2 growth as the
             # source of a real crash where loss_sum stayed finite but the
             # backward pass produced a NaN gradient (see git history) --
-            # write()'s create_graph=True second-order autograd through
-            # this exact computation is a plausible place for that. Updated
+            # differentiating back through write()'s own gradient step
+            # (_write_grads) is a plausible place for that. Updated
             # with a plain .item() at each write() call site (once per
             # memory-window close, not per token -- cheap enough that the
             # sync-avoidance reasoning above doesn't apply here).

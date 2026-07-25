@@ -19,6 +19,7 @@ from ..mamba2_2_7b_memory.train_hooks import (  # noqa: F401  (re-exported hooks
     init_state,
     on_step,
     reset_slot,
+    set_grad_checkpoint,
     sleep_slot,
 )
 from . import model as _model_mod

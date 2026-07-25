@@ -109,6 +109,17 @@ def sleep_slot(model, state, slot_idx: int) -> None:
     model.sleep_slot(state, slot_idx)
 
 
+def set_grad_checkpoint(model, enabled: bool, block: int | None = None) -> None:
+    """Optional hook -- train.py calls this (if defined) at the start of every
+    config-group segment with that slice's `grad_checkpoint` setting, so a
+    long-chunk slice can pay the recompute tax while the short-chunk slices in
+    the same run don't. See Model.set_grad_checkpoint."""
+    if block is None:
+        model.set_grad_checkpoint(enabled)
+    else:
+        model.set_grad_checkpoint(enabled, block)
+
+
 def on_step(model, global_step: int) -> None:
     """Optional hook -- train.py calls this (if defined) once before training
     starts and again after every optimizer step, passing the global step
