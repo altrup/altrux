@@ -105,7 +105,42 @@ Two deliberate differences from the cram slice, both forced by bAbI's six-name v
 
 The filler pool wraps rather than running out, and both generators report how many times it was cycled — if that number is far above 1, stream more articles (`--articles`), because one needle per block at long gaps consumes a lot of interference.
 
-Every generator run ends with a structural validation block: counts whose correct value is zero (malformed role adjacency, credited span text mismatch, the credited entity visible between its source and its cue, credit outside a recorded span) plus decoded text around the source, the cue and the credited answer span of a sample item. Read the sample before using the artifact — counts confirm the generator did what it was told, never that what it was told was right.
+```bash
+MODEL_NAME=mamba2_780m make filter-items ARGS="--data data/train_cram.pt"
+# writes data/train_cram-filtered.pt
+```
+
+`filter_items.py` decides which items keep their `recall_masks` credit. Each is scored teacher-forced on its credited span with the plain backbone (which *is* the M-ablated model) in three contexts:
+
+| test | context | must |
+|------|---------|------|
+| A (well-posed) | source + cue | answer (`--a-min`, default −0.7) |
+| B (memory-required) | interference + cue, source absent | fail (`--b-max`, default −1.5) |
+| C (SSM-insufficient) | source + interference + cue, in-stream | fail (`--c-max`, default −1.5) |
+
+plus `--min-margin` (default 1.5 nats/token): A − max(B, C) must clear it. The margin is what does the work where the absolute thresholds cannot — a common-word answer scores high in every context, so its *difference* is the signal. All four are mean log-probs per credited token, and all four are **guesses until calibrated**: run the filter on a pilot artifact, read the printed scored samples, then set them.
+
+Before scoring, an explicit string check drops any item whose credited answer (or a word of it ≥4 characters, so a surname counts) is already visible in the interference before the cue — those cost no forward pass.
+
+B and C are one pass over the block each, not one per item: the cues and answers already sit in the stream in order, so a single teacher-forced pass reads every item's span at its own position. B's stream is the block with every item's source cut out; C's is the block verbatim. Only A is per-item, and its context is short.
+
+Discarded items **keep their tokens** — passages stay as carrier/interference, only the credit is dropped — so a high discard rate costs probes, not tokens. Oversample candidates rather than raising the slice's token share. The composition is the diagnostic: mostly `fail_a` means the cloze construction is bad, mostly `fail_b` means entity substitution isn't biting, mostly `fail_c` means the gaps are too short for the interference to defeat the SSM.
+
+Every generator run ends with a structural validation block: counts whose correct value is zero (malformed role adjacency, credited span text mismatch, the credited entity visible between its source and its cue, credit outside a recorded span) plus decoded text around the source, the cue and the credited answer span of a sample item. The filter prints the same kind of evidence for what it scored. Read the sample before using the artifact — counts confirm the generator did what it was told, never that what it was told was right.
+
+#### Artifact schema
+
+All four artifacts (`train_cram.pt`, `eval_cram.pt`, `train_needles.pt`, `eval_needles.pt`) use `train.py`'s dataset schema — `ids`, `masks`, `recall_masks`, `sleep_positions` (empty: cram blocks carry no sleeps) — plus:
+
+| key | meaning |
+|-----|---------|
+| `items` | per block, a list of item records: `gap`, `target_gap`, `ceiling`, `source_start/end`, `cue_start/end`, `answer_start`, `span_start/end`, `credit_text`, `entity`, `entity_type`, `article`, `original_entity`, and after filtering `filter` (`a`/`b`/`c`/`verdict`) |
+| `curriculum` | `ceilings` (one per block, non-decreasing), `gap_min`, `ceiling_start`, `ceiling_end` |
+| `heldout_articles` | titles reserved for eval, recorded in both the train and eval artifacts |
+| `slice` | `cram`, `cram-heldout`, `needles`, `needles-heldout` |
+| `filter` | after filtering: thresholds used, discard rate, per-test composition |
+
+Everything is plain tensors, lists, dicts and primitives, so the files load under `weights_only=True`.
 
 ## Training
 

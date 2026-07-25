@@ -138,6 +138,16 @@ prepare-needles:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u prepare_needles.py $(ARGS)
 
+# Three-test solvability filter over a cram/needle artifact: recall credit
+# survives only on items the plain backbone answers from their source, fails
+# without it, and fails with it in-stream. Two forward passes over the
+# artifact, so this one wants the GPU -- and MODEL_NAME must name a plain
+# backbone (mamba2_780m), which is what "M-ablated" means here.
+filter-items:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u filter_items.py $(ARGS) 2>&1 | tee logs/filter-$(shell date +%Y%m%d-%H%M%S).log
+
 # Long-gap recall probe against the latest checkpoint: states a random code,
 # runs thousands of filler tokens, queries it back, and compares the code's
 # log-prob with the neural memory intact vs ablated (fresh random M at query
