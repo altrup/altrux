@@ -121,6 +121,13 @@ prepare-chains:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u prepare_chains.py $(ARGS)
 
+# Ten-second cross-slice read before training: decoded windows + headline
+# counts per artifact. Hand the output to a reviewer (cheap subagent on the
+# box) asking "does each slice look like what it claims to be?"
+sanity-sample:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u sanity_sample.py $(ARGS)
+
 # Wikipedia IMR cram blocks -> data/train_cram.pt (+ data/eval_cram.pt from
 # held-out articles): alternating turns of fresh passages and one earlier
 # passage's sentence re-shown with its NER entity blanked, answered by the

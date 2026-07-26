@@ -135,6 +135,8 @@ Discarded items **keep their tokens** — passages stay as carrier/interference,
 
 Every generator run ends with a structural validation block: counts whose correct value is zero (malformed role adjacency, credited span text mismatch, the credited entity visible between its source and its cue, credit outside a recorded span) plus decoded text around the source, the cue and the credited answer span of a sample item. The filter prints the same kind of evidence for what it scored. Read the sample before using the artifact — counts confirm the generator did what it was told, never that what it was told was right.
 
+For the cross-slice version of that read — a few decoded windows and headline counts from *every* artifact about to be trained on — use `make sanity-sample ARGS="--data data/train_chains.pt --data data/train_cram.pt …"`. Windows center on recall-credited spans, then sleeps, then random text. It's the ten-second pre-training gate (the experimenter runs it on the box and hands the output to a cheap subagent), not a substitute for the generation-time validation.
+
 #### Artifact schema
 
 All four artifacts (`train_cram.pt`, `eval_cram.pt`, `train_needles.pt`, `eval_needles.pt`) use `train.py`'s dataset schema — `ids`, `masks`, `recall_masks`, `sleep_positions` (empty: cram blocks carry no sleeps) — plus:

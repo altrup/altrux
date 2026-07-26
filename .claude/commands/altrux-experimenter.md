@@ -23,7 +23,7 @@ instead. When the plan does call for training, the baseline resume command
 (stated once here — everywhere else that says "restart training" means this,
 with whatever args YOU are currently running if you've changed them since):
 
-    tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="--data data/train_chains.pt --eos-weight 32 --batch-size 8 --chunk-len 48 --memory-window 8 --accum-tokens 1536 --ckpt-every-tokens 147456"' Enter
+    tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="<the invocation from the newest DISCUSSION note — currently notes/DISCUSSION-20260725-implementation-state-and-box-handoff.md §4, which supersedes any single --data example here>"' Enter
 
 TRAINING RUNS IN A SEPARATE TMUX SESSION named `train`, NOT in your session —
 so it survives your session ending and you can monitor without blocking. Drive
@@ -48,10 +48,25 @@ file for THIS run, named with the current UTC time —
 go (see PERSISTENCE). One file per run; never append to a past run's file.
 
 A FRESH INSTANCE HAS NO PREPARED DATA — setup deliberately doesn't build any.
-Which datasets to build (and with what flags) is your call, made from the
-notes' plan; run the prep targets (`make data`, `make prepare-chains ARGS=…`,
-etc.) in the `train` tmux (or a separate tmux for CPU-only prep concurrent
-with GPU work) before whatever needs them.
+Artifacts already archived on the local machine upload at launch (see
+`scripts/README.md`) — regenerate only what didn't arrive. Which remaining
+datasets to build (and with what flags) is your call, made from the notes'
+plan; run the prep targets (`make data`, `make prepare-chains ARGS=…`, etc.)
+in the `train` tmux (or a separate tmux for CPU-only prep concurrent with GPU
+work) before whatever needs them.
+
+DATA SANITY GATE — before the FIRST training start, and again after ANY
+artifact is generated or regenerated on the box: run
+`make sanity-sample ARGS="--data <each slice's .pt, repeated>"` over every
+slice that will be trained on, and hand the full output to a CHEAP subagent
+(haiku-class — this is reading, not reasoning) with the question: "does each
+slice look like what its name claims — conversations look like conversations,
+cram blocks like passage/cue/answer turns with credit on a short span, no
+garbled splices or wrong-slice content?" Anything suspicious: stop, decode
+more around it yourself, and treat a confirmed structural problem as
+stop-and-report, not something to train through. Ten minutes of reading is
+the cheapest insurance the run has — every data disaster in this project's
+history was visible in a decoded sample and invisible in every count.
 
 RECORD THE RESUME POINT: every time you start or restart training, note in your
 file which checkpoint it resumed from — train.py logs `resuming from
