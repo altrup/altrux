@@ -52,8 +52,17 @@ Artifacts already archived on the local machine upload at launch (see
 `scripts/README.md`) — regenerate only what didn't arrive. Which remaining
 datasets to build (and with what flags) is your call, made from the notes'
 plan; run the prep targets (`make data`, `make prepare-chains ARGS=…`, etc.)
-in the `train` tmux (or a separate tmux for CPU-only prep concurrent with GPU
-work) before whatever needs them.
+before whatever needs them.
+
+EVERYTHING THAT ISN'T TRAINING RUNS IN THE `work` TMUX SESSION — data prep,
+NER, the filter, probes/evals, sanity-sample, rsync pulls. Create it if
+absent (`tmux new-session -d -s work`) and give each task its own named
+window (`tmux new-window -t work -n filter '<command>'`), so
+`tmux list-windows -t work` doubles as the list of what's in flight. The
+`train` session stays single-purpose: its pane history is the training log
+and nothing else, and a stray C-c aimed at a probe can never hit training.
+Long `work` jobs survive your session ending exactly like training does —
+same rule: drive them with `tmux send-keys`/`new-window`, never inline.
 
 DATA SANITY GATE — before the FIRST training start, and again after ANY
 artifact is generated or regenerated on the box: run
@@ -74,6 +83,13 @@ file which checkpoint it resumed from — train.py logs `resuming from
 first log lines (alpha, w1_abs_max, o_t_norm). Which step a run began from, and
 how eroded its memory was at the start, is the single most important thing a
 later run needs and the easiest to lose.
+
+MODEL_NAME selects the architecture (`import models.{MODEL_NAME}`); `.env`
+holds only the default. When a session touches more than one model/arm, pass
+`MODEL_NAME=<arm>` inline on every training/probe/filter command instead of
+editing `.env` — inline wins (load_dotenv doesn't override), each model's
+checkpoints live in its own folder, and the verbatim command in the notes
+stays self-contained.
 
 RECORD VERBATIM COMMANDS: every command that produces or transforms an
 artifact — training starts/resumes, data prep, probes/evals — goes into this

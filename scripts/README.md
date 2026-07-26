@@ -150,8 +150,10 @@ guesses the wrong torch wheel.
 
 Configures a freshly-launched instance: install `uv` if absent, wire up
 `GITHUB_TOKEN` / `HF_TOKEN` if provided, clone-or-pull the repo at `~/altrux`,
-write `sft/.env` (`MODEL_NAME=mamba2_2_7b_memory` — it's gitignored, so a clone
-has none), `make sync` (and verify torch sees a CUDA GPU), verify `git push`
+write `sft/.env` with `MODEL_NAME` deliberately blank (it's gitignored, so a
+clone has none; a run that doesn't name a model inline fails at import rather
+than silently training a default — the experimenter passes `MODEL_NAME=<arm>`
+inline per command), `make sync` (and verify torch sees a CUDA GPU), verify `git push`
 auth, and install the Claude Code CLI. It also places whatever launch staged —
 resume checkpoints and `sft/data/` artifacts — printing each one, so the
 experimenter can see which datasets already exist. Data *prep* is deliberately

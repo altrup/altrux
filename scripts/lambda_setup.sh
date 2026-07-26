@@ -82,10 +82,11 @@ fi
 step "Configure sft/.env"
 [[ -f "$REPO_DIR/sft/.env" ]] || cp "$REPO_DIR/sft/.env.example" "$REPO_DIR/sft/.env"
 # Blank MODEL_NAME so a run without an explicit choice fails at import
-# instead of silently training the example default. The experimenter sets it
-# per training leg from the DISCUSSION notes.
+# instead of silently training the example default. The experimenter passes
+# MODEL_NAME=<arm> inline on every training/probe/filter command (inline wins
+# over .env), per the DISCUSSION notes.
 sed -i "s/^MODEL_NAME=.*/MODEL_NAME=/" "$REPO_DIR/sft/.env"
-echo "MODEL_NAME left blank — set it in sft/.env before each training leg"
+echo "MODEL_NAME left blank — pass MODEL_NAME=<arm> inline on each command"
 
 step "make sync (torch + mamba-ssm — several minutes)"
 # Wheels uploaded by lambda_launch.sh (harvested from a previous instance)
