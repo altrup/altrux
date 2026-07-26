@@ -143,3 +143,134 @@ local card cannot).
 Smoke artifacts (`sft/data/smoke_*.pt`, `pilot_*`-series) are disposable;
 `models/mamba2_780m_memory_mix/checkpoints/epoch-1/` predates this session
 (2026-07-24 01:37–02:42 local run) and was deliberately left untouched.
+
+---
+
+# Part 2 — same day, evening: data regenerated, filter re-economized, ops loop closed
+
+Everything below happened after Part 1, same team session. Part 1's §6 queue
+is superseded by §12 here.
+
+## 7. All training artifacts regenerated and verified (this box, tonight)
+
+- **Base corpora** (`make data` + `make data-memory`): ultrachat uncapped
+  24.4M tokens / LongAlign 203.7M / babilong 11.1M with **all 2000 episodes
+  carrying `question_offsets`**. Every artifact in `sft/data` now postdates
+  every pipeline repair.
+- **Chains** (`data/train_chains.pt`, 35.6M tokens, 523 chains): regenerated
+  with `--sources data/train.pt data/train_memory_babilong.pt --split-qa-rate
+  0.5 --mid-sleep-min-len 1536 --fact-rate 0`. Result: **0 malformed
+  transitions** (validator now hard-fails on any), 78 split-QA suspensions
+  (gaps 3.2k–7.8k), 68 mid-conversation sleeps, 8.4% sleeping chains
+  (`--sleep-chain-rate 0.1`, the plan's ~10% attribution fraction —
+  `f64488b`). LongAlign is excluded from chains; it is consumed directly as
+  the ballast slice.
+- **Two more latent generators bugs found by the read-the-log rule** and
+  fixed: (a) **fact blocks emit structurally illegal role sequences**
+  (consecutive unanswered `[USER]` fact turns; query pairs spliced between a
+  question and its answer) — 14,716 malformed transitions in one regen, all
+  inside fact-bearing chains. Standing decision: `--fact-rate 0` for chains
+  (plan-conformant — retention lives in cram); the fact-block splicer itself
+  is unrepaired. (b) `--split-min-part` applied to both sides of a QA cut,
+  and babilong's dataset-authored tails are 8–12 tokens — **split-QA had
+  been silently zero in every dataset that ever passed a rate**. Fixed
+  head-only (`25a7d84`); a zero split-tail counter now means a constraint
+  bound, not luck.
+- **Legacy `train_memory.pt` deleted** (merged single-`--data`-era artifact;
+  nothing in the plan consumes it; regenerable via `merge_data.py`).
+
+## 8. Density result (pilot2) and the C decision
+
+Densified cram generation (`efedc51`: one source passage can answer several
+items) measured against the baseline pilot, same articles, same calibrated
+thresholds:
+
+- **Yield is the real win**: 590 items vs 401 (+47%), 288 kept vs 194
+  (+48%), short-gap kept items 81 vs 57 (+42%) — ~1.5× recall credit per
+  article/NER-dollar.
+- **Short-gap fail_c improved 41% → 31% but is nowhere near zero** → density
+  cannot be trusted open-loop, a gap threshold cannot replace test C (fail_c
+  spans the whole gap range), and **per-item C stays for this run**. Its
+  cost concern is answered by batching (§9), not by dropping it.
+- **C's verdict is a t=0 lower bound that erodes as training improves
+  SSM-carry** (owner's observation; BX runs demonstrably improved SSM-range
+  recall). Anchors slowing the decay: capacity is information-theoretic once
+  interference volume exceeds the state (selectivity has no signal — probe
+  identity is unpredictable at read time), and the curriculum sends the
+  hardest items to the most-trained model. Standing decision: **post-run
+  C-rescore against the final checkpoint** (~minutes, batched) as the
+  erosion diagnostic; mid-run C-refreshes only if that measurement says so.
+  A/B/leak verdicts are properties of the text and do not decay.
+
+## 9. Filter economics after batching (`11d4d8c`)
+
+All three passes run batched (`--score-batch`, default 16 sized for this
+8 GB card — **raise it on the GH200**); progress line carries tok/s (pad
+excluded) + ETA, every line timestamped. Cost model, GH200, full-scale cram
+(~50M candidate tokens, ~200k items): B+C are block-amortized long passes
+(~minutes); A is per-item and the only real bill (~15–20 min batched).
+Whole filter ≈ **tens of minutes**, smaller than the NER pass (~30–60 min
+batched). Measured-trigger fallbacks if a box pilot disagrees: skip C above
+a gap threshold several× the interference capacity, sample-audit A.
+First box act for the filter regardless: a pilot-sized run (minutes) to
+replace every number above with a measurement.
+
+**Scoring-regime caveat**: serial vs batched scores differ beyond matmul
+noise (median |Δ| 0.04 nats, max ~0.5 late in long blocks — bf16 recurrence
+divergence compounding with position; verdicts held on the equality check,
+and the CPU fake-model test pins index-correctness bitwise). Scores are
+consistent *within* one run; treat cross-regime borderline flips as noise
+and calibrate any threshold change on the box's own batched scores via
+`--rescore`.
+
+## 10. Ops loop (scripts/, all committed)
+
+- **Launch uploads local data artifacts** (`train*.pt eval_*.pt` in
+  `sft/data`, sizes on the confirm screen; `LAMBDA_DATA_ARTIFACTS`
+  overrides). Today's set ≈ 2.4 GB, all load-bearing, all regenerated
+  tonight. Pilots/smokes/raw intermediates never sync.
+- **`lambda_pull.sh` pulls the same set home** (plus checkpoints), `--follow`
+  runs continuously in the local watch window — box-generated artifacts and
+  their embedded filter scores archive here automatically; pull explicitly
+  after the filter, before training starts. Generate once, reuse forever:
+  a future launch uploads instead of regenerating.
+- **`work` tmux session** on the box for everything that isn't training
+  (one named window per task); local `altrux` session gets a live attach
+  window to it. The `train` session's history stays a pure training log.
+- **MODEL_NAME**: launch tooling never chooses a model — setup blanks it on
+  the box (unnamed runs fail at import); the experimenter passes
+  `MODEL_NAME=<arm>` inline on every command (inline beats `.env`).
+- **Data sanity gate** (`make sanity-sample` + a haiku-class subagent reads
+  the decoded windows) before the first training start and after any on-box
+  regeneration — wired into the experimenter skill.
+- Root CLAUDE.md logging rules added: results stream as produced (never
+  end-of-run-only), every log line timestamped.
+
+## 11. Run sizing (deciding data: tonight's inventory)
+
+~70M-token run: chains 24.5M (pool ceiling ~35M — comfortable) / cram 24.5M
+kept (≈50M candidates at the measured ~49% keep → ~150k articles through
+NER) / needles 10.5M (large filler pool; pilot wrapped at 1.1×) / ballast
+10.5M (LongAlign, abundant). Check emitted per-slice token counts against
+35/15/35/15 before launch — an exhausted slice re-normalizes the rest.
+
+## 12. The box sequence (supersedes §6)
+
+1. Launch (uploads chains/ballast/pools; confirm screen shows the set).
+2. Integration smoke at real config on tiny slices (§5) — the one seam
+   never live-tested is the config-group handover.
+3. **Transcript-consolidation null** (still unowned, still before the
+   training budget) — under the recalibrated ambition (see the memory
+   note): it answers "does M beat re-reading the transcript," the most
+   learning-per-dollar question on the list.
+4. Gate-5 sweep: batch from 8, chunk 640/768 vs 512 (§3.2), filter
+   `--score-batch` raise, pilot-sized filter+NER runs for real throughput
+   numbers.
+5. Full-scale generation (`prepare_cram` densified defaults, ~2×
+   oversample; `prepare_needles` with a large `--articles`) →
+   `make sanity-sample` + cheap-subagent read → batched filter (A/B/C cram,
+   `--leak-only` needles) → **pull artifacts home** → train, per the §4
+   invocation with `--recall-weight 16` explicit and `MODEL_NAME` inline.
+6. NaN watch unchanged (§6.8 of the 07-24 plan): `GRAD_NORM` /
+   `[nonfinite-write]` in the first hours; post-run C-rescore (§8) at the
+   end.
