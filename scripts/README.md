@@ -13,7 +13,7 @@ it's the only thing that can stop the billing:
 
 ```bash
 ./scripts/lambda_watchdog.sh &      # terminates the instance when idle; key stays local
-./scripts/lambda_pull.sh --follow   # rescues logs/checkpoints/notes every 5 min
+./scripts/lambda_pull.sh --follow   # rescues logs/checkpoints/notes/data every 5 min
 ```
 
 That's the whole local side — the watchdog does a final pull (including
@@ -29,6 +29,32 @@ not settings.json, credentials, or history) so the instance session behaves
 like your local one; setup wires the status line into the instance's settings. With `CLAUDE_CODE_OAUTH_TOKEN` set the `/experimenter` session starts
 itself; otherwise ssh in, run `claude` to authenticate, and start it. No
 watchdog, no terminate chain, no API key on the instance.
+
+## Training-data artifacts: generate once, reuse forever
+
+Datasets under `sft/data/` are gitignored and expensive to build, so they
+travel by rsync in both directions and are archived on the local machine:
+
+1. The box generates an artifact the local machine doesn't have.
+2. `lambda_pull.sh` brings it home — every 5 minutes under `--follow`, and
+   worth running by hand the moment generation or filtering finishes, so the
+   artifacts are safe before the long training phase starts.
+3. The next `lambda_launch.sh` uploads it again, path-preserving, alongside the
+   resume checkpoints. **The box only generates what isn't in that upload.**
+
+The pre-launch confirm screen is the guard: it lists every artifact it's about
+to upload, with sizes, before anything bills. What's listed there does not need
+regenerating on the box, and `lambda_setup.sh` prints the same list again as it
+places the files. There's no manifest or hashing — rsync's own change detection
+decides what moves, so re-running either direction is free.
+
+`scripts/lambda_data_artifacts.sh` holds the one include list both ends read
+(`LAMBDA_DATA_ARTIFACTS` in `scripts/.env` overrides it; empty syncs no data).
+It takes the finished `train_*`/`eval_*` datasets and their scored
+`*-filtered` variants — the scored files carry per-item scores, so any later
+threshold policy is a local `filter_items.py --rescore` away and the box's
+final filtered variant needn't come home separately. Scratch (`pilot_*`,
+`smoke_*`) and raw intermediates stay put.
 
 ## `lambda_launch.sh`
 
@@ -98,6 +124,10 @@ are gitignored and too big for GitHub (a single `optimizer.pt` exceeds the
 100MB file limit), so this direct copy is the only sane transfer. Unset →
 training starts fresh.
 
+Local `sft/data/` artifacts ride the same staging route automatically (see
+"Training-data artifacts" above) — no env var needed to opt in, and the confirm
+screen lists what's going up with sizes.
+
 It waits for the instance to boot and accept ssh, then starts `lambda_setup.sh`
 inside a detached tmux session named `train` and returns immediately, printing
 the attach commands — so setup survives a dropped connection without holding
@@ -122,9 +152,12 @@ Configures a freshly-launched instance: install `uv` if absent, wire up
 `GITHUB_TOKEN` / `HF_TOKEN` if provided, clone-or-pull the repo at `~/altrux`,
 write `sft/.env` (`MODEL_NAME=mamba2_2_7b_memory` — it's gitignored, so a clone
 has none), `make sync` (and verify torch sees a CUDA GPU), verify `git push`
-auth, and install the Claude Code CLI. Data prep is deliberately not part of
-setup — which data to build (and with what flags) is an experimental decision,
-so the experimenter runs it from the notes' plan.
+auth, and install the Claude Code CLI. It also places whatever launch staged —
+resume checkpoints and `sft/data/` artifacts — printing each one, so the
+experimenter can see which datasets already exist. Data *prep* is deliberately
+not part of setup: which data to build (and with what flags) is an experimental
+decision, so the experimenter runs it from the notes' plan, for the artifacts
+that didn't arrive with the upload.
 Runs **on the instance** — either invoked automatically by `lambda_launch.sh`,
 or by hand after ssh-ing in:
 
@@ -184,10 +217,11 @@ instance (e.g. from a different machine), set `LAMBDA_INSTANCE_ID` in
 
 ## `lambda_pull.sh`
 
-Pulls training artifacts — `sft/logs/`, every `models/*/checkpoints/`, and
+Pulls training artifacts — `sft/logs/`, every `models/*/checkpoints/`,
 `notes/` (free-form observations written by whoever is monitoring on the
 instance; committed only from the local machine after a run, so rsync is
-how it travels off the instance) — down from a running
+how it travels off the instance), and the `sft/data/` datasets listed in
+`lambda_data_artifacts.sh` — down from a running
 instance to this machine via rsync, so they survive termination (everything
 on the instance otherwise dies with it). Run it from the **local** machine:
 
@@ -197,7 +231,15 @@ on the instance otherwise dies with it). Run it from the **local** machine:
 ./scripts/lambda_pull.sh --follow             # re-pull every 5 min until terminated
 ./scripts/lambda_pull.sh --follow --interval 60
 ./scripts/lambda_pull.sh --with-mem-state     # final pull, before terminating
+./scripts/lambda_pull.sh --dry-run            # list what would transfer
 ```
+
+Every pull is idempotent — rsync moves only what changed, and each run
+itemizes the files it actually brought down — so it's safe to fire off
+repeatedly during a session. Do exactly that when data generation or filtering
+finishes: it archives the new artifacts locally (see "Training-data artifacts"
+above) before the hours-long training phase, rather than betting them on the
+box surviving.
 
 `mem_state.pt` — a checkpoint's full internal model state, written by
 `sft/train.py` — is excluded unless `--with-mem-state` is passed. It's large
@@ -206,7 +248,7 @@ checkpoint without it still resumes (mid-example slots restart rather than
 continuing exactly). Pass `--with-mem-state` for one last pull before
 terminating, when exact mid-example resume is worth the transfer.
 
-Any of those three that don't exist on the instance are skipped — a run that
+Any of those that don't exist on the instance are skipped — a run that
 hasn't written its first checkpoint yet isn't an error. A missing *repo* is,
 and fails immediately (including under `--follow`, so a wrong
 `LAMBDA_REMOTE_REPO` can't masquerade as a terminated instance).
