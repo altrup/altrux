@@ -64,15 +64,19 @@ else
   [[ -n "$REPO_REF" ]] && git -C "$REPO_DIR" checkout "$REPO_REF"
 fi
 
-step "Stage resume checkpoints"
-# lambda_launch.sh uploads checkpoints path-preserving (repo-relative), so
-# staging already mirrors models/<model>/checkpoints/... — merge it verbatim.
+step "Stage uploaded checkpoints + data artifacts"
+# lambda_launch.sh uploads both path-preserving (repo-relative), so staging
+# already mirrors models/<model>/checkpoints/... and sft/data/ — merge it
+# verbatim. Staged data artifacts are finished datasets: regenerate only what
+# isn't listed here.
 if [[ -d "$HOME/resume-staging" && -n "$(ls -A "$HOME/resume-staging" 2>/dev/null)" ]]; then
-  find "$HOME/resume-staging" -mindepth 1 -maxdepth 4 -type d -name 'step-*' -printf 'placing %P\n'
+  find "$HOME/resume-staging" -mindepth 1 -maxdepth 4 -type d -name 'step-*' -printf 'placing checkpoint %P\n'
+  [[ -d "$HOME/resume-staging/sft/data" ]] &&
+    find "$HOME/resume-staging/sft/data" -maxdepth 1 -type f -printf 'placing data artifact sft/data/%P (already generated — do not regenerate)\n'
   cp -a "$HOME/resume-staging/." "$REPO_DIR/"
   rm -rf "$HOME/resume-staging"
 else
-  echo "no checkpoint staged — training will start fresh"
+  echo "nothing staged — training starts fresh and all data must be generated here"
 fi
 
 step "Configure sft/.env"

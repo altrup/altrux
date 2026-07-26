@@ -15,6 +15,8 @@
 #   LAMBDA_SSH_KEY_PATH    optional, private key for ssh (default ~/.ssh/id_ed25519)
 #   LAMBDA_SSH_USER        optional, default ubuntu
 #   LAMBDA_INSTANCE_NAME   optional, default altrux-train
+#   LAMBDA_DATA_ARTIFACTS  optional, sft/data/ globs to upload (see
+#                          lambda_data_artifacts.sh); empty = upload no data
 #   LAMBDA_CAPACITY_POLL_INTERVAL  optional, default 60 (seconds between
 #                          capacity retries when the instance type is sold out)
 #   LAMBDA_CAPACITY_MAX_WAIT  optional, default 0 = poll forever; else give up
@@ -85,6 +87,12 @@ resume_ckpts_full=()
 for p in ${LAMBDA_RESUME_CHECKPOINT_FULL:-}; do resume_ckpts_full+=("$(resolve_ckpt "$p")"); done
 all_ckpts=("${resume_ckpts[@]}" "${resume_ckpts_full[@]}")
 
+# Training-data artifacts already generated here (see lambda_data_artifacts.sh)
+# ride up the same path-preserving staging route as checkpoints, so the box
+# only ever generates what this machine doesn't already have.
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lambda_data_artifacts.sh"
+
 # Validate + confirm the run config BEFORE launching, while aborting is
 # still free (no instance billing yet).
 if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
@@ -107,6 +115,12 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
     for p in "${resume_ckpts_full[@]}"; do echo "  ${p#*/./} (with optimizer.pt)"; done
   else
     echo "Checkpoints to upload: none (fresh run)"
+  fi
+  if (( ${#data_local_files[@]} )); then
+    echo "Data artifacts to upload ($(du -shc "${data_local_files[@]}" | tail -1 | cut -f1)) — the box regenerates only what is NOT listed:"
+    for p in "${data_local_files[@]}"; do printf '  %5s  %s\n' "$(du -h "$p" | cut -f1)" "${p#*/./}"; done
+  else
+    echo "Data artifacts to upload: none (the box generates all of its own)"
   fi
   if [[ -t 0 ]]; then
     read -r -p "Proceed? [Y/n] " reply
@@ -278,10 +292,12 @@ if [[ "$RUN_SETUP" == 0 ]]; then
   exit 0
 fi
 
-if (( ${#all_ckpts[@]} )); then
-  echo "Uploading ${#all_ckpts[@]} checkpoint(s) (${#resume_ckpts_full[@]} with optimizer.pt, mem_state.pt excluded) to staging..."
+if (( ${#all_ckpts[@]} + ${#data_local_files[@]} )); then
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
   RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
+fi
+if (( ${#all_ckpts[@]} )); then
+  echo "Uploading ${#all_ckpts[@]} checkpoint(s) (${#resume_ckpts_full[@]} with optimizer.pt, mem_state.pt excluded) to staging..."
   if (( ${#resume_ckpts[@]} )); then
     rsync -rtR --info=progress2 --exclude=mem_state.pt --exclude=optimizer.pt \
       "${RSYNC_SSH[@]}" "${resume_ckpts[@]}" "$SSH_USER@$ip:resume-staging/"
@@ -291,6 +307,11 @@ if (( ${#all_ckpts[@]} )); then
     rsync -rtR --info=progress2 --exclude=mem_state.pt \
       "${RSYNC_SSH[@]}" "${resume_ckpts_full[@]}" "$SSH_USER@$ip:resume-staging/"
   fi
+fi
+
+if (( ${#data_local_files[@]} )); then
+  echo "Uploading ${#data_local_files[@]} data artifact(s) to staging..."
+  rsync -rtR --info=progress2 "${RSYNC_SSH[@]}" "${data_local_files[@]}" "$SSH_USER@$ip:resume-staging/"
 fi
 
 # Global Claude config, so the instance's claude behaves like the local one
