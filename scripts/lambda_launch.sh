@@ -268,10 +268,11 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     sess="altrux"; n=1
     while tmux has-session -t "$sess" 2>/dev/null; do sess="altrux-$n"; n=$((n + 1)); done
     [[ "$sess" != altrux ]] && echo "local tmux session 'altrux' already exists — using '$sess' for this run"
-    # One local session, four views: watch = pull (top pane) + watchdog
-    # (bottom pane); train/claude = live attaches to the remote tmux sessions.
-    # The remote sessions don't exist until setup runs, so those windows poll
-    # until theirs appears, then attach.
+    # One local session, five views: watch = pull (top pane) + watchdog
+    # (bottom pane); train/claude/work = live attaches to the remote tmux
+    # sessions. The remote sessions don't exist until setup runs (and 'work',
+    # where the experimenter runs prep/filter/probes, only when it first needs
+    # one), so those windows poll until theirs appears, then attach.
     # ServerAliveInterval so a silently-dropped connection kills the ssh (and
     # its poll loop) instead of leaving the window waiting forever.
     rssh="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i '$SSH_KEY_PATH' $SSH_USER@$ip"
@@ -279,8 +280,9 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     tmux split-window -t "$sess:watch" "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --pattern 'train.py|probe_recall.py' --no-mem-state; exec bash"
     tmux new-window -t "$sess" -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
     tmux new-window -t "$sess" -n claude "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
+    tmux new-window -t "$sess" -n work "$rssh -t 'until tmux has-session -t work 2>/dev/null; do echo \"waiting for remote work tmux...\"; sleep 5; done; exec tmux attach -t work'; exec bash"
     tmux select-window -t "$sess:watch"
-    echo "Local tmux session '$sess' up — windows: watch (pull + watchdog panes), train (remote train tmux), claude (remote experimenter tmux)."
+    echo "Local tmux session '$sess' up — windows: watch (pull + watchdog panes), train (remote train tmux), claude (remote experimenter tmux), work (remote work tmux)."
     echo "Attach: tmux attach -t $sess"
   fi
 fi

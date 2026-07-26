@@ -76,6 +76,11 @@ Unless `--no-watch` is passed, launch also starts a **local tmux session
   live). Waits for the remote session to exist, then attaches.
 - window `claude` — ssh'd into the remote `experimenter` tmux (the Claude
   session). Same wait-then-attach.
+- window `work` — ssh'd into the remote `work` tmux, where the experimenter
+  runs everything that isn't training (data prep, filtering, probes, pulls),
+  one named window per job. Same wait-then-attach — the experimenter creates
+  that session the first time it needs one, so this window usually waits
+  longer than the other two.
 
 Set `LAMBDA_RESUME_CHECKPOINT` to one or more local checkpoint step dirs
 (space-separated, e.g.

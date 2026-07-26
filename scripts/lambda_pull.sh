@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Pulls training artifacts down from a running Lambda Cloud instance to this
-# machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/, and
+# machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/,
 # notes/ (the experimenter session's observations — committed to git only
 # from this machine after a run; rsync is how they travel off the
-# instance). Whichever of those don't exist yet are skipped. A missing repo
+# instance), and the sft/data/ artifacts listed in lambda_data_artifacts.sh
+# (so a dataset generated on the box is archived here and uploaded again on
+# the next launch instead of regenerated). Whichever of those don't exist
+# yet are skipped. A missing repo
 # is an error in one-shot mode; in --follow mode it's expected at first
 # (launch starts the pull loop before setup clones the repo) and just retried.
 #
@@ -15,6 +18,11 @@
 #   ./scripts/lambda_pull.sh --follow [1.2.3.4]   # re-pull every 5 minutes
 #   ./scripts/lambda_pull.sh --follow --interval 60
 #   ./scripts/lambda_pull.sh --with-mem-state     # final pull, before terminating
+#   ./scripts/lambda_pull.sh --dry-run            # list what would transfer
+#
+# Every pull is idempotent (rsync only moves what changed), so running it
+# again — e.g. the moment data generation or filtering finishes, before the
+# long training phase — costs nothing and gets the artifacts to safety early.
 #
 # mem_state.pt (a checkpoint's full internal model state, written by
 # sft/train.py) is excluded unless --with-mem-state is passed: it's large
@@ -44,16 +52,21 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
   set +a
 fi
 
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lambda_data_artifacts.sh"
+
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
 follow=0
 interval=300
 with_mem_state=0
+dry_run=0
 ip=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --follow) follow=1; shift ;;
     --interval) interval="$2"; shift 2 ;;
     --with-mem-state) with_mem_state=1; shift ;;
+    --dry-run) dry_run=1; shift ;;
     -*) echo "error: unknown flag $1" >&2; exit 1 ;;
     *) ip="$1"; shift ;;
   esac
@@ -83,20 +96,28 @@ SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes)
 # .step-N.partial is a checkpoint mid-save (see sft/train.py's
 # save_checkpoint); it's renamed into place when complete, so pulling it would
 # just spend bandwidth on bytes that arrive again under their real name.
-RSYNC=(rsync -az --info=stats1 --exclude='.*.partial' -e "ssh ${SSH_OPTS[*]}")
+# -i itemizes what actually changed, so each pull's output names the files it
+# brought down rather than just counting them.
+RSYNC=(rsync -azi --info=stats1,progress2 --exclude='.*.partial' -e "ssh ${SSH_OPTS[*]}")
 if [[ "$with_mem_state" -eq 0 ]]; then
   RSYNC+=(--exclude=mem_state.pt)
 else
   echo "Including mem_state.pt (--with-mem-state) — this can be a large transfer."
 fi
+if [[ "$dry_run" -eq 1 ]]; then
+  RSYNC+=(-n)
+  echo "Dry run (--dry-run) — listing what would transfer, copying nothing."
+fi
 
 # Lists the artifact dirs that exist on the instance, one per line. Exits 10
 # if the repo itself is missing, distinguishing a misconfigured
 # LAMBDA_REMOTE_REPO from an artifact dir a run hasn't created yet.
+probe_dirs="sft/logs notes models/*/checkpoints"
+[[ -n "$DATA_ARTIFACTS" ]] && probe_dirs="$probe_dirs sft/data"
 probe_paths() {
   ssh "${SSH_OPTS[@]}" "ubuntu@${ip}" "
     cd '$remote_repo' 2>/dev/null || exit 10
-    for p in sft/logs notes models/*/checkpoints; do
+    for p in $probe_dirs; do
       [ -d \"\$p\" ] && printf '%s\n' \"\$p\"
     done
     exit 0
@@ -114,13 +135,17 @@ pull() {
   fi
 
   if [[ -z "$paths" ]]; then
-    echo "Nothing to pull yet — no sft/logs/, models/*/checkpoints/, or notes/ on the instance."
+    echo "Nothing to pull yet — none of $probe_dirs exist on the instance."
     return 0
   fi
 
   while IFS= read -r p; do
-    echo "Pulling $p/ ..."
-    "${RSYNC[@]}" --relative "ubuntu@${ip}:${remote_repo}/./${p}/" "$REPO_ROOT/" || return 1
+    echo "[$(date +%H:%M:%S)] Pulling $p/ ..."
+    # sft/data holds scratch and raw intermediates alongside the artifacts
+    # worth keeping, so it's the one path that pulls a filtered subset.
+    filter=()
+    [[ "$p" == sft/data ]] && filter=("${data_filter[@]}")
+    "${RSYNC[@]}" "${filter[@]}" --relative "ubuntu@${ip}:${remote_repo}/./${p}/" "$REPO_ROOT/" || return 1
   done <<< "$paths"
 }
 
