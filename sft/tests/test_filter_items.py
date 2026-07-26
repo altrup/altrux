@@ -6,11 +6,20 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from filter_items import filter_dataset, interference_stream, rescore_dataset
+from filter_items import (
+    BackboneScorer,
+    filter_dataset,
+    interference_stream,
+    length_batches,
+    pad_rows,
+    rescore_dataset,
+    score_rows,
+)
 
 USER_ID, ASST_ID = 1, 2
 
@@ -24,15 +33,21 @@ class _Tok:
 
 
 class _Scorer:
-    """Returns per-(test, credited-text) log-probs; records every call."""
+    """Returns per-(test, credited-text) log-probs; records every scored row
+    and the batch each arrived in."""
 
     def __init__(self, table: dict):
         self.table = table
         self.calls: list[tuple[str, int, list]] = []
+        self.batches: list[tuple[str, int]] = []
 
-    def span_logprobs(self, ids, spans, label: str) -> list[float]:
-        self.calls.append((label, len(ids), list(spans)))
-        return [self.table[(label, _Tok().decode(ids[a:b]))] for a, b in spans]
+    def span_logprobs(self, rows, label: str) -> list[list[float]]:
+        self.batches.append((label, len(rows)))
+        out = []
+        for ids, spans in rows:
+            self.calls.append((label, len(ids), list(spans)))
+            out.append([self.table[(label, _Tok().decode(ids[a:b]))] for a, b in spans])
+        return out
 
 
 def _block(entity: str = "Zorblat", stray: str = "") -> tuple[torch.Tensor, torch.Tensor, list[dict]]:
@@ -70,7 +85,7 @@ def _dataset(*blocks):
 
 
 def _args(**overrides):
-    defaults = dict(a_min=-0.7, b_max=-1.5, c_max=-1.5, min_margin=1.5, samples=0)
+    defaults = dict(a_min=-0.7, b_max=-1.5, c_max=-1.5, min_margin=1.5, samples=0, score_batch=8)
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
@@ -209,6 +224,128 @@ def test_rescore_leak_only_reinstates_scored_failures():
     rescore_dataset(dataset, _args(leak_only=True))
     assert item["filter"]["verdict"] == "pass"
     assert dataset["recall_masks"][0][item["span_start"]:item["span_end"]].all()
+
+
+def test_the_a_contexts_of_several_blocks_are_scored_in_one_batch():
+    dataset = _dataset(_block("Zorblat"), _block("Quovix"))
+    scorer = _Scorer({(t, e): v for t, v in {"A": -0.2, "B": -3.0, "C": -2.6}.items()
+                      for e in ("Zorblat", "Quovix")})
+    filter_dataset(dataset, scorer, _Tok(), _args(score_batch=8))
+    assert dict(scorer.batches) == {"A": 2, "B": 2, "C": 2}
+
+
+def test_score_batch_1_scores_every_row_on_its_own():
+    dataset = _dataset(_block("Zorblat"), _block("Quovix"))
+    scorer = _Scorer({(t, e): v for t, v in {"A": -0.2, "B": -3.0, "C": -2.6}.items()
+                      for e in ("Zorblat", "Quovix")})
+    filter_dataset(dataset, scorer, _Tok(), _args(score_batch=1))
+    assert {n for _, n in scorer.batches} == {1}
+
+
+def test_length_batches_caps_rows_and_covers_every_index_once():
+    batches = length_batches([10, 10, 10, 10, 10], max_rows=2)
+    assert [len(b) for b in batches] == [2, 2, 1]
+    assert sorted(i for b in batches for i in b) == [0, 1, 2, 3, 4]
+
+
+def test_length_batches_keeps_a_long_row_out_of_a_short_batch():
+    batches = length_batches([10, 100, 11], max_rows=8, max_ratio=2.0)
+    assert sorted(sorted(b) for b in batches) == [[0, 2], [1]]
+
+
+def test_length_batches_handles_no_rows():
+    assert length_batches([], max_rows=4) == []
+
+
+def test_pad_rows_right_pads_to_the_batch_max_and_reports_true_lengths():
+    padded, lens = pad_rows([(torch.tensor([1, 2, 3]), [(1, 3)]),
+                             (torch.tensor([4, 5]), [(1, 2)])], "cpu")
+    assert lens == [3, 2]
+    assert padded.shape == (2, 3)
+    assert padded[1].tolist() == [4, 5, 0]
+
+
+def test_pad_rows_rejects_a_span_reaching_past_its_own_row():
+    with pytest.raises(AssertionError):
+        pad_rows([(torch.tensor([1, 2, 3]), [(1, 3)]), (torch.tensor([4, 5]), [(1, 3)])], "cpu")
+
+
+def test_score_rows_returns_results_in_input_order_across_batches():
+    rows = [(torch.tensor([7] * n), [(1, 2)]) for n in (40, 10, 41, 11)]
+
+    class _ByLength:
+        def span_logprobs(self, batch, label):
+            return [[float(len(ids))] for ids, _ in batch]
+
+    out, fed = score_rows(_ByLength(), rows, "A", max_rows=2)
+    assert out == [[40.0], [10.0], [41.0], [11.0]]
+
+
+def test_score_rows_counts_real_tokens_and_not_padding():
+    rows = [(torch.tensor([7] * n), [(1, 2)]) for n in (40, 10, 41, 11)]
+
+    class _Fixed:
+        def span_logprobs(self, batch, label):
+            return [[0.0] for _ in batch]
+
+    _, fed = score_rows(_Fixed(), rows, "A", max_rows=4)
+    assert fed == 102
+
+
+class _FakeState:
+    def __init__(self, pos: int, acc: torch.Tensor):
+        self.pos, self.acc = pos, acc
+
+    def detach(self) -> "_FakeState":
+        return self
+
+
+class _FakeLM(torch.nn.Module):
+    """Causal stand-in for the backbone: each position's logits depend on the
+    absolute position and on a running function of every token fed so far, so
+    a batched read that lands one position off -- or inside another row's
+    padding -- cannot agree with the row-by-row read."""
+
+    V = 11
+
+    def forward(self, input_ids, state=None):
+        B, T = input_ids.shape
+        pos = 0 if state is None else state.pos
+        acc = torch.zeros(B) if state is None else state.acc
+        outs = []
+        for t in range(T):
+            acc = acc * 1.1 + input_ids[:, t].float()
+            outs.append(torch.sin(acc.view(B, 1) * 0.37 + (pos + t) * 0.11
+                                  + torch.arange(self.V).view(1, self.V) * 0.53))
+        return torch.stack(outs, dim=1), _FakeState(pos + T, acc)
+
+
+def test_batched_span_scoring_reads_the_same_values_as_row_by_row_scoring():
+    """Rows of different lengths, spans inside a chunk, spans crossing a chunk
+    boundary, and spans starting exactly on one (the carried-logits path)."""
+    rows = [(torch.tensor([3, 1, 4, 1, 5, 9]), [(1, 3), (3, 6)]),
+            (torch.tensor([2, 7, 1, 8, 2, 8, 1, 8, 2, 8, 4]), [(4, 5), (7, 11)]),
+            (torch.tensor([6, 6, 6, 5]), [(2, 4)])]
+    scorer = BackboneScorer(_FakeLM(), "cpu", chunk_len=4)
+
+    batched = scorer.span_logprobs(rows, "A")
+    serial = [scorer.span_logprobs([r], "A")[0] for r in rows]
+    assert [len(r) for r in batched] == [len(r) for r in serial]
+    assert [v for r in batched for v in r] == pytest.approx([v for r in serial for v in r], abs=1e-9)
+
+
+def test_a_span_scores_its_own_tokens_against_the_preceding_positions_logits():
+    """Pins the teacher-forcing convention independently of the scorer's
+    chunking: the logits at position t-1 are what score the token at t."""
+    ids = torch.tensor([3, 1, 4, 1, 5, 9, 2, 6])
+    model = _FakeLM()
+    logits, _ = model(ids.view(1, -1))
+    lp = torch.log_softmax(logits[0].float(), dim=-1)
+    a, b = 2, 6
+    expected = sum(float(lp[t - 1, ids[t]]) for t in range(a, b)) / (b - a)
+
+    got = BackboneScorer(model, "cpu", chunk_len=4).span_logprobs([(ids, [(a, b)])], "A")[0][0]
+    assert got == pytest.approx(expected, abs=1e-9)
 
 
 def test_a_source_shared_by_two_items_is_cut_once_and_remapped_once():
