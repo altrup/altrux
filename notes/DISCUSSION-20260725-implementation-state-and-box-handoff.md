@@ -259,10 +259,14 @@ NER) / needles 10.5M (large filler pool; pilot wrapped at 1.1×) / ballast
 1. Launch (uploads chains/ballast/pools; confirm screen shows the set).
 2. Integration smoke at real config on tiny slices (§5) — the one seam
    never live-tested is the config-group handover.
-3. **Transcript-consolidation null** (still unowned, still before the
-   training budget) — under the recalibrated ambition (see the memory
-   note): it answers "does M beat re-reading the transcript," the most
-   learning-per-dollar question on the list.
+3. **Transcript-consolidation null — DEFERRED out of this run's critical
+   path** (owner-approved reasoning, launch night): no harness exists, and
+   building one unsupervised on billed time is worse than deferring. This
+   run's value doesn't depend on it — it trains wake-time memory (M's one
+   non-substitutable role), while the null gates the *CL design*. Run it
+   next session (or in a quiet stretch late in this one if training is
+   healthy and attended); it stays mandatory before any CL implementation
+   work.
 4. Gate-5 sweep: batch from 8, chunk 640/768 vs 512 (§3.2), filter
    `--score-batch` raise, pilot-sized filter+NER runs for real throughput
    numbers.
