@@ -66,9 +66,11 @@ There's a `CLAUDE.md` at the root and in some subdirectories (e.g. `models/CLAUD
 
 When editing a `CLAUDE.md`, also check whether the entry you're touching (or a neighboring one) has gone stale — e.g. describes a workaround for a bug that's since been fixed elsewhere — and trim or update it rather than only appending. Keeps the file a live reference instead of an append-only log.
 
-## Live progress logs
+## Live progress logs — and live *results*
 
 Any operation that takes more than a few seconds must print live progress so it's clear something is happening. This includes data preparation, evaluation, model loading, and any other blocking step. A `\r`-based counter or periodic print is fine — silence is not. Never leave a long operation running with no output.
+
+Progress counters alone are not enough: **results must stream as they are produced, never be held for an end-of-run report.** A long run has to be informative if read — or killed — at any point: decoded samples print the moment they're collected, running composition/verdict counters ride the progress line, and anything wall-clock-sensitive reports its rate and ETA. If the only way to learn what a script found is to let it finish, that's a bug. (A filter run once sat at "0 kept" for 100 blocks over an hour while the explanation — the per-test fail composition — existed internally but printed only at exit; the fix was ~5 lines.)
 
 ## Sanity-check the artifact, not just the counts
 
