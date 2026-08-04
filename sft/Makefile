@@ -10,7 +10,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -174,6 +174,15 @@ read-diagnostic:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u read_diagnostic.py $(ARGS) 2>&1 | tee logs/read-diag-$(shell date +%Y%m%d-%H%M%S).log
+
+# Transcript-consolidation null: state N facts in a wake transcript, distil
+# the in-context teacher into LoRA, then probe generation from a fresh state
+# with no context. The field-default consolidation baseline that gates the
+# M-replay arm -- see the module docstring. Box tool (rented CUDA hardware).
+consolidation-null:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u consolidation_null.py $(ARGS) 2>&1 | tee logs/consolidation-null-$(shell date +%Y%m%d-%H%M%S).log
 
 dream-fidelity:
 	@mkdir -p logs
