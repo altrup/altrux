@@ -277,7 +277,7 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     # its poll loop) instead of leaving the window waiting forever.
     rssh="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i '$SSH_KEY_PATH' $SSH_USER@$ip"
     tmux new-session -d -s "$sess" -n watch "'$SCRIPT_DIR/lambda_pull.sh' --follow '$ip'; exec bash"
-    tmux split-window -t "$sess:watch" "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --pattern 'train.py|probe_recall.py' --no-mem-state; exec bash"
+    tmux split-window -t "$sess:watch" "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --pattern 'train.py|probe_recall.py|consolidation_null.py' --no-mem-state; exec bash"
     tmux new-window -t "$sess" -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
     tmux new-window -t "$sess" -n claude "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
     tmux new-window -t "$sess" -n work "$rssh -t 'until tmux has-session -t work 2>/dev/null; do echo \"waiting for remote work tmux...\"; sleep 5; done; exec tmux attach -t work'; exec bash"
