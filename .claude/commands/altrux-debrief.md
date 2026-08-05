@@ -12,7 +12,11 @@ act on.
 
 ## Flow
 
-1. **Bank the run.** Check `git status` for uncommitted pulled artifacts —
+1. **Bank the run.** `git pull --rebase` first, every time, before this or
+   any later commit in this flow: the box pushes its own commits mid-session
+   (test-tolerance fixes, script patches), so local `main` is routinely
+   behind by the time a debrief starts. Then check `git status` for
+   uncommitted pulled artifacts —
    `notes/EXPERIMENT_NOTES-*.md` and anything else the rsync pull left — and
    commit the notes first, before any discussion. The run's record is
    preserved before it's interpreted.
