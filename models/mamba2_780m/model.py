@@ -136,6 +136,13 @@ class Model(nn.Module):
         # (see set_grad_checkpoint). Plain attribute, never checkpointed.
         self.grad_checkpoint_block = 0
 
+        # When set to a list, _mixer_step appends each layer's post-conv read
+        # query C (detached) -- one entry per layer per token, token-major.
+        # Used by sft/erase_probe.py (and the dream-sleep loop) to address the
+        # rank-1 state erase; per-token path only, so drive the model one
+        # token at a time while capturing.
+        self.c_capture: list[torch.Tensor] | None = None
+
     def _init_state(self, batch_size: int, dtype) -> MixerState:
         conv_states, ssm_states = [], []
         for layer in self.layers:
@@ -184,6 +191,8 @@ class Model(nn.Module):
         xBC = mixer.act(xBC).to(dtype=dtype)
 
         x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        if self.c_capture is not None:
+            self.c_capture.append(C.detach())
         A = -torch.exp(mixer.A_log.float())
 
         dt = F.softplus(dt + mixer.dt_bias.to(dtype=dt.dtype))
