@@ -25,8 +25,10 @@ act on.
    versus what it merely suggests, which conclusions are load-bearing for
    the next step, and a proposed direction for the next run with reasoning.
 
-3. **Discuss as teammates.** Present your position, then have a real
-   two-way discussion — your teammate pushes back, you defend or update;
+3. **Discuss as teammates.** Open with your position as a handful of
+   one-line claims, strongest first — no prose block, no restating the run.
+   Then have a real two-way discussion, one thread at a time — your
+   teammate pushes back, you defend or update;
    you push back on their readings too when the evidence disagrees.
    Don't relitigate what a prior DISCUSSION file already rejected unless
    one of you has new evidence. Disagreements either get resolved or get
@@ -64,5 +66,7 @@ grinding it out locally.
 
 - No instance actions: this command never launches, drives, or terminates
   rented boxes. Prepping the next launch is outside its scope.
+- The conversation is a conversation. The DISCUSSION file is the only place
+  long-form writing belongs.
 - The standing direction is the product. If the discussion ends without a
   next-run plan the experimenter could execute unprompted, it isn't done.
