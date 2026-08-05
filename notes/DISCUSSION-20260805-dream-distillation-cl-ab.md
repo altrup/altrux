@@ -65,9 +65,11 @@ token allowed, so it rehearses both sides of a session itself), and per
 generated token t:
 
 1. Forward from the current state → logits. Store as **teacher** signal.
-2. Apply the state ablation: `S ← S(I − γ ĉ_tĉ_tᵀ)` where `ĉ_t` is the
-   token's own read query — targeted consume-what-you-just-read. γ is
-   **hard-coded** (partial removal, γ < 1; no learned gate exists).
+2. Apply the state ablation: `S ← S(I − γ ĉ_⊥ĉ_⊥ᵀ)` where `ĉ_⊥` is the
+   token's own read query **deflated against the state's top singular
+   direction** (per layer, recomputed from the current `S`), and
+   **γ = 1.0**. Both choices are probe-driven, registered in §3a below —
+   hard-coded, no learned gate.
 3. Gradient step: forward with the ablated state; train LoRA to match the
    stored teacher logits (KL). The gap is exactly the content step 2
    removed; only weights can close it.
@@ -82,6 +84,51 @@ part of v1.
 Consequences: the gate-collapse check (07-30 §5a) is **cancelled** — there
 is no learned gate to collapse. The every-token erase concern from this
 debrief's discussion does not apply — the erase never runs during wake.
+
+## 3a. Erase-efficacy probe results (run this debrief, local box)
+
+`sft/erase_probe.py` (`make erase-probe`; committed `8469e37`, deflation
+`5984d61`; logs `sft/logs/erase_probe*.jsonl`). Prime the 4×40 null
+transcript, capture per-layer read queries while teacher-forcing each
+fact's answer, apply the rank-1 erase, re-probe all facts. One seed
+(1234), 780M. Findings:
+
+1. **The facts' read queries share a ~0.9-|cos| interference cone.** The
+   fact-discriminative content is a small orthogonal sliver per fact. This
+   is also the mechanistic picture of the ~4-binding ceiling: readout is a
+   mixture, capacity ends where sliver margins drown in cone mush.
+2. **Sub-1 γ is a near-no-op** even applied at all 48 layers × 5 answer
+   positions (raw γ=0.5: target −0.13 nats; deflated sweep 0.25/0.5/0.75/
+   1.0 → −0.03/−0.09/−0.28/−0.74, supra-linear). A uniformly attenuated
+   readout keeps its direction, and the mixer's gated RMSNorm renormalizes
+   magnitude for free — the architecture has built-in automatic gain
+   control, so partial erasure is undone at inference time.
+3. **γ must be 1.0 for a second reason: compensation.** A γ<1 KL gap can
+   be closed by amplifying the surviving signal, and amplifying the shared
+   cone is a ~rank-1 change to `in_proj`'s C-slice — one of the cheapest
+   directions available to the LoRA. At γ=1 the erased direction reads
+   exactly zero and amplification has nothing to amplify. Residual escape
+   (re-aiming C at a binding's orthogonal remnant) is rank-hungry and
+   per-fact; the detector for all compensation flavors is fresh-state
+   recall, which any state-reading strategy fails.
+4. **Deflating the erase direction against the state's top singular
+   direction makes the erase surgical, at no information cost.** The cone
+   is where `S` concentrates its energy, so `S`'s top right-singular
+   vector locates it from `(S, ĉ)` alone — streaming-computable in the
+   dream loop. At γ=1: raw erase −1.05 target / −0.22 off-target; state-
+   svd −0.72 / −0.066 (all targets still flip); oracle deflation (other
+   facts' actual queries) −0.108 off-target — the self-contained estimate
+   matches the oracle. Remaining collateral concentrates in the
+   topaz–osprey pair, whose bindings are entangled *in the stored content*
+   (topaz reads back osprey's code at baseline) — no erase direction can
+   separate them.
+5. **Erasure can un-mask interfered facts**: erasing clove recovered
+   topaz's true code (a baseline miss) — direct evidence that freeing
+   cone capacity restores drowned bindings, the capacity-freeing story the
+   design is premised on.
+
+Caveats: one seed, N=4, answer-span queries only. The SVD costs one
+128-dim decomposition per layer per erased token — fine offline in sleep.
 
 ## 4. The CL A/B — design
 
@@ -134,8 +181,9 @@ fraction is ~0 in the smoke run, seed the sleep generation with category
 cues (a one-line prompt per wave) before concluding anything about the
 mechanism.
 
-**Hyperparameters:** γ default 0.5 (one knob; sweep only if the smoke run
-shows it saturating — dlogp flat and dream degenerating → try 0.25/0.9).
+**Hyperparameters:** γ = 1.0 with state-svd deflation, k=1 (probe-driven,
+§3a — sub-1 γ is both ineffective and a compensation invitation; do not
+re-tune γ downward without new evidence of a kind the probe couldn't see).
 Dream length: fixed token budget per sleep, default 512, logged. Gradient
 step per token (sleep is offline; if throughput is a problem, accumulate
 over small windows — record the window size in the jsonl).
@@ -162,17 +210,15 @@ point is confirmed even if A wins on speed.
 
 **Local (this machine, in order):**
 
-1. **Erase-efficacy probe** (pure inference, cheap): prime a 4×40
-   transcript, apply the rank-1 erase with one fact's read query, probe all
-   four facts. Expect: target fact degraded, others intact (the algebra
-   note says non-overlapping keys are preserved). This is the physics of
-   step 2 of the protocol and has never touched a real model. If targeted
-   erase can't remove a binding, the protocol needs rework before any box
-   time.
+1. ~~**Erase-efficacy probe**~~ **Done this debrief** — see §3a. Verdict:
+   protocol viable; erase step registered as γ=1.0 + state-svd deflation.
 2. **Build the sleep loop** — new `sft/dream_sleep.py` (generation loop
-   with per-token teacher-capture → ablate → distill-step → sample), plus
-   the A/B driver and the new probes (paraphrase templates, fixed PPL
-   slice). CPU-testable pieces get tests; TDD applies.
+   with per-token teacher-capture → ablate (per §3 step 2, reusing
+   `erase_probe.rank1_erase`/`deflate`/`state_top_dirs` and
+   `Model.c_capture`) → distill-step → sample), plus the A/B driver, the
+   Arm A transcript-SFT trainer, and the new probes (paraphrase templates,
+   self-calibrated knowledge battery, fixed PPL slice). CPU-testable
+   pieces get tests; TDD applies.
 3. **2.7B fused port** — queued behind 1–2, does not gate the A/B.
 
 **Box (next session, A10, in order):**
@@ -229,3 +275,8 @@ point is confirmed even if A wins on speed.
   altrup signs off on that block specifically** before it becomes standing
   direction. Prose summaries drift; numbered sequences don't. (Recorded
   here only for now — not propagated into the command files, by decision.)
+- Probe-session commits (same day, after the debrief proper): `7de6e00`
+  (Mamba3 stub on ROCm + venv-rebuild gotchas in root CLAUDE.md — the
+  local venv was rebuilt from empty; `UV_TORCH_BACKEND=auto` now resolves
+  CPU torch, mamba-ssm needs `MAMBA_SKIP_CUDA_BUILD=TRUE` without hipcc),
+  `8469e37` (erase probe + `Model.c_capture`), `5984d61` (`--deflate`).
