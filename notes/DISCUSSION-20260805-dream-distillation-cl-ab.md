@@ -132,13 +132,23 @@ Dream length: fixed token budget per sleep, default 512, logged. Gradient
 step per token (sleep is offline; if throughput is a problem, accumulate
 over small windows — record the window size in the jsonl).
 
-**Reading the result:** B ≥ A on reliability with smaller ΔPPL → the novel
-mechanism wins where it's supposed to (on-policy KL to own logits should
-drift less than off-policy SFT — that's the hypothesis being tested, not
-assumed). B ≪ A on reliability → dream rehearsal isn't delivering the
-facts to the reads; check the rehearsal fraction before blaming the
-mechanism. Both heavily forgetting → the LoRA budget confounds both arms;
-report, don't tune past it.
+**Registered primary hypothesis (altrup, pre-data):** Arm B is expected to
+be *slower* at installing facts; the bet is that its **ratio of learned to
+catastrophically forgotten is better** — installation is more targeted.
+Raw install rate at a matched budget is therefore NOT the headline and a
+single-budget comparison would be misleading (B could sit lower on both
+axes at one point while owning the better frontier). So each arm runs at
+2–3 training budgets (Arm A: fine-tune steps; Arm B: dream length /
+distill steps) and the primary outcome is the **install-vs-ΔPPL frontier**:
+does B's curve dominate A's (more retained knowledge at equal damage, or
+equal knowledge at less damage)? Backward transfer is read the same way —
+wave-1 survival at matched wave-2 installation.
+
+**Secondary readings:** B installs ~nothing at any budget → check the
+dream's fact-rehearsal fraction before blaming the mechanism. Both arms
+forget heavily at all budgets → the LoRA budget confounds both; report,
+don't tune past it. B dominates the frontier → the mechanism's selling
+point is confirmed even if A wins on speed.
 
 ## 5. Work queue
 
