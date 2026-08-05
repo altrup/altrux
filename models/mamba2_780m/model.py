@@ -1,3 +1,5 @@
+import functools
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,6 +33,20 @@ SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN]
 GRAD_CHECKPOINT_BLOCK = 64
 
 
+@functools.cache
+def _chunk_scan_kernel():
+    """The fused SSD chunk-scan, or None where it can't be used: it hangs on
+    this project's ROCm dev box (see Model), and a broken or absent kernel
+    build must not break importing the model."""
+    if torch.version.hip is not None:
+        return None
+    try:
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    except ImportError:
+        return None
+    return mamba_chunk_scan_combined
+
+
 class MixerState:
     """Per-layer SSM/conv state threaded across calls to Model.forward, so a
     sequence can be processed incrementally (decode) or in chunks (long-
@@ -62,20 +78,23 @@ class MixerState:
 class Model(nn.Module):
     """Mamba LM wrapper for inference and training.
 
-    Manually replicates Mamba2.step()'s arithmetic in plain PyTorch (no
-    causal_conv1d, no Triton SSD chunk-scan kernel) instead of calling the
-    library's own Mamba2.forward/Block.forward. Both of mamba_ssm's fused
-    kernel families are broken on this hardware (an unsupported ROCm gfx
-    arch): causal_conv1d's compiled kernel segfaults (confirmed on both the
-    multi-token "channellast" path and the single-token decode path), and
-    the Triton SSD scan kernel hangs -- both confirmed independent of model
-    size, package version, and a from-source rebuild. See this README's
-    `Model` wrapper quirks section for the full investigation. Slower
-    per-token than the (currently broken) fused path would be, but it's the
-    only thing proven to actually run on this hardware.
+    Drives the mixer directly rather than calling the library's own
+    Mamba2.forward/Block.forward, over two interchangeable paths:
+    `_mixer_chunk` runs a whole chunk through the fused Triton SSD chunk-scan
+    (with the conv as a plain `F.conv1d`, so no causal_conv1d build is
+    needed), and `_mixer_step` replicates Mamba2.step()'s arithmetic in plain
+    PyTorch one token at a time. `_mixer_step` is what a single decode step
+    uses, and the only path that runs at all on this project's dev box: both
+    of mamba_ssm's fused kernel families are broken on that hardware (an
+    unsupported ROCm gfx arch) -- causal_conv1d's compiled kernel segfaults
+    (confirmed on both the multi-token "channellast" path and the
+    single-token decode path) and the Triton SSD scan kernel hangs, both
+    confirmed independent of model size, package version, and a from-source
+    rebuild. See this README's `Model` wrapper quirks section for the full
+    investigation.
 
-    `forward` loops over tokens explicitly and threads/returns a MixerState,
-    so calling it repeatedly with state carried (and detached) across calls
+    `forward` threads/returns a MixerState, so calling it repeatedly with
+    state carried (and detached) across calls
     supports incremental decode and chunked training on long sequences
     without holding the whole sequence's activations at once -- the same
     pattern as mamba2_2_7b_memory's MemoryState. This replaces the previous
@@ -185,6 +204,55 @@ class Model(nn.Module):
         out = mixer.out_proj(y)
         return out, conv_state, ssm_state
 
+    def _mixer_chunk(self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state):
+        """A whole (B, T, d_model) chunk through `mixer` in one shot, via the
+        fused SSD chunk-scan -- the parallel equivalent of looping
+        `_mixer_step` over T, same states in and out. The conv runs as a plain
+        grouped `F.conv1d` over the incoming `conv_state` prepended as left
+        context, so no causal_conv1d build is required.
+        """
+        dtype = hidden_states.dtype
+        zxbcdt = mixer.in_proj(hidden_states)
+        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        z0, x0, z, xBC, dt = torch.split(
+            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+        )
+
+        d_conv = conv_state.shape[-1]
+        padded = torch.cat([conv_state[:, :, 1:], rearrange(xBC, "b l d -> b d l")], dim=-1)
+        # .contiguous(): a view here would keep the whole chunk's conv input alive via the outgoing state.
+        conv_state = padded[:, :, -d_conv:].contiguous()
+        xBC = F.conv1d(padded, mixer.conv1d.weight, mixer.conv1d.bias, groups=mixer.conv1d.groups)
+        xBC = mixer.act(rearrange(xBC, "b d l -> b l d")).to(dtype=dtype)
+
+        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        A = -torch.exp(mixer.A_log.float())
+
+        y, ssm_state = _chunk_scan_kernel()(
+            rearrange(x, "b l (h p) -> b l h p", p=mixer.headdim),
+            dt,
+            A,
+            rearrange(B, "b l (g n) -> b l g n", g=mixer.ngroups),
+            rearrange(C, "b l (g n) -> b l g n", g=mixer.ngroups),
+            chunk_size=mixer.chunk_size,
+            D=mixer.D,
+            z=None,
+            dt_bias=mixer.dt_bias,
+            initial_states=ssm_state,
+            dt_softplus=True,
+            return_final_states=True,
+        )
+
+        y = rearrange(y, "b l h p -> b l (h p)")
+        if not mixer.rmsnorm:
+            y = y * mixer.act(z)
+        else:
+            y = mixer.norm(y, z)
+        if d_mlp > 0:
+            y = torch.cat([F.silu(z0) * x0, y], dim=-1)
+        out = mixer.out_proj(y)
+        return out, conv_state, ssm_state
+
     def _apply_norm_f(self, h: torch.Tensor, residual: torch.Tensor | None) -> torch.Tensor:
         if not self.fused_add_norm:
             combined = (h + residual) if residual is not None else h
@@ -205,20 +273,22 @@ class Model(nn.Module):
 
         Pass state=None to start a fresh sequence; pass the returned state
         back in to continue it (incremental decode, or the next chunk of a
-        long sequence). Processes `input_ids` one token at a time regardless
-        of T -- correct for both a many-token prefill/chunk and a single
-        incremental decode step, just not parallelized across T (see class
-        docstring for why).
+        long sequence). A multi-token chunk runs through the fused SSD
+        chunk-scan where that kernel is usable, and otherwise (and always for
+        a single decode step) one token at a time -- same states, same
+        logits, see the class docstring.
         """
         batch_size, seqlen = input_ids.shape
         dtype = self.embedding.weight.dtype
         if state is None:
             state = self._init_state(batch_size, dtype)
 
+        fused = seqlen > 1 and _chunk_scan_kernel() is not None
+        forward_fn = self._forward_chunk if fused else self._forward_tokens
         block = self.grad_checkpoint_block if torch.is_grad_enabled() else 0
         if 0 < block < seqlen:
-            return blockwise_checkpoint(self._forward_tokens, input_ids, state, block)
-        return self._forward_tokens(input_ids, state)
+            return blockwise_checkpoint(forward_fn, input_ids, state, block)
+        return forward_fn(input_ids, state)
 
     def set_grad_checkpoint(self, enabled: bool, block: int = GRAD_CHECKPOINT_BLOCK) -> None:
         """Turn block-wise gradient checkpointing on or off for subsequent
@@ -249,6 +319,23 @@ class Model(nn.Module):
             all_logits.append(logits)
 
         return torch.stack(all_logits, dim=1), state
+
+    def _forward_chunk(self, input_ids: torch.Tensor, state: MixerState) -> tuple[torch.Tensor, MixerState]:
+        h = self.embedding(input_ids)
+        if self.marker_delta is not None:
+            h = self.marker_delta.embed(h, input_ids)
+        residual = None
+        for i, layer in enumerate(self.layers):
+            h, residual = self._prenorm(layer, h, residual)
+            h, conv_state, ssm_state = self._mixer_chunk(layer.mixer, h, state.conv_states[i], state.ssm_states[i])
+            state.conv_states[i] = conv_state
+            state.ssm_states[i] = ssm_state
+
+        h = self._apply_norm_f(h, residual)
+        logits = self.lm_head(h)
+        if self.marker_delta is not None:
+            logits = self.marker_delta.head(logits, h)
+        return logits, state
 
 
 def load_base(device: str) -> MambaLMHeadModel:
