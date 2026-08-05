@@ -25,6 +25,7 @@ from consolidation_null import (
     first_success,
     pass_at_k,
     render_turns,
+    replay_step,
     role_adjacency_violations,
     verdict,
 )
@@ -138,3 +139,19 @@ def test_verdict_is_underpowered_when_only_the_logprob_moved():
 def test_verdict_is_dead_when_neither_threshold_is_met():
     assert verdict(0.0, 0.0) == "FAIL-DEAD"
     assert verdict(PASS_MATCH_RATE - 0.01, UNDERPOWERED_DELTA_NATS - 0.01) == "FAIL-DEAD"
+
+
+def test_replay_schedule_carries_state_within_a_pass():
+    """Default (carried) schedule: state resets only at a pass boundary, so
+    chunk 0 is the only chunk the student ever sees from a fresh state."""
+    sched = [replay_step(i, n_chunks=3, fresh_state_replay=False) for i in range(7)]
+    assert [c for c, _ in sched] == [0, 1, 2, 0, 1, 2, 0]
+    assert [reset for _, reset in sched] == [True, False, False, True, False, False, True]
+
+
+def test_fresh_state_replay_resets_before_every_chunk():
+    """--fresh-state-replay: every chunk is distilled from a fresh state, the
+    same condition the post-distillation probes run under."""
+    sched = [replay_step(i, n_chunks=3, fresh_state_replay=True) for i in range(7)]
+    assert [c for c, _ in sched] == [0, 1, 2, 0, 1, 2, 0]
+    assert all(reset for _, reset in sched)

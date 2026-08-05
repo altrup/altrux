@@ -290,6 +290,19 @@ def target_logprob(model, prompt: torch.Tensor, target: torch.Tensor, state) -> 
     return logprobs[idx, target[0]].mean().item()
 
 
+def replay_step(step: int, n_chunks: int, fresh_state_replay: bool) -> tuple[int, bool]:
+    """(chunk index, reset-state-first) for one distillation step.
+
+    Under the carried schedule only chunk 0 follows a reset, so it is the only
+    chunk the student ever distils from a fresh state -- the exact condition
+    the post-distillation probes run under. Every run of this harness to date
+    has installed the first fact and no other; `fresh_state_replay` resets
+    before every chunk so no position is privileged.
+    """
+    c = step % n_chunks
+    return c, (fresh_state_replay or c == 0)
+
+
 def kl_loss(teacher_logits: torch.Tensor, student_logits: torch.Tensor, temp: float) -> torch.Tensor:
     import torch.nn.functional as F
 
@@ -338,6 +351,11 @@ def main() -> None:
     parser.add_argument("--gen-tokens", type=int, default=GEN_TOKENS, help="Tokens generated per probe (default: %(default)s)")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--out", default="logs/consolidation_null.jsonl", help="Per-fact results jsonl (default: %(default)s)")
+    parser.add_argument(
+        "--fresh-state-replay",
+        action="store_true",
+        help="reset the student's state before every replay chunk, not just at pass boundaries",
+    )
     parser.add_argument(
         "--no-memory",
         action="store_true",
@@ -456,8 +474,8 @@ def main() -> None:
     state = None
     started = time.time()
     for step in range(args.distill_steps):
-        c = step % n_chunks
-        if c == 0:
+        c, reset = replay_step(step, n_chunks, args.fresh_state_replay)
+        if reset:
             state = None
         lo, hi = c * chunk_len, min((c + 1) * chunk_len, transcript.shape[1])
         logits, state = model(transcript[:, lo:hi], state=state)
@@ -536,6 +554,7 @@ def main() -> None:
         "any_rung_rate": rung_hits / len(facts), "mean_logprob_delta": mean_delta,
         "pass_threshold": PASS_MATCH_RATE, "underpowered_threshold": UNDERPOWERED_DELTA_NATS,
         "memory_injection": has_memory and not args.no_memory,
+        "fresh_state_replay": args.fresh_state_replay,
     }
     emit(summary)
     out_file.close()
