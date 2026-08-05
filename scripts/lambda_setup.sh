@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Configures a freshly-launched Lambda Cloud GPU instance for a training run:
 # clone/pull the repo, `make sync` (+ verify CUDA torch), and install the
-# Claude Code CLI so a `/experimenter` session can take over. Data prep is
+# Claude Code CLI so a `/altrux-experimenter` session can take over. Data prep is
 # deliberately NOT done here — which data (and with what flags) is an
 # experimental decision the experimenter makes from the notes.
 #
@@ -108,7 +108,7 @@ fi
 step "Verify git push auth"
 if ! git -C "$REPO_DIR" push --dry-run origin HEAD; then
   echo "warning: 'git push --dry-run' failed — the instance can't push fixes." >&2
-  echo "         Set up a deploy key / credential before relying on /experimenter." >&2
+  echo "         Set up a deploy key / credential before relying on /altrux-experimenter." >&2
 fi
 
 step "Install Claude Code CLI"
@@ -152,7 +152,7 @@ cj.write_text(json.dumps(d, indent=2) + "\n")
 EOF
 echo "first-run prompts pre-answered (onboarding, trust, skip-permissions confirm)"
 
-EXP_PROMPT="/experimenter You were started automatically by the setup script on a freshly provisioned instance. Your teammates set this up and may be AFK, so operate autonomously within the brief and the watchdog cost controls: read the prior notes and any DISCUSSION notes, decide what this session should do first (that may be evals/probes rather than training — the DISCUSSION notes carry the current plan), and execute it in the train session."
+EXP_PROMPT="/altrux-experimenter You were started automatically by the setup script on a freshly provisioned instance. Your teammates set this up and may be AFK, so operate autonomously within the brief and the watchdog cost controls: read the prior notes and any DISCUSSION notes, decide what this session should do first (that may be evals/probes rather than training — the DISCUSSION notes carry the current plan), and execute it in the train session."
 
 step "Start the 'experimenter' tmux session"
 if ! command -v tmux >/dev/null 2>&1; then
@@ -169,7 +169,7 @@ elif [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && command -v claude >/dev/null 2>&
   tmux new-session -d -s experimenter -c "$REPO_DIR" \
     -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" -e PATH="$PATH" \
     "claude --dangerously-skip-permissions '$EXP_PROMPT'"
-  echo "auto-started claude /experimenter (CLAUDE_CODE_OAUTH_TOKEN present)"
+  echo "auto-started claude /altrux-experimenter (CLAUDE_CODE_OAUTH_TOKEN present)"
   auto=1
 else
   tmux new-session -d -s experimenter -c "$REPO_DIR"
@@ -187,5 +187,5 @@ if [[ "$auto" == 1 ]]; then
   echo "  It is already running autonomously — watch it with: tmux attach -t experimenter"
 else
   echo "  Start it: tmux attach -t experimenter, run 'claude' (paste a"
-  echo "  'claude setup-token' value to auth), then /experimenter."
+  echo "  'claude setup-token' value to auth), then /altrux-experimenter."
 fi

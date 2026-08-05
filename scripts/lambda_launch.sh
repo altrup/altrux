@@ -4,7 +4,7 @@
 # Runs on the LOCAL machine (it needs LAMBDA_API_KEY, which by design never
 # lives on the instance). It launches the instance, waits for it to boot and
 # accept ssh, then scp's lambda_setup.sh up and runs it — leaving a box that
-# just needs `claude` auth and `/experimenter` to start the run.
+# just needs `claude` auth and `/altrux-experimenter` to start the run.
 #
 # Config (scripts/.env):
 #   LAMBDA_API_KEY         required
