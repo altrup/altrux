@@ -10,7 +10,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -183,6 +183,13 @@ consolidation-null:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u consolidation_null.py $(ARGS) 2>&1 | tee logs/consolidation-null-$(shell date +%Y%m%d-%H%M%S).log
+
+# In-context capacity ladder: the largest fact count whose in-context control
+# still clears 0.8, i.e. the N at which consolidation-null has a valid premise.
+capacity-ladder:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u capacity_ladder.py $(ARGS) 2>&1 | tee logs/capacity-ladder-$(shell date +%Y%m%d-%H%M%S).log
 
 dream-fidelity:
 	@mkdir -p logs
