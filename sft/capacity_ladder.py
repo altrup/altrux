@@ -57,6 +57,20 @@ CONTROL_THRESHOLD = 0.8
 DEFAULT_GRID = "4x200,8x200,16x200,24x200,40x40,4x800"
 
 
+def set_memory_injection(model: object, enabled: bool) -> bool:
+    """Turn the neural-memory path on/off, reporting whether the model has one.
+
+    A fresh memory model is NOT a plain-backbone proxy: `beta_anneal_offset`
+    is 0.0 until training sets it, so the gated-delta merge writes an
+    untrained random `p` into `ssm_state` at every window close and decays it
+    by `retain` (~0.98). Measuring the backbone alone means disabling it.
+    """
+    if not hasattr(model, "injection_enabled"):
+        return False
+    model.injection_enabled = enabled
+    return True
+
+
 def parse_grid(spec: str) -> list[tuple[int, int]]:
     cells = []
     for part in spec.split(","):
@@ -72,6 +86,11 @@ def main() -> None:
     parser.add_argument("--gen-tokens", type=int, default=16)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--out", default="logs/capacity_ladder.jsonl")
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="disable the neural-memory injection, measuring the backbone alone",
+    )
     args = parser.parse_args()
 
     import importlib
@@ -98,6 +117,8 @@ def main() -> None:
     # shared loader.
     model, _ = train_hooks.setup_training(device, 16, 32.0, 0.0)
     model.eval()
+    has_memory = set_memory_injection(model, not args.no_memory)
+    print(f"[{ts()}] memory injection: {'absent' if not has_memory else ('off' if args.no_memory else 'on')}")
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN
     stops = (".", "\n", user_open, asst_open)
@@ -158,6 +179,7 @@ def main() -> None:
             "n_facts": n_facts, "filler_tokens": filler, "transcript_tokens": n_tokens,
             "in_context_rate": rate, "late_half_rate": late_rate,
             "hit_indices": hit_positions, "threshold": CONTROL_THRESHOLD, "phase": "cell",
+            "memory_injection": has_memory and not args.no_memory,
         }
         results.append(record)
         out_file.write(json.dumps(record) + "\n")
