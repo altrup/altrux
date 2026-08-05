@@ -3,7 +3,7 @@ capture bookkeeping."""
 
 import torch
 
-from erase_probe import group_by_layer, rank1_erase
+from erase_probe import deflate, group_by_layer, rank1_erase, state_top_dirs
 
 
 def read(ssm_state: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
@@ -47,6 +47,32 @@ def test_zero_query_is_a_noop():
     s = torch.randn(1, 4, 8, 16)
     c = torch.zeros(1, 16)
     torch.testing.assert_close(rank1_erase(s, c, gamma=1.0), s)
+
+
+def test_deflate_removes_basis_components():
+    torch.manual_seed(3)
+    basis = torch.linalg.qr(torch.randn(16, 2))[0].T  # (2, 16) orthonormal rows
+    c = torch.randn(1, 16)
+    out = deflate(c, basis)
+    assert torch.einsum("bn,kn->bk", out, basis).abs().max().item() < 1e-5
+
+
+def test_erase_along_deflated_direction_spares_basis_reads():
+    torch.manual_seed(4)
+    s = torch.randn(1, 4, 8, 16)
+    basis = torch.linalg.qr(torch.randn(16, 1))[0].T
+    c = torch.randn(1, 16)
+    erased = rank1_erase(s, deflate(c, basis), gamma=1.0)
+    torch.testing.assert_close(read(erased, basis[:1]), read(s, basis[:1]), rtol=1e-4, atol=1e-5)
+
+
+def test_state_top_dirs_finds_the_dominant_key():
+    torch.manual_seed(5)
+    key = torch.nn.functional.normalize(torch.randn(16), dim=0)
+    vals = torch.randn(4, 8, 1)
+    s = (vals * key).unsqueeze(0) + 0.01 * torch.randn(1, 4, 8, 16)
+    top = state_top_dirs(s, k=1)
+    assert torch.nn.functional.cosine_similarity(top[0], key, dim=0).abs().item() > 0.99
 
 
 def test_group_by_layer_orders_capture_token_major():

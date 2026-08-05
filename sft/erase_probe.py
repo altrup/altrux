@@ -90,6 +90,26 @@ def group_by_layer(flat: list[T], n_layers: int) -> list[list[T]]:
     return [flat[i : i + n_layers] for i in range(0, len(flat), n_layers)]
 
 
+def deflate(c: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
+    """Remove `c`'s components along the rows of `basis` (assumed orthonormal):
+    (I - V^T V) c. Shapes: c (b, n), basis (k, n)."""
+    import torch
+
+    coeffs = torch.einsum("bn,kn->bk", c.float(), basis.float())
+    return c - torch.einsum("bk,kn->bn", coeffs, basis.float()).to(c.dtype)
+
+
+def state_top_dirs(ssm_state: torch.Tensor, k: int) -> torch.Tensor:
+    """Top-k right-singular directions of the state's address space -- the
+    directions the stored keys share (the interference cone), computed from
+    the state alone. Heads stacked so the result is per layer. Returns (k, n)."""
+    import torch
+
+    m = ssm_state[0].float().reshape(-1, ssm_state.shape[-1])  # (h*p, n)
+    _, _, vh = torch.linalg.svd(m, full_matrices=False)
+    return vh[:k]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--n-facts", type=int, default=4)
@@ -97,6 +117,11 @@ def main() -> None:
     parser.add_argument("--gammas", default="0.25,0.5,1.0", help="Comma-separated erase strengths (default: %(default)s)")
     parser.add_argument("--span", choices=["answer", "question"], default="answer",
                         help="Which positions' read queries address the erase: the answer span alone, or question+answer (default: %(default)s)")
+    parser.add_argument("--deflate", choices=["none", "state-svd", "others"], default="none",
+                        help="Orthogonalize each erase direction before applying it: against the state's own top "
+                             "singular directions (state-svd -- what a dream loop can compute), or against the other "
+                             "facts' mean queries (others -- the oracle upper bound). Default: %(default)s")
+    parser.add_argument("--deflate-k", type=int, default=1, help="Singular directions to deflate against for state-svd (default: %(default)s)")
     parser.add_argument("--gen-tokens", type=int, default=GEN_TOKENS)
     parser.add_argument("--chunk-len", type=int, default=None, help="Priming chunk length (default: the model's DEFAULT_CHUNK_LEN)")
     parser.add_argument("--seed", type=int, default=1234)
@@ -216,23 +241,49 @@ def main() -> None:
         print(f"[{ts()}]   {a:<11} " + " ".join(f"{v:9.3f}" for v in row))
     emit({"phase": "overlap", "span": args.span, "mean_abs_cos": overlaps})
 
-    print(f"\n[{ts()}] === erase sweep ===")
+    # "others" deflation basis: per layer, the other facts' mean queries,
+    # orthonormalized. The oracle -- a dream loop cannot know these.
+    others_basis: dict[str, list[torch.Tensor]] = {}
+    if args.deflate == "others":
+        for fact in facts:
+            per_layer_basis = []
+            for i in range(len(model.layers)):
+                stack = torch.stack([mean_q[o.entity][i, 0] for o in facts if o.entity != fact.entity])
+                q_mat, _ = torch.linalg.qr(stack.float().T)
+                per_layer_basis.append(q_mat.T)  # (k, n) orthonormal rows
+            others_basis[fact.entity] = per_layer_basis
+
+    print(f"\n[{ts()}] === erase sweep (deflate={args.deflate}) ===")
+    skipped = 0
     for fact in facts:
         for gamma in gammas:
             edited = copy.deepcopy(primed)
             for per_layer in queries[fact.entity]:
                 for i, c in enumerate(per_layer):
+                    if args.deflate == "state-svd":
+                        basis = state_top_dirs(edited.ssm_states[i], args.deflate_k)
+                        c = deflate(c, basis)
+                    elif args.deflate == "others":
+                        c = deflate(c, others_basis[fact.entity][i])
+                    # A query living almost entirely in the deflated cone has no
+                    # reliable discriminative direction left -- skip, don't erase noise.
+                    if args.deflate != "none" and c.float().norm() < 0.05 * per_layer[i].float().norm():
+                        skipped += 1
+                        continue
                     edited.ssm_states[i] = rank1_erase(edited.ssm_states[i], c, gamma)
             print(f"\n[{ts()}] erase target={fact.entity} gamma={gamma}")
             results = probe_all(edited, f"g={gamma}")
             for r in results:
                 base = base_by_fact[r["fact"]]
                 emit({
-                    "phase": "erase", "erased": fact.entity, "gamma": gamma, "span": args.span, **r,
+                    "phase": "erase", "erased": fact.entity, "gamma": gamma, "span": args.span,
+                    "deflate": args.deflate, **r,
                     "baseline_match": base["match"], "baseline_logprob": base["logprob"],
                     "logprob_delta": r["logprob"] - base["logprob"],
                     "is_target": r["fact"] == fact.entity,
                 })
+    if args.deflate != "none":
+        print(f"[{ts()}] deflation skipped {skipped} near-cone erase directions")
 
     print(f"\n[{ts()}] === summary (logprob delta vs baseline, mean over runs) ===")
     records = [json.loads(line) for line in out_path.open() if '"phase": "erase"' in line]
