@@ -109,11 +109,19 @@ forgetting):**
 - **Reliability:** fresh-state greedy exact match per fact (existing probe).
 - **Generality:** paraphrased probes (~4 templates/fact, new) — installs
   knowledge vs memorizes a string.
-- **Locality / catastrophic forgetting:** ΔPPL on a fixed held-out
-  general-text slice, measured pre/post each sleep, per arm. This is the
-  direct A-vs-B forgetting comparison altrup asked for.
-- **Backward transfer:** wave-1 fact recall probed after sleep 2 (did
-  learning wave 2 destroy wave 1).
+- **Locality / catastrophic forgetting**, three layers:
+  - **Pre-existing-knowledge battery (headline forgetting number):** a
+    fixed battery of prompts the base 780M reliably answers correctly,
+    built once before any training by self-calibration (run candidates
+    through the base model greedy, keep only consistent hits — simple
+    items are fine, they must be *its* knowledge). Re-probed after each
+    sleep; forgotten = correct→incorrect flips, with per-item logprob
+    drops as the sensitive measure. The frontier's forgetting axis is
+    battery items lost + wave-1 items lost.
+  - **Backward transfer:** wave-1 fact recall probed after sleep 2 (did
+    learning wave 2 destroy wave 1), logprob drops alongside.
+  - **ΔPPL** on a fixed held-out general-text slice, pre/post each sleep —
+    the backstop for diffuse degradation no item battery catches.
 - Per-fact logprob deltas throughout (the null taught us installs are too
   rare to carry significance alone).
 
