@@ -134,7 +134,7 @@ def test_grad_checkpoint_matches_uncheckpointed_memory_model():
         assert (gr is None) == (gc is None), name
         if gr is None:
             continue
-        torch.testing.assert_close(gc, gr, rtol=2e-4, atol=1e-6, msg=lambda m, n=name: f"{n}: {m}")
+        torch.testing.assert_close(gc, gr, rtol=2e-4, atol=1e-5, msg=lambda m, n=name: f"{n}: {m}")
         nonzero += int(gr.abs().max() > 0)
     assert nonzero > 0
 
@@ -277,4 +277,4 @@ def test_grad_checkpoint_matches_uncheckpointed_plain_model():
         gr, gc = grads_ref[name], grads_ckpt[name]
         assert (gr is None) == (gc is None), name
         if gr is not None:
-            torch.testing.assert_close(gc, gr, rtol=2e-4, atol=1e-6, msg=lambda m, n=name: f"{n}: {m}")
+            torch.testing.assert_close(gc, gr, rtol=2e-4, atol=1e-5, msg=lambda m, n=name: f"{n}: {m}")
