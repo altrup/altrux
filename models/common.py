@@ -207,3 +207,18 @@ class MarkerDelta(nn.Module):
         rows' logit contribution)."""
         extra = (h @ self.delta.to(h.dtype).t()).to(logits.dtype)
         return logits.index_add(logits.dim() - 1, self.marker_ids, extra)
+
+
+def set_memory_injection(model: object, enabled: bool) -> bool:
+    """Turn the neural-memory path on/off, reporting whether the model has one.
+
+    A freshly-initialised memory model is NOT a plain-backbone proxy: the
+    state arm's `beta_anneal_offset` is 0.0 until training sets it, so the
+    gated-delta merge writes an untrained value into `ssm_state` at every
+    window close. Measuring the backbone alone means disabling it, and
+    measuring both ways gives the memory's ablation delta.
+    """
+    if not hasattr(model, "injection_enabled"):
+        return False
+    model.injection_enabled = enabled
+    return True

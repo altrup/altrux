@@ -57,20 +57,6 @@ CONTROL_THRESHOLD = 0.8
 DEFAULT_GRID = "4x200,8x200,16x200,24x200,40x40,4x800"
 
 
-def set_memory_injection(model: object, enabled: bool) -> bool:
-    """Turn the neural-memory path on/off, reporting whether the model has one.
-
-    A fresh memory model is NOT a plain-backbone proxy: `beta_anneal_offset`
-    is 0.0 until training sets it, so the gated-delta merge writes an
-    untrained random `p` into `ssm_state` at every window close and decays it
-    by `retain` (~0.98). Measuring the backbone alone means disabling it.
-    """
-    if not hasattr(model, "injection_enabled"):
-        return False
-    model.injection_enabled = enabled
-    return True
-
-
 def parse_grid(spec: str) -> list[tuple[int, int]]:
     cells = []
     for part in spec.split(","):
@@ -104,7 +90,7 @@ def main() -> None:
     model_name = os.getenv("MODEL_NAME", "mamba2_780m")
     model_mod = importlib.import_module(f"models.{model_name}")
     train_hooks = importlib.import_module(f"models.{model_name}.train_hooks")
-    from models.common import build_tokenizer
+    from models.common import build_tokenizer, set_memory_injection
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     chunk_len = args.chunk_len or getattr(train_hooks, "DEFAULT_CHUNK_LEN", 48)

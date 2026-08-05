@@ -338,6 +338,11 @@ def main() -> None:
     parser.add_argument("--gen-tokens", type=int, default=GEN_TOKENS, help="Tokens generated per probe (default: %(default)s)")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--out", default="logs/consolidation_null.jsonl", help="Per-fact results jsonl (default: %(default)s)")
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="disable the neural-memory injection, distilling into the backbone alone",
+    )
     args = parser.parse_args()
 
     import importlib
@@ -350,7 +355,7 @@ def main() -> None:
     model_name = os.getenv("MODEL_NAME", "mamba2_780m")
     model_mod = importlib.import_module(f"models.{model_name}")
     train_hooks = importlib.import_module(f"models.{model_name}.train_hooks")
-    from models.common import build_tokenizer
+    from models.common import build_tokenizer, set_memory_injection
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     chunk_len = args.chunk_len or getattr(train_hooks, "DEFAULT_CHUNK_LEN", 48)
@@ -368,6 +373,8 @@ def main() -> None:
 
         load_checkpoint(model, Path(args.checkpoint))
     model.eval()
+    has_memory = set_memory_injection(model, not args.no_memory)
+    print(f"[{ts()}] memory injection: {'absent' if not has_memory else ('off' if args.no_memory else 'on')}")
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN
     stops = (".", "\n", user_open, asst_open)
@@ -528,6 +535,7 @@ def main() -> None:
         "post_match_rate": match_rate, "post_pass_at_k": pass_sum / len(facts),
         "any_rung_rate": rung_hits / len(facts), "mean_logprob_delta": mean_delta,
         "pass_threshold": PASS_MATCH_RATE, "underpowered_threshold": UNDERPOWERED_DELTA_NATS,
+        "memory_injection": has_memory and not args.no_memory,
     }
     emit(summary)
     out_file.close()

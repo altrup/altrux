@@ -8,7 +8,7 @@ import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from models.common import MarkerDelta, build_tokenizer, extend_embeddings
+from models.common import MarkerDelta, build_tokenizer, extend_embeddings, set_memory_injection
 
 
 class FakeConfig:
@@ -178,3 +178,17 @@ def test_build_tokenizer_registers_special_tokens_as_atomic():
     assert ids[0] == user_id
     tail_ids = tokenizer.encode(" hello\n", add_special_tokens=False)
     assert ids[1:] == tail_ids
+
+
+def test_set_memory_injection_toggles_a_memory_model():
+    model = SimpleNamespace(injection_enabled=True)
+    assert set_memory_injection(model, False) is True
+    assert model.injection_enabled is False
+    assert set_memory_injection(model, True) is True
+    assert model.injection_enabled is True
+
+
+def test_set_memory_injection_reports_a_model_with_no_memory_path():
+    model = SimpleNamespace()
+    assert set_memory_injection(model, False) is False
+    assert not hasattr(model, "injection_enabled")
