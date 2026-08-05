@@ -1,5 +1,11 @@
 # Discussion notes — 2026-07-30: consume-on-read in the SSM state, and what it does to the M-necessity question
 
+> **SUPERSEDED (2026-08-05):** the wake-time consume-on-read design (§1) and
+> the gate-collapse check (§5a) recorded here were a drift from the intended
+> design. The erase is sleep-only, hard-coded γ, no learned gate — see
+> `DISCUSSION-20260805-dream-distillation-cl-ab.md` §3. Do not resurrect the
+> wake-time version. §3 (M-necessity) and the algebra note remain valid.
+
 Team discussion (altrup + Claude). Standing direction. Builds on
 `DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md` (§1 sleep-loop
 analysis, §2 KL-gated erase, §4 M-necessity, §5 CL evaluation),
