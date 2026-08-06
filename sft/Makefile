@@ -10,7 +10,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep summarize-grid train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -193,10 +193,11 @@ erase-probe:
 	uv run --no-sync python -u erase_probe.py $(ARGS) 2>&1 | tee logs/erase-probe-$(shell date +%Y%m%d-%H%M%S).log
 
 # Dream-distillation sleep, the CL A/B: wake on N facts, sleep with one of the
-# four registered arms (--arm replay|drain|counterfactual|drain-live, or
-# --sft-ref / --no-sleep), then the reliability/generality/locality battery.
-# Trains a LoRA and holds a full-vocab dream logit cache -- box tool (rented
-# CUDA hardware), not the local ROCm box.
+# registered arms (--arm replay|drain|counterfactual, --ce-on-dream, or
+# --sft-ref / --no-sleep), then the margin/generality/locality battery. Build
+# the seed's shared dream cache first (--build-dream-cache); every arm loads it
+# and none regenerates. Trains a LoRA and holds a full-vocab dream logit cache
+# -- box tool (rented CUDA hardware), not the local ROCm box.
 dream-sleep:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
@@ -208,6 +209,12 @@ capacity-ladder:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u capacity_ladder.py $(ARGS) 2>&1 | tee logs/capacity-ladder-$(shell date +%Y%m%d-%H%M%S).log
+
+# Score the corrected single-sleep grid (logs/g2_*_s*.jsonl). Refuses to pool
+# cells of a seed whose wave-1 dream or transcript hashes disagree.
+summarize-grid:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python summarize_grid.py $(ARGS)
 
 dream-fidelity:
 	@mkdir -p logs

@@ -6,10 +6,13 @@
 # Space-separated basename globs, matched inside sft/data/. The default takes
 # the finished train_*/eval_* artifacts and their scored *-filtered variants
 # (whose embedded per-item scores make any threshold policy a local
-# filter_items.py --rescore away), and leaves pilot_*/smoke_* scratch files and
-# raw intermediates behind. Override with LAMBDA_DATA_ARTIFACTS in scripts/.env;
-# empty means don't sync data at all.
-DATA_ARTIFACTS="${LAMBDA_DATA_ARTIFACTS-train*.pt eval_*.pt}"
+# filter_items.py --rescore away), plus the dream-sleep grid's shared inputs --
+# the per-seed dream caches every arm distils, their decoded sidecars, and the
+# self-calibrated knowledge battery, all of which must stay identical across
+# runs and machines for a cell to be comparable. Leaves pilot_*/smoke_* scratch
+# files and raw intermediates behind. Override with LAMBDA_DATA_ARTIFACTS in
+# scripts/.env; empty means don't sync data at all.
+DATA_ARTIFACTS="${LAMBDA_DATA_ARTIFACTS-train*.pt eval_*.pt dream_cache_*.pt dream_s*.txt knowledge_battery_*.json}"
 
 _data_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
