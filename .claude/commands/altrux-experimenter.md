@@ -64,6 +64,13 @@ and nothing else, and a stray C-c aimed at a probe can never hit training.
 Long `work` jobs survive your session ending exactly like training does —
 same rule: drive them with `tmux send-keys`/`new-window`, never inline.
 
+NEVER redirect a run's output solely to a log file (`> log 2>&1`): the pane
+must show the live stream AND the log must capture it — that's
+`2>&1 | tee logs/<name>.log`, the pattern every long-running Makefile target
+already applies (prefer the Makefile targets, which do this for you). A
+blank pane over a live run violates the live-progress rule and makes the
+tmux layout unreadable to anyone attaching.
+
 DATA SANITY GATE — before the FIRST training start, and again after ANY
 artifact is generated or regenerated on the box: run
 `make sanity-sample ARGS="--data <each slice's .pt, repeated>"` over every
