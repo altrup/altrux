@@ -281,10 +281,24 @@ point is confirmed even if A wins on speed.
 
 **Box (next session, A10, in order):**
 
-1. Smoke `dream_sleep.py` at 780M on the fused path: read the decoded dream
-   and the rehearsal fraction before anything else.
-2. The A/B per §4, 3 seeds.
-3. Nothing else. No 2.7B, no M, no ladder, no null.
+1. `MODEL_NAME=mamba2_780m make test` — the dream_sleep tests' first GPU
+   execution. Then smoke one arm:
+
+       cd ~/altrux/sft && MODEL_NAME=mamba2_780m make dream-sleep ARGS='--arm replay --n-facts 4 --filler-tokens 40 --dream-tokens 512 --distill-steps 200 --seed 1234 --out logs/dream_smoke_replay.jsonl'
+
+   **Read the decoded dream and the fact-rehearsal fraction before running
+   anything else.** If the dream never rehearses the facts, apply §4's
+   seeding decision rule before concluding anything.
+2. Single-sleep primary, per §4: arms `replay`, `drain`, `counterfactual`,
+   plus `--sft-ref` and `--no-sleep`, × seeds 1234/2345/3456 × distill
+   budgets 200 and 800 (dream arms only for the budget dimension), same
+   `--n-facts 4 --filler-tokens 40 --dream-tokens 512`, one jsonl per run
+   named `logs/dream_<arm>_d<steps>_s<seed>.jsonl`. Plus `--arm drain-live`
+   at seed 1234 only (exploratory; judged on dream coherence).
+3. Two-wave (`--waves 2`) ONLY if any dream arm's pooled
+   rehearsal-conditioned install rate ≥ 0.3: arms replay/drain/
+   counterfactual at the better budget, 3 seeds.
+4. Nothing else. No 2.7B, no M, no ladder, no null.
 
 ## 6. Explicitly considered and rejected
 
