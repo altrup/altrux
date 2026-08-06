@@ -2,8 +2,8 @@
 inside the forward (DISCUSSION-20260806 sec 3's micro-order).
 
 What must hold: the hook sees each layer's own post-conv read query C before
-that layer's decay+write, its return value is what the write lands on, and
-leaving the hook unset is a byte-identical no-op.
+that layer's decay+write, its return value is what the write lands on, and an
+identity hook leaves the forward's result unchanged.
 
 Tiny synthetic backbone (seconds, no download), same skip condition as the
 other model tests -- mamba_ssm's norm path needs a working GPU.
@@ -56,16 +56,19 @@ def _run(model: M780.Model, ids: torch.Tensor):
         return model(ids, state=model._init_state(1, torch.float32))
 
 
-def test_hook_unset_is_a_byte_identical_no_op():
+def test_an_identity_hook_is_a_no_op():
+    """Setting any hook forces the per-token path, so on a fused-kernel host
+    this compares the loop against the chunk-scan -- same tolerance as
+    test_mixer_fused.py's oracle, not bitwise equality."""
     model, ids = _tiny_model(), _ids()
     logits, state = _run(model, ids)
 
     model.erase_hook = lambda i, ssm, c: ssm
     hooked_logits, hooked_state = _run(model, ids)
 
-    assert torch.equal(logits, hooked_logits)
+    assert torch.allclose(logits, hooked_logits, atol=1e-4, rtol=1e-4)
     for a, b in zip(state.ssm_states, hooked_state.ssm_states, strict=True):
-        assert torch.equal(a, b)
+        assert torch.allclose(a.float(), b.float(), atol=1e-4, rtol=1e-4)
 
 
 def test_hook_fires_once_per_layer_per_token_with_that_layer_s_read_query():
