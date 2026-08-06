@@ -340,6 +340,17 @@ point is confirmed even if A wins on speed.
   then.
 - Whether dream rehearsal needs seeding (§4 decision rule) — empirical,
   settled by the smoke run.
+- **Soft dreaming** (altrup, this debrief): skip sampling entirely — feed
+  the softmax-weighted mixture of token embeddings back in as the next
+  input, so the dream walks a superposition instead of committing to one
+  token. The KL target is already soft; this would make the *trajectory*
+  soft too. Concerns to weigh before trying it: blended embeddings are
+  off-distribution and 512 compounding steps may drift into text-space
+  nowhere; the decoded-dream diagnostic stops reflecting what the state
+  consumed; and hedged rehearsal blurs exactly the crisp reads the erase
+  targets. Cheap on-distribution first step if sampling noise is the worry:
+  greedy dreaming (`--temperature 0`, exists today). Revisit as a
+  `--soft-dream` flag only after the discrete baseline has results.
 
 ## 8. Housekeeping
 
