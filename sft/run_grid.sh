@@ -21,11 +21,14 @@ common="--n-facts 4 --filler-tokens 40 --dream-tokens 512 --dream-temp 0.7 --cue
 run() {  # run <name> <args...>
   local name=$1; shift
   local out="logs/dream_${name}_s${seed}.jsonl"
-  if [ -s "$out" ]; then echo "=== skip $name s$seed (exists) ==="; return; fi
+  # A cell is finished only once it has written its locality record: the jsonl
+  # is non-empty from the first probe, so existence alone would skip a cell a
+  # kill interrupted halfway.
+  if grep -q '"phase": "locality"' "$out" 2>/dev/null; then echo "=== skip $name s$seed (done) ==="; return; fi
   echo "=== grid $name seed=$seed ==="
   MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.. \
     uv run --no-sync python -u dream_sleep.py $common --seed "$seed" "$@" --out "$out" 2>&1 \
-    | grep -E "rehearsal fraction|probe w|battery retained|held-out ppl|in_context w|WARNING|Error"
+    | grep --line-buffered -E "rehearsal fraction|probe w|battery retained|held-out ppl|in_context w|WARNING|Error"
 }
 
 for steps in 200 800; do
