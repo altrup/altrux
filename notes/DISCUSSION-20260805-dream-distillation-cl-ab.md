@@ -58,28 +58,62 @@ gate-collapse check as the first experiment. That was never the intent.
 The intended design, confirmed line-by-line by altrup today:
 
 **Normal (wake) operation is exactly stock.** No gate, no erase, no
-behavior change, no new parameters in the wake path.
+behavior change, no new parameters in the wake path. The wake state is
+never cleared before sleep — it is the sleep's material.
 
-**Sleep operation** — the model generates freely (EOS ignored, `[USER]`
-token allowed, so it rehearses both sides of a session itself), and per
-generated token t:
+**Sleep operation** — the model generates a dream freely (EOS ignored,
+`[USER]` token allowed, so it rehearses both sides of a session itself).
+The erase, where an arm applies one, is
+`S ← S(I − γ ĉ_⊥ĉ_⊥ᵀ)` with `ĉ_⊥` the token's own read query **deflated
+against the current state's top singular direction** (per layer) and
+**γ = 1.0** — probe-driven choices, §3a; hard-coded, no learned gate.
 
-1. Forward from the current state → logits. Store as **teacher** signal.
-2. Apply the state ablation: `S ← S(I − γ ĉ_⊥ĉ_⊥ᵀ)` where `ĉ_⊥` is the
-   token's own read query **deflated against the state's top singular
-   direction** (per layer, recomputed from the current `S`), and
-   **γ = 1.0**. Both choices are probe-driven, registered in §3a below —
-   hard-coded, no learned gate.
-3. Gradient step: forward with the ablated state; train LoRA to match the
-   stored teacher logits (KL). The gap is exactly the content step 2
-   removed; only weights can close it.
-4. Sample the emitted token from the teacher logits at `--temperature`;
-   continue generation from the ablated state.
+**Teacher is frozen** in all registered arms: teacher forwards run with
+the LoRA adapters bypassed, so the distillation target is stable and (for
+A/B2) the dream is byte-identical across arms at a seed. All registered
+arms train the **same objective**: KL from cached teacher logits to the
+adapters-on student; the *student's state deprivation* is the only
+manipulated variable. Teacher passes are generated once and cached
+(logits, and for B1 drained-state snapshots); the training budget is
+optimizer steps over the cached dream, as in the null.
 
-One state stream (teacher and student are one ablation increment apart; the
-teacher degrades over the sleep — bootstrapped handoff to weights).
-Two-stream (pristine teacher) is an **open question**, recorded in §7, not
-part of v1.
+The four arm sequences, signed off 2026-08-05 (evolved from this note's
+original single-sequence design during the same debrief — the earlier
+"generate from the ablated state, train as you go" form survives as
+B1-live):
+
+**Arm A — generative replay (the field method):**
+1. Teacher: frozen base + wake state → generate dream to budget, cache
+   logits. 2. Clear state. 3. Train: student teacher-forced over the
+   dream from a **fresh state**, KL to cached logits, N steps. 4. Carry:
+   nothing (state stays cleared).
+
+**Arm B2 — per-token counterfactual (shares A's cached dream):**
+1. Same cached teacher pass as A. 2. Train, per dream position t: copy
+   the wake state advanced to t → ablate the copy along ĉ_t → student
+   forwards that position from the ablated copy → KL to cached logits;
+   copy discarded. N steps. 3. Carry: the **intact** wake state.
+
+**Arm B1 — cumulative drain:**
+1. Teacher: frozen base + wake state, generating and **erasing as it
+   goes** (per token: emit logits → erase along ĉ_t → next token from the
+   drained state); cache logits + per-position drained-state snapshots.
+2. Train: student teacher-forced over the dream, each position forwarded
+   from that position's drained snapshot, KL to cached logits, N steps.
+3. Carry: the final drained state.
+
+**B1-live — exploratory (1 seed, not part of the frontier):**
+1. One online pass: forward from current state (adapters **on**) → store
+   logits → erase along ĉ_t → gradient step (post-erase forward vs stored
+   logits) → sample from stored logits → continue from the drained state.
+2. Carry: final drained state. 3. Primary observable: decoded-dream
+   coherence over the sleep (does the handoff to weights keep the dream
+   alive, or does it collapse mid-sleep).
+
+The three registered arms are one experiment — same teacher, same data,
+same objective; deprivation total (A) vs surgical-per-token (B2) vs
+cumulative (B1). B1/B2/B1-live carry state across the sleep; A (and the
+SFT reference) clear, because clearing is the convention being compared.
 
 Consequences: the gate-collapse check (07-30 §5a) is **cancelled** — there
 is no learned gate to collapse. The every-token erase concern from this
@@ -140,15 +174,39 @@ arms, ≥3 seeds. Session material: the null's synthetic entity→code
 transcripts, waves of **4 facts** (the measured capacity ceiling — sleep
 cadence must be ≤ ~4 facts written, per the ladder).
 
-**Structure (both arms):** wake 1 (4 facts) → sleep → wake 2 (4 new facts)
-→ sleep → probe.
+**Arms** (dream arms per the §3 sequences; frozen teacher, all-KL):
 
-- **Arm A — conventional CL:** sleep = LoRA fine-tuning on the raw wake
-  transcript (experience replay, the field default). State wiped at sleep.
-- **Arm B — dream distillation:** sleep = the §3 protocol. State persists
-  across sleep minus what the dream's reads consumed.
-- **Control:** no-sleep (state carried, no training) — the ladder already
-  gives its expected shape.
+| arm | teacher generation | student state during training | carries |
+|---|---|---|---|
+| A (generative replay) | intact state | fresh | nothing |
+| B1 (cumulative drain) | draining state | per-position drained snapshot | drained state |
+| B2 (counterfactual) | intact state (≡ A's dream) | intact minus ĉ_t (copy, discarded) | intact state |
+| B1-live (exploratory) | adapters-on, online | the draining state itself | drained state |
+| SFT-ref | — (CE on the stored wake transcript verbatim) | fresh | nothing |
+| no-sleep | — | — | intact state |
+
+SFT-ref covers the CE-on-raw-text convention (the objective-type confound
+is deliberately quarantined there); no-sleep is the floor.
+
+**Structure — single-sleep primary, two-wave conditional:** the primary
+experiment is wake (4 facts) → sleep → probe, for all arms × 3 seeds × 2
+budgets. Only if installation works (any dream arm clearing ~0.3 pooled
+conditioned installs), the two-wave form — wake 1 → sleep 1 → wake 2 (4
+new facts, running on the carried state) → sleep 2 → probe — runs on A,
+B1, B2 at the best budget. Wake 2 measures what single-sleep cannot: the
+wake-2 in-context control prices **consumption** (B1 enters selectively
+vacated, B2 enters full, A enters empty), and post-sleep-2 fresh-state
+recall of wave-1 facts measures **backward transfer**.
+
+**Probe battery, at every sleep boundary, in order:** fresh-state scored
+probes — reliability (trained phrasing, greedy + teacher-forced code
+log-prob), generality (~4 paraphrase templates/fact), knowledge battery,
+ΔPPL — then carried-state probes as a **diagnostic column, never scored
+as installation** (B1 should show consolidated facts gone from state and
+unconsolidated ones present — the erase verified in vivo; B2 everything;
+A nothing). Instrumentation per run: decoded dream printed live,
+fact-rehearsal fraction (uninstalled-but-never-rehearsed is a data
+failure, conditioned on like `in_context_match`), KL curve.
 
 **Metrics (the established battery — knowledge-editing triad + CL
 forgetting):**
@@ -250,9 +308,15 @@ point is confirmed even if A wins on speed.
 
 ## 7. Open questions
 
-- **One vs two state streams in the sleep loop** (§3): one stream is v1 by
-  decision; whether a pristine-state teacher materially changes what gets
-  consolidated is untested. Revisit after the first A/B result.
+- ~~One vs two state streams~~ Resolved into the arm structure: the
+  pristine-teacher variant *is* B2, the original one-stream design *is*
+  B1-live, and B1 is the cacheable middle. Superseded by the §3 sequences.
+- **Verified erase (07-25 KL-gated "forget what you committed"):** install
+  via B2's counterfactual training, then one end-of-sleep *real* erase of
+  only the facts that pass a fresh-state check. Parked as the follow-up
+  refinement if B2 wins the frontier but loses the wake-2 capacity
+  comparison to B1 — it would graft B1's consumption onto B2's training
+  robustness, with deletion gated on proof of installation.
 - **Lit-search verdict (this debrief, web search): erase-on-read in a
   dense recurrent/SSM state appears unexplored.** Closest prior art: DNC
   free gates (read-triggered but slot memory, learned), stack-RNN pop
