@@ -38,6 +38,20 @@ act on.
    one of you has new evidence. Disagreements either get resolved or get
    recorded as open questions — don't paper over them.
 
+   Before anything is registered, confirm you are on the same page — and
+   "the same page" includes the details, not just the headline. The
+   details ARE the experiment: which state a logit is trained from, what
+   carries versus what's discarded, what fires before what inside a step,
+   what two arms share byte-for-byte. Restate any agreed mechanism back as
+   math plus a numbered event sequence and get explicit sign-off on that
+   block specifically — never on a paraphrase or a vibe. When your teammate's
+   words admit two readings, or your design differs from what they
+   originally described even slightly, surface it as a named difference and
+   ask; a nod to a summary that papered over one detail cost an entire grid
+   (08-06: "B1" ran as generate-while-draining when the intent was
+   train-on-shared-dream — the discrepancy was sign-off-able all along,
+   nobody put the sequence in front of the teammate).
+
 4. **Write the DISCUSSION file as you converge** —
    `notes/DISCUSSION-YYYYMMDD-<topic>.md` (see the existing ones for the
    format): reinterpretation of the run's conclusions, prioritized standing
@@ -47,13 +61,22 @@ act on.
    autonomous experimenter session reading it cold: concrete commands,
    flags, checkpoint names, and thresholds — not vibes.
 
-5. **Housekeeping last, by mutual consent.** After the direction is agreed,
+5. **Dry-run the file before committing it.** Spawn a subagent (Opus-class,
+   no conversation context — only the codebase, like a real experimenter
+   session) that loads the altrux-experimenter skill in explicit DRY-RUN
+   mode: it reads the new DISCUSSION file cold and reports, without
+   executing anything, exactly what it would do, every ambiguity or silent
+   guess the file forces, and any spec-vs-code conflict. Fold its findings
+   back into the file. The file is done when the dry run contains no
+   surprises — misreadings surface here, not on a rented box.
+
+6. **Housekeeping last, by mutual consent.** After the direction is agreed,
    propose any small local changes that fell out of the discussion (script
    fixes, altrux-experimenter/altrux-debrief command updates, data-prep tweaks). Implement
    only what you both agree to, commit them, and record them in the notes'
    housekeeping section.
 
-6. **Close.** Commit the DISCUSSION file. This is the local machine —
+7. **Close.** Commit the DISCUSSION file. This is the local machine —
    notes are committed here directly (no watchdog or rsync race).
 
 ## Small tests locally, big tests on the box

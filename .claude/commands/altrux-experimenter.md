@@ -71,6 +71,15 @@ already applies (prefer the Makefile targets, which do this for you). A
 blank pane over a live run violates the live-progress rule and makes the
 tmux layout unreadable to anyone attaching.
 
+A REGISTERED INVARIANT SHIPS WITH ITS MACHINE CHECK. When a DISCUSSION file
+registers a structural guarantee across cells or runs (a shared artifact, a
+byte-identical input, a fixed schedule), the harness must hash or record the
+shared thing into every result file and the scorer must assert equality —
+loudly failing, not silently pooling. Prose invariants don't survive
+refactors or harness→driver composition; the 08-06 grid lost its primary
+contrast exactly this way (per-process dream regeneration silently voided
+the registered shared-dream guarantee).
+
 DATA SANITY GATE — before the FIRST training start, and again after ANY
 artifact is generated or regenerated on the box: run
 `make sanity-sample ARGS="--data <each slice's .pt, repeated>"` over every
