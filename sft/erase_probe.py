@@ -70,10 +70,15 @@ T = TypeVar("T")
 def rank1_erase(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float) -> torch.Tensor:
     """S(I - g chat chat^T): attenuate the state's read along `c` by `gamma`,
     leave orthogonal reads untouched. A (near-)zero query is a no-op rather
-    than a divide-by-zero. Computed in fp32, returned in the state's dtype."""
+    than a divide-by-zero. Computed in fp32, returned in the state's dtype.
+
+    The direction is detached: gradient flows through the state's contents,
+    never through the address the erase is aimed at -- a differentiable erase
+    lets the optimizer rotate its queries to dodge consumption instead of
+    installing facts (DISCUSSION-20260806 sec 3)."""
     import torch
 
-    s32, c32 = ssm_state.float(), c.float()
+    s32, c32 = ssm_state.float(), c.detach().float()
     norm = c32.norm(dim=-1, keepdim=True)
     if norm.max().item() < 1e-8:
         return ssm_state
@@ -95,6 +100,7 @@ def deflate(c: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
     (I - V^T V) c. Shapes: c (b, n), basis (k, n)."""
     import torch
 
+    c, basis = c.detach(), basis.detach()
     coeffs = torch.einsum("bn,kn->bk", c.float(), basis.float())
     return c - torch.einsum("bk,kn->bn", coeffs, basis.float()).to(c.dtype)
 
@@ -105,7 +111,7 @@ def state_top_dirs(ssm_state: torch.Tensor, k: int) -> torch.Tensor:
     the state alone. Heads stacked so the result is per layer. Returns (k, n)."""
     import torch
 
-    m = ssm_state[0].float().reshape(-1, ssm_state.shape[-1])  # (h*p, n)
+    m = ssm_state[0].detach().float().reshape(-1, ssm_state.shape[-1])  # (h*p, n)
     _, _, vh = torch.linalg.svd(m, full_matrices=False)
     return vh[:k]
 

@@ -87,3 +87,24 @@ def test_group_by_layer_rejects_partial_tokens():
     except ValueError:
         return
     raise AssertionError("expected ValueError on a capture not divisible by n_layers")
+
+
+def test_the_erase_direction_carries_no_gradient_back_to_the_query():
+    """Sec 3 step 2: a differentiable erase lets the optimizer rotate its
+    queries to dodge consumption instead of installing facts."""
+    s = torch.randn(1, 2, 4, 8, requires_grad=True)
+    c = torch.randn(1, 8, requires_grad=True)
+
+    rank1_erase(s, c, gamma=1.0).float().sum().backward()
+
+    assert c.grad is None
+    assert s.grad is not None
+
+
+def test_the_deflation_basis_is_detached_from_the_state_it_is_read_from():
+    s = torch.randn(1, 2, 4, 8, requires_grad=True)
+    c = torch.randn(1, 8, requires_grad=True)
+
+    basis = state_top_dirs(s, 1)
+    assert not basis.requires_grad
+    assert not deflate(c, basis).requires_grad
