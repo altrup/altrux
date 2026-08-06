@@ -2,16 +2,17 @@
 sampling ban, the state erase applied per layer, the paraphrase probes, and
 the dream's fact-rehearsal accounting."""
 
+import pytest
 import torch
 import torch.nn as nn
 
 from consolidation_null import Fact
 from dream_sleep import (
     ARM_CARRY,
+    distill_counterfactual,
     distill_live,
     distill_replay,
     distill_sft,
-    distill_stateful,
     erase_state,
     frozen_teacher,
     paraphrase_prompts,
@@ -148,6 +149,7 @@ class TinyModel(nn.Module):
         self.head = nn.Linear(dim, vocab)
         self.layers = list(range(n_layers))
         self.c_capture = None
+        self.erase_hook = None
         self.marker_delta = None
 
     def forward(self, ids, state=None):
@@ -160,6 +162,8 @@ class TinyModel(nn.Module):
             for i in range(len(self.layers)):
                 if self.c_capture is not None:
                     self.c_capture.append(h.detach())
+                if self.erase_hook is not None:
+                    state.ssm_states[i] = self.erase_hook(i, state.ssm_states[i], h)
                 state.ssm_states[i] = state.ssm_states[i] + h.view(1, 1, 1, dim)
             read = torch.einsum("bhpn,bn->bn", state.ssm_states[0], h)
             out.append(self.head(h + read))
@@ -180,6 +184,12 @@ def _tiny_setup():
     wake = FakeState([torch.randn(1, 1, 1, 4) for _ in model.layers])
     seed = torch.tensor([[1]])
     return model, opt, wake, seed
+
+
+def _sentences(token_id: int) -> str:
+    """Decoded text where every token ends a sentence, so a fired cue timer
+    splices at the next token rather than waiting for a boundary."""
+    return f"{token_id}."
 
 
 def _moved(model, before) -> bool:
@@ -203,7 +213,7 @@ def test_cue_schedule_forces_every_cue_into_the_dream_in_rotation():
     model, _, wake, seed = _tiny_setup()
 
     dream = teacher_dream(model, wake, seed, n_tokens=24, temperature=1.0, banned=(),
-                          drain=False, decode_token=str, needles=[],
+                          drain=False, decode_token=_sentences, needles=[],
                           cues=[[3, 4], [5, 6]], cue_every=6)
 
     emitted = dream.tokens.tolist()[0]
@@ -216,8 +226,8 @@ def test_cue_schedule_leaves_the_answer_slot_free_to_come_from_the_state():
     sampled, or the dream would be teacher-forced text rather than recall."""
     model, _, wake, seed = _tiny_setup()
 
-    a = teacher_dream(model, wake, seed, 20, 1.0, (), False, str, [], cues=[[3, 4]], cue_every=5)
-    b = teacher_dream(model, wake, seed, 20, 1.0, (), False, str, [], cues=[[3, 4]], cue_every=5)
+    a = teacher_dream(model, wake, seed, 20, 1.0, (), False, _sentences, [], cues=[[3, 4]], cue_every=5)
+    b = teacher_dream(model, wake, seed, 20, 1.0, (), False, _sentences, [], cues=[[3, 4]], cue_every=5)
 
     assert a.tokens.tolist() != b.tokens.tolist()
 
@@ -229,7 +239,7 @@ def test_cue_greedy_decodes_the_answer_span_deterministically():
     model, _, wake, seed = _tiny_setup()
 
     dream = teacher_dream(model, wake, seed, n_tokens=18, temperature=1.0, banned=(),
-                          drain=False, decode_token=str, needles=[],
+                          drain=False, decode_token=_sentences, needles=[],
                           cues=[[3, 4]], cue_every=4, cue_greedy=3)
 
     emitted = dream.tokens.tolist()[0]
@@ -263,20 +273,6 @@ def test_teacher_dream_drains_the_state_it_generates_from():
     assert not torch.allclose(intact.final_state.ssm_states[0], drained.final_state.ssm_states[0])
 
 
-def test_distill_stateful_steps_both_arms_and_leaves_the_wake_state_untouched():
-    for drain in (True, False):
-        model, opt, wake, seed = _tiny_setup()
-        dream = teacher_dream(model, wake, seed, 4, 0.0, (), drain, str, [])
-        before = [p.detach().clone() for p in model.parameters()]
-        wake_before = wake.ssm_states[0].clone()
-
-        distill_stateful(model, opt, dream, wake, steps=6, kl_temp=1.0, accum=1, drain=drain,
-                         on_step=lambda step, loss: None)
-
-        assert _moved(model, before)
-        torch.testing.assert_close(wake.ssm_states[0], wake_before)
-
-
 def test_distill_replay_and_sft_take_their_optimizer_steps():
     model, opt, wake, seed = _tiny_setup()
     dream = teacher_dream(model, wake, seed, 6, 0.0, (), False, str, [])
@@ -304,12 +300,244 @@ def test_distill_live_trains_online_and_returns_the_drained_state():
     torch.testing.assert_close(wake.ssm_states[0], wake_before)  # the arm works on a copy
 
 
+def _fixed_dream(model, wake, seed, n_tokens=4):
+    return teacher_dream(model, wake, seed, n_tokens, 0.0, (), False, str, [])
+
+
+def _counterfactual_run(in_place: bool, steps: int = 1, deep: bool = False):
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed)
+    losses: list[float] = []
+    distill_counterfactual(model, opt, dream, wake, steps=steps, kl_temp=1.0, accum=1,
+                           in_place=in_place, deep=deep, on_step=lambda s, l: losses.append(l))
+    return [p.detach().clone() for p in model.parameters()], losses
+
+
+def test_b1_and_b2_are_identical_at_token_one_including_gradients():
+    """Same state, same query, same ablation, same logit -- so the same
+    optimizer step. They may only diverge from token 2, through the carry."""
+    b1_params, b1_losses = _counterfactual_run(in_place=True)
+    b2_params, b2_losses = _counterfactual_run(in_place=False)
+
+    assert b1_losses == b2_losses
+    for a, b in zip(b1_params, b2_params, strict=True):
+        assert torch.equal(a, b)
+
+
+def test_b1_and_b2_diverge_once_the_carry_matters():
+    b1_params, _ = _counterfactual_run(in_place=True, steps=4)
+    b2_params, _ = _counterfactual_run(in_place=False, steps=4)
+
+    assert any(not torch.equal(a, b) for a, b in zip(b1_params, b2_params, strict=True))
+
+
+def test_counterfactual_ablates_through_the_model_s_erase_hook():
+    """The erase is per-layer and interleaved inside the forward (sec 3's
+    micro-order), so it must arrive via the hook rather than a wrapper."""
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed)
+    seen: list[int] = []
+    original = TinyModel.forward
+
+    def spy(self, ids, state=None):
+        if self.erase_hook is not None:
+            seen.append(1)
+        return original(self, ids, state=state)
+
+    TinyModel.forward = spy
+    try:
+        distill_counterfactual(model, opt, dream, wake, steps=2, kl_temp=1.0, accum=1,
+                               in_place=False, deep=False, on_step=lambda s, l: None)
+    finally:
+        TinyModel.forward = original
+    assert seen and model.erase_hook is None  # always unset again
+
+
+def test_counterfactual_leaves_the_wake_state_untouched():
+    for in_place in (True, False):
+        model, opt, wake, seed = _tiny_setup()
+        dream = _fixed_dream(model, wake, seed)
+        before = wake.ssm_states[0].clone()
+        before_params = [p.detach().clone() for p in model.parameters()]
+
+        distill_counterfactual(model, opt, dream, wake, steps=5, kl_temp=1.0, accum=1,
+                               in_place=in_place, deep=False, on_step=lambda s, l: None)
+
+        torch.testing.assert_close(wake.ssm_states[0], before)
+        assert _moved(model, before_params)
+
+
+def test_counterfactual_reports_one_token_gradient_per_step():
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed)
+    tokens, carried = distill_counterfactual(model, opt, dream, wake, steps=6, kl_temp=1.0, accum=1,
+                                             in_place=False, deep=False, on_step=lambda s, l: None)
+    assert tokens == 6 and carried is not None
+
+
+def test_deep_b2_takes_one_optimizer_step_per_pass():
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed)
+    steps: list[int] = []
+
+    distill_counterfactual(model, opt, dream, wake, steps=8, kl_temp=1.0, accum=1,
+                           in_place=False, deep=True, on_step=lambda s, l: steps.append(s))
+
+    assert len(steps) == 2  # two passes over a 4-token dream, one step each
+
+
+def test_deep_mode_is_not_available_for_b1():
+    """Sec 6: deep-B1's cross-token gradient passes through every ablation
+    projector, so its depth is pre-aimed at the compensation harbor."""
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed)
+    with pytest.raises(ValueError):
+        distill_counterfactual(model, opt, dream, wake, steps=2, kl_temp=1.0, accum=1,
+                               in_place=True, deep=True, on_step=lambda s, l: None)
+
+
+def test_replay_can_reset_the_state_before_every_chunk():
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+
+    carried, _ = _replay_params(model, opt, dream, fresh_state=False)
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    fresh, _ = _replay_params(model, opt, dream, fresh_state=True)
+
+    assert any(not torch.equal(a, b) for a, b in zip(carried, fresh, strict=True))
+
+
+def _replay_params(model, opt, dream, **kwargs):
+    tokens = distill_replay(model, opt, dream, steps=4, chunk_len=3, kl_temp=1.0,
+                            on_step=lambda s, l: None, **kwargs)
+    return [p.detach().clone() for p in model.parameters()], tokens
+
+
+def test_replay_masks_cue_targets_out_of_the_loss():
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    keep = [True, False, True, True, True, True]
+
+    _, tokens = _replay_params(model, opt, dream, keep=keep)
+
+    assert tokens == 10  # chunks of 3 over 6 tokens: 2 kept then 3 kept, twice
+
+
+def test_a_fully_masked_chunk_takes_no_optimizer_step():
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    before = [p.detach().clone() for p in model.parameters()]
+
+    tokens = distill_replay(model, opt, dream, steps=1, chunk_len=6, kl_temp=1.0,
+                            on_step=lambda s, l: None, keep=[False] * 6)
+
+    assert tokens == 0 and not _moved(model, before)
+
+
+def test_ce_on_dream_trains_on_the_dream_tokens_instead_of_the_teacher_logits():
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    kl, _ = _replay_params(model, opt, dream)
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    ce, _ = _replay_params(model, opt, dream, ce=True)
+
+    assert any(not torch.equal(a, b) for a, b in zip(kl, ce, strict=True))
+
+
 def test_arm_carry_matches_the_registered_sequences():
     assert ARM_CARRY == {
         "replay": "none",
+        "ce-on-dream": "none",
         "drain": "drained",
         "counterfactual": "intact",
         "drain-live": "drained",
         "sft-ref": "none",
         "no-sleep": "intact",
     }
+
+
+class _FakeTokenizer:
+    eos_token_id = 0
+
+
+def _fake_io():
+    def encode(text: str) -> torch.Tensor:
+        return torch.tensor([[1 + (sum(map(ord, word)) % 5) for word in text.split()][:4] or [1]])
+
+    def decode(ids) -> str:
+        return "".join(f"{int(i)}." for i in ids)
+
+    return encode, decode
+
+
+def _sleep_args(**overrides):
+    from types import SimpleNamespace
+
+    args = dict(seed=1234, dream_tokens=8, dream_temp=0.0, dream_prompt="", cue_every=3, cue_greedy=1,
+                chunk_len=None, distill_steps=4, kl_temp=1.0, accum_window=1, probe_every=0,
+                fresh_state_replay=False, deep=False, ce_on_dream=False, n_facts=2, filler_tokens=4)
+    return SimpleNamespace(**{**args, **overrides})
+
+
+def _built_cache(tmp_path, args):
+    from dream_sleep import build_cache
+
+    model, opt, wake, seed = _tiny_setup()
+    encode, decode = _fake_io()
+    facts = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]
+    transcript = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    cache = build_cache(model, args, tmp_path / "dream_cache_s1234.pt", transcript, facts, 3,
+                        encode, decode, _FakeTokenizer(), USER, ASST)
+    return model, opt, wake, cache, facts, transcript, encode, decode
+
+
+def test_build_cache_writes_a_loadable_cache_and_its_sidecar(tmp_path):
+    from dream_sleep import load_dream_cache
+
+    args = _sleep_args()
+    _, _, _, cache, facts, transcript, _, _ = _built_cache(tmp_path, args)
+
+    loaded = load_dream_cache(tmp_path / "dream_cache_s1234.pt")
+    assert loaded.dream_ids == cache.dream_ids and len(loaded.dream_ids) == args.dream_tokens
+    assert loaded.transcript_ids == [1, 2, 3, 4, 5, 6]
+    assert set(loaded.distractors) == {f.entity for f in facts}
+    assert len(loaded.cue_flags) == args.dream_tokens and any(loaded.cue_flags)
+    sidecar = (tmp_path / "dream_s1234.txt").read_text()
+    assert "[CUE]" in sidecar and cache.dream_sha in sidecar
+
+
+@pytest.mark.parametrize("arm", ["replay", "ce-on-dream", "drain", "counterfactual", "sft-ref"])
+def test_run_sleep_trains_every_arm_from_the_cached_dream(tmp_path, arm):
+    from dream_sleep import run_sleep
+
+    args = _sleep_args(ce_on_dream=(arm == "ce-on-dream"))
+    model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
+    before = [p.detach().clone() for p in model.parameters()]
+    records: list[dict] = []
+
+    carried = run_sleep(arm, model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
+                        encode, decode, _FakeTokenizer(), USER, ASST, records.append,
+                        lambda step: records.append({"phase": "periodic", "step": step}))
+
+    assert _moved(model, before)
+    sleep = next(r for r in records if r["phase"] == "sleep")
+    assert sleep["token_gradients"] > 0
+    assert (carried is None) == (ARM_CARRY[arm] == "none")
+    if arm != "sft-ref":
+        dream = next(r for r in records if r["phase"] == "dream")
+        assert "bound_cov" in dream and "misbound" in dream
+
+
+def test_run_sleep_streams_the_probe_battery_on_the_registered_cadence(tmp_path):
+    from dream_sleep import run_sleep
+
+    args = _sleep_args(distill_steps=6, probe_every=2)
+    model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
+    probes: list[int] = []
+
+    run_sleep("counterfactual", model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
+              encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, probes.append)
+
+    assert probes == [2, 4]  # not at the last step -- the end-of-sleep battery covers that
