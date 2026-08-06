@@ -32,6 +32,11 @@ from consolidation_null import normalize, run_chunks, ts
 # probe(prompt) -> (greedy continuation, mean log-prob of the expected answer)
 Probe = Callable[[str], tuple[str, float]]
 
+# A fact counts as installed at this much margin over its distractor code --
+# the correct code roughly 2.7x likelier over the whole code
+# (notes/DISCUSSION-20260806 sec 4). Chosen before the data, not after.
+MARGIN_INSTALL = 1.0
+
 BatteryItem = dict[str, str | float | bool]
 
 # Candidate completions for the battery. Deliberately simple and diverse --
@@ -174,6 +179,30 @@ def battery_summary(scored: Sequence[BatteryItem]) -> dict[str, float | int]:
         "retained_rate": (len(scored) - lost) / len(scored),
         "mean_logprob_delta": sum(float(r["logprob_delta"]) for r in scored) / len(scored),
     }
+
+
+def code_margin(correct_logprob: float, distractor_logprob: float) -> tuple[float, bool]:
+    """(margin, installed) from the two summed code log-probs. The margin is
+    immune to the format prior the cues inject -- both codes gain equally from
+    "digits are likelier here" -- and to the digit-counting attractor that
+    makes greedy exact match unusable as a gate."""
+    margin = correct_logprob - distractor_logprob
+    return margin, margin >= MARGIN_INSTALL
+
+
+def logprob_sum(model, prompt: torch.Tensor, target: torch.Tensor, state) -> float:
+    """Teacher-forced log-prob of `target`, SUMMED over its tokens -- the
+    reduction MARGIN_INSTALL is calibrated to (consolidation_null's
+    `target_logprob` averages instead, which is the reported per-token column)."""
+    import torch
+
+    seq = torch.cat([prompt, target], dim=1)
+    with torch.no_grad():
+        logits, _ = model(seq, state=state)
+    logprobs = torch.log_softmax(logits[0].float(), dim=-1)
+    start = prompt.shape[1] - 1
+    idx = torch.arange(start, seq.shape[1] - 1, device=seq.device)
+    return logprobs[idx, target[0]].sum().item()
 
 
 def nll_from_logits(logits: torch.Tensor, ids: torch.Tensor) -> float:
