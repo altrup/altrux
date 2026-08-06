@@ -1,4 +1,5 @@
 import functools
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -143,6 +144,12 @@ class Model(nn.Module):
         # token at a time while capturing.
         self.c_capture: list[torch.Tensor] | None = None
 
+        # When set, _mixer_step calls it as hook(layer_idx, ssm_state, C) just
+        # before that layer's decay+write and writes onto whatever it returns
+        # -- the ablate-then-write-then-read micro-order the dream-sleep
+        # counterfactual arms need (sft/dream_sleep.py). Per-token path only.
+        self.erase_hook: Callable[[int, torch.Tensor, torch.Tensor], torch.Tensor] | None = None
+
     def _init_state(self, batch_size: int, dtype) -> MixerState:
         conv_states, ssm_states = [], []
         for layer in self.layers:
@@ -169,7 +176,7 @@ class Model(nn.Module):
             is_rms_norm=isinstance(layer.norm, RMSNorm),
         )
 
-    def _mixer_step(self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state):
+    def _mixer_step(self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state, layer_idx: int = 0):
         """One token through `mixer`, replicating Mamba2.step()'s arithmetic
         manually (see class docstring for why). `ssm_state`/`conv_state` are
         *not* mutated in place (unlike the library's own decode cache): each
@@ -193,6 +200,8 @@ class Model(nn.Module):
         x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
         if self.c_capture is not None:
             self.c_capture.append(C.detach())
+        if self.erase_hook is not None:
+            ssm_state = self.erase_hook(layer_idx, ssm_state, C)
         A = -torch.exp(mixer.A_log.float())
 
         dt = F.softplus(dt + mixer.dt_bias.to(dtype=dt.dtype))
@@ -292,7 +301,7 @@ class Model(nn.Module):
         if state is None:
             state = self._init_state(batch_size, dtype)
 
-        fused = seqlen > 1 and _chunk_scan_kernel() is not None
+        fused = seqlen > 1 and _chunk_scan_kernel() is not None and self.erase_hook is None
         forward_fn = self._forward_chunk if fused else self._forward_tokens
         block = self.grad_checkpoint_block if torch.is_grad_enabled() else 0
         if 0 < block < seqlen:
@@ -317,7 +326,7 @@ class Model(nn.Module):
             residual = None
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
-                h, conv_state, ssm_state = self._mixer_step(layer.mixer, h, state.conv_states[i], state.ssm_states[i])
+                h, conv_state, ssm_state = self._mixer_step(layer.mixer, h, state.conv_states[i], state.ssm_states[i], i)
                 state.conv_states[i] = conv_state
                 state.ssm_states[i] = ssm_state
 
