@@ -13,9 +13,13 @@
 # summarize_grid.py can assert they agree.
 set -u
 seed=${1:?usage: run_grid2.sh SEED}
+# A seed whose dream binds fewer than 3/4 codes to their own entity is rebuilt
+# at CUE_EVERY=24 (DISCUSSION-20260806 sec 5a); the arms of that seed run at the
+# same value so the cell's flags regenerate the cache they distilled.
+cue_every=${CUE_EVERY:-32}
 cd ~/altrux/sft
 env_vars="MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.."
-common="--n-facts 4 --filler-tokens 40 --dream-tokens 512 --dream-temp 0.7 --cue-every 32 --cue-greedy 12"
+common="--n-facts 4 --filler-tokens 40 --dream-tokens 512 --dream-temp 0.7 --cue-every $cue_every --cue-greedy 12"
 regime="--lr 1e-4 --distill-steps 800 --probe-every 200"
 stamp() { date +%H:%M:%S; }
 
