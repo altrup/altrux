@@ -121,6 +121,9 @@ ARM_CARRY = {
 }
 ARMS = ("replay", "drain", "counterfactual", "drain-live")
 
+# The wake session's own question phrasing, reused verbatim as a rehearsal cue.
+USER_CUE = "{user} What is the code for the {entity}?"
+
 # Generality probes: the question is reworded, the assistant stem is not, so a
 # miss is a failure to retrieve rather than a failure to match a format.
 PARAPHRASE_TEMPLATES = [
@@ -239,6 +242,9 @@ def teacher_dream(
     drain: bool,
     decode_token,
     needles: Sequence[str],
+    cues: Sequence[Sequence[int]] = (),
+    cue_every: int = 0,
+    cue_greedy: int = 0,
 ) -> Dream:
     """Sequences 1 of arms A/B2 (`drain=False`) and B1 (`drain=True`): the
     frozen teacher generates a dream from the wake state, one token at a time
@@ -247,11 +253,19 @@ def teacher_dream(
     next token is produced from the drained state.
 
     The decoded dream prints live, with the running fact-rehearsal fraction.
+
+    `cues` (with `cue_every`) forces question stems into the dream in rotation,
+    every `cue_every` tokens. Free generation rehearses the wake facts only by
+    luck -- measured coverage swings from 4/4 codes to 0/4 across seeds at
+    every fixed temperature and length -- and a fact the dream never mentions
+    is one no arm can install. Each cue ends mid-answer, so the code itself is
+    still sampled from the state rather than forced.
     """
     import torch
 
     state = copy.deepcopy(wake_state)
     ids = [int(i) for i in seed_ids[0].tolist()]
+    next_cue, cue_at, greedy_left = 0, len(ids) + cue_every, 0
     logits_cache: list[torch.Tensor] = []
     queries: list[list[torch.Tensor]] = []
     texts: list[str] = []
@@ -271,7 +285,15 @@ def teacher_dream(
             if drain:
                 skipped += erase_state(state, per_layer)
             if t + 1 >= len(ids):
-                ids.append(int(sample_next(logits[:, -1], temperature, banned).item()))
+                if cues and cue_every and len(ids) >= cue_at:
+                    ids.extend(int(i) for i in cues[next_cue % len(cues)])
+                    next_cue += 1
+                    cue_at = len(ids) + cue_every
+                    greedy_left = cue_greedy
+                else:
+                    temp = 0.0 if greedy_left > 0 else temperature
+                    greedy_left = max(0, greedy_left - 1)
+                    ids.append(int(sample_next(logits[:, -1], temp, banned).item()))
 
             if (t + 1) % PRINT_EVERY == 0 or t + 1 == n_tokens:
                 frac, _ = rehearsal_fraction(texts, needles)
@@ -453,6 +475,8 @@ def main() -> None:
     parser.add_argument("--dream-tokens", type=int, default=DREAM_TOKENS, help="Dream length per sleep (default: %(default)s)")
     parser.add_argument("--dream-temp", type=float, default=1.0, help="Dream sampling temperature (default: %(default)s)")
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
+    parser.add_argument("--cue-greedy", type=int, default=12, help="Tokens after each cue decoded greedily -- the recalled code, which temperature sampling almost never gets right (default: %(default)s)")
+    parser.add_argument("--cue-every", type=int, default=0, help="Force a fact's question stem into the dream every N tokens, cycling the wave's facts; 0 leaves generation free (default: %(default)s)")
     parser.add_argument("--distill-steps", type=int, default=200, help="Optimizer steps per sleep (default: %(default)s)")
     parser.add_argument("--accum-window", type=int, default=1, help="Positions accumulated per optimizer step in the per-token arms (default: %(default)s)")
     parser.add_argument("--lr", type=float, default=1e-4, help="AdamW learning rate (default: %(default)s)")
@@ -615,7 +639,7 @@ def main() -> None:
         else:
             print(f"\n[{ts()}] === wave {wave} sleep: {mode} ===")
             carried = run_sleep(mode, model, opt, args, wave, carried, transcript, seen, chunk_len,
-                                encode, decode, tokenizer, asst_open, emit)
+                                encode, decode, tokenizer, user_open, asst_open, emit)
 
         print(f"\n[{ts()}] === wave {wave} probes: fresh state, no context ===")
         probe_facts(seen, None, "probe", wave, True, fresh_baseline)
@@ -631,7 +655,7 @@ def main() -> None:
 
 
 def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_len,
-              encode, decode, tokenizer, asst_open, emit):
+              encode, decode, tokenizer, user_open, asst_open, emit):
     """One sleep. Returns the state carried into the next wake (None where the
     arm clears it)."""
     import torch
@@ -661,6 +685,13 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
     def decode_token(token_id: int) -> str:
         return decode([token_id])
 
+    # Each cue is the wake session's question plus the answer stem, stopping
+    # before the code -- so the cue names which fact to recall and the state
+    # still has to supply the digits.
+    cues = [encode(f"{USER_CUE.format(user=user_open, entity=f.entity)}"
+                   f"{asst_open} The code for the {f.entity} is")[0].tolist()
+            for _, f in seen] if args.cue_every else []
+
     if mode == "drain-live":
         carried, dream = distill_live(model, opt, wake_state, seed, args.dream_tokens, args.dream_temp,
                                       banned, args.kl_temp, args.accum_window, decode_token, needles, on_step)
@@ -668,7 +699,8 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
     else:
         model.eval()
         dream = teacher_dream(model, wake_state, seed, args.dream_tokens, args.dream_temp, banned,
-                              drain=(mode == "drain"), decode_token=decode_token, needles=needles)
+                              drain=(mode == "drain"), decode_token=decode_token, needles=needles,
+                              cues=cues, cue_every=args.cue_every, cue_greedy=args.cue_greedy)
         model.train()
         if mode == "replay":
             distill_replay(model, opt, dream, args.distill_steps, chunk_len, args.kl_temp, on_step)

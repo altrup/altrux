@@ -199,6 +199,60 @@ def test_teacher_dream_caches_a_position_per_token_and_bans_eos():
     assert len(dream.token_texts) == 8
 
 
+def test_cue_schedule_forces_every_cue_into_the_dream_in_rotation():
+    model, _, wake, seed = _tiny_setup()
+
+    dream = teacher_dream(model, wake, seed, n_tokens=24, temperature=1.0, banned=(),
+                          drain=False, decode_token=str, needles=[],
+                          cues=[[3, 4], [5, 6]], cue_every=6)
+
+    emitted = dream.tokens.tolist()[0]
+    windows = [emitted[i:i + 2] for i in range(len(emitted) - 1)]
+    assert [3, 4] in windows and [5, 6] in windows
+
+
+def test_cue_schedule_leaves_the_answer_slot_free_to_come_from_the_state():
+    """The cue supplies the question; the tokens after it must still be
+    sampled, or the dream would be teacher-forced text rather than recall."""
+    model, _, wake, seed = _tiny_setup()
+
+    a = teacher_dream(model, wake, seed, 20, 1.0, (), False, str, [], cues=[[3, 4]], cue_every=5)
+    b = teacher_dream(model, wake, seed, 20, 1.0, (), False, str, [], cues=[[3, 4]], cue_every=5)
+
+    assert a.tokens.tolist() != b.tokens.tolist()
+
+
+def test_cue_greedy_decodes_the_answer_span_deterministically():
+    """The digits after a cue are the recall being rehearsed: sampled at
+    temperature they almost never come out right, so they decode greedily
+    while the rest of the dream stays sampled."""
+    model, _, wake, seed = _tiny_setup()
+
+    dream = teacher_dream(model, wake, seed, n_tokens=18, temperature=1.0, banned=(),
+                          drain=False, decode_token=str, needles=[],
+                          cues=[[3, 4]], cue_every=4, cue_greedy=3)
+
+    emitted = dream.tokens.tolist()[0]
+    start = next(j for j in range(len(emitted) - 1) if emitted[j:j + 2] == [3, 4]) + 2
+    span = range(start, min(start + 3, len(emitted)))
+    assert len(span) > 0
+    for j in span:
+        assert emitted[j] == int(dream.logits[j - 1].argmax())
+
+
+def test_no_cues_leaves_generation_untouched():
+    model, _, wake, seed = _tiny_setup()
+    kwargs = dict(seed_ids=seed, n_tokens=8, temperature=0.0, banned=(), drain=False,
+                  decode_token=str, needles=[])
+
+    torch.manual_seed(0)
+    plain = teacher_dream(model, wake, **kwargs)
+    torch.manual_seed(0)
+    empty = teacher_dream(model, wake, cues=[], cue_every=4, **kwargs)
+
+    assert plain.tokens.tolist() == empty.tokens.tolist()
+
+
 def test_teacher_dream_drains_the_state_it_generates_from():
     model, _, wake, seed = _tiny_setup()
     kwargs = dict(seed_ids=seed, n_tokens=6, temperature=0.0, banned=(), decode_token=str, needles=[])
