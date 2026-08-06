@@ -378,13 +378,23 @@ the pull.
 - **B2's saturation ceiling** — measured by (b); if it flattens early, the
   per-token counterfactual gap is structurally too small and the erase
   mechanism's future is B2′'s policy role, not distillation signal.
-- **Teacher-state-hosted B2** (planned, altrup — not chosen against, never
-  presented as a choice during registration): at each token, ablate a copy
-  of the *teacher's* state at that position (recomputed by a second frozen
-  no-grad forward per pass — never cached, 19 GB) instead of the student's.
-  Stationary counterfactual, no drift; the cost is a growing train/probe
-  state mismatch and 2× forward compute. Run as a variant after the
-  registered grid establishes the student-hosted baseline.
+- **B3 — teacher-spine counterfactual** (planned, altrup; named this
+  debrief, not in the next run). Duplicate-GPU-work form, no state caching:
+  the frozen teacher re-walks the cached dream per pass (no-grad, states
+  only — its logits are already cached and identical). Per position t:
+  1. Teacher's intact generating state S_{t−1} (the state before this
+     token's logit).
+  2. Student takes a copy, ablates it (same micro-order: deflated ĉ from
+     the token, detached, cut before the write).
+  3. Student's forward for token t from the ablated copy → logit → KL vs
+     the cached teacher logit → optimizer step.
+  4. Student's state is discarded entirely; the teacher continues from its
+     own intact post-token state.
+  Stationary counterfactual (the hosting spine never drifts with learning);
+  costs 2× forward compute and accepts a train/probe state mismatch that
+  grows as the student learns. Run after the registered grid establishes
+  the student-hosted baseline, as the B2-vs-B3 contrast isolates what
+  spine drift contributes.
 - **Full-BPTT B2 variant** (promoted to a registered (b) cell, seed 1234):
   accumulate per-token losses over the dream, one optimizer step per pass,
   full graph (affordable on the GH200). Faster learning + fresh-state
