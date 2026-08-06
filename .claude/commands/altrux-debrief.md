@@ -64,11 +64,15 @@ act on.
 5. **Dry-run the file before committing it.** Spawn a subagent (Opus-class,
    no conversation context — only the codebase, like a real experimenter
    session) that loads the altrux-experimenter skill in explicit DRY-RUN
-   mode: it reads the new DISCUSSION file cold and reports, without
-   executing anything, exactly what it would do, every ambiguity or silent
-   guess the file forces, and any spec-vs-code conflict. Fold its findings
-   back into the file. The file is done when the dry run contains no
-   surprises — misreadings surface here, not on a rented box.
+   mode. Replicate the production setup as closely as possible: give it
+   ONLY what a real experimenter session would get — the skill and the
+   repo — plus exactly two deviations: "dry run: narrate what you would
+   do instead of executing anything" and "state anything you'd have to
+   guess or decide yourself". Do NOT hand it a reading list, a report
+   structure, or hints about what matters — steering it hides exactly the
+   misreadings the dry run exists to surface. Fold its findings back into
+   the file. The file is done when the dry run contains no surprises —
+   misreadings surface here, not on a rented box.
 
 6. **Housekeeping last, by mutual consent.** After the direction is agreed,
    propose any small local changes that fell out of the discussion (script
