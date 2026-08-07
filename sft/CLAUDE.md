@@ -43,6 +43,12 @@ The model is selected via `MODEL_NAME` in `.env`. This controls which package in
   `dream_sleep.py` streams managed 0.11 optimizer step/s each (0.33 aggregate)
   against **1.4 step/s for a single job** — ~4x worse in total throughput. The
   low single-job utilisation number (~20%) is not usable headroom: these loops
-  are one-token-at-a-time and latency-bound. Run grids serially.
+  are one-token-at-a-time and latency-bound. Run grids serially **on that
+  card** — this is an A10 capacity limit, not a property of these loops. On a
+  GH200 (measured 2026-08-07) the same three streams cost nothing: one cell
+  uses 3.4 GB of 97 GB at 12% utilisation, and three concurrent
+  `dream_sleep.py` processes hold their solo step rate (2.2 step/s replay,
+  against 2.0 solo) at 99% utilisation — ~2.8x aggregate. Match the decision
+  to the card: measure one cell's utilisation before choosing.
 - **`pkill -f <script>.py` kills your own shell**, because the tool's command
   string contains the pattern. Kill the tmux window instead.
