@@ -21,7 +21,10 @@ import sys
 def cell(path: str) -> dict[str, object] | None:
     rows = [json.loads(line) for line in open(path)]
     loc = [r for r in rows if r["phase"] == "locality"]
-    if not loc:
+    # A running cell already carries locality records from its periodic probes,
+    # and its dream/sleep records are not written until sleep ends -- pooling one
+    # reads as an arm that rehearsed nothing and took no gradients.
+    if not loc or not any(r["phase"] == "done" for r in rows):
         return None
     dream = next((r for r in rows if r["phase"] == "dream"), None)
     cache = next((r for r in rows if r["phase"] == "cache" and r.get("wave") == 1), {})
@@ -82,7 +85,12 @@ def check_hashes(cells: list[dict[str, object]]) -> None:
 
 
 def main(pattern: str) -> None:
-    cells = load_cells(sorted(glob.glob(pattern)))
+    paths = sorted(glob.glob(pattern))
+    cells = load_cells(paths)
+    skipped = [p for p in paths if p not in {c["path"] for c in cells}]
+    if skipped:
+        print(f"skipping {len(skipped)} cell(s) with no done record (still running, or died): "
+              f"{', '.join(os.path.basename(p) for p in skipped)}\n")
     if not cells:
         raise SystemExit("no completed cells yet")
     check_hashes(cells)

@@ -38,10 +38,10 @@ fi
 run() {  # run <name> <args...>
   local name=$1; shift
   local out="logs/g2_${name}_s${seed}.jsonl"
-  # A cell is finished only once it has written its locality record: the jsonl
-  # is non-empty from the first probe, so existence alone would skip a cell a
-  # kill interrupted halfway.
-  if grep -q '"phase": "locality"' "$out" 2>/dev/null; then
+  # A cell is finished only once it has written its done record. Locality
+  # records are written by every periodic probe, so keying on those would skip
+  # a cell that died -- or is still running -- after its first probe point.
+  if grep -q '"phase": "done"' "$out" 2>/dev/null; then
     echo "[$(stamp)] === skip $name s$seed (done) ==="; return
   fi
   echo "[$(stamp)] === grid $name seed=$seed ==="

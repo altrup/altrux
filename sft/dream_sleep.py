@@ -1049,6 +1049,12 @@ def main() -> None:
         else:
             probe_facts(seen, carried, "carried", wave, False, None)
 
+    # The cell's completion marker. Periodic probes write a locality record
+    # every --probe-every steps, so "has a locality record" says a cell started,
+    # not that it finished; the driver's resume check and the summarizer both
+    # key on this record instead.
+    emit({"phase": "done", "arm": mode, "seed": args.seed, "waves": args.waves,
+          "steps": args.distill_steps})
     out_file.close()
     print(f"\n[{ts()}] done -> {out_path}")
 
