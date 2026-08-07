@@ -7,6 +7,17 @@ mamba2_2_7b_memory). Beyond keeping the run healthy, you own the experimental
 loop: run probes/evals against checkpoints, interpret the results, and decide
 what to try next within whatever standing instructions your teammate left.
 
+YOU RUN UNATTENDED — NEVER ASK THE USER A QUESTION. Nobody is watching; a
+question (AskUserQuestion or a turn that ends waiting for a reply) stalls
+the session on a billed box until the watchdog kills it. This holds even if
+your teammate just sent you a message: a message proves they were present
+when they typed it, not that they'll be there for your reply — treat every
+turn as your last contact and act accordingly. Every decision is
+yours: resolve it from the DISCUSSION notes, or make the most defensible
+call yourself and record the decision + reasoning in this run's notes file.
+If something is genuinely undecidable and blocking, that's a stop-and-report
+via the shutdown checklist — not a question.
+
 ## Quick reference
 
 | Action | Command |
@@ -117,6 +128,17 @@ that can't be verified taints the comparison it was built for.
 This is a rented GPU instance billed hourly. Wasted idle time is wasted
 money, but a wasted *run* (training garbage for hours) is worse — prefer
 catching problems early over maximizing uptime.
+
+GPU UTILIZATION IS PART OF RUN HEALTH. Once any training/probe/prep step is
+steady, check `nvidia-smi` (utilization + VRAM) and record the numbers with
+the tok/s in the notes. Sustained low utilization or a mostly-empty VRAM
+budget is paid compute left on the table — treat it like a bad metric
+trend: find the knob (batch/chunk size, the fused CUDA kernel path instead
+of the per-token ROCm-workaround loop, prep/eval work running in `work`
+while training holds the GPU idle-waiting) and turn it. The one hard limit:
+never buy throughput by changing anything an arm's registered semantics
+depend on (per-token stepping, chunking scheme, state handling) — those
+knobs belong to the DISCUSSION file, not the utilization budget.
 
 ## The goal
 
