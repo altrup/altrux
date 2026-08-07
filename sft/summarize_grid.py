@@ -16,6 +16,11 @@ import glob
 import json
 import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from probes_common import MARGIN_INSTALL as INSTALL_NATS
 
 
 def cell(path: str) -> dict[str, object] | None:
@@ -52,6 +57,7 @@ def cell(path: str) -> dict[str, object] | None:
         "n": len(final),
         "margin_install": sum(bool(r.get("margin_install")) for r in final),
         "margin": sum(r.get("margin", 0.0) for r in final) / max(1, len(final)),
+        "fact_margin": {r["fact"]: r.get("margin") for r in final if r.get("margin") is not None},
         "install": sum(r["match"] for r in final),
         "dlp": sum(r["logprob_delta"] for r in final if r.get("logprob_delta") is not None) / max(1, len(final)),
         "para": sum(r["paraphrase_rate"] for r in final) / max(1, len(final)),
@@ -61,6 +67,33 @@ def cell(path: str) -> dict[str, object] | None:
 
 def load_cells(paths: list[str]) -> list[dict[str, object]]:
     return [c for c in (cell(p) for p in paths) if c]
+
+
+def apply_floor(cells: list[dict[str, object]]) -> int:
+    """Baseline-correct every margin against the same fact's no-sleep margin.
+
+    A raw margin is not a measure of learning. The distractor is one fixed
+    random code, and nothing makes it as likely a priori as the real one: at
+    the untrained floor the per-fact margins measured -1.6 to +4.1 nats, so the
+    registered "installed iff margin >= 1.0" fires for two thirds of facts that
+    were never trained on at all. The floor arm is per (seed, fact) constant, so
+    subtracting it costs nothing and gives the metric a true zero. Returns how
+    many facts the floor itself would have scored installed -- print it, because
+    it is the evidence that the raw column cannot be read.
+    """
+    floor: dict[tuple[str, str], float] = {}
+    for c in cells:
+        if c["arm"] == "nosleep":
+            for fact, m in c["fact_margin"].items():
+                floor[(str(c["seed"]), fact)] = m
+    false_positives = sum(m >= INSTALL_NATS for m in floor.values())
+    for c in cells:
+        deltas = [m - floor[(str(c["seed"]), f)] for f, m in c["fact_margin"].items()
+                  if (str(c["seed"]), f) in floor]
+        c["dmargin"] = sum(deltas) / len(deltas) if deltas else float("nan")
+        c["dinstall"] = sum(d >= INSTALL_NATS for d in deltas)
+        c["dn"] = len(deltas)
+    return false_positives
 
 
 def check_hashes(cells: list[dict[str, object]]) -> None:
@@ -96,12 +129,19 @@ def main(pattern: str) -> None:
     check_hashes(cells)
     seeds = sorted({str(c["seed"]) for c in cells})
     print(f"{len(cells)} cells, seeds {', '.join(seeds)}; wave-1 dream hashes agree within every seed")
+    false_positives = apply_floor(cells)
+    floor_n = sum(c["dn"] for c in cells if c["arm"] == "nosleep")
+    if floor_n:
+        print(f"raw-margin floor: the untrained no-sleep arm clears the {INSTALL_NATS:.1f}-nat bar on "
+              f"{false_positives}/{floor_n} facts -- read dmarg/dinst (floor-corrected), not marg/inst")
 
     print(f"\n{'arm':22} {'seed':5} {'rehrs':>6} {'bound':>6} {'misb':>5} {'ic':>4} {'marg':>7} "
-          f"{'inst':>5} {'EM':>4} {'dlogp':>7} {'para':>5} {'tokgrad':>8} {'lost':>6} {'dPPL':>8}")
+          f"{'inst':>5} {'dmarg':>7} {'dinst':>6} {'EM':>4} {'dlogp':>7} {'para':>5} {'tokgrad':>8} "
+          f"{'lost':>6} {'dPPL':>8}")
     for c in cells:
         print(f"{c['arm']:22} {c['seed']:5} {c['rehearse']:6.3f} {c['bound_cov']:>4}/4 {c['misbound']:>5} "
-              f"{c['ic']:>2}/4 {c['margin']:+7.2f} {c['margin_install']:>2}/{c['n']:<2} {c['install']:>2}/{c['n']:<1} "
+              f"{c['ic']:>2}/4 {c['margin']:+7.2f} {c['margin_install']:>2}/{c['n']:<2} "
+              f"{c['dmargin']:+7.2f} {c['dinstall']:>3}/{c['dn']:<2} {c['install']:>2}/{c['n']:<1} "
               f"{c['dlp']:+7.3f} {c['para']:5.2f} {c['token_gradients']:>8} "
               f"{c['lost']:>2}/{c['items']:<3} {c['dppl']:+8.4f}")
 
@@ -109,12 +149,14 @@ def main(pattern: str) -> None:
     pool: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
     for c in cells:
         pool[str(c["arm"])].append(c)
-    print(f"{'arm':22} {'n':>2} {'install':>8} {'EM':>7} {'dlogp':>7} {'para':>5} {'tokgrad':>9} "
-          f"{'lost':>6} {'dPPL':>8}")
+    print(f"{'arm':22} {'n':>2} {'install':>8} {'dmarg':>7} {'dinst':>8} {'EM':>7} {'dlogp':>7} "
+          f"{'para':>5} {'tokgrad':>9} {'lost':>6} {'dPPL':>8}")
     for arm, group in sorted(pool.items()):
         n = len(group)
         facts = sum(int(c["n"]) for c in group)
+        dfacts = sum(int(c["dn"]) for c in group)
         print(f"{arm:22} {n:>2} {sum(c['margin_install'] for c in group):>3}/{facts:<4} "
+              f"{sum(c['dmargin'] for c in group) / n:+7.2f} {sum(c['dinstall'] for c in group):>3}/{dfacts:<4} "
               f"{sum(c['install'] for c in group):>3}/{facts:<3} {sum(c['dlp'] for c in group) / n:+7.3f} "
               f"{sum(c['para'] for c in group) / n:5.2f} {sum(c['token_gradients'] for c in group):>9} "
               f"{sum(c['lost'] for c in group):>3}/{sum(c['items'] for c in group):<3} "
