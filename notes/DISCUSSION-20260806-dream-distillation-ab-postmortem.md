@@ -375,6 +375,20 @@ the pull.
   neighbors likely. Revisit when fact sets stop sharing one cone.
 - **Soft dreaming** (08-05 §7): unchanged, parked behind the discrete
   baseline.
+- **Warm-start before the first dream** (altrup, 08-06, agreed for the run
+  after this one): the base model's first dream is generated with untrained
+  `[USER]`/`[ASSISTANT]` embeddings, so the uncued stretches go
+  off-distribution (mojibake, bracket-mimicry — observed live in the g2
+  cache build). A short SFT pass first — enough to train the special-token
+  embeddings — should keep free-running dream text coherent and raise
+  rehearsal density per token. Not automatic today: `dream_sleep.py` builds
+  fresh LoRA on the base every invocation with no checkpoint-load flag, so
+  this needs a small harness addition (`--init-adapter <ckpt>`, loaded
+  before both cache build and training) plus the warm-start becoming part
+  of the shared preamble so every arm starts from the same weights. The
+  multi-sleep phase partially measures the same effect for free: sleep 2+
+  dreams come from trained embeddings, so dream-quality-across-sleeps is
+  data.
 - **B2's saturation ceiling** — measured by (b); if it flattens early, the
   per-token counterfactual gap is structurally too small and the erase
   mechanism's future is B2′'s policy role, not distillation signal.
