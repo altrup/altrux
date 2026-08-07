@@ -541,3 +541,71 @@ def test_run_sleep_streams_the_probe_battery_on_the_registered_cadence(tmp_path)
               encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, probes.append)
 
     assert probes == [2, 4]  # not at the last step -- the end-of-sleep battery covers that
+
+
+def test_a_later_wave_generates_its_own_dream_from_the_carried_state(tmp_path):
+    """A wave-2 sleep that reuses the cached wave-1 dream never rehearses the
+    new facts. The dream a later wave distils comes from that wave's own
+    carried state, so its tokens differ from the cached one's."""
+    from dream_sleep import generate_wave_dream
+
+    args = _sleep_args()
+    model, _, _, cache, _, _, encode, decode = _built_cache(tmp_path, args)
+    carried = FakeState([torch.randn(1, 1, 1, 4) for _ in model.layers])
+    facts = [Fact("marimba", "instrument", "5 4 6 6 9")]
+    states: list[object] = []
+    original = model.forward
+
+    def spy(ids, state=None):
+        # The fake backbone advances the state in place, so snapshot it.
+        states.append(None if state is None else [s.clone() for s in state.ssm_states])
+        return original(ids, state=state)
+
+    model.forward = spy
+    dream = generate_wave_dream(model, args, carried, facts, encode, decode, _FakeTokenizer(),
+                                USER, ASST, teacher="base")
+
+    assert dream.tokens.shape == (1, args.dream_tokens)
+    assert len(dream.queries) == args.dream_tokens
+    # Generated from this wave's carried state, not the cached wave-1 one.
+    assert torch.equal(states[0][0], carried.ssm_states[0])
+    assert not torch.equal(states[0][0], cache.wake_state.ssm_states[0])
+
+
+def test_the_base_teacher_generates_with_the_adapters_bypassed(tmp_path):
+    """`--wave-teacher base` keeps the wave-1 contract (frozen base, adapters
+    off); `current` distils the student the run has already trained."""
+    from dream_sleep import generate_wave_dream
+
+    args = _sleep_args()
+    model, _, _, _, _, _, encode, decode = _built_cache(tmp_path, args)
+    model.lora = LoRALinear(model.head, rank=2, alpha=6.0, dropout=0.0)
+    carried = FakeState([torch.randn(1, 1, 1, 4) for _ in model.layers])
+    seen: list[float] = []
+    original = model.forward
+
+    def spy(ids, state=None):
+        seen.append(model.lora.scale)
+        return original(ids, state=state)
+
+    model.forward = spy
+    generate_wave_dream(model, args, carried, [Fact("oboe", "instrument", "3 7 8 5 0")],
+                        encode, decode, _FakeTokenizer(), USER, ASST, teacher="base")
+    assert seen and all(s == 0.0 for s in seen)
+    assert model.lora.scale == 3.0  # restored
+
+    seen.clear()
+    generate_wave_dream(model, args, carried, [Fact("oboe", "instrument", "3 7 8 5 0")],
+                        encode, decode, _FakeTokenizer(), USER, ASST, teacher="current")
+    assert seen and all(s == 3.0 for s in seen)  # alpha/rank
+
+
+def test_multi_wave_requires_an_explicit_wave_teacher():
+    """Who teaches wave 2 -- the frozen base or the already-trained student --
+    is a protocol choice the harness must not make silently."""
+    from dream_sleep import validate_wave_args
+
+    with pytest.raises(SystemExit):
+        validate_wave_args(_sleep_args(waves=2, wave_teacher=None))
+    validate_wave_args(_sleep_args(waves=2, wave_teacher="base"))
+    validate_wave_args(_sleep_args(waves=1, wave_teacher=None))

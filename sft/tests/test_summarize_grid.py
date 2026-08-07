@@ -22,6 +22,7 @@ def _cell(path, arm, transcript_sha, dream_sha, wave2_dream_sha=None):
          "margin_install": True},
         {"phase": "in_context", "wave": 1, "arm": arm, "fact": "osprey", "match": True},
         {"phase": "locality", "wave": 1, "arm": arm, "ppl_delta": 0.1, "lost": 0, "items": 24},
+        {"phase": "done", "arm": arm, "seed": 1234},
     ]
     if wave2_dream_sha:
         rows.append({"phase": "cache", "wave": 2, "arm": arm, "seed": 1234,

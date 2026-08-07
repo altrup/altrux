@@ -467,6 +467,7 @@ def teacher_dream(
     cues: Sequence[Sequence[int]] = (),
     cue_every: int = 0,
     cue_greedy: int = 0,
+    frozen: bool = True,
 ) -> Dream:
     """Sequences 1 of arms A/B2 (`drain=False`) and B1 (`drain=True`): the
     frozen teacher generates a dream from the wake state, one token at a time
@@ -497,7 +498,8 @@ def teacher_dream(
     texts: list[str] = []
     skipped = 0
     started = time.time()
-    with frozen_teacher(model), torch.no_grad():
+    teacher_ctx = frozen_teacher(model) if frozen else contextlib.nullcontext()
+    with teacher_ctx, torch.no_grad():
         for t in range(n_tokens):
             token = torch.tensor([[ids[t]]], dtype=torch.long, device=seed_ids.device)
             model.c_capture = []
@@ -777,6 +779,8 @@ def main() -> None:
     parser.add_argument("--sft-ref", action="store_true", help="Reference arm: CE on the wake transcript instead of a dream")
     parser.add_argument("--no-sleep", action="store_true", help="Floor arm: no training at all, wake state carried")
     parser.add_argument("--waves", type=int, default=1, help="Wake/sleep waves; 2 adds a second wake on the carried state (default: %(default)s)")
+    parser.add_argument("--wave-teacher", choices=("base", "current"), default=None,
+                        help="Who generates the dream for waves after the first: the frozen base, or the model this run has trained. Required when --waves > 1.")
     parser.add_argument("--n-facts", type=int, default=4, help="Facts per wave -- the measured binding ceiling (default: %(default)s)")
     parser.add_argument("--filler-tokens", type=int, default=40, help="Filler tokens between consecutive facts (default: %(default)s)")
     parser.add_argument("--dream-tokens", type=int, default=DREAM_TOKENS, help="Dream length per sleep (default: %(default)s)")
@@ -1097,6 +1101,44 @@ def report_dream(cache: DreamCache) -> None:
     if sum(v > 0 for v in bound.values()) < len(facts):
         print(f"[{ts()}] WARNING: a fact this dream never binds is one no arm can install. "
               f"Regenerate this seed at a tighter --cue-every before running the grid.")
+
+
+def validate_wave_args(args) -> None:
+    """Multi-sleep needs a teacher for waves after the first, and which one is a
+    protocol choice: the frozen base keeps wave 1's contract (a stationary
+    teacher that never drifts), while the current model distils a student the
+    run has already consolidated into. The two measure different things, so the
+    harness refuses to pick."""
+    if args.waves > 1 and not getattr(args, "wave_teacher", None):
+        raise SystemExit(
+            "--waves > 1 needs --wave-teacher base|current: wave 1's dream comes from the frozen base, "
+            "and after that 'the teacher' is ambiguous (frozen base vs the student trained by earlier "
+            "sleeps). Register the choice before running multi-sleep."
+        )
+
+
+def generate_wave_dream(model, args, carried, facts, encode, decode, tokenizer,
+                        user_open, asst_open, teacher: str) -> Dream:
+    """The dream a wave after the first distils: generated from that wave's own
+    carried state, cued on that wave's facts.
+
+    Wave 1 loads the seed's cached dream, shared byte-identically across arms.
+    A later wave cannot: each arm reaches it with a different carried state (A
+    cleared, B1 selectively vacated, B2 intact), which is the whole object of
+    the multi-sleep contrast, so these dreams legitimately differ per arm and
+    are recorded rather than asserted equal.
+    """
+    seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt))
+    banned = [tokenizer.eos_token_id] if tokenizer.eos_token_id is not None else []
+    needles = [f.entity for f in facts] + [f.code for f in facts]
+    cues = build_cues([(0, f) for f in facts], encode, user_open, asst_open) if args.cue_every else []
+
+    model.eval()
+    return teacher_dream(
+        model, carried, seed_ids, args.dream_tokens, args.dream_temp, banned,
+        drain=False, decode_token=lambda i: decode([i]), needles=needles,
+        cues=cues, cue_every=args.cue_every, cue_greedy=args.cue_greedy,
+        frozen=(teacher == "base"))
 
 
 def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
