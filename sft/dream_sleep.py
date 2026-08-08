@@ -37,6 +37,16 @@ touches the wake path.
                    --deep             : B2 with the pass's losses accumulated
                                        and one optimizer step per pass (full
                                        BPTT through the spine).
+                   b2-fused-detached  : B2's whole dream in one step (sec 3.5)
+                                       -- the intact spine materialized once
+                                       per pass and detached, then every
+                                       position's counterfactual batched.
+                   b2-fused-deep      : the same, spine not detached (BPTT
+                                       through the scan; v still no-grad).
+                   b3-fused           : the same, on the dream generator's own
+                                       state trajectory, constant across
+                                       passes. Equals b2-fused-detached at
+                                       pass 1, machine-checked every sleep.
                    drain-live         : one online adapters-on pass. Retired
                                        (sec 6), kept for reference.
                    --sft-ref          : the CE-on-raw-text convention, on the
@@ -135,6 +145,13 @@ CONE_SKIP = 0.05
 DREAM_TOKENS = 512
 PRINT_EVERY = 16
 
+# Fused-B knobs (sec 3.5). `SPINE_BLOCK` trades the spine's sequential depth
+# (T/block whole-block forwards, then `block` batched token steps) against the
+# batch width of the second phase; ~sqrt(dream length) is the minimum. Neither
+# changes the trajectory, only how it is computed.
+SPINE_BLOCK = 32
+CF_BATCH = 128
+
 # The cue timer defers its splice to the next sentence end, so a cue never cuts
 # a thought in half (the prepare_chains splice lesson); this is how far it will
 # wait before splicing anyway.
@@ -154,8 +171,12 @@ ARM_CARRY = {
     "drain-live": "drained",
     "sft-ref": "none",
     "no-sleep": "intact",
+    "b2-fused-detached": "intact",
+    "b2-fused-deep": "intact",
+    "b3-fused": "intact",
 }
-ARMS = ("replay", "drain", "counterfactual", "drain-live")
+FUSED_ARMS = ("b2-fused-detached", "b2-fused-deep", "b3-fused")
+ARMS = ("replay", "drain", "counterfactual", "drain-live", *FUSED_ARMS)
 
 # The wake session's own question phrasing, reused verbatim as a rehearsal cue.
 USER_CUE = "{user} What is the code for the {entity}?"
@@ -227,8 +248,8 @@ def erase_ssm(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float = GAMMA, k:
     The direction is differentiable (the cut follows the query); the protected
     subspace it is deflated against is stop-gradiented at its source.
 
-    Batched over the leading dimension throughout: an arm that ablates many
-    dream positions at once gets a basis and a skip decision per element.
+    Batched over the leading dimension throughout: the fused arms ablate every
+    dream position at once, each with its own basis and its own skip decision.
 
     This is what Model.erase_hook is fed: the ablation lands on the carried
     past, before this token's decay+write (sec 3's micro-order)."""
@@ -726,6 +747,166 @@ def distill_counterfactual(model, opt, dream: Dream, wake_state, steps: int, kl_
     return tokens, state
 
 
+def _state_layers(state, attr: str) -> list:
+    return list(getattr(state, attr))
+
+
+def _state_attrs(state) -> tuple[str, ...]:
+    return tuple(a for a in ("conv_states", "ssm_states") if hasattr(state, a))
+
+
+def spine_states(model, tokens: torch.Tensor, wake_state, block: int) -> dict[str, list[torch.Tensor]]:
+    """The intact dream spine, materialized: per layer, the state carried INTO
+    each of the T tokens, stacked as a (T, ...) tensor.
+
+    Two phases, so the sequential depth is ~T/block + block rather than T: the
+    block boundaries come from whole-block forwards -- the fused SSD chunk-scan
+    wherever that kernel is usable, the per-token loop otherwise -- and then
+    every block steps through its own tokens simultaneously as one batch. The
+    trajectory is the plain serial one either way (tests/test_dream_sleep.py).
+
+    Gradient follows the caller's grad mode: B2-fused-detached materializes the
+    spine under no_grad, B2-fused-deep back-propagates through both phases.
+    """
+    import torch
+
+    attrs = _state_attrs(wake_state)
+    length = tokens.shape[1]
+    block = max(1, min(block, length))
+    n_blocks = (length + block - 1) // block
+    padded = tokens
+    if n_blocks * block > length:
+        padded = torch.cat([tokens, tokens.new_zeros(1, n_blocks * block - length)], dim=1)
+
+    # Cloned, unlike the phase-2 snapshots below: a fused chunk-scan kernel is
+    # free to write its output over the states it was handed.
+    starts = []
+    state = copy_state(wake_state)
+    for b in range(n_blocks):
+        starts.append({a: [t.clone() for t in _state_layers(state, a)] for a in attrs})
+        _, state = model(padded[:, b * block : (b + 1) * block], state=state)
+
+    batched = copy.copy(wake_state)
+    for attr in attrs:
+        setattr(batched, attr, [torch.cat([s[attr][i] for s in starts], dim=0)
+                                for i in range(len(starts[0][attr]))])
+
+    block_tokens = padded.view(n_blocks, block)
+    snaps: list[dict[str, list[torch.Tensor]]] = []
+    for j in range(block):
+        snaps.append({a: _state_layers(batched, a) for a in attrs})
+        _, batched = model(block_tokens[:, j : j + 1], state=batched)
+
+    spine: dict[str, list[torch.Tensor]] = {}
+    for attr in attrs:
+        per_layer = []
+        for i in range(len(snaps[0][attr])):
+            stacked = torch.stack([snap[attr][i] for snap in snaps], dim=1)  # (n_blocks, block, ...)
+            per_layer.append(stacked.reshape(-1, *stacked.shape[2:])[:length])
+        spine[attr] = per_layer
+    return spine
+
+
+def fused_pass(model, dream: Dream, wake_state, spine: dict[str, list[torch.Tensor]], scored: Sequence[int],
+               kl_temp: float, erase_op: str, cf_batch: int, backward: bool, retain: bool = False):
+    """One counterfactual pass over the whole dream at this pass's weights:
+    every scored position takes its own copy of the spine's per-layer states,
+    ablates them along the student's own query for that token (per layer,
+    interleaved inside the forward), writes the token, reads, and is scored
+    against the cached teacher logits. Nothing carries between positions --
+    B2's defining property, and what makes the pass batchable.
+
+    Micro-batches of `cf_batch` positions accumulate into one gradient; the
+    returned loss is the sum over positions, so the micro-batch size is a
+    memory knob and not a hyperparameter. Returns (summed KL, skipped)."""
+    import torch
+
+    skipped = 0
+    total = 0.0
+    device = dream.tokens.device
+    for lo in range(0, len(scored), cf_batch):
+        sel = list(scored[lo : lo + cf_batch])
+        idx = torch.tensor(sel, dtype=torch.long, device=device)
+        cf = copy.copy(wake_state)
+        for attr, layers in spine.items():
+            setattr(cf, attr, [t[idx] for t in layers])
+
+        def hook(layer_idx: int, ssm_state, c):
+            nonlocal skipped
+            erased, was_skipped = erase_ssm(ssm_state, c, op=erase_op)
+            skipped += was_skipped
+            return erased
+
+        model.erase_hook = hook
+        try:
+            logits, _ = model(dream.tokens[0, idx].view(-1, 1), state=cf)
+        finally:
+            model.erase_hook = None
+
+        teacher = dream.logits[sel].unsqueeze(1).to(logits.device)
+        loss = kl_loss(teacher, logits, kl_temp) * len(sel)
+        if backward:
+            loss.backward(retain_graph=retain)
+        total += float(loss.detach())
+    return total, skipped
+
+
+def distill_fused(model, opt, dream: Dream, wake_state, steps: int, kl_temp: float, on_step,
+                  keep: Sequence[bool] | None = None, erase_op: str = ERASE_OP, deep: bool = False,
+                  block: int = SPINE_BLOCK, cf_batch: int = CF_BATCH,
+                  frozen_spine: dict[str, list[torch.Tensor]] | None = None, check=None) -> int:
+    """The fused B arms (sec 3.5). One optimizer step is one full-dream pass --
+    arm A's currency.
+
+    B2-fused-detached recomputes the intact spine each pass under the current
+    weights and detaches it; B2-fused-deep (`deep`) keeps its graph and
+    back-propagates through the scan; B3-fused passes `frozen_spine`, the dream
+    generator's own trajectory, constant across passes.
+
+    At pass 1 the student's weights are still the generator snapshot, so a
+    B3-fused pass must reproduce B2-fused-detached's exactly; the arm checks
+    that itself, every sleep, and reports it through `check`.
+    """
+    import torch
+
+    length = dream.tokens.shape[1]
+    scored = [t for t in range(length) if keep is None or keep[t]]
+    skipped = tokens = 0
+    for step in range(steps):
+        if frozen_spine is not None:
+            spine = frozen_spine
+        elif deep:
+            spine = spine_states(model, dream.tokens, wake_state, block)
+        else:
+            with torch.no_grad():
+                spine = spine_states(model, dream.tokens, wake_state, block)
+
+        loss, cut = fused_pass(model, dream, wake_state, spine, scored, kl_temp, erase_op, cf_batch,
+                               backward=True, retain=deep)
+        skipped += cut
+
+        # Still at the generator snapshot's weights: this is the only moment
+        # the two spines are comparable, so the check runs before the step.
+        if step == 0 and frozen_spine is not None and check is not None:
+            with torch.no_grad():
+                live = spine_states(model, dream.tokens, wake_state, block)
+                reference, _ = fused_pass(model, dream, wake_state, live, scored, kl_temp, erase_op,
+                                          cf_batch, backward=False)
+            equivalent = abs(loss - reference) <= 1e-4 * max(1.0, abs(reference))
+            check({"pass": 1, "b3_loss": loss, "b2_loss": reference,
+                   "abs_diff": abs(loss - reference), "equivalent": equivalent})
+            print(f"[{ts()}]  pass-1 equivalence B3-fused vs B2-fused-detached: "
+                  f"{'OK' if equivalent else 'FAILED'} ({loss:.6f} vs {reference:.6f})", flush=True)
+
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+        tokens += len(scored)
+        on_step(step, loss / max(1, len(scored)))
+    print(f"\n[{ts()}]  near-cone erases skipped: {skipped} of "
+          f"{tokens * max(1, len(getattr(model, 'layers', [1])))}")
+    return tokens
+
+
 def distill_live(
     model, opt, wake_state, seed_ids: torch.Tensor, n_tokens: int, temperature: float,
     banned: Sequence[int], kl_temp: float, accum: int, decode_token, needles: Sequence[str], on_step,
@@ -843,6 +1024,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deep", action="store_true",
                         help="B2 only: accumulate the pass's losses and take one optimizer step with the graph "
                              "intact (full BPTT through the spine)")
+    parser.add_argument("--spine-block", type=int, default=SPINE_BLOCK,
+                        help="Fused B arms: tokens per whole-block forward when materializing the dream spine; "
+                             "the blocks then step through their own tokens as one batch (default: %(default)s)")
+    parser.add_argument("--cf-batch", type=int, default=CF_BATCH,
+                        help="Fused B arms: dream positions whose counterfactuals are forwarded together, "
+                             "accumulating into the one optimizer step per pass (default: %(default)s)")
     parser.add_argument("--probe-every", type=int, default=200,
                         help="Stream the full probe battery every N distillation steps, so every cell yields a "
                              "learned-vs-forgotten curve; 0 probes only at the end (default: %(default)s)")
@@ -1295,6 +1482,21 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
                                              on_step, fresh_state=args.fresh_state_replay, keep=keep,
                                              ce=(mode == "ce-on-dream"))
             carried = None
+        elif mode in FUSED_ARMS:
+            generator_spine = None
+            if mode == "b3-fused":
+                # The generator snapshot: the weights that produced this
+                # sleep's dream, i.e. the student before this sleep trains it.
+                print(f"[{ts()}] b3-fused: materializing the generator's own spine over "
+                      f"{dream.tokens.shape[1]} tokens (block {args.spine_block})", flush=True)
+                with torch.no_grad():
+                    generator_spine = spine_states(model, dream.tokens, wake_state, args.spine_block)
+            token_gradients = distill_fused(
+                model, opt, dream, wake_state, args.distill_steps, args.kl_temp, on_step, keep=keep,
+                erase_op=args.erase_op, deep=(mode == "b2-fused-deep"), block=args.spine_block,
+                cf_batch=args.cf_batch, frozen_spine=generator_spine,
+                check=lambda record: emit({"phase": "equivalence", "wave": wave, "arm": mode, **record}))
+            carried = wake_state
         else:
             token_gradients, drained = distill_counterfactual(
                 model, opt, dream, wake_state, args.distill_steps, args.kl_temp, args.accum_window,

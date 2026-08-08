@@ -332,7 +332,7 @@ class TinyModel(nn.Module):
     def forward(self, ids, state=None):
         dim = self.embedding.embedding_dim
         if state is None:
-            state = FakeState([torch.zeros(1, 1, 1, dim) for _ in self.layers])
+            state = FakeState([torch.zeros(ids.shape[0], 1, 1, dim) for _ in self.layers])
         out = []
         for t in range(ids.shape[1]):
             h = self.embedding(ids[:, t])
@@ -341,7 +341,7 @@ class TinyModel(nn.Module):
                     self.c_capture.append(h.detach())
                 if self.erase_hook is not None:
                     state.ssm_states[i] = self.erase_hook(i, state.ssm_states[i], h)
-                state.ssm_states[i] = state.ssm_states[i] + h.view(1, 1, 1, dim)
+                state.ssm_states[i] = state.ssm_states[i] + h.view(-1, 1, 1, dim)
             read = torch.einsum("bhpn,bn->bn", state.ssm_states[0], h)
             out.append(self.head(h + read))
         return torch.stack(out, dim=1), state
@@ -632,6 +632,9 @@ def test_arm_carry_matches_the_registered_sequences():
         "drain-live": "drained",
         "sft-ref": "none",
         "no-sleep": "intact",
+        "b2-fused-detached": "intact",
+        "b2-fused-deep": "intact",
+        "b3-fused": "intact",
     }
 
 
@@ -655,7 +658,7 @@ def _sleep_args(**overrides):
     args = dict(seed=1234, dream_tokens=8, dream_temp=0.0, dream_prompt="", cue_every=3, cue_greedy=1,
                 chunk_len=None, distill_steps=4, kl_temp=1.0, accum_window=1, probe_every=0,
                 fresh_state_replay=False, deep=False, ce_on_dream=False, n_facts=2, filler_tokens=4,
-                erase_op="deflated")
+                erase_op="deflated", spine_block=3, cf_batch=3)
     return SimpleNamespace(**{**args, **overrides})
 
 
@@ -803,6 +806,198 @@ def test_multi_wave_requires_an_explicit_wave_teacher():
     validate_wave_args(_sleep_args(waves=1, wave_teacher=None))
 
 
+# --- the fused B arms (sec 3.5) ------------------------------------------
+
+
+def _serial_spine(model, tokens, wake):
+    """Ground truth for spine_states: the state carried into each token by a
+    plain one-token-at-a-time run."""
+    from dream_sleep import copy_state
+
+    state = copy_state(wake)
+    per_token = []
+    with torch.no_grad():
+        for t in range(tokens.shape[1]):
+            per_token.append([s.clone() for s in state.ssm_states])
+            _, state = model(tokens[:, t : t + 1], state=state)
+    return per_token
+
+
+@pytest.mark.parametrize("block", [1, 2, 3, 4, 8])
+def test_spine_states_match_a_plain_per_token_run(block):
+    """The block/batch decomposition is an optimization, not a different
+    trajectory: token t's carried state must be what a serial run would hold."""
+    from dream_sleep import spine_states
+
+    model, _, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    expected = _serial_spine(model, dream.tokens, wake)
+
+    with torch.no_grad():
+        spine = spine_states(model, dream.tokens, wake, block)
+
+    assert all(t.shape[0] == 6 for t in spine["ssm_states"])
+    for t, per_layer in enumerate(expected):
+        for i, want in enumerate(per_layer):
+            torch.testing.assert_close(spine["ssm_states"][i][t : t + 1], want)
+
+
+def _fused_run(arm, steps=1, **kwargs):
+    from dream_sleep import distill_fused
+
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    losses: list[float] = []
+    records: list[dict] = []
+    tokens = distill_fused(model, opt, dream, wake, steps=steps, kl_temp=1.0,
+                           on_step=lambda s, l: losses.append(l), erase_op=kwargs.pop("erase_op", "deflated"),
+                           deep=(arm == "b2-fused-deep"), block=kwargs.pop("block", 2),
+                           cf_batch=kwargs.pop("cf_batch", 4),
+                           frozen_spine=None, check=records.append, **kwargs)
+    return model, tokens, losses, records
+
+
+def test_b3_fused_equals_b2_fused_detached_at_pass_one():
+    """Sec 3.5: at pass 1 the student's weights are the generator snapshot, so
+    B3's cached spine and B2-detached's freshly recomputed one coincide."""
+    from dream_sleep import distill_fused, spine_states
+
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    with torch.no_grad():
+        generator_spine = spine_states(model, dream.tokens, wake, 2)
+
+    b3: list[float] = []
+    records: list[dict] = []
+    distill_fused(model, opt, dream, wake, steps=1, kl_temp=1.0, on_step=lambda s, l: b3.append(l),
+                  block=2, cf_batch=4, frozen_spine=generator_spine, check=records.append)
+
+    _, _, b2, _ = _fused_run("b2-fused-detached")
+    assert b3 == pytest.approx(b2)
+    assert records and records[0]["equivalent"] is True
+    assert records[0]["b3_loss"] == pytest.approx(records[0]["b2_loss"])
+
+
+def test_b3_fused_reports_a_failed_equivalence_when_the_spine_is_not_the_generator_s():
+    """The check has to be able to fail, or it is decoration."""
+    from dream_sleep import distill_fused, spine_states
+
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    with torch.no_grad():
+        wrong = spine_states(model, dream.tokens, wake, 2)
+        wrong["ssm_states"][0] = wrong["ssm_states"][0] + 1.0
+
+    records: list[dict] = []
+    distill_fused(model, opt, dream, wake, steps=1, kl_temp=1.0, on_step=lambda s, l: None,
+                  block=2, cf_batch=4, frozen_spine=wrong, check=records.append)
+
+    assert records and records[0]["equivalent"] is False
+
+
+@pytest.mark.parametrize("arm", ["b2-fused-detached", "b2-fused-deep"])
+def test_the_fused_arms_run_end_to_end_with_finite_losses(arm):
+    """Not compared to per-token B2 for equality: different step currency
+    (sec 3.5). Both must simply train and stay finite."""
+    import math
+
+    model, tokens, losses, _ = _fused_run(arm, steps=3)
+
+    assert tokens == 18 and len(losses) == 3
+    assert all(math.isfinite(x) for x in losses)
+
+
+def test_the_fused_and_per_token_b2_arms_both_train_on_the_same_dream():
+    import math
+
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    before = [p.detach().clone() for p in model.parameters()]
+    per_token, _ = distill_counterfactual(model, opt, dream, wake, steps=6, kl_temp=1.0, accum=1,
+                                          in_place=False, deep=False, on_step=lambda s, l: None)
+    assert per_token == 6 and _moved(model, before)
+
+    fused_model, fused_tokens, losses, _ = _fused_run("b2-fused-detached")
+    assert fused_tokens == 6 and math.isfinite(losses[0])
+
+
+@pytest.mark.parametrize("op", ["raw", "deflated"])
+def test_the_deep_fused_spine_carries_gradient_and_the_detached_one_does_not(op, monkeypatch):
+    import dream_sleep
+
+    seen: list[bool] = []
+    original = dream_sleep.spine_states
+
+    def spy(*a, **k):
+        spine = original(*a, **k)
+        seen.append(any(t.requires_grad for t in spine["ssm_states"]))
+        return spine
+
+    monkeypatch.setattr(dream_sleep, "spine_states", spy)
+    detached, _, _, _ = _fused_run("b2-fused-detached", erase_op=op)
+    assert seen == [False]
+
+    seen.clear()
+    deep, _, _, _ = _fused_run("b2-fused-deep", erase_op=op)
+    assert seen == [True]
+
+    assert any(not torch.equal(a, b) for a, b in
+               zip(detached.parameters(), deep.parameters(), strict=True))
+
+
+@pytest.mark.parametrize("op", ["raw", "deflated"])
+@pytest.mark.parametrize("arm", ["b2-fused-detached", "b2-fused-deep"])
+def test_the_fused_arms_never_differentiate_the_protected_subspace(op, arm, monkeypatch):
+    """v is computed under no-grad at its source; the deep arm's live spine
+    must not open a path to it (sec 3.4)."""
+    import dream_sleep
+
+    grads: list[bool] = []
+    original = dream_sleep.state_top_dirs
+    monkeypatch.setattr(dream_sleep, "state_top_dirs",
+                        lambda s, k: (lambda v: (grads.append(v.requires_grad), v)[1])(original(s, k)))
+
+    _fused_run(arm, erase_op=op)
+
+    assert (op == "raw") or (grads and not any(grads))
+
+
+def test_micro_batched_counterfactuals_match_the_unbatched_pass():
+    from dream_sleep import fused_pass, spine_states
+
+    model, _, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    scored = list(range(6))
+    with torch.no_grad():
+        spine = spine_states(model, dream.tokens, wake, 2)
+        whole, skipped_whole = fused_pass(model, dream, wake, spine, scored, 1.0, "deflated", 6, backward=False)
+        micro, skipped_micro = fused_pass(model, dream, wake, spine, scored, 1.0, "deflated", 2, backward=False)
+
+    assert micro == pytest.approx(whole, rel=1e-5)
+    assert skipped_micro == skipped_whole
+
+
+def test_the_raw_erase_zeroes_the_ablated_readout_through_the_fused_path(monkeypatch):
+    """Sec 3.4's identity, asserted where the arm actually applies it: after a
+    raw own-query cut the state's read along that query is identically zero."""
+    import dream_sleep
+
+    seen: list[tuple[torch.Tensor, torch.Tensor]] = []
+    original = dream_sleep.erase_ssm
+
+    def spy(ssm_state, c, *a, **k):
+        erased, skipped = original(ssm_state, c, *a, **k)
+        seen.append((erased, c))
+        return erased, skipped
+
+    monkeypatch.setattr(dream_sleep, "erase_ssm", spy)
+    _fused_run("b2-fused-detached", erase_op="raw")
+
+    assert seen
+    for erased, c in seen:
+        assert read(erased, c).abs().max().item() < 1e-4
+
+
 def test_an_unknown_erase_op_is_refused():
     """argparse guards the CLI; the arms call erase_ssm programmatically."""
     with pytest.raises(ValueError, match="erase op"):
@@ -810,8 +1005,8 @@ def test_an_unknown_erase_op_is_refused():
 
 
 def test_the_erase_operates_per_batch_element():
-    """An arm that ablates a whole batch of token-positions at once needs its
-    own deflation basis and its own skip decision for every element."""
+    """The fused arms ablate a whole batch of token-positions at once: every
+    element gets its own deflation basis and its own skip decision."""
     torch.manual_seed(4)
     cone = torch.nn.functional.normalize(torch.randn(8), dim=0)
     pure = (torch.randn(2, 4, 1) * cone).unsqueeze(0)
@@ -824,3 +1019,31 @@ def test_the_erase_operates_per_batch_element():
     assert skipped == 1
     torch.testing.assert_close(erased[0], state[0])  # pure cone: skipped
     assert not torch.equal(erased[1], state[1])
+
+
+@pytest.mark.parametrize("arm", ["b2-fused-detached", "b2-fused-deep", "b3-fused"])
+def test_run_sleep_stamps_the_fused_arm_and_the_warm_start_on_every_record(tmp_path, arm):
+    import io
+    import json
+
+    from dream_sleep import ARM_CARRY, make_emit, run_sleep
+
+    args = _sleep_args(distill_steps=2)
+    model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
+    before = [p.detach().clone() for p in model.parameters()]
+    buf = io.StringIO()
+    emit = make_emit(buf, erase_op=args.erase_op, init_adapter_sha256="deadbeef", init_adapter="warm_start.pt")
+
+    carried = run_sleep(arm, model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
+                        encode, decode, _FakeTokenizer(), USER, ASST, emit, lambda step: None)
+
+    records = [json.loads(line) for line in buf.getvalue().splitlines()]
+    assert _moved(model, before)
+    assert carried is wake and ARM_CARRY[arm] == "intact"
+    assert records and all(r["init_adapter_sha256"] == "deadbeef" for r in records)
+    assert all(r["arm"] == arm for r in records if "arm" in r)
+    sleep = next(r for r in records if r["phase"] == "sleep")
+    assert sleep["token_gradients"] > 0
+    checks = [r for r in records if r["phase"] == "equivalence"]
+    assert bool(checks) == (arm == "b3-fused")
+    assert all(r["equivalent"] for r in checks)
