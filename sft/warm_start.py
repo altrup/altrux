@@ -17,8 +17,8 @@ Box tool: trains a LoRA on the real backbone, so it runs on the rented CUDA
 hardware, not the local ROCm box.
 
 Usage (from sft/, env vars as in the Makefile):
-    make warm-start ARGS="--out checkpoints/warm_start.pt"
-    make warm-start ARGS="--steps 800 --out checkpoints/warm_start_800.pt"
+    make warm-start                       # -> models/<MODEL_NAME>/checkpoints/warm_start.pt
+    make warm-start ARGS="--steps 800 --out ../models/mamba2_780m/checkpoints/warm_start_800.pt"
 """
 
 from __future__ import annotations
@@ -43,6 +43,12 @@ from prepare_data import format_conversation
 # too little text to move the marker embeddings). Lower it with --chunk-len if
 # the run OOMs.
 CHUNK_LEN = 512
+
+REPO_ROOT = Path(__file__).parent.parent
+
+
+def model_dir() -> Path:
+    return REPO_ROOT / "models" / os.getenv("MODEL_NAME", "mamba2_780m")
 
 
 def build_corpus(records, tokenizer, user_open: str, asst_open: str, max_len: int, turns: int):
@@ -163,7 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lora-alpha", type=float, default=DEFAULT_ALPHA)
     parser.add_argument("--log-every", type=int, default=10, help="Steps between loss lines (default: %(default)s)")
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--out", default="checkpoints/warm_start.pt", help="Adapter checkpoint (default: %(default)s)")
+    parser.add_argument("--out", default=str(model_dir() / "checkpoints" / "warm_start.pt"),
+                        help="Adapter checkpoint (default: %(default)s)")
     return parser
 
 

@@ -155,6 +155,17 @@ def _fake_corpus() -> list[tuple[list[int], list[bool]]]:
     return [([1] + list(range(2, 20)), [False] * 9 + [True] * 10) for _ in range(3)]
 
 
+def test_the_default_output_is_the_selected_model_s_checkpoint_dir(monkeypatch):
+    """The repo keeps checkpoints under models/<MODEL_NAME>/checkpoints (what
+    lambda_pull.sh brings home); sft/checkpoints/ is nobody's convention."""
+    monkeypatch.setenv("MODEL_NAME", "some_model")
+    out = Path(build_parser().parse_args([]).out)
+
+    assert out.is_absolute()
+    assert out.parent == Path(__file__).parent.parent.parent / "models" / "some_model" / "checkpoints"
+    assert out.name == "warm_start.pt"
+
+
 def test_two_step_run_trains_the_adapter_and_the_checkpoint_loads_back(tmp_path):
     model, trainable = FakeHooks.setup_training("cpu", DEFAULT_RANK, DEFAULT_ALPHA, DEFAULT_DROPOUT)
     before = [p.detach().clone() for p in trainable]

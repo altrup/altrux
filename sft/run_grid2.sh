@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The d800 baselines of DISCUSSION-20260807 sec 4(3), one seed per invocation:
 #
-#   INIT_ADAPTER=checkpoints/warm_start.pt ERASE_OP=deflated ./run_grid2.sh 1234
+#   INIT_ADAPTER=../models/mamba2_780m/checkpoints/warm_start.pt ERASE_OP=deflated ./run_grid2.sh 1234
 #
 # Concurrency is a per-card decision, not a property of this script (sft/CLAUDE.md):
 # serial on an A10, three seeds at once on a GH200.
@@ -33,7 +33,7 @@ init_adapter=${INIT_ADAPTER:-}
 if [ -z "$init_adapter" ]; then
   echo "refusing to run: INIT_ADAPTER is unset, and sec 3.1 registers the warm start for the whole" >&2
   echo "session -- cache, battery and every arm. Pass the checkpoint:" >&2
-  echo "  INIT_ADAPTER=checkpoints/warm_start.pt ./run_grid2.sh $seed" >&2
+  echo "  INIT_ADAPTER=../models/mamba2_780m/checkpoints/warm_start.pt ./run_grid2.sh $seed" >&2
   echo "or INIT_ADAPTER=none for a deliberate cold run (the g2 reference shape)." >&2
   exit 2
 fi
