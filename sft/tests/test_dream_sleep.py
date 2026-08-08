@@ -187,6 +187,110 @@ def test_the_erase_operator_defaults_to_the_registered_deflated_form():
     assert build_parser().parse_args(["--erase-op", "raw"]).erase_op == "raw"
 
 
+def _adapter_model(rank: int = 2, alpha: float = 4.0) -> nn.Module:
+    from lora import apply_lora
+
+    model = nn.Sequential(nn.Linear(4, 4))
+    model.marker_delta = nn.Module()
+    model.marker_delta.delta = nn.Parameter(torch.randn(2, 4))
+    return apply_lora(model, ["0"], rank=rank, alpha=alpha, dropout=0.0)
+
+
+def test_a_saved_adapter_round_trips_into_a_freshly_initialised_model(tmp_path):
+    from lora import adapter_state_dict, load_adapter, save_adapter
+
+    torch.manual_seed(0)
+    trained = _adapter_model()
+    with torch.no_grad():
+        for p in trained.parameters():
+            p += 0.5
+    ckpt = tmp_path / "warm_start.pt"
+    save_adapter(trained, ckpt, rank=2, alpha=4.0)
+
+    torch.manual_seed(1)
+    fresh = _adapter_model()
+    expected = adapter_state_dict(trained)
+    assert any(not torch.equal(v, expected[k]) for k, v in adapter_state_dict(fresh).items())
+
+    load_adapter(fresh, ckpt, rank=2, alpha=4.0)
+
+    for name, tensor in adapter_state_dict(fresh).items():
+        torch.testing.assert_close(tensor, expected[name])
+
+
+@pytest.mark.parametrize("rank,alpha", [(4, 4.0), (2, 8.0)])
+def test_an_adapter_from_a_different_lora_config_refuses_to_load(tmp_path, rank, alpha):
+    from lora import load_adapter, save_adapter
+
+    ckpt = tmp_path / "warm_start.pt"
+    save_adapter(_adapter_model(rank=rank, alpha=alpha), ckpt, rank=rank, alpha=alpha)
+
+    with pytest.raises(ValueError, match="rank|alpha"):
+        load_adapter(_adapter_model(rank=2, alpha=4.0), ckpt, rank=2, alpha=4.0)
+
+
+def test_an_adapter_missing_a_trained_parameter_refuses_to_load(tmp_path):
+    from lora import load_adapter, save_adapter
+
+    ckpt = tmp_path / "warm_start.pt"
+    partial = _adapter_model()
+    del partial.marker_delta.delta
+    save_adapter(partial, ckpt, rank=2, alpha=4.0)
+
+    with pytest.raises(ValueError, match="marker_delta"):
+        load_adapter(_adapter_model(), ckpt, rank=2, alpha=4.0)
+
+
+def test_every_result_record_carries_the_warm_start_hash():
+    import io
+    import json
+
+    from dream_sleep import make_emit
+
+    buf = io.StringIO()
+    emit = make_emit(buf, init_adapter_sha256="deadbeef", init_adapter="warm_start.pt")
+    emit({"phase": "sleep"})
+
+    record = json.loads(buf.getvalue())
+    assert record["init_adapter_sha256"] == "deadbeef" and record["init_adapter"] == "warm_start.pt"
+
+
+def test_no_warm_start_is_a_null_hash_on_every_record():
+    import io
+    import json
+
+    from dream_sleep import make_emit
+
+    buf = io.StringIO()
+    make_emit(buf, init_adapter_sha256=None, init_adapter=None)({"phase": "sleep"})
+
+    record = json.loads(buf.getvalue())
+    assert record["init_adapter_sha256"] is None
+
+
+def test_the_warm_start_checkpoint_is_optional_and_absent_by_default():
+    from dream_sleep import build_parser
+
+    assert build_parser().parse_args([]).init_adapter is None
+    assert build_parser().parse_args(["--init-adapter", "w.pt"]).init_adapter == "w.pt"
+
+
+def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
+    """Order of operations, not decoration: the dream cache and the
+    self-calibrated battery are both artifacts *of* the warm-started model
+    (sec 3.1's battery-recalibration mechanism), so the load has to precede
+    every use of the model."""
+    import inspect
+
+    import dream_sleep
+
+    source = inspect.getsource(dream_sleep.main)
+    load = source.index("load_adapter(")
+    assert load < source.index("load_or_build_battery(")
+    assert load < source.index("build_cache(")
+    assert load < source.index("load_dream_cache(")
+
+
 def test_paraphrase_prompts_reword_the_question_but_keep_the_answer_stem():
     fact = Fact("osprey", "bird", "1 2 3 4 5")
     prompts = paraphrase_prompts(fact, USER, ASST)

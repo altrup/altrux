@@ -46,6 +46,7 @@ def cell(path: str) -> dict[str, object] | None:
     return {
         "arm": arm, "seed": seed, "path": path,
         "transcript_sha": cache.get("transcript_sha"), "dream_sha": cache.get("dream_sha"),
+        "init_adapter": {r.get("init_adapter_sha256") for r in rows},
         "wave2_shas": [(r.get("wave"), r.get("dream_sha")) for r in rows
                        if r["phase"] == "cache" and r.get("wave", 1) > 1],
         "rehearse": dream["rehearsal_fraction"] if dream else 0.0,
@@ -117,6 +118,21 @@ def check_hashes(cells: list[dict[str, object]]) -> None:
                 )
 
 
+def check_init_adapter(cells: list[dict[str, object]]) -> str | None:
+    """Every cell of the grid ran from the same warm-start adapter, or nothing
+    is comparable (DISCUSSION-20260807 sec 3.1). All-absent is the
+    pre-warm-start form (g2) and passes. Returns the grid's checkpoint hash."""
+    shas = {s for c in cells for s in c["init_adapter"]}
+    if len(shas) > 1:
+        for c in cells:
+            print(f"  {c['arm']:22} init_adapter {sorted(str(s)[:16] for s in c['init_adapter'])}  ({c['path']})")
+        raise SystemExit(
+            f"{len(shas)} distinct warm starts across {len(cells)} cells -- the arms began from different "
+            f"weights, so nothing here is comparable. Rerun the odd cells with the same --init-adapter."
+        )
+    return next(iter(shas), None)
+
+
 def main(pattern: str) -> None:
     paths = sorted(glob.glob(pattern))
     cells = load_cells(paths)
@@ -127,8 +143,10 @@ def main(pattern: str) -> None:
     if not cells:
         raise SystemExit("no completed cells yet")
     check_hashes(cells)
+    adapter = check_init_adapter(cells)
     seeds = sorted({str(c["seed"]) for c in cells})
-    print(f"{len(cells)} cells, seeds {', '.join(seeds)}; wave-1 dream hashes agree within every seed")
+    print(f"{len(cells)} cells, seeds {', '.join(seeds)}; wave-1 dream hashes agree within every seed; "
+          f"{f'warm start {adapter[:12]}' if adapter else 'no warm start'}")
     false_positives = apply_floor(cells)
     floor_n = sum(c["dn"] for c in cells if c["arm"] == "nosleep")
     if floor_n:

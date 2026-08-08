@@ -7,10 +7,10 @@ import json
 
 import pytest
 
-from summarize_grid import check_hashes, load_cells
+from summarize_grid import check_hashes, check_init_adapter, load_cells
 
 
-def _cell(path, arm, transcript_sha, dream_sha, wave2_dream_sha=None):
+def _cell(path, arm, transcript_sha, dream_sha, wave2_dream_sha=None, init_adapter_sha256=None):
     rows = [
         {"phase": "cache", "wave": 1, "arm": arm, "seed": 1234,
          "transcript_sha": transcript_sha, "dream_sha": dream_sha},
@@ -27,6 +27,8 @@ def _cell(path, arm, transcript_sha, dream_sha, wave2_dream_sha=None):
     if wave2_dream_sha:
         rows.append({"phase": "cache", "wave": 2, "arm": arm, "seed": 1234,
                      "transcript_sha": transcript_sha, "dream_sha": wave2_dream_sha})
+    for row in rows:
+        row["init_adapter_sha256"] = init_adapter_sha256
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
     return path
 
@@ -66,6 +68,40 @@ def test_the_check_is_scoped_to_wave_one(tmp_path):
     _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb", wave2_dream_sha="w2b")
 
     check_hashes(load_cells(sorted(str(p) for p in tmp_path.glob("g2_*.jsonl"))))
+
+
+def _cells(tmp_path):
+    return load_cells(sorted(str(p) for p in tmp_path.glob("g2_*.jsonl")))
+
+
+def test_arms_warm_started_from_the_same_checkpoint_pool(tmp_path):
+    _cell(tmp_path / "g2_replay_s1234.jsonl", "replay", "aa", "bb", init_adapter_sha256="ff")
+    _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb", init_adapter_sha256="ff")
+
+    assert check_init_adapter(_cells(tmp_path)) == "ff"
+
+
+def test_arms_from_different_warm_starts_refuse_to_pool(tmp_path):
+    _cell(tmp_path / "g2_replay_s1234.jsonl", "replay", "aa", "bb", init_adapter_sha256="ff")
+    _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb", init_adapter_sha256="ee")
+
+    with pytest.raises(SystemExit, match="warm start"):
+        check_init_adapter(_cells(tmp_path))
+
+
+def test_a_warm_started_arm_never_pools_with_a_cold_one(tmp_path):
+    _cell(tmp_path / "g2_replay_s1234.jsonl", "replay", "aa", "bb", init_adapter_sha256="ff")
+    _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb")
+
+    with pytest.raises(SystemExit):
+        check_init_adapter(_cells(tmp_path))
+
+
+def test_a_grid_with_no_warm_start_pools_as_before(tmp_path):
+    _cell(tmp_path / "g2_replay_s1234.jsonl", "replay", "aa", "bb")
+    _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb")
+
+    assert check_init_adapter(_cells(tmp_path)) is None
 
 
 def test_cells_carry_the_new_columns(tmp_path):

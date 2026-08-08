@@ -47,6 +47,46 @@ class LoRALinear(nn.Module):
         return self.linear(x) + self.dropout(x) @ self.lora_A.T @ self.lora_B.T * self.scale
 
 
+def adapter_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
+    """A warm-start checkpoint's payload: the LoRA factors plus the marker
+    embeddings' delta -- exactly the set `train_hooks.setup_training` makes
+    trainable."""
+    return {name: param.detach().cpu().clone() for name, param in model.named_parameters()
+            if "lora_A" in name or "lora_B" in name or "marker_delta" in name}
+
+
+def save_adapter(model: nn.Module, path, rank: int, alpha: float) -> None:
+    torch.save({"lora_rank": rank, "lora_alpha": alpha, "adapter": adapter_state_dict(model)}, path)
+
+
+def load_adapter(model: nn.Module, path, rank: int, alpha: float) -> int:
+    """Copy a `save_adapter` checkpoint into an already-LoRA-attached model.
+    Every mismatch is fatal: a warm start that silently half-applied would be
+    indistinguishable in the results from one that worked."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    if (ckpt["lora_rank"], float(ckpt["lora_alpha"])) != (rank, float(alpha)):
+        raise ValueError(
+            f"{path} was trained at LoRA rank {ckpt['lora_rank']} alpha {ckpt['lora_alpha']}, "
+            f"this run is rank {rank} alpha {alpha} -- the adapters do not correspond. "
+            f"Retrain the warm start at this run's config, or run at the checkpoint's."
+        )
+    target = dict(model.named_parameters())
+    wanted = set(adapter_state_dict(model))
+    saved = set(ckpt["adapter"])
+    if wanted != saved:
+        raise ValueError(
+            f"{path} holds a different trainable set than this model: "
+            f"missing {sorted(wanted - saved)}, unexpected {sorted(saved - wanted)}"
+        )
+    with torch.no_grad():
+        for name, tensor in ckpt["adapter"].items():
+            param = target[name]
+            if tuple(tensor.shape) != tuple(param.shape):
+                raise ValueError(f"{path}: {name} is {tuple(tensor.shape)}, this model's is {tuple(param.shape)}")
+            param.copy_(tensor.to(param.device, param.dtype))
+    return len(saved)
+
+
 def apply_lora(
     model: nn.Module,
     target_modules: list[str],
