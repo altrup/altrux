@@ -10,7 +10,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep summarize-grid train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep summarize-grid train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -202,6 +202,15 @@ dream-sleep:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u dream_sleep.py $(ARGS) 2>&1 | tee logs/dream-sleep-$(shell date +%Y%m%d-%H%M%S).log
+
+# Warm-start SFT: ordinary chat data rendered into the repo's marker format,
+# trained into one adapter checkpoint that every dream_sleep cell then loads
+# with --init-adapter. Run this before the dream cache and before the battery
+# is recalibrated. Box tool (rented CUDA hardware).
+warm-start:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u warm_start.py $(ARGS) 2>&1 | tee logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log
 
 # In-context capacity ladder: the largest fact count whose in-context control
 # still clears 0.8, i.e. the N at which consolidation-null has a valid premise.

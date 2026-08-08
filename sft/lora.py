@@ -4,6 +4,14 @@ import torch
 import torch.nn as nn
 
 
+# The single LoRA config warm-start checkpoints are written and read at.
+# load_adapter treats a rank/alpha mismatch as fatal, so warm_start.py and
+# dream_sleep.py have to default to the same numbers or no checkpoint loads.
+DEFAULT_RANK = 16
+DEFAULT_ALPHA = 32.0
+DEFAULT_DROPOUT = 0.0
+
+
 class LoRALinear(nn.Module):
     def __init__(self, linear: nn.Linear, rank: int, alpha: float, dropout: float):
         super().__init__()

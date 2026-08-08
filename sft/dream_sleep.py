@@ -108,6 +108,7 @@ from consolidation_null import (
     ts,
 )
 from erase_probe import deflate, group_by_layer, rank1_erase, state_top_dirs
+from lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
 from probes_common import (
     BATTERY_CANDIDATES,
     HELDOUT_TEXT,
@@ -843,8 +844,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Warm-start adapter checkpoint (warm_start trainer's save_adapter output) loaded into "
                              "the model before the dream cache, the battery or any training; its SHA-256 is stamped "
                              "on every record and the summarizer refuses to pool cells that disagree")
-    parser.add_argument("--lora-rank", type=int, default=16)
-    parser.add_argument("--lora-alpha", type=float, default=32.0)
+    parser.add_argument("--lora-rank", type=int, default=DEFAULT_RANK)
+    parser.add_argument("--lora-alpha", type=float, default=DEFAULT_ALPHA)
     parser.add_argument("--gen-tokens", type=int, default=GEN_TOKENS, help="Tokens generated per probe (default: %(default)s)")
     parser.add_argument("--battery", default=None, help="Knowledge-battery artifact (default: data/knowledge_battery_<model>.json)")
     parser.add_argument("--seed", type=int, default=1234)
@@ -893,7 +894,7 @@ def main() -> None:
           f"chunk_len {chunk_len}, seed {args.seed}, gamma {GAMMA}, erase {args.erase_op}"
           f"{f' (state-svd k={DEFLATE_K})' if args.erase_op == 'deflated' else ''}")
 
-    model, trainable = train_hooks.setup_training(device, args.lora_rank, args.lora_alpha, 0.0)
+    model, trainable = train_hooks.setup_training(device, args.lora_rank, args.lora_alpha, DEFAULT_DROPOUT)
     if getattr(model, "c_capture", "missing") == "missing":
         raise SystemExit(f"model {model_name} has no c_capture hook -- this harness is for mamba2_780m")
     adapter_sha = None
