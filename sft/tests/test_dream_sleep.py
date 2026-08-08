@@ -953,6 +953,29 @@ def test_b3_fused_equals_b2_fused_detached_at_pass_one():
     assert records[0]["b3_loss"] == pytest.approx(records[0]["b2_loss"])
 
 
+def test_b3_fused_leaves_the_generator_spine_usable_after_the_equivalence_check():
+    """The check builds a second full spine, so the generator's is parked on the
+    host while it runs -- every later pass still distils on it, unchanged."""
+    from dream_sleep import distill_fused, spine_states
+
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed, n_tokens=6)
+    with torch.no_grad():
+        frozen = spine_states(model, dream.tokens, wake, 2)
+    before = {a: [t.clone() for t in layers] for a, layers in frozen.items()}
+
+    records: list[dict] = []
+    distill_fused(model, opt, dream, wake, steps=2, kl_temp=1.0, on_step=lambda s, l: None,
+                  block=2, cf_batch=4, frozen_spine=frozen, check=records.append)
+
+    assert records and records[0]["equivalent"] is True
+    for attr, layers in before.items():
+        assert len(frozen[attr]) == len(layers)
+        for got, want in zip(frozen[attr], layers, strict=True):
+            assert got.device == want.device
+            torch.testing.assert_close(got, want)
+
+
 def test_b3_fused_reports_a_failed_equivalence_when_the_spine_is_not_the_generator_s():
     """The check has to be able to fail, or it is decoration."""
     from dream_sleep import distill_fused, spine_states

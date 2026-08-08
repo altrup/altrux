@@ -948,10 +948,25 @@ def distill_fused(model, opt, dream: Dream, wake_state, steps: int, kl_temp: flo
         # Still at the generator snapshot's weights: this is the only moment
         # the two spines are comparable, so the check runs before the step.
         if step == 0 and frozen_spine is not None and check is not None:
+            # The live spine is a second full copy -- ~37 GB at 512 tokens on
+            # the 780m's 48 layers -- so the generator's spine parks on the
+            # host for the length of the comparison instead of the two
+            # coexisting on-card. B3's own loss is already computed above.
+            device = frozen_spine["ssm_states"][0].device
+            parked = {a: [t.to("cpu") for t in layers] for a, layers in frozen_spine.items()}
+            for layers in frozen_spine.values():
+                layers.clear()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             with torch.no_grad():
                 live = spine_states(model, dream.tokens, wake_state, block)
                 reference, _ = fused_pass(model, dream, wake_state, live, scored, kl_temp, erase_op,
                                           cf_batch, backward=False)
+            del live
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            for attr, layers in parked.items():
+                frozen_spine[attr].extend(t.to(device) for t in layers)
             equivalent = abs(loss - reference) <= 1e-4 * max(1.0, abs(reference))
             check({"pass": 1, "b3_loss": loss, "b2_loss": reference,
                    "abs_diff": abs(loss - reference), "equivalent": equivalent})
