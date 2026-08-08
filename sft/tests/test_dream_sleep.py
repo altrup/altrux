@@ -13,6 +13,7 @@ from dream_sleep import (
     distill_live,
     distill_replay,
     distill_sft,
+    erase_ssm,
     erase_state,
     frozen_teacher,
     paraphrase_prompts,
@@ -112,6 +113,78 @@ def test_erase_state_skips_directions_that_are_pure_cone():
 
     assert skipped == 1
     torch.testing.assert_close(state.ssm_states[0], ssm)
+
+
+@pytest.mark.parametrize("op", ["raw", "deflated"])
+def test_the_erase_gradient_reaches_the_query_projection(op):
+    """Sec 3.4: the gradient runs through the ablation direction's query path.
+    The state here is a constant, so the projection's only path to the loss is
+    the direction it produces."""
+    torch.manual_seed(0)
+    proj = nn.Linear(8, 8, bias=False)
+    ssm = torch.randn(1, 2, 4, 8)
+    c = proj(torch.randn(1, 8))
+
+    erased, _ = erase_ssm(ssm, c, op=op)
+    erased.float().pow(2).sum().backward()
+
+    assert proj.weight.grad is not None
+    assert proj.weight.grad.abs().max().item() > 0
+
+
+@pytest.mark.parametrize("op", ["raw", "deflated"])
+def test_the_erase_never_differentiates_the_protected_subspace(op):
+    """v is detached at its source, so no arm -- however deep its BPTT -- can
+    rotate the protected subspace onto the fact it is meant to guard."""
+    ssm = torch.randn(1, 2, 4, 8, requires_grad=True)
+    v = state_top_dirs(ssm, 1)
+
+    assert not v.requires_grad and v.grad_fn is None
+    assert not deflate(torch.randn(1, 8), v).requires_grad
+
+
+def test_the_raw_erase_zeroes_the_read_along_the_query_itself():
+    torch.manual_seed(3)
+    state = FakeState([torch.randn(1, 2, 4, 8) for _ in range(3)])
+    queries = [torch.randn(1, 8) for _ in range(3)]
+
+    skipped = erase_state(state, queries, op="raw")
+
+    assert skipped == 0
+    for ssm, c in zip(state.ssm_states, queries, strict=True):
+        assert read(ssm, c).abs().max().item() < 1e-4
+
+
+def test_the_raw_erase_cuts_a_pure_cone_query_the_deflated_one_skips():
+    torch.manual_seed(2)
+    cone = torch.nn.functional.normalize(torch.randn(8), dim=0)
+    ssm = (torch.randn(2, 4, 1) * cone).unsqueeze(0)
+    state = FakeState([ssm.clone()])
+
+    skipped = erase_state(state, [cone.unsqueeze(0)], op="raw")
+
+    assert skipped == 0
+    assert read(state.ssm_states[0], cone.unsqueeze(0)).abs().max().item() < 1e-4
+
+
+def test_every_result_record_carries_the_erase_operator():
+    import io
+    import json
+
+    from dream_sleep import make_emit
+
+    buf = io.StringIO()
+    make_emit(buf, erase_op="raw")({"phase": "sleep", "arm": "drain"})
+
+    record = json.loads(buf.getvalue())
+    assert record["erase_op"] == "raw" and record["phase"] == "sleep"
+
+
+def test_the_erase_operator_defaults_to_the_registered_deflated_form():
+    from dream_sleep import build_parser
+
+    assert build_parser().parse_args([]).erase_op == "deflated"
+    assert build_parser().parse_args(["--erase-op", "raw"]).erase_op == "raw"
 
 
 def test_paraphrase_prompts_reword_the_question_but_keep_the_answer_stem():
@@ -477,7 +550,8 @@ def _sleep_args(**overrides):
 
     args = dict(seed=1234, dream_tokens=8, dream_temp=0.0, dream_prompt="", cue_every=3, cue_greedy=1,
                 chunk_len=None, distill_steps=4, kl_temp=1.0, accum_window=1, probe_every=0,
-                fresh_state_replay=False, deep=False, ce_on_dream=False, n_facts=2, filler_tokens=4)
+                fresh_state_replay=False, deep=False, ce_on_dream=False, n_facts=2, filler_tokens=4,
+                erase_op="deflated")
     return SimpleNamespace(**{**args, **overrides})
 
 
@@ -528,6 +602,20 @@ def test_run_sleep_trains_every_arm_from_the_cached_dream(tmp_path, arm):
     if arm != "sft-ref":
         dream = next(r for r in records if r["phase"] == "dream")
         assert "bound_cov" in dream and "misbound" in dream
+
+
+def test_run_sleep_cuts_along_the_operator_the_cell_was_launched_with(tmp_path):
+    from dream_sleep import run_sleep
+
+    trained = {}
+    for op in ("raw", "deflated"):
+        args = _sleep_args(erase_op=op)
+        model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
+        run_sleep("counterfactual", model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
+                  encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, lambda step: None)
+        trained[op] = [p.detach().clone() for p in model.parameters()]
+
+    assert any(not torch.equal(a, b) for a, b in zip(trained["raw"], trained["deflated"], strict=True))
 
 
 def test_run_sleep_streams_the_probe_battery_on_the_registered_cadence(tmp_path):

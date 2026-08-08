@@ -119,11 +119,14 @@ from probes_common import (
     score_battery,
 )
 
-# Registered erase parameters (sec 3a) -- deliberately not flags. Do not
-# re-tune gamma downward without new evidence of a kind the erase probe
-# could not see.
+# Registered erase parameters (sec 3a). Gamma and k are deliberately not
+# flags: do not re-tune gamma downward without new evidence of a kind the
+# erase probe could not see. The operator is a flag only because sec 3.4
+# registers the raw-vs-deflated comparison as a cell to be run.
 GAMMA = 1.0
 DEFLATE_K = 1
+ERASE_OPS = ("raw", "deflated")
+ERASE_OP = "deflated"
 # A query with almost nothing left after deflation is all shared cone and no
 # discriminative sliver: skip it rather than erase noise (erase_probe.py).
 CONE_SKIP = 0.05
@@ -211,30 +214,50 @@ def sample_next(logits: torch.Tensor, temperature: float, banned: Sequence[int])
     return torch.multinomial(torch.softmax(last / temperature, dim=-1), num_samples=1)
 
 
-def erase_ssm(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float = GAMMA, k: int = DEFLATE_K):
-    """The registered erase for one layer: deflate `c` against the state's own
-    top singular direction, then attenuate the state's read along what is left.
-    Returns (state, skipped) -- the direction is detached inside `rank1_erase`
-    and `deflate`, so no gradient reaches the address being cut.
+def erase_ssm(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float = GAMMA, k: int = DEFLATE_K,
+              op: str = ERASE_OP):
+    """The registered erase for one layer, in the operator the cell was
+    launched with (sec 3.4's B1-raw vs B1-deflated picker): `raw` attenuates
+    the state's read along the query itself, `deflated` first removes the
+    query's component along the state's own top singular direction. Returns
+    (state, skipped) -- only `deflated` can skip, when nothing discriminative
+    survives the deflation.
+
+    The direction is differentiable (the cut follows the query); the protected
+    subspace it is deflated against is stop-gradiented at its source.
 
     This is what Model.erase_hook is fed: the ablation lands on the carried
     past, before this token's decay+write (sec 3's micro-order)."""
-    c = c.detach().to(ssm_state.device)
+    c = c.to(ssm_state.device)
+    if op == "raw":
+        return rank1_erase(ssm_state, c, gamma), False
     direction = deflate(c, state_top_dirs(ssm_state, k))
     if direction.float().norm() < CONE_SKIP * c.float().norm():
         return ssm_state, True
     return rank1_erase(ssm_state, direction, gamma), False
 
 
-def erase_state(state, queries: Sequence[torch.Tensor], gamma: float = GAMMA, k: int = DEFLATE_K) -> int:
+def erase_state(state, queries: Sequence[torch.Tensor], gamma: float = GAMMA, k: int = DEFLATE_K,
+                op: str = ERASE_OP) -> int:
     """Apply the registered erase to every layer of `state` in place, each with
     that layer's own read query. Returns the number of near-cone directions
     skipped."""
     skipped = 0
     for i, c in enumerate(queries):
-        state.ssm_states[i], hit = erase_ssm(state.ssm_states[i], c, gamma, k)
+        state.ssm_states[i], hit = erase_ssm(state.ssm_states[i], c, gamma, k, op)
         skipped += hit
     return skipped
+
+
+def make_emit(out_file, **stamped: object):
+    """Result-jsonl writer. Every record carries `stamped` -- the run
+    parameters the summarizer needs on each line to know which cell it is
+    pooling."""
+    def emit(record: dict[str, object]) -> None:
+        out_file.write(json.dumps({**stamped, **record}) + "\n")
+        out_file.flush()
+
+    return emit
 
 
 def token_sha(ids: Sequence[int]) -> str:
@@ -468,6 +491,7 @@ def teacher_dream(
     cue_every: int = 0,
     cue_greedy: int = 0,
     frozen: bool = True,
+    erase_op: str = ERASE_OP,
 ) -> Dream:
     """Sequences 1 of arms A/B2 (`drain=False`) and B1 (`drain=True`): the
     frozen teacher generates a dream from the wake state, one token at a time
@@ -511,7 +535,7 @@ def teacher_dream(
             queries.append([c.cpu() for c in per_layer])
             texts.append(decode_token(ids[t]))
             if drain:
-                skipped += erase_state(state, per_layer)
+                skipped += erase_state(state, per_layer, op=erase_op)
             if t + 1 >= len(ids):
                 if cues and cue_every and deferred < 0 and len(ids) >= cue_at:
                     deferred = 0
@@ -596,7 +620,8 @@ def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp
 
 
 def distill_counterfactual(model, opt, dream: Dream, wake_state, steps: int, kl_temp: float, accum: int,
-                           in_place: bool, deep: bool, on_step, keep: Sequence[bool] | None = None):
+                           in_place: bool, deep: bool, on_step, keep: Sequence[bool] | None = None,
+                           erase_op: str = ERASE_OP):
     """The corrected B arms (sec 3), both teacher-forced over the cached dream
     from a copy of the cached wake state. Per token, per layer, inside the
     forward: compute C, deflate it against that layer's state, ablate the
@@ -625,7 +650,7 @@ def distill_counterfactual(model, opt, dream: Dream, wake_state, steps: int, kl_
 
     def hook(layer_idx: int, ssm_state, c):
         nonlocal skipped
-        erased, was_skipped = erase_ssm(ssm_state, c)
+        erased, was_skipped = erase_ssm(ssm_state, c, op=erase_op)
         skipped += was_skipped
         return erased
 
@@ -688,6 +713,7 @@ def distill_counterfactual(model, opt, dream: Dream, wake_state, steps: int, kl_
 def distill_live(
     model, opt, wake_state, seed_ids: torch.Tensor, n_tokens: int, temperature: float,
     banned: Sequence[int], kl_temp: float, accum: int, decode_token, needles: Sequence[str], on_step,
+    erase_op: str = ERASE_OP,
 ) -> tuple[object, Dream]:
     """B1-live sequence 1: one online adapters-on pass. Per token -- forward
     from the current state and store the logits, erase that state along the
@@ -715,7 +741,7 @@ def distill_live(
         per_layer = group_by_layer(model.c_capture, len(model.layers))[0]
         model.c_capture = None
 
-        skipped += erase_state(state, per_layer)
+        skipped += erase_state(state, per_layer, op=erase_op)
         logits, state = model(token, state=state)
         loss = kl_loss(stored.detach(), logits, kl_temp) / accum
         loss.backward()
@@ -773,7 +799,7 @@ def distill_sft(model, opt, ids: torch.Tensor, steps: int, chunk_len: int, on_st
     return tokens
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--arm", choices=ARMS, default="replay", help="Sleep protocol, per DISCUSSION sec 3 (default: %(default)s)")
     parser.add_argument("--sft-ref", action="store_true", help="Reference arm: CE on the wake transcript instead of a dream")
@@ -815,7 +841,15 @@ def main() -> None:
     parser.add_argument("--battery", default=None, help="Knowledge-battery artifact (default: data/knowledge_battery_<model>.json)")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--out", default="logs/dream_sleep.jsonl", help="Per-fact results jsonl (default: %(default)s)")
-    args = parser.parse_args()
+    parser.add_argument("--erase-op", choices=ERASE_OPS, default=ERASE_OP,
+                        help="Ablation operator for the B arms (sec 3.4's picker): cut along the query itself "
+                             "(raw), or along what survives deflating it against the state's top singular "
+                             "direction (deflated) (default: %(default)s)")
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     if args.sft_ref and args.no_sleep:
         raise SystemExit("--sft-ref and --no-sleep are different arms; pass one")
@@ -848,7 +882,8 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     chunk_len = args.chunk_len or getattr(train_hooks, "DEFAULT_CHUNK_LEN", 48)
     print(f"[{ts()}] model {model_name} on {device}, arm {mode}, carries {ARM_CARRY[mode]}, "
-          f"chunk_len {chunk_len}, seed {args.seed}, gamma {GAMMA} (state-svd k={DEFLATE_K})")
+          f"chunk_len {chunk_len}, seed {args.seed}, gamma {GAMMA}, erase {args.erase_op}"
+          f"{f' (state-svd k={DEFLATE_K})' if args.erase_op == 'deflated' else ''}")
 
     model, trainable = train_hooks.setup_training(device, args.lora_rank, args.lora_alpha, 0.0)
     if getattr(model, "c_capture", "missing") == "missing":
@@ -873,9 +908,7 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_file = out_path.open("w")
 
-    def emit(record: dict[str, object]) -> None:
-        out_file.write(json.dumps(record) + "\n")
-        out_file.flush()
+    emit = make_emit(out_file, erase_op=args.erase_op)
 
     cache = None if args.build_dream_cache else load_dream_cache(cache_path)
     distractors = cache.distractors if cache else {}
@@ -1218,7 +1251,7 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
         banned = [tokenizer.eos_token_id] if tokenizer.eos_token_id is not None else []
         carried, dream = distill_live(model, opt, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
                                       banned, args.kl_temp, args.accum_window,
-                                      lambda i: decode([i]), needles, on_step)
+                                      lambda i: decode([i]), needles, on_step, erase_op=args.erase_op)
         token_gradients = args.dream_tokens
         print()
     else:
@@ -1238,7 +1271,8 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
         else:
             token_gradients, drained = distill_counterfactual(
                 model, opt, dream, wake_state, args.distill_steps, args.kl_temp, args.accum_window,
-                in_place=(mode == "drain"), deep=args.deep, on_step=on_step, keep=keep)
+                in_place=(mode == "drain"), deep=args.deep, on_step=on_step, keep=keep,
+                erase_op=args.erase_op)
             carried = drained if mode == "drain" else wake_state
         print()
 
