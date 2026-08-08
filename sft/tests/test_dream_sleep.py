@@ -370,11 +370,15 @@ def _detachable(state: FakeState) -> FakeState:
 FakeState.detach = _detachable
 
 
-def _tiny_setup():
+def _tiny_setup(rows=1):
+    """`rows` is the state's h*p, i.e. the rank available to state_top_dirs.
+    The default 1 makes the state rank-1, which is fine for everything that
+    does not deflate but degenerate for anything that does -- see
+    test_the_deep_fused_spine_carries_gradient_and_the_detached_one_does_not."""
     torch.manual_seed(0)
     model = TinyModel()
     opt = torch.optim.SGD(model.parameters(), lr=0.1)
-    wake = FakeState([torch.randn(1, 1, 1, 4) for _ in model.layers])
+    wake = FakeState([torch.randn(1, rows, 1, 4) for _ in model.layers])
     seed = torch.tensor([[1]])
     return model, opt, wake, seed
 
@@ -913,10 +917,10 @@ def test_spine_states_match_a_plain_per_token_run(block):
             torch.testing.assert_close(spine["ssm_states"][i][t : t + 1], want)
 
 
-def _fused_run(arm, steps=1, **kwargs):
+def _fused_run(arm, steps=1, rows=1, **kwargs):
     from dream_sleep import distill_fused
 
-    model, opt, wake, seed = _tiny_setup()
+    model, opt, wake, seed = _tiny_setup(rows)
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
     losses: list[float] = []
     records: list[dict] = []
@@ -1005,11 +1009,20 @@ def test_the_deep_fused_spine_carries_gradient_and_the_detached_one_does_not(op,
         return spine
 
     monkeypatch.setattr(dream_sleep, "spine_states", spy)
-    detached, _, _, _ = _fused_run("b2-fused-detached", erase_op=op)
+    # h*p = 4, not the default rank-1 state: with rank 1 the state's only top
+    # singular direction IS its own row, so deflating the query against it
+    # leaves a direction exactly orthogonal to the state, the erase is the
+    # identity to fp precision, the counterfactual reproduces the teacher, and
+    # the loss is 0 -- both arms then take a null step and coincide for want of
+    # gradient signal rather than for want of a gradient path. (h*p = 16 is
+    # degenerate the other way: the deflated direction falls under the skip-cone
+    # threshold half the time.) The real 780m state is 3072x128.
+    rows = 4
+    detached, _, _, _ = _fused_run("b2-fused-detached", erase_op=op, rows=rows)
     assert seen == [False]
 
     seen.clear()
-    deep, _, _, _ = _fused_run("b2-fused-deep", erase_op=op)
+    deep, _, _, _ = _fused_run("b2-fused-deep", erase_op=op, rows=rows)
     assert seen == [True]
 
     assert any(not torch.equal(a, b) for a, b in
