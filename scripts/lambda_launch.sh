@@ -171,7 +171,9 @@ raw = os.environ['resp']
 try:
     d = json.loads(raw)
 except json.JSONDecodeError:
-    sys.stderr.write('non-JSON response from launch API:\n' + raw[:500] + '\n'); sys.exit(2)
+    # A non-JSON body is the CDN talking (e.g. Cloudflare 1015 rate limiting),
+    # not Lambda -- retryable, and the poll interval doubles as the cool-off.
+    sys.stderr.write('non-JSON response from launch API:\n' + raw[:500] + '\n'); sys.exit(1)
 err = d.get('error')
 if err:
     code, msg = err.get('code', ''), str(err.get('message', err))
@@ -187,8 +189,6 @@ print(ids[0])
 }
 
 poll_interval="${LAMBDA_CAPACITY_POLL_INTERVAL:-30}"
-burst_attempts="${LAMBDA_LAUNCH_BURST_ATTEMPTS:-10}"
-burst_interval="${LAMBDA_LAUNCH_BURST_INTERVAL:-5}"
 max_wait="${LAMBDA_CAPACITY_MAX_WAIT:-0}"   # seconds to keep polling; 0 = forever
 
 echo "Resolving a region with capacity for $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}..."
@@ -217,15 +217,7 @@ while :; do
   fi
   echo "Region: $region"
   echo "Launching..."
-  # Scarce types sell out in the seconds between the capacity check and the
-  # launch call, but released capacity also flickers back within that window —
-  # burst-retry the launch before falling back to slow polling.
-  launched=0
-  for (( attempt=1; attempt<=burst_attempts; attempt++ )); do
-    if launch_instance; then launched=1; break; fi
-    (( attempt < burst_attempts )) && { echo "  launch raced (attempt $attempt/$burst_attempts) — retrying in ${burst_interval}s"; sleep "$burst_interval"; }
-  done
-  (( launched )) && break
+  launch_instance && break
   echo "capacity in $region vanished before launch — back to polling"
   region=""
 done
