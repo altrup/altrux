@@ -296,6 +296,20 @@ def erase_state(state, queries: Sequence[torch.Tensor], gamma: float = GAMMA, k:
     return skipped
 
 
+def make_erase_hook(erase_op: str):
+    """The `Model.erase_hook` the counterfactual arms run their forward under,
+    paired with a read of how many near-cone directions it has skipped so far."""
+    skipped = 0
+
+    def hook(layer_idx: int, ssm_state, c):
+        nonlocal skipped
+        erased, was_skipped = erase_ssm(ssm_state, c, op=erase_op)
+        skipped += was_skipped
+        return erased
+
+    return hook, lambda: skipped
+
+
 def make_emit(out_file, **stamped: object):
     """Result-jsonl writer. Every record carries `stamped` -- the run
     parameters the summarizer needs on each line to know which cell it is
@@ -735,13 +749,7 @@ def distill_counterfactual(model, opt, dream: Dream, wake_state, steps: int, kl_
     if deep and in_place:
         raise ValueError("deep gradients are measured on B2 only -- deep-B1 is structurally confounded (sec 6)")
 
-    skipped = 0
-
-    def hook(layer_idx: int, ssm_state, c):
-        nonlocal skipped
-        erased, was_skipped = erase_ssm(ssm_state, c, op=erase_op)
-        skipped += was_skipped
-        return erased
+    hook, skipped = make_erase_hook(erase_op)
 
     length = dream.tokens.shape[1]
     step = tokens = 0
@@ -795,7 +803,8 @@ def distill_counterfactual(model, opt, dream: Dream, wake_state, steps: int, kl_
             opt.zero_grad(set_to_none=True)
             on_step(step - 1, total.item() / len(losses))
             state = state.detach()
-    print(f"\n[{ts()}]  near-cone erases skipped: {skipped} of {tokens * max(1, len(getattr(model, 'layers', [1])))}")
+    print(f"\n[{ts()}]  near-cone erases skipped: {skipped()} of "
+          f"{tokens * max(1, len(getattr(model, 'layers', [1])))}")
     return tokens, state
 
 
@@ -873,7 +882,7 @@ def fused_pass(model, dream: Dream, wake_state, spine: dict[str, list[torch.Tens
     memory knob and not a hyperparameter. Returns (summed KL, skipped)."""
     import torch
 
-    skipped = 0
+    hook, skipped = make_erase_hook(erase_op)
     total = 0.0
     device = dream.tokens.device
     for lo in range(0, len(scored), cf_batch):
@@ -882,12 +891,6 @@ def fused_pass(model, dream: Dream, wake_state, spine: dict[str, list[torch.Tens
         cf = copy.copy(wake_state)
         for attr, layers in spine.items():
             setattr(cf, attr, [t[idx] for t in layers])
-
-        def hook(layer_idx: int, ssm_state, c):
-            nonlocal skipped
-            erased, was_skipped = erase_ssm(ssm_state, c, op=erase_op)
-            skipped += was_skipped
-            return erased
 
         model.erase_hook = hook
         try:
@@ -900,7 +903,7 @@ def fused_pass(model, dream: Dream, wake_state, spine: dict[str, list[torch.Tens
         if backward:
             loss.backward(retain_graph=retain)
         total += float(loss.detach())
-    return total, skipped
+    return total, skipped()
 
 
 def distill_fused(model, opt, dream: Dream, wake_state, steps: int, kl_temp: float, on_step,
