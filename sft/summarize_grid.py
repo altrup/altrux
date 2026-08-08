@@ -90,7 +90,7 @@ def load_cells(paths: list[str]) -> list[dict[str, object]]:
     return [c for c in (cell(p) for p in paths) if c]
 
 
-def apply_floor(cells: list[dict[str, object]]) -> int:
+def floor_deltas(cells, extract, fallback=None):
     """Baseline-correct every margin against the same fact's no-sleep margin.
 
     A raw margin is not a measure of learning. The distractor is one fixed
@@ -98,23 +98,50 @@ def apply_floor(cells: list[dict[str, object]]) -> int:
     the untrained floor the per-fact margins measured -1.6 to +4.1 nats, so the
     registered "installed iff margin >= 1.0" fires for two thirds of facts that
     were never trained on at all. The floor arm is per (seed, fact) constant, so
-    subtracting it costs nothing and gives the metric a true zero. Returns how
-    many facts the floor itself would have scored installed -- print it, because
-    it is the evidence that the raw column cannot be read.
+    subtracting it costs nothing and gives the metric a true zero.
+
+    `extract` maps a cell to {group key: {fact: margin}} -- one group for the
+    frontier's final margins, one per probe point for the curves. `fallback`
+    supplies a per (seed, fact) floor for groups the no-sleep arm never reached.
+    Returns the floor itself and one (cell, group key, deltas) row per group.
     """
-    floor: dict[tuple[str, str], float] = {}
+    floor: dict[tuple[str, object, str], float] = {}
     for c in cells:
         if c["arm"] == "nosleep":
-            for fact, m in c["fact_margin"].items():
-                floor[(str(c["seed"]), fact)] = m
-    false_positives = sum(m >= INSTALL_NATS for m in floor.values())
+            for key, facts in extract(c).items():
+                for fact, m in facts.items():
+                    floor[(str(c["seed"]), key, fact)] = m
+    rows = []
     for c in cells:
-        deltas = [m - floor[(str(c["seed"]), f)] for f, m in c["fact_margin"].items()
-                  if (str(c["seed"]), f) in floor]
+        groups = extract(c)
+        for key in sorted(groups):
+            deltas = []
+            for fact, m in groups[key].items():
+                base = floor.get((str(c["seed"]), key, fact))
+                if base is None and fallback is not None:
+                    base = fallback.get((str(c["seed"]), fact))
+                if base is not None:
+                    deltas.append(m - base)
+            rows.append((c, key, deltas))
+    return floor, rows
+
+
+def _final_margins(c: dict[str, object]) -> dict[str, dict[str, float]]:
+    return {"": c["fact_margin"]}
+
+
+def apply_floor(cells: list[dict[str, object]]) -> int:
+    """Floor-correct each cell's final margins onto `dmargin`/`dinstall`/`dn`.
+
+    Returns how many facts the floor itself would have scored installed --
+    print it, because it is the evidence that the raw column cannot be read.
+    """
+    floor, rows = floor_deltas(cells, _final_margins)
+    for c, _, deltas in rows:
         c["dmargin"] = sum(deltas) / len(deltas) if deltas else float("nan")
         c["dinstall"] = sum(d >= INSTALL_NATS for d in deltas)
         c["dn"] = len(deltas)
-    return false_positives
+    return sum(m >= INSTALL_NATS for m in floor.values())
 
 
 def curve_rows(cells: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -123,35 +150,16 @@ def curve_rows(cells: list[dict[str, object]]) -> list[dict[str, object]]:
     Δmargin, which the endpoint alone cannot answer). The floor is the seed's
     no-sleep cell at the same probe step where it has one -- the no-sleep arm
     trains on nothing, so its final margin stands in everywhere else."""
-    floor: dict[tuple[str, tuple[int, int], str], float] = {}
-    final_floor: dict[tuple[str, str], float] = {}
-    for c in cells:
-        if c["arm"] != "nosleep":
-            continue
-        for key, facts in c["steps"].items():
-            for fact, m in facts.items():
-                floor[(str(c["seed"]), key, fact)] = m
-        for fact, m in c["fact_margin"].items():
-            final_floor[(str(c["seed"]), fact)] = m
-
-    rows: list[dict[str, object]] = []
-    for c in cells:
-        for key in sorted(c["steps"]):
-            deltas = []
-            for fact, m in c["steps"][key].items():
-                base = floor.get((str(c["seed"]), key, fact), final_floor.get((str(c["seed"]), fact)))
-                if base is not None:
-                    deltas.append(m - base)
-            if not deltas:
-                continue
-            rows.append({
-                "arm": c["arm"], "seed": str(c["seed"]), "erase_op": c["erase_op"],
-                "wave": key[0], "step": key[1], "n": len(deltas),
-                "dmargin": sum(deltas) / len(deltas),
-                "dinstall": sum(d >= INSTALL_NATS for d in deltas),
-                "dppl": c["dppl_at"].get(key),
-            })
-    return rows
+    final_floor = {(seed, fact): m
+                   for (seed, _, fact), m in floor_deltas(cells, _final_margins)[0].items()}
+    _, rows = floor_deltas(cells, lambda c: c["steps"], fallback=final_floor)
+    return [{
+        "arm": c["arm"], "seed": str(c["seed"]), "erase_op": c["erase_op"],
+        "wave": key[0], "step": key[1], "n": len(deltas),
+        "dmargin": sum(deltas) / len(deltas),
+        "dinstall": sum(d >= INSTALL_NATS for d in deltas),
+        "dppl": c["dppl_at"].get(key),
+    } for c, key, deltas in rows if deltas]
 
 
 def print_curves(cells: list[dict[str, object]]) -> None:
