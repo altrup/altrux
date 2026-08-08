@@ -341,7 +341,12 @@ keys on it). Without the floor cells Δ-installs and Δmargin are
 uncomputable and the §3.4 rule cannot be applied; the g2 floor does not
 transfer across the warm-start. Decision by the §3.4 rule (dominance →
 iso-learning damage at matched Δmargin with the ≥2/3-seed robustness
-guard → raw fallback). Winner is the session's erase operator.
+guard → raw fallback). Winner is the session's erase operator. Run the
+picker as direct `dream_sleep.py` invocations (B1-raw, B1-deflated,
+no-sleep per seed, flags copied verbatim from `run_grid2.sh` into the
+notes) — not the grid script twice, which duplicates every non-B1 arm
+for zero information; step (3)'s grid run then skips the finished B1
+cells via the done-record resume check.
 
 **(3) d800 baselines** on the new caches: A, B1 (winning operator),
 B2-fused-detached, B2-fused-deep, B3-fused, per-token-B2 bridge. The g2
@@ -359,7 +364,8 @@ is within 2× of B2-fused-detached's.
 
 **(5) Multi-sleep** per §3.7 — this session if there is room; else it is
 the next session's docket with (0)–(4)'s artifacts (checkpoint, caches)
-pulled home and reused. **Multi-sleep needs its own cache build per seed**
+pulled home and reused. At the ~4 h headroom boundary, finish the ladder
+cleanly rather than start a multi-sleep that can't complete. **Multi-sleep needs its own cache build per seed**
 (`--waves 4` consumes a different RNG stream, so the wave-1 facts and
 transcript differ from the single-sleep cache's — verified locally; a
 `--waves 4` cell against a single-sleep cache exits on the transcript
