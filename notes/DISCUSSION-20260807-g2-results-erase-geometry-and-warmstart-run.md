@@ -319,8 +319,9 @@ cold-weight baselines. **If the 400→800 fallback fires, the new
 checkpoint requires deleting the battery a second time.** Checkpoint
 hash into the run notes; commit the battery and checkpoint from the box
 (small files — ends the regeneration drift; this was the second
-consecutive run to lose the battery). The battery is inside gitignored
-`sft/data/` — committing it needs `git add -f`.
+consecutive run to lose the battery). Both files are gitignored (the
+battery under `sft/data/`, the checkpoint under `models/*/checkpoints/`)
+— committing either needs `git add -f`.
 
 **(1) Fresh dream caches**, seeds 1234/2345/3456, from the warm-started
 weights, coverage-gated; generator per-token states cached for B3 (or
