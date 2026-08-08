@@ -853,18 +853,23 @@ def spine_states(model, tokens: torch.Tensor, wake_state, block: int) -> dict[st
                                 for i in range(len(starts[0][attr]))])
 
     block_tokens = padded.view(n_blocks, block)
-    snaps: list[dict[str, list[torch.Tensor]]] = []
+    # Written in place, one snapshot at a time: collecting the T snapshots and
+    # then stacking them holds the whole spine twice at once, and one copy is
+    # already n_layers * T * state_bytes -- ~37 GB for a 512-token dream on the
+    # 780m's 48 layers, so the transient second copy alone overflows a 94 GB
+    # card before a single counterfactual is forwarded.
+    spine: dict[str, list[torch.Tensor]] = {
+        attr: [t.new_empty((n_blocks, block, *t.shape[1:])) for t in _state_layers(batched, attr)]
+        for attr in attrs
+    }
     for j in range(block):
-        snaps.append({a: _state_layers(batched, a) for a in attrs})
+        for attr in attrs:
+            for i, t in enumerate(_state_layers(batched, attr)):
+                spine[attr][i][:, j] = t
         _, batched = model(block_tokens[:, j : j + 1], state=batched)
 
-    spine: dict[str, list[torch.Tensor]] = {}
     for attr in attrs:
-        per_layer = []
-        for i in range(len(snaps[0][attr])):
-            stacked = torch.stack([snap[attr][i] for snap in snaps], dim=1)  # (n_blocks, block, ...)
-            per_layer.append(stacked.reshape(-1, *stacked.shape[2:])[:length])
-        spine[attr] = per_layer
+        spine[attr] = [t.reshape(-1, *t.shape[2:])[:length] for t in spine[attr]]
     return spine
 
 
