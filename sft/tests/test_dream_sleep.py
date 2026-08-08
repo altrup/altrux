@@ -1285,3 +1285,60 @@ def test_the_commit_arm_moves_the_carried_state_and_plain_b2_does_not(tmp_path):
 
 def test_the_commit_arm_is_registered_as_carrying_a_committed_state():
     assert ARM_CARRY["counterfactual-commit"] == "committed"
+
+
+def test_the_r_matrix_row_averages_each_wave_s_facts_separately():
+    """R[i][j] is wave i's facts after sleep j (sec 3.7), so one probe sweep
+    over all facts so far is one column, split by the wave that taught them."""
+    from dream_sleep import r_matrix_row
+
+    row = r_matrix_row({
+        "osprey": {"fact_wave": 1, "margin": 2.0, "install": True},
+        "heron": {"fact_wave": 1, "margin": 0.0, "install": False},
+        "marimba": {"fact_wave": 2, "margin": 3.0, "install": True},
+    })
+
+    assert row == {1: {"mean_margin": 1.0, "installs": 1, "facts": 2},
+                   2: {"mean_margin": 3.0, "installs": 1, "facts": 1}}
+
+
+def test_a_fact_with_no_foil_is_not_averaged_into_its_wave():
+    from dream_sleep import r_matrix_row
+
+    assert r_matrix_row({"osprey": {"fact_wave": 1, "margin": None, "install": False}}) == {}
+
+
+def _triangle():
+    return {(1, 1): {"mean_margin": 4.0, "installs": 2, "facts": 2},
+            (1, 2): {"mean_margin": 1.0, "installs": 1, "facts": 2},
+            (2, 2): {"mean_margin": 3.0, "installs": 2, "facts": 2}}
+
+
+def test_backward_transfer_is_the_mean_move_from_each_wave_s_own_sleep_to_the_last():
+    from dream_sleep import cl_summary
+
+    summary = cl_summary(_triangle(), waves=2)
+
+    assert summary["bwt"] == pytest.approx(-3.0)  # wave 1: 1.0 - 4.0
+    assert summary["installs_final"] == 3  # 1 of wave 1 plus 2 of wave 2
+    assert summary["installs_peak"] == 4  # wave 1 peaked at 2 before losing one
+
+
+def test_backward_transfer_is_undefined_for_a_single_sleep():
+    from dream_sleep import cl_summary
+
+    assert cl_summary({(1, 1): {"mean_margin": 4.0, "installs": 2, "facts": 2}}, waves=1)["bwt"] is None
+
+
+def test_the_r_matrix_is_lower_triangular_over_the_run_s_sleeps():
+    """A wave's facts do not exist before their own wake, so the upper triangle
+    is empty by construction and must not be counted as a loss."""
+    from dream_sleep import cl_summary, r_matrix_rows
+
+    r = {(i, j): {"mean_margin": float(j - i), "installs": 1, "facts": 1}
+         for j in range(1, 5) for i in range(1, j + 1)}
+
+    assert [len(row) for row in r_matrix_rows(r, waves=4)] == [4, 4, 4, 4]
+    assert r_matrix_rows(r, waves=4)[0][0] == pytest.approx(0.0)
+    assert r_matrix_rows(r, waves=4)[3][0] is None  # wave 4 did not exist at sleep 1
+    assert cl_summary(r, waves=4)["bwt"] == pytest.approx((3 + 2 + 1) / 3)

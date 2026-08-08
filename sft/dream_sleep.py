@@ -69,10 +69,13 @@ touches the wake path.
 
 The dream arms train the same objective (KL to the frozen teacher's cached
 logits) on the same cached dream; the student's state deprivation is the only
-manipulated variable. `--waves 2` runs wake -> sleep -> wake(new facts, on the
-carried state) -> sleep -> probes, which is the only form that can price
-consumption (wave-2 in-context control) and backward transfer (wave-1 recall
-after sleep 2).
+manipulated variable. `--waves K` runs K wake/sleep rounds on one carried
+state (sec 3.7's registered shape is 4 x 4 fresh facts): wave 1 distils the
+seed's shared cache, every later sleep generates its own dream from the state
+it carried in, cued on that wave's facts only, and every fact so far is
+probed after every sleep -- which is the only form that can price consumption
+(the in-context control) and backward transfer (the R-matrix, BWT and
+cumulative installation the run reports).
 
 Box tool: this trains a LoRA and holds a full-vocab logit cache for the dream
 -- it runs on rented CUDA hardware, never the local ROCm box. Only the pure
@@ -1174,7 +1177,8 @@ def main() -> None:
         return margin, installed, correct, foil
 
     def probe_facts(facts: Sequence[tuple[int, Fact]], state, phase: str, wave: int, paraphrases: bool,
-                    baseline: dict[str, float] | None, step: int | None = None) -> dict[str, float]:
+                    baseline: dict[str, float] | None, step: int | None = None,
+                    collect: dict[str, dict[str, object]] | None = None) -> dict[str, float]:
         """Greedy exact match, teacher-forced code log-prob and the distractor
         margin per fact, plus the paraphrase battery where asked. Streams one
         record per fact."""
@@ -1195,6 +1199,8 @@ def main() -> None:
                     gen, _ = answer_probe(prompt, fact.code, state)
                     para.append({"prompt": prompt, "greedy": gen, "match": exact_match(gen, fact.code, stops)})
             para_rate = sum(bool(p["match"]) for p in para) / len(para) if para else 0.0
+            if collect is not None:
+                collect[fact.entity] = {"fact_wave": fact_wave, "margin": margin, "install": installed}
             hits += matched
             para_hits += para_rate
             delta = logprob - baseline[fact.entity] if baseline and fact.entity in baseline else None
@@ -1253,6 +1259,7 @@ def main() -> None:
     seen: list[tuple[int, Fact]] = []
     fresh_baseline: dict[str, float] = {}
     committed: set[str] = set()
+    r_matrix: dict[tuple[int, int], dict[str, float]] = {}
     for wave in range(1, args.waves + 1):
         facts = all_facts[(wave - 1) * args.n_facts : wave * args.n_facts]
         if wave > 1:
@@ -1325,13 +1332,34 @@ def main() -> None:
                                 verify=lambda f: margin_probe(f, None), committed=committed)
 
         print(f"\n[{ts()}] === wave {wave} probes: fresh state, no context ===")
-        probe_facts(seen, None, "probe", wave, True, fresh_baseline, step=args.distill_steps)
+        scored: dict[str, dict[str, object]] = {}
+        probe_facts(seen, None, "probe", wave, True, fresh_baseline, step=args.distill_steps,
+                    collect=scored)
         locality(wave, step=args.distill_steps)
+
+        # Column `wave` of the R-matrix, streamed the moment the sleep produces
+        # it: read at any point, the log already says what each earlier wave's
+        # facts are worth now.
+        for fact_wave, stats in sorted(r_matrix_row(scored).items()):
+            r_matrix[(fact_wave, wave)] = stats
+            emit({"phase": "r_matrix", "arm": mode, "sleep": wave, "fact_wave": fact_wave, **stats})
+            print(f"[{ts()}]  R[wave {fact_wave}][sleep {wave}] mean margin {stats['mean_margin']:+7.3f} "
+                  f"installs {stats['installs']}/{stats['facts']}")
         print(f"\n[{ts()}] === wave {wave} carried-state diagnostic ({ARM_CARRY[mode]}) -- NOT installation ===")
         if carried is None:
             print(f"[{ts()}]  arm {mode} carries nothing; column empty by construction")
         else:
             probe_facts(seen, carried, "carried", wave, False, None)
+
+    if args.waves > 1:
+        summary = cl_summary(r_matrix, args.waves)
+        print(f"\n[{ts()}] === R-matrix (rows: the wave that taught the facts; columns: after sleep j) ===")
+        for i, row in enumerate(r_matrix_rows(r_matrix, args.waves), start=1):
+            print(f"[{ts()}]  wave {i}: " + "  ".join("     ." if m is None else f"{m:+8.3f}" for m in row))
+        print(f"[{ts()}] BWT {'n/a' if summary['bwt'] is None else f'{summary['bwt']:+.3f}'}   "
+              f"installs {summary['installs_final']} of a peak {summary['installs_peak']}")
+        emit({"phase": "cl_summary", "arm": mode, "seed": args.seed,
+              "r_matrix": r_matrix_rows(r_matrix, args.waves), **summary})
 
     # The cell's completion marker. Periodic probes write a locality record
     # every --probe-every steps, so "has a locality record" says a cell started,
@@ -1385,15 +1413,16 @@ def report_dream(cache: DreamCache) -> None:
 
 def validate_wave_args(args) -> None:
     """Multi-sleep needs a teacher for waves after the first, and which one is a
-    protocol choice: the frozen base keeps wave 1's contract (a stationary
-    teacher that never drifts), while the current model distils a student the
-    run has already consolidated into. The two measure different things, so the
-    harness refuses to pick."""
+    protocol choice: `current` is the registered protocol (sec 3.2 -- the
+    student as of that sleep's start, generating from its own carried state),
+    `base` is the drift-contribution control, a teacher pinned at the base
+    across every sleep. The two measure different things, so the harness
+    refuses to pick."""
     if args.waves > 1 and not getattr(args, "wave_teacher", None):
         raise SystemExit(
-            "--waves > 1 needs --wave-teacher base|current: wave 1's dream comes from the frozen base, "
-            "and after that 'the teacher' is ambiguous (frozen base vs the student trained by earlier "
-            "sleeps). Register the choice before running multi-sleep."
+            "--waves > 1 needs --wave-teacher base|current: the registered protocol is `current` "
+            "(sec 3.2), `base` is the one-seed drift-contribution control. Register the choice "
+            "before running multi-sleep."
         )
 
 
@@ -1419,6 +1448,48 @@ def generate_wave_dream(model, args, carried, facts, encode, decode, tokenizer,
         drain=False, decode_token=lambda i: decode([i]), needles=needles,
         cues=cues, cue_every=args.cue_every, cue_greedy=args.cue_greedy,
         frozen=(teacher == "base"))
+
+
+def r_matrix_row(scored: dict[str, dict[str, object]]) -> dict[int, dict[str, float]]:
+    """One probe sweep, split by the wave that taught each fact -- column j of
+    the R-matrix (sec 3.7). Facts with no foil carry no margin and are left
+    out rather than averaged in as zero."""
+    rows: dict[int, dict[str, float]] = {}
+    for record in scored.values():
+        if record.get("margin") is None:
+            continue
+        row = rows.setdefault(int(record["fact_wave"]), {"mean_margin": 0.0, "installs": 0, "facts": 0})
+        row["mean_margin"] += float(record["margin"])
+        row["installs"] += int(bool(record["install"]))
+        row["facts"] += 1
+    for row in rows.values():
+        row["mean_margin"] /= row["facts"]
+    return rows
+
+
+def r_matrix_rows(r: dict[tuple[int, int], dict[str, float]], waves: int) -> list[list[float | None]]:
+    """The R-matrix as `waves` rows of `waves` mean margins, `None` where a
+    wave's facts did not exist yet (the empty upper triangle)."""
+    return [[r[(i, j)]["mean_margin"] if (i, j) in r else None for j in range(1, waves + 1)]
+            for i in range(1, waves + 1)]
+
+
+def cl_summary(r: dict[tuple[int, int], dict[str, float]], waves: int) -> dict[str, object]:
+    """The continual-learning readout over a finished multi-sleep run (sec 3.7).
+
+    Backward transfer is the mean, over the waves taught before the last sleep,
+    of how far their margin moved between the sleep that taught them and the
+    final one -- negative is forgetting. Cumulative installation is reported as
+    what survives the final sleep beside the peak any sleep reached: a fact
+    installed at sleep 1 and destroyed at sleep 2 shows up as the gap.
+    """
+    deltas = [r[(i, waves)]["mean_margin"] - r[(i, i)]["mean_margin"]
+              for i in range(1, waves) if (i, waves) in r and (i, i) in r]
+    peak = sum(max(v["installs"] for (wave, _), v in r.items() if wave == i)
+               for i in sorted({i for i, _ in r}))
+    return {"bwt": sum(deltas) / len(deltas) if deltas else None,
+            "installs_final": sum(v["installs"] for (_, j), v in r.items() if j == waves),
+            "installs_peak": peak, "waves": waves}
 
 
 def commit_erase(model, carried, seen, committed: set[str], encode, user_open: str, asst_open: str,
