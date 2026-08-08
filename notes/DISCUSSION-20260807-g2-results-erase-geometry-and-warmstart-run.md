@@ -309,15 +309,19 @@ Regime unchanged unless stated: `--n-facts 4 --filler-tokens 40
 floor), binding-aware coverage gate ≥3/4 per seed cache, probes every 200
 at d800 (every 1600 on the ladder).
 
-**(0) Warm-start** (§3.1), which is `make warm-start` and nothing else —
-`prepare_data.py --hf-dataset HuggingFaceH4/ultrachat_200k --max-examples
-1000 --max-len 4096 --output data/warm_start.pt`, then `train.py --data
-data/warm_start.pt --max-steps 400 --lr 1e-4 --chunk-len 512 --lora-rank
-16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1`, leaving the one
-checkpoint dir `models/mamba2_780m/checkpoints/epoch-1/step-400` that
-every cell then loads with `--init-adapter` (the 400→800 fallback is
-`make warm-start ARGS="--max-steps 800"`). Read `make sanity-sample
-ARGS="--data data/warm_start.pt"` before the training half starts.
+**(0) Warm-start** (§3.1): the two halves of `make warm-start`, run
+separately so the data gate lands between them — `prepare_data.py
+--hf-dataset HuggingFaceH4/ultrachat_200k --max-examples 1000 --max-len
+4096 --output data/warm_start.pt` (verbatim from the Makefile body), then
+read `make sanity-sample ARGS="--data data/warm_start.pt"`, then the
+training half `train.py --data data/warm_start.pt --max-steps 400 --lr
+1e-4 --chunk-len 512 --lora-rank 16 --lora-alpha 32 --lora-dropout 0
+--keep-ckpts 1`, leaving the one checkpoint dir
+`models/mamba2_780m/checkpoints/epoch-1/step-400` that every cell then
+loads with `--init-adapter`. The atomic `make warm-start` is the same
+chain without the read between the halves — fine for the 400→800
+fallback rerun (`make warm-start ARGS="--max-steps 800"`), whose corpus
+is already vetted.
 Sequence: corpus → checkpoint → **delete
 `data/knowledge_battery_mamba2_780m.json`** → first `--init-adapter`
 invocation rebuilds it → dream-sample acceptance check. The battery
@@ -334,7 +338,12 @@ battery under `sft/data/`, the checkpoint dir under
 
 **(1) Fresh dream caches**, seeds 1234/2345/3456, from the warm-started
 weights, coverage-gated; generator per-token states cached for B3 (or
-recomputed per sleep — implementer's choice, equivalence-tested). Read one
+recomputed per sleep — implementer's choice, equivalence-tested). **Seed
+1234 builds alone until `data/knowledge_battery_mamba2_780m.json`
+exists**, then 2345/3456 go concurrent: `load_or_build_battery` is
+unlocked check-then-build, so concurrent first builds would each
+self-calibrate their own battery in memory and score against different
+item sets, last writer winning on disk. Read one
 decoded dream + one cue joint. **Caches are built only after the session's
 harness code is frozen** — generation is nondeterministic (§1.8), so a
 cache built before a code change can never be regenerated; harness first,
@@ -534,7 +543,11 @@ notes. A rushed shutdown records artifacts as UNRETRIEVED, never as
   mechanism, acceptance pass/fail line + fallback, cache-freeze rule,
   cue-24 pooling stance, the commit-from-box exception, the picker
   decision rule, and items (c)–(f) above. The step earned its place
-  again.
+  again. Re-run 2026-08-08 after the harness landed: the cold plan
+  matched §4 end-to-end (no misreadings); its guess list drove two pins —
+  the split warm-start invocation and the serialized first cache build —
+  and left the judgment calls (torch.compile time-box, ladder-wrap
+  headroom) unpinned deliberately.
 - Chance-collision arithmetic for the record: for *random* directions at
   d_state=128, |cos| concentrates at ~0.09 and |cos|>0.5 is ~10⁻⁸/pair —
   but §2.4 shows realized query geometry is common-mode dominated, so
