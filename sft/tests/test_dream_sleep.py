@@ -741,7 +741,7 @@ def test_the_cache_records_which_weights_generated_it(tmp_path):
 
     assert base.generator == "base" and warm.generator == "deadbeef"
     assert load_dream_cache(tmp_path / "dream_deadbeef.pt").generator == "deadbeef"
-    assert "deadbeef" in (tmp_path / "dream_s1234.txt").read_text()
+    assert "deadbeef" in (tmp_path / "dream_deadbeef.txt").read_text()
 
 
 @pytest.mark.parametrize("arm", ["replay", "ce-on-dream", "drain", "counterfactual", "sft-ref"])
