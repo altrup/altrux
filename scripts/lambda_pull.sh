@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Pulls training artifacts down from a running Lambda Cloud instance to this
 # machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/,
-# sft/checkpoints/ (the warm-start adapter every cell of a run loads —
-# without it the run's grid cannot be reproduced or extended),
 # notes/ (the experimenter session's observations — committed to git only
 # from this machine after a run; rsync is how they travel off the
 # instance), and the sft/data/ artifacts listed in lambda_data_artifacts.sh
@@ -21,6 +19,11 @@
 #   ./scripts/lambda_pull.sh --follow --interval 60
 #   ./scripts/lambda_pull.sh --with-mem-state     # final pull, before terminating
 #   ./scripts/lambda_pull.sh --dry-run            # list what would transfer
+#
+# After every successful pull, a receipt (timestamp + the sizes of the pulled
+# files as they exist HERE) is written back to <remote_repo>/scripts/.pull-receipt
+# on the instance: a session on the box has no other way to know its artifacts
+# arrived. A failed receipt write is a warning, not a failed pull.
 #
 # Every pull is idempotent (rsync only moves what changed), so running it
 # again — e.g. the moment data generation or filtering finishes, before the
@@ -114,7 +117,8 @@ fi
 # Lists the artifact dirs that exist on the instance, one per line. Exits 10
 # if the repo itself is missing, distinguishing a misconfigured
 # LAMBDA_REMOTE_REPO from an artifact dir a run hasn't created yet.
-probe_dirs="sft/logs notes models/*/checkpoints sft/checkpoints"
+artifact_dirs="sft/logs notes models/*/checkpoints"
+probe_dirs="$artifact_dirs"
 [[ -n "$DATA_ARTIFACTS" ]] && probe_dirs="$probe_dirs sft/data"
 probe_paths() {
   ssh "${SSH_OPTS[@]}" "ubuntu@${ip}" "
@@ -124,6 +128,22 @@ probe_paths() {
     done
     exit 0
   "
+}
+
+# The instance can't see this machine's disk, so after every pull the sizes of
+# the artifacts AS THEY LANDED HERE are written back to
+# <remote_repo>/scripts/.pull-receipt — the only evidence a session on the box
+# has that what it produced is actually home.
+write_receipt() {
+  {
+    printf '# pull receipt %s UTC from %s (%s)\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%S)" "$(uname -n)" "$REPO_ROOT"
+    cd "$REPO_ROOT" || exit
+    find $artifact_dirs -type f -printf '%s %p\n' 2>/dev/null
+    for pat in $DATA_ARTIFACTS; do
+      stat -c '%s %n' sft/data/$pat 2>/dev/null
+    done
+  } | ssh "${SSH_OPTS[@]}" "ubuntu@${ip}" "cat > '$remote_repo/scripts/.pull-receipt'"
 }
 
 # Returns 10 if the repo is missing on the instance, 1 on any other failure.
@@ -149,6 +169,10 @@ pull() {
     [[ "$p" == sft/data ]] && filter=("${data_filter[@]}")
     "${RSYNC[@]}" "${filter[@]}" --relative "ubuntu@${ip}:${remote_repo}/./${p}/" "$REPO_ROOT/" || return 1
   done <<< "$paths"
+
+  if [[ "$dry_run" -eq 0 ]]; then
+    write_receipt || echo "warning: the pull succeeded but writing scripts/.pull-receipt back to the instance failed" >&2
+  fi
 }
 
 no_repo_msg="no repo at ~/${remote_repo} on ${ip} — set LAMBDA_REMOTE_REPO in scripts/.env if it lives elsewhere"
