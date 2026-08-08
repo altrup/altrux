@@ -4,4 +4,6 @@ __pycache__/
 scripts/.env
 .watchdog-delay
 .watchdog-terminate
+.watchdog-fetch
 .watchdog.lock
+.pull-receipt

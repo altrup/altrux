@@ -4,20 +4,30 @@
 # seconds, so an idle instance can't silently bill. The API key stays on
 # this machine -- the instance itself holds no Lambda credentials, so
 # nothing running on it (including an autonomous monitoring session) can
-# launch, resize, or terminate instances. Run it alongside the pull loop:
+# launch, resize, or terminate instances. It's the whole local side:
 #
-#   ./scripts/lambda_watchdog.sh &
-#   ./scripts/lambda_pull.sh --follow
+#   ./scripts/lambda_watchdog.sh
 #
-# Before terminating, it runs lambda_pull.sh twice: once for the
-# resume-critical files, then once with --with-mem-state for the large
-# mem_state.pt (--no-pull skips both, --no-mem-state just the second). A
-# graceful terminate is the only moment that knows a run is over, so it's the
-# only place mem_state.pt can be rescued automatically. Both pulls are
-# best-effort and separately bounded (--pull-timeout, --mem-state-timeout) --
-# terminate follows whether they succeed, fail, or time out. The --follow loop
-# stays worth running alongside: it bounds what a hard crash loses, where no
-# graceful terminate ever happens.
+# It owns the scheduled pulling too -- lambda_pull.sh runs every
+# --pull-interval seconds from the loop, so a hard crash loses at most one
+# interval (lambda_pull.sh --follow exists for watchdog-less use). A session
+# on the instance can also ask for a pull right now (e.g. the moment a cache
+# finishes building) by touching the fetch file there:
+#
+#   touch ~/altrux/scripts/.watchdog-fetch
+#
+# The next probe pulls and deletes the marker; the fresh scripts/.pull-receipt
+# lambda_pull.sh leaves on the instance is the success signal.
+#
+# Before terminating, it runs the final pull (retried twice on failure, then
+# terminating regardless -- an unbounded billing leak is worse than a lost
+# artifact, and a final pull that never succeeded leaves a loud
+# scripts/PULL-FAILED-<timestamp> file on THIS machine), then once more with
+# --with-mem-state for the large mem_state.pt (--no-pull skips both,
+# --no-mem-state just the second). A graceful terminate is the only moment
+# that knows a run is over, so it's the only place mem_state.pt can be rescued
+# automatically. Both stages are bounded by --pull-timeout /
+# --mem-state-timeout.
 #
 # "Training" means a process matching --pattern (default: train.py) exists
 # on the instance, probed over ssh every --interval seconds. Anyone working
@@ -75,6 +85,7 @@ unreachable_timeout=900
 pattern="train.py"
 terminate_cmd=""
 pull=1
+pull_interval=300
 pull_timeout=900
 mem_state=1
 mem_state_timeout=3600
@@ -87,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --unreachable-timeout) unreachable_timeout="$2"; shift 2 ;;
     --pattern) pattern="$2"; shift 2 ;;
     --no-pull) pull=0; shift ;;
+    --pull-interval) pull_interval="$2"; shift 2 ;;
     --pull-timeout) pull_timeout="$2"; shift 2 ;;
     --no-mem-state) mem_state=0; shift ;;
     --mem-state-timeout) mem_state_timeout="$2"; shift 2 ;;
@@ -142,12 +154,13 @@ echo "Watching instance $instance_id at $instance_ip (pattern: '$pattern', timeo
 neutralized="$(printf '%s' "$pattern" | sed 's/\(^\||\)\([^[\\^.$|]\)/\1[\2]/g')"
 
 # One round trip per probe: remote epoch, training yes/no, delay-file
-# mtime, terminate-file mtime.
+# mtime, terminate-file mtime, fetch-file present.
 probe_snippet="
   date +%s
   pgrep -f '$neutralized' >/dev/null && echo 1 || echo 0
   stat -c %Y '$remote_repo/scripts/.watchdog-delay' 2>/dev/null || echo 0
   stat -c %Y '$remote_repo/scripts/.watchdog-terminate' 2>/dev/null || echo 0
+  [ -e '$remote_repo/scripts/.watchdog-fetch' ] && echo 1 || echo 0
 "
 
 # ConnectTimeout only bounds the TCP connect; the keepalives kill a
@@ -160,6 +173,10 @@ SSH_CMD=(ssh -o ConnectTimeout=10 -o BatchMode=yes
 if [[ -n "${WATCHDOG_SSH_OVERRIDE:-}" ]]; then
   read -ra SSH_CMD <<< "$WATCHDOG_SSH_OVERRIDE"
 fi
+
+run_pull() {
+  timeout "$pull_timeout" "$SCRIPT_DIR/lambda_pull.sh" "$instance_ip"
+}
 
 # $2: whether to attempt a final pull first (0 on the unreachable path --
 # nothing can be pulled from an instance that won't answer ssh).
@@ -176,10 +193,31 @@ terminate() {
     # resume needs. Both stages are best-effort -- the terminate has to happen
     # even if a pull hangs, since an unbounded billing leak is the one thing
     # this script exists to prevent.
-    echo "watchdog: final pull (resume-critical files) before terminating..."
-    timeout "$pull_timeout" "$SCRIPT_DIR/lambda_pull.sh" "$instance_ip" \
-      || echo "watchdog: final pull failed or timed out after ${pull_timeout}s — terminating anyway" >&2
-    if [[ "$mem_state" -eq 1 ]]; then
+    local log marker ok=0 attempt
+    log="$(mktemp)"
+    for attempt in 1 2 3; do
+      echo "watchdog: final pull (resume-critical files), attempt ${attempt}/3..."
+      if run_pull 2>&1 | tee "$log"; then
+        ok=1
+        break
+      fi
+      echo "watchdog: final pull failed or timed out after ${pull_timeout}s" >&2
+      if (( attempt < 3 )); then sleep 120; fi
+    done
+    if (( ok == 0 )); then
+      # The run's artifacts die with the instance, so the loss has to be
+      # visible on this machine the same day rather than inferred later.
+      marker="$SCRIPT_DIR/PULL-FAILED-$(date -u +%Y%m%dT%H%M%SZ)"
+      {
+        echo "final pull from $instance_ip (instance $instance_id) failed 3 times; terminated anyway"
+        echo "reason for terminating: $reason"
+        echo "last error:"
+        tail -20 "$log"
+      } > "$marker"
+      echo "watchdog: FINAL PULL NEVER SUCCEEDED — wrote $marker" >&2
+    fi
+    rm -f "$log"
+    if [[ "$mem_state" -eq 1 && "$ok" -eq 1 ]]; then
       echo "watchdog: pulling mem_state.pt (large; --no-mem-state to skip)..."
       timeout "$mem_state_timeout" "$SCRIPT_DIR/lambda_pull.sh" --with-mem-state "$instance_ip" \
         || echo "watchdog: mem_state.pt pull failed or timed out after ${mem_state_timeout}s — terminating anyway (checkpoints still resume without it)" >&2
@@ -200,6 +238,7 @@ instance_still_active() {
 last_active=""      # in REMOTE clock terms; set by the first successful probe (grace window)
 watch_start=""      # remote epoch of the first successful probe; older terminate touches are stale
 unreachable_since=""
+last_pull=0        # local epoch; 0 pulls on the first probe
 
 if [[ "$arm_after_training" -eq 1 ]]; then
   echo "watchdog: waiting for '$pattern' to start before arming the idle countdown (cap: ${arm_cap}min, 0=forever)"
@@ -224,10 +263,24 @@ while true; do
   # interval's worth of failure, never as the whole time it hung.
   if output="$(timeout "$interval" "${SSH_CMD[@]}" "$probe_snippet" 2>/dev/null)"; then
     unreachable_since=""
-    { read -r remote_now; read -r training; read -r delay_mtime; read -r terminate_mtime; } <<< "$output"
+    { read -r remote_now; read -r training; read -r delay_mtime; read -r terminate_mtime; read -r fetch; } <<< "$output"
     watch_start="${watch_start:-$remote_now}"
     if (( terminate_mtime >= watch_start )); then
       terminate "termination requested via .watchdog-terminate (touched $(( remote_now - terminate_mtime ))s ago)"
+    fi
+    probe_now="$(date +%s)"
+    if [[ "$pull" -eq 1 ]] && (( fetch == 1 || probe_now - last_pull >= pull_interval )); then
+      if (( fetch == 1 )); then
+        echo "watchdog: [$(date +%H:%M:%S)] pull requested via .watchdog-fetch"
+      fi
+      echo "watchdog: [$(date +%H:%M:%S)] pulling artifacts..."
+      run_pull || echo "watchdog: pull failed or timed out after ${pull_timeout}s — retrying in ${pull_interval}s" >&2
+      last_pull="$(date +%s)"
+      if (( fetch == 1 )); then
+        # Deleted whether or not the pull worked: the request is consumed, and
+        # the receipt lambda_pull.sh leaves behind is what says it succeeded.
+        timeout 30 "${SSH_CMD[@]}" "rm -f '$remote_repo/scripts/.watchdog-fetch'" 2>/dev/null || true
+      fi
     fi
     if [[ -z "$last_active" || "$training" == "1" ]]; then
       last_active="$remote_now"
