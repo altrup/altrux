@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Pulls training artifacts down from a running Lambda Cloud instance to this
 # machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/,
+# sft/checkpoints/ (the warm-start adapter every cell of a run loads —
+# without it the run's grid cannot be reproduced or extended),
 # notes/ (the experimenter session's observations — committed to git only
 # from this machine after a run; rsync is how they travel off the
 # instance), and the sft/data/ artifacts listed in lambda_data_artifacts.sh
@@ -112,7 +114,7 @@ fi
 # Lists the artifact dirs that exist on the instance, one per line. Exits 10
 # if the repo itself is missing, distinguishing a misconfigured
 # LAMBDA_REMOTE_REPO from an artifact dir a run hasn't created yet.
-probe_dirs="sft/logs notes models/*/checkpoints"
+probe_dirs="sft/logs notes models/*/checkpoints sft/checkpoints"
 [[ -n "$DATA_ARTIFACTS" ]] && probe_dirs="$probe_dirs sft/data"
 probe_paths() {
   ssh "${SSH_OPTS[@]}" "ubuntu@${ip}" "
