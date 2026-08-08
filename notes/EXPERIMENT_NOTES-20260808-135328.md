@@ -777,9 +777,4 @@ question is an arm-level measurement" the debrief anticipated at §2's close, an
 it now has an answer: **the cumulative behaviour reverses the single-shot
 ranking.** The harbor apparatus (deflation, skip-cone guard, v-energy
 fingerprint) therefore does NOT retire — §3.4's "if raw wins" branch does not
-fire. Reached by §3.4's rule-3 fallback
-(the paired deflated cells were descoped by the teammate's priority call, so
-rules 1–2 have no data), and independently supported by the erase measurement
-above: raw is the only operator that actually removes the target readout on
-real state. Recorded as the session operator; every fused/B cell below runs
-`--erase-op raw`.
+fire.
