@@ -11,6 +11,7 @@ Before anything is pooled, every cell of a seed must agree on the wave-1
 transcript and dream hashes: one cached dream per seed, byte-identical across
 arms, is a registered invariant and this is its machine check (sec 2).
 """
+import argparse
 import collections
 import glob
 import json
@@ -264,5 +265,10 @@ def main(pattern: str, curves: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    argv = [a for a in sys.argv[1:] if a != "--curves"]
-    main(argv[0] if argv else "logs/g2_*_s*.jsonl", curves="--curves" in sys.argv[1:])
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("pattern", nargs="?", default="logs/g2_*_s*.jsonl",
+                        help="glob of cell result jsonls (default: %(default)s)")
+    parser.add_argument("--curves", action="store_true",
+                        help="one row per cell per probe step instead of the frontier tables")
+    args = parser.parse_args()
+    main(args.pattern, args.curves)
