@@ -206,13 +206,14 @@ def rank1_erase(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float) -> torch
     leave orthogonal reads untouched. A (near-)zero query is a no-op rather
     than a divide-by-zero. Computed in fp32, returned in the state's dtype.
 
-    The direction is detached: gradient flows through the state's contents,
-    never through the address the erase is aimed at -- a differentiable erase
-    lets the optimizer rotate its queries to dodge consumption instead of
-    installing facts (DISCUSSION-20260806 sec 3)."""
+    The direction is differentiable: gradient runs through the query path that
+    aimed the cut, so the landscape encodes "the cut follows the query" rather
+    than a fixed cut the reads can dodge around (DISCUSSION-20260807 sec 3.4).
+    Only the protected subspace stays stop-gradiented, at its source in
+    `state_top_dirs`."""
     import torch
 
-    s32, c32 = ssm_state.float(), c.detach().float()
+    s32, c32 = ssm_state.float(), c.float()
     norm = c32.norm(dim=-1, keepdim=True)
     if norm.max().item() < 1e-8:
         return ssm_state
@@ -234,7 +235,7 @@ def deflate(c: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
     (I - V^T V) c. Shapes: c (b, n), basis (k, n)."""
     import torch
 
-    c, basis = c.detach(), basis.detach()
+    basis = basis.detach()
     coeffs = torch.einsum("bn,kn->bk", c.float(), basis.float())
     return c - torch.einsum("bk,kn->bn", coeffs, basis.float()).to(c.dtype)
 
