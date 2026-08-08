@@ -78,6 +78,23 @@ def test_chunk_loss_upweights_eos_positions():
     assert weight_sum == 9 + 3.0  # 9 ordinary positions weight 1, the EOS position weight 3
 
 
+def test_chunk_loss_handles_the_batched_weight_mask_train_py_passes():
+    """train.py stacks its slots into (B, chunk_len) inputs and a (B, chunk_len)
+    float weight mask -- the shape every real run uses (--batch-size default 6)."""
+    model, _ = _build_tiny_model()
+    ids = torch.randint(1, 50, (3, 8), device=DEVICE)
+    target_ids = torch.randint(1, 50, (3, 8), device=DEVICE)
+    target_ids[1, 4] = hooks.EOS_ID
+    weight_mask = torch.zeros(3, 8, device=DEVICE)
+    weight_mask[:, 2:] = 1.0  # 6 trained positions per row
+
+    loss_sum, weight_sum, state = hooks.chunk_loss(model, ids, target_ids, weight_mask, None, eos_weight=3.0)
+
+    assert weight_sum == 17 + 3.0  # 18 positions, one of them EOS at weight 3
+    assert torch.isfinite(loss_sum)
+    assert state is not None
+
+
 def test_chunk_loss_state_threads_across_calls_and_gradients_flow_to_lora():
     model, _ = _build_tiny_model()
     ids = torch.randint(0, 50, (37,), device=DEVICE)

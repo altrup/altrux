@@ -79,9 +79,10 @@ def chunk_loss(
     state,
     eos_weight: float,
 ):
-    """input_ids/target_ids: shape (1, T). mask_slice: shape (T,), bool/0-1,
-    1 for assistant-turn positions, 0 otherwise -- unlike mamba2_2_7b_memory,
-    this model has no reason to train on user turns too. Returns (loss_sum,
+    """input_ids/target_ids: shape (B, T). mask_slice: shape (B, T) (or (T,) for
+    a single sequence), the per-position weight -- nonzero for assistant-turn
+    positions, 0 otherwise -- unlike mamba2_2_7b_memory, this model has no
+    reason to train on user turns too. Returns (loss_sum,
     weight_sum, state); the generic loop in sft/train.py owns chunking,
     accumulation, and checkpointing across calls.
 
@@ -104,7 +105,7 @@ def chunk_loss(
         return zero, zero, state
     logits, state = model(input_ids, state=state)
     loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
-    loss_mask = mask_slice.float().clone()
+    loss_mask = mask_slice.reshape(-1).float().clone()
     if eos_weight != 1.0:
         eos_positions = (target_ids.reshape(-1) == EOS_ID) & (loss_mask > 0)
         loss_mask[eos_positions] = eos_weight
