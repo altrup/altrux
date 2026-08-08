@@ -72,7 +72,19 @@ def test_state_top_dirs_finds_the_dominant_key():
     vals = torch.randn(4, 8, 1)
     s = (vals * key).unsqueeze(0) + 0.01 * torch.randn(1, 4, 8, 16)
     top = state_top_dirs(s, k=1)
-    assert torch.nn.functional.cosine_similarity(top[0], key, dim=0).abs().item() > 0.99
+    assert top.shape == (1, 1, 16)  # one basis per batch element
+    assert torch.nn.functional.cosine_similarity(top[0, 0], key, dim=0).abs().item() > 0.99
+
+
+def test_state_top_dirs_gives_each_batch_element_its_own_basis():
+    torch.manual_seed(6)
+    keys = torch.nn.functional.normalize(torch.randn(2, 16), dim=-1)
+    s = (torch.randn(2, 4, 8, 1) * keys.view(2, 1, 1, 16)) + 0.01 * torch.randn(2, 4, 8, 16)
+
+    top = state_top_dirs(s, k=1)
+
+    for b in range(2):
+        assert torch.nn.functional.cosine_similarity(top[b, 0], keys[b], dim=0).abs().item() > 0.99
 
 
 def test_group_by_layer_orders_capture_token_major():

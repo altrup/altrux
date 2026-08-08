@@ -232,23 +232,29 @@ def group_by_layer(flat: list[T], n_layers: int) -> list[list[T]]:
 
 def deflate(c: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
     """Remove `c`'s components along the rows of `basis` (assumed orthonormal):
-    (I - V^T V) c. Shapes: c (b, n), basis (k, n)."""
+    (I - V^T V) c. Shapes: c (b, n), basis either (k, n) shared across the
+    batch or (b, k, n), one basis per element."""
     import torch
 
-    basis = basis.detach()
-    coeffs = torch.einsum("bn,kn->bk", c.float(), basis.float())
-    return c - torch.einsum("bk,kn->bn", coeffs, basis.float()).to(c.dtype)
+    basis = basis.detach().float()
+    if basis.dim() == 2:
+        basis = basis.unsqueeze(0)
+    basis = basis.expand(c.shape[0], -1, -1)
+    coeffs = torch.einsum("bn,bkn->bk", c.float(), basis)
+    return c - torch.einsum("bk,bkn->bn", coeffs, basis).to(c.dtype)
 
 
 def state_top_dirs(ssm_state: torch.Tensor, k: int) -> torch.Tensor:
     """Top-k right-singular directions of the state's address space -- the
     directions the stored keys share (the interference cone), computed from
-    the state alone. Heads stacked so the result is per layer. Returns (k, n)."""
+    the state alone. Heads stacked so the result is per layer, one basis per
+    batch element (the fused arms ablate a whole batch of token-positions at
+    once). Returns (b, k, n)."""
     import torch
 
-    m = ssm_state[0].detach().float().reshape(-1, ssm_state.shape[-1])  # (h*p, n)
+    m = ssm_state.detach().float().reshape(ssm_state.shape[0], -1, ssm_state.shape[-1])  # (b, h*p, n)
     _, _, vh = torch.linalg.svd(m, full_matrices=False)
-    return vh[:k]
+    return vh[:, :k]
 
 
 def main() -> None:

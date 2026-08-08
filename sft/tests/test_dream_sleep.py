@@ -801,3 +801,26 @@ def test_multi_wave_requires_an_explicit_wave_teacher():
         validate_wave_args(_sleep_args(waves=2, wave_teacher=None))
     validate_wave_args(_sleep_args(waves=2, wave_teacher="base"))
     validate_wave_args(_sleep_args(waves=1, wave_teacher=None))
+
+
+def test_an_unknown_erase_op_is_refused():
+    """argparse guards the CLI; the arms call erase_ssm programmatically."""
+    with pytest.raises(ValueError, match="erase op"):
+        erase_ssm(torch.randn(1, 2, 4, 8), torch.randn(1, 8), op="defalted")
+
+
+def test_the_erase_operates_per_batch_element():
+    """An arm that ablates a whole batch of token-positions at once needs its
+    own deflation basis and its own skip decision for every element."""
+    torch.manual_seed(4)
+    cone = torch.nn.functional.normalize(torch.randn(8), dim=0)
+    pure = (torch.randn(2, 4, 1) * cone).unsqueeze(0)
+    mixed = torch.randn(1, 2, 4, 8)
+    state = torch.cat([pure, mixed], dim=0)
+    queries = torch.cat([cone.unsqueeze(0), torch.randn(1, 8)], dim=0)
+
+    erased, skipped = erase_ssm(state, queries)
+
+    assert skipped == 1
+    torch.testing.assert_close(erased[0], state[0])  # pure cone: skipped
+    assert not torch.equal(erased[1], state[1])

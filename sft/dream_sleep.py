@@ -221,21 +221,32 @@ def erase_ssm(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float = GAMMA, k:
     launched with (sec 3.4's B1-raw vs B1-deflated picker): `raw` attenuates
     the state's read along the query itself, `deflated` first removes the
     query's component along the state's own top singular direction. Returns
-    (state, skipped) -- only `deflated` can skip, when nothing discriminative
-    survives the deflation.
+    (state, skipped) -- the number of near-cone directions skipped, which only
+    `deflated` can produce, when nothing discriminative survives the deflation.
 
     The direction is differentiable (the cut follows the query); the protected
     subspace it is deflated against is stop-gradiented at its source.
 
+    Batched over the leading dimension throughout: an arm that ablates many
+    dream positions at once gets a basis and a skip decision per element.
+
     This is what Model.erase_hook is fed: the ablation lands on the carried
     past, before this token's decay+write (sec 3's micro-order)."""
+    import torch
+
+    if op not in ERASE_OPS:
+        raise ValueError(f"unknown erase op {op!r}; expected one of {ERASE_OPS}")
     c = c.to(ssm_state.device)
     if op == "raw":
-        return rank1_erase(ssm_state, c, gamma), False
+        return rank1_erase(ssm_state, c, gamma), 0
     direction = deflate(c, state_top_dirs(ssm_state, k))
-    if direction.float().norm() < CONE_SKIP * c.float().norm():
-        return ssm_state, True
-    return rank1_erase(ssm_state, direction, gamma), False
+    skip = direction.float().norm(dim=-1) < CONE_SKIP * c.float().norm(dim=-1)
+    if bool(skip.all()):
+        return ssm_state, int(skip.sum())
+    erased = rank1_erase(ssm_state, direction, gamma)
+    if bool(skip.any()):
+        erased = torch.where(skip.view(-1, *([1] * (ssm_state.dim() - 1))), ssm_state, erased)
+    return erased, int(skip.sum())
 
 
 def erase_state(state, queries: Sequence[torch.Tensor], gamma: float = GAMMA, k: int = DEFLATE_K,
