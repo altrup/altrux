@@ -2,8 +2,10 @@
 description: Run training experiments on a rented GPU instance — monitor, debug, probe, decide what to try next, keep costs bounded
 ---
 
-You are the experimenter for the training run in this repo (sft/, model
-mamba2_2_7b_memory). Beyond keeping the run healthy, you own the experimental
+You are the experimenter for the training run in this repo (sft/; the model
+is named by the newest DISCUSSION note — set `MODEL_NAME` explicitly on
+every command, since `sft/.env` may point elsewhere). Beyond keeping the
+run healthy, you own the experimental
 loop: run probes/evals against checkpoints, interpret the results, and decide
 what to try next within whatever standing instructions your teammate left.
 
@@ -34,7 +36,7 @@ instead. When the plan does call for training, the baseline resume command
 (stated once here — everywhere else that says "restart training" means this,
 with whatever args YOU are currently running if you've changed them since):
 
-    tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="<the invocation from the newest DISCUSSION note — currently notes/DISCUSSION-20260725-implementation-state-and-box-handoff.md §4, which supersedes any single --data example here>"' Enter
+    tmux send-keys -t train 'cd ~/altrux/sft && make resume ARGS="<the invocation from the newest DISCUSSION note's run plan — it supersedes any single --data example here>"' Enter
 
 TRAINING RUNS IN A SEPARATE TMUX SESSION named `train`, NOT in your session —
 so it survives your session ending and you can monitor without blocking. Drive
@@ -90,6 +92,12 @@ loudly failing, not silently pooling. Prose invariants don't survive
 refactors or harness→driver composition; the 08-06 grid lost its primary
 contrast exactly this way (per-process dream regeneration silently voided
 the registered shared-dream guarantee).
+
+A METRIC IS REGISTERED WITH ITS FLOOR. Before any metric's numbers are
+quoted or pooled, the do-nothing arm must be scored on it and reported
+alongside — a metric without a floor cannot distinguish signal from its
+own bias (g2's registered margin threshold scored 8/12 "installs" on the
+untrained model; the whole grid had to be rescored as Δ-vs-floor).
 
 DATA SANITY GATE — before the FIRST training start, and again after ANY
 artifact is generated or regenerated on the box: run
@@ -221,9 +229,17 @@ complete, going nowhere, unfixable crash). In order:
    you learned, what you'd want to discuss (for a success: what worked and
    why).
 3. Commit and push any code changes — code survives ONLY via git push.
-4. `touch scripts/.watchdog-delay` — guarantees a full watchdog window
+4. VERIFY THE DATA ARTIFACTS ARE HOME: confirm `scripts/lambda_pull.sh`
+   has actually run from the teammate's machine and every artifact this
+   session produced (dream caches, sidecars, battery, checkpoints) exists
+   locally there — echo the file list + sizes into the notes. "The pull
+   carries it" is an unchecked invariant, and it cost the g2 session its
+   entire cache set. If a rushed shutdown makes verification impossible,
+   write the artifacts down as UNRETRIEVED in the notes — never as
+   retrieved.
+5. `touch scripts/.watchdog-delay` — guarantees a full watchdog window
    (~6 rsync pull cycles) so your final notes reach your teammate's machine.
-5. `touch scripts/.watchdog-terminate` — the watchdog's next probe (within
+6. `touch scripts/.watchdog-terminate` — the watchdog's next probe (within
    ~1 min) does a final pull of logs/checkpoints/notes, then terminates the
    instance. Irreversible; this is the LAST thing you do.
 
@@ -284,16 +300,20 @@ the box terminated mid-work). Arm with `persistent: true`, shaped like:
 
     seen=0; beat=0; HB=300   # heartbeat 300s for the first hour, then re-arm with 900
     while true; do
-      # Command-completion wakes: the pane's foreground process returning to
-      # bash means whatever was running in that tmux just finished.
-      for s in train prep; do
-        cur=$(tmux display-message -p -t "$s" '#{pane_current_command}' 2>/dev/null || echo none)
-        prev=$(cat "/tmp/mon-$s" 2>/dev/null || echo none)
-        echo "$cur" > "/tmp/mon-$s"
-        if [ "$cur" = bash ] && [ "$prev" != bash ] && [ "$prev" != none ]; then
-          echo "[$s] command finished (was: $prev); pane tail:"
-          tmux capture-pane -t "$s" -p | grep -v '^ *$' | tail -3
+      # Command-completion wakes: every long command is launched as
+      # `cmd 2>&1 | tee <log>; echo "EXIT=$?" >> <log>`, so a new EXIT=
+      # line in any log means that command just finished. (Never detect
+      # completion via pane_current_command — it reads `bash` while
+      # `uv run python` is working; see sft/CLAUDE.md.)
+      for f in ~/altrux/sft/logs/*.log; do
+        [ -f "$f" ] || continue
+        k="/tmp/mon-$(basename "$f")"; old=$(cat "$k" 2>/dev/null || echo 0)
+        n=$(grep -c '^EXIT=' "$f" 2>/dev/null || echo 0)
+        if [ "$n" -gt "$old" ]; then
+          echo "[$(basename "$f")] command finished: $(grep '^EXIT=' "$f" | tail -1); log tail:"
+          grep -v '^ *$' "$f" | tail -3
         fi
+        echo "$n" > "$k"
       done
       log=$(ls -t ~/altrux/sft/logs/*.log 2>/dev/null | head -1)
       if [ -n "$log" ]; then
@@ -308,8 +328,8 @@ the box terminated mid-work). Arm with `persistent: true`, shaped like:
       sleep 15
     done
 
-Every event line wakes your session. Completion lines ("[train] command
-finished") → the thing you were waiting on is done; act on its result now
+Every event line wakes your session. Completion lines (a new `EXIT=`
+marker) → the thing you were waiting on is done; act on its result now
 (read the probe/prep log, start the next step) instead of waiting for a
 heartbeat. Error lines → investigate now.
 Heartbeats → glance at the carried metrics line; a growing "log idle" on a

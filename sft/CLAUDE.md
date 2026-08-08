@@ -39,16 +39,17 @@ The model is selected via `MODEL_NAME` in `.env`. This controls which package in
   it reports `bash` while `uv run python` is working, so a completion poll (and
   the launch skill's monitor snippet) fires early. Use a file marker
   (`cmd > log 2>&1; echo "EXIT=$?" >> log`) and poll for that.
-- **Running GPU jobs in parallel on one GPU is a net loss.** Three concurrent
-  `dream_sleep.py` streams managed 0.11 optimizer step/s each (0.33 aggregate)
-  against **1.4 step/s for a single job** — ~4x worse in total throughput. The
-  low single-job utilisation number (~20%) is not usable headroom: these loops
-  are one-token-at-a-time and latency-bound. Run grids serially **on that
-  card** — this is an A10 capacity limit, not a property of these loops. On a
-  GH200 (measured 2026-08-07) the same three streams cost nothing: one cell
-  uses 3.4 GB of 97 GB at 12% utilisation, and three concurrent
-  `dream_sleep.py` processes hold their solo step rate (2.2 step/s replay,
-  against 2.0 solo) at 99% utilisation — ~2.8x aggregate. Match the decision
-  to the card: measure one cell's utilisation before choosing.
+- **Grid concurrency is a per-card decision — measure one cell's
+  utilisation before choosing; neither "serial" nor "parallel" is a
+  standing rule.** A10: three concurrent `dream_sleep.py` streams managed
+  0.11 optimizer step/s each (0.33 aggregate) against **1.4 step/s for a
+  single job** — ~4x worse; the low single-job utilisation (~20%) is not
+  usable headroom (per-token latency-bound loops). Run grids serially on
+  an A10. GH200 (measured 2026-08-07): the same three streams cost
+  nothing — one cell uses 3.4 GB of 97 GB at 12% utilisation, and three
+  concurrent processes hold their solo step rate (2.2 step/s replay vs
+  2.0 solo) at 99% utilisation — ~2.8x aggregate. Run grids concurrently
+  on a GH200 (per-token arms still saturate ~2.5 aggregate step/s —
+  launch-latency-bound, not fixable by more processes).
 - **`pkill -f <script>.py` kills your own shell**, because the tool's command
   string contains the pattern. Kill the tmux window instead.
