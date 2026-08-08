@@ -15,32 +15,16 @@
 # rule applies per arm -- a rung flat against d800 ends that arm's ladder
 # rather than buying the next rung.
 set -u
+source "$(dirname "$0")/_driver_common.sh"
 steps=${1:?usage: INIT_ADAPTER=<ckpt|none> [ERASE_OP=deflated] run_ladder.sh STEPS [arm...]}
 shift
 arms=("$@")
 [ ${#arms[@]} -eq 0 ] && arms=(A B1 B2fd B2fdeep)
 seed=1234
 erase_op=${ERASE_OP:-deflated}
-stamp() { date +%H:%M:%S; }
 
-# The registered protocol for this session is warm-start-everything (sec 3.1),
-# ladder included; a cold rung is a different experiment and has to be asked
-# for by name.
-init_adapter=${INIT_ADAPTER:-}
-if [ -z "$init_adapter" ]; then
-  echo "refusing to run: INIT_ADAPTER is unset, and sec 3.1 registers the warm start for the whole" >&2
-  echo "session, ladder included. Pass the checkpoint dir (a train.py step-N/):" >&2
-  echo "  INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ./run_ladder.sh $steps" >&2
-  echo "or INIT_ADAPTER=none for a deliberate cold run (the g2 reference shape)." >&2
-  exit 2
-fi
-if [ "$init_adapter" = none ]; then
-  init_flag=""
-  echo "[$(stamp)] === COLD RUN: INIT_ADAPTER=none, no warm start -- not the sec 3.1 protocol ==="
-else
-  init_flag="--init-adapter $init_adapter"
-  [ -d "$init_adapter" ] || { echo "no warm-start checkpoint dir at $init_adapter" >&2; exit 2; }
-fi
+require_init_adapter \
+  "INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ./run_ladder.sh $steps"
 echo "[$(stamp)] === ladder d$steps | erase op $erase_op | warm start ${init_adapter} | arms ${arms[*]} ==="
 
 cd ~/altrux/sft

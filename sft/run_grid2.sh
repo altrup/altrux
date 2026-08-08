@@ -19,31 +19,16 @@
 # (a cache whose generator disagrees with the cell's --init-adapter is fatal),
 # and every cell records its hashes so summarize_grid.py can assert they agree.
 set -u
+source "$(dirname "$0")/_driver_common.sh"
 seed=${1:?usage: INIT_ADAPTER=<ckpt|none> [ERASE_OP=deflated] run_grid2.sh SEED}
 # A seed whose dream binds fewer than 3/4 codes to their own entity is rebuilt
 # at CUE_EVERY=24 (DISCUSSION-20260806 sec 5a); the arms of that seed run at the
 # same value so the cell's flags regenerate the cache they distilled.
 cue_every=${CUE_EVERY:-32}
 erase_op=${ERASE_OP:-deflated}
-stamp() { date +%H:%M:%S; }
 
-# The registered protocol for this session is warm-start-everything (sec 3.1):
-# a cold grid is a different experiment, so it has to be asked for by name.
-init_adapter=${INIT_ADAPTER:-}
-if [ -z "$init_adapter" ]; then
-  echo "refusing to run: INIT_ADAPTER is unset, and sec 3.1 registers the warm start for the whole" >&2
-  echo "session -- cache, battery and every arm. Pass the checkpoint dir (a train.py step-N/):" >&2
-  echo "  INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ./run_grid2.sh $seed" >&2
-  echo "or INIT_ADAPTER=none for a deliberate cold run (the g2 reference shape)." >&2
-  exit 2
-fi
-if [ "$init_adapter" = none ]; then
-  init_flag=""
-  echo "[$(stamp)] === COLD RUN: INIT_ADAPTER=none, no warm start -- not the sec 3.1 protocol ==="
-else
-  init_flag="--init-adapter $init_adapter"
-  [ -d "$init_adapter" ] || { echo "no warm-start checkpoint dir at $init_adapter" >&2; exit 2; }
-fi
+require_init_adapter \
+  "INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ./run_grid2.sh $seed"
 echo "[$(stamp)] === seed $seed | erase op $erase_op | warm start ${init_adapter} | cue_every $cue_every ==="
 
 cd ~/altrux/sft
