@@ -309,7 +309,16 @@ Regime unchanged unless stated: `--n-facts 4 --filler-tokens 40
 floor), binding-aware coverage gate ≥3/4 per seed cache, probes every 200
 at d800 (every 1600 on the ladder).
 
-**(0) Warm-start** (§3.1): corpus → checkpoint → **delete
+**(0) Warm-start** (§3.1), which is `make warm-start` and nothing else —
+`prepare_data.py --hf-dataset HuggingFaceH4/ultrachat_200k --max-examples
+1000 --max-len 4096 --output data/warm_start.pt`, then `train.py --data
+data/warm_start.pt --max-steps 400 --lr 1e-4 --chunk-len 512 --lora-rank
+16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1`, leaving the one
+checkpoint dir `models/mamba2_780m/checkpoints/epoch-1/step-400` that
+every cell then loads with `--init-adapter` (the 400→800 fallback is
+`make warm-start ARGS="--max-steps 800"`). Read `make sanity-sample
+ARGS="--data data/warm_start.pt"` before the training half starts.
+Sequence: corpus → checkpoint → **delete
 `data/knowledge_battery_mamba2_780m.json`** → first `--init-adapter`
 invocation rebuilds it → dream-sample acceptance check. The battery
 deletion is a written step, not a reminder: `load_or_build_battery`
@@ -320,8 +329,8 @@ checkpoint requires deleting the battery a second time.** Checkpoint
 hash into the run notes; commit the battery and checkpoint from the box
 (small files — ends the regeneration drift; this was the second
 consecutive run to lose the battery). Both files are gitignored (the
-battery under `sft/data/`, the checkpoint under `models/*/checkpoints/`)
-— committing either needs `git add -f`.
+battery under `sft/data/`, the checkpoint dir under
+`models/*/checkpoints/`) — committing either needs `git add -f`.
 
 **(1) Fresh dream caches**, seeds 1234/2345/3456, from the warm-started
 weights, coverage-gated; generator per-token states cached for B3 (or
@@ -376,9 +385,11 @@ transcripts.
 **Local harness work before the box (TDD on the CPU fake backbone where
 testable):**
 
-- `--init-adapter <ckpt>` in `dream_sleep.py` (before cache build AND
-  training; hash in every jsonl; summarizer asserts equality).
-- Warm-start corpus builder + trainer.
+- `--init-adapter <ckpt-dir>` in `dream_sleep.py` (before cache build AND
+  training; trainable.pt hash in every jsonl; summarizer asserts
+  equality).
+- Warm start as `make warm-start` = `prepare_data.py` + `train.py`
+  (`--max-steps`, the one new `train.py` flag).
 - B2-fused-detached / B2-fused-deep / B3-fused per §3.5: fused spine,
   state materialization, batched counterfactual forward, detach flag,
   per-sleep B3≡B2 pass-1 equivalence test, generator-state caching.
@@ -406,6 +417,16 @@ notes. A rushed shutdown records artifacts as UNRETRIEVED, never as
 
 ## 5. Explicitly considered and rejected
 
+- **A bespoke warm-start trainer** (`warm_start.py`'s own corpus
+  builder + training loop, plus `lora.save_adapter`/`load_adapter` and
+  its single-file `.pt` adapter format) — built, then deleted unused. It
+  was a second implementation of `prepare_data.py` + `train.py`: the
+  same marker rendering, the same chunked loss, a parallel checkpoint
+  format for the same trainable set. The chain does it with one new flag
+  (`train.py --max-steps`) and inherits resume, mixing, the loss
+  weights and `sanity_sample.py` for free. Reuse wins; the only thing
+  lost is the bespoke corpus-invariant print, which the sanity-sample
+  read covers.
 - **Filler-synthetic warm-start corpus** (altrup): trains the model to
   emit the filler distribution the dreams already over-repeat; general
   data teaches the format without amplifying regurgitation.
