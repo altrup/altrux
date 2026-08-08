@@ -1,0 +1,140 @@
+[
+ {
+  "prompt": "The capital of Japan is",
+  "answer": "Tokyo",
+  "logprob": -1.6404309272766113,
+  "greedy": " Tokyo, and the capital of the United States is Washington, D.C."
+ },
+ {
+  "prompt": "The chemical symbol for gold is",
+  "answer": "Au",
+  "logprob": -0.3947751820087433,
+  "greedy": " Au. The symbol for gold is also used to represent the metal in the form"
+ },
+ {
+  "prompt": "The chemical symbol for iron is",
+  "answer": "Fe",
+  "logprob": -0.10135875642299652,
+  "greedy": " Fe. Iron is a metal that is found in the earth's crust. It"
+ },
+ {
+  "prompt": "Water freezes at a temperature of zero degrees",
+  "answer": "Celsius",
+  "logprob": -0.18170201778411865,
+  "greedy": " Celsius, and the temperature of the Earth is about -40 degrees C"
+ },
+ {
+  "prompt": "The author of Romeo and Juliet is William",
+  "answer": "Shakespeare",
+  "logprob": -0.030591772869229317,
+  "greedy": " Shakespeare. The play is about a young man named Romeo who falls in love"
+ },
+ {
+  "prompt": "The author of Pride and Prejudice is Jane",
+  "answer": "Austen",
+  "logprob": -0.009484070353209972,
+  "greedy": " Austen, and the book is a classic. But the movie version, which"
+ },
+ {
+  "prompt": "The theory of general relativity was developed by Albert",
+  "answer": "Einstein",
+  "logprob": -0.011039725504815578,
+  "greedy": " Einstein in the early 20th century. It is a theory of gravity that explains"
+ },
+ {
+  "prompt": "The first president of the United States was George",
+  "answer": "Washington",
+  "logprob": -0.007093010004609823,
+  "greedy": " Washington, and he was a man of great character and vision. He was a"
+ },
+ {
+  "prompt": "The longest river in Africa is the",
+  "answer": "Nile",
+  "logprob": -0.8730572462081909,
+  "greedy": " Nile, which flows from the Ethiopian highlands to the Mediterranean Sea. The"
+ },
+ {
+  "prompt": "The tallest mountain in the world is Mount",
+  "answer": "Everest",
+  "logprob": -0.054456569254398346,
+  "greedy": " Everest, which stands at 8,848 meters (29,029 feet"
+ },
+ {
+  "prompt": "A triangle has three",
+  "answer": "sides",
+  "logprob": -0.7152978181838989,
+  "greedy": " sides. A triangle has three angles. A triangle has three sides and three angles"
+ },
+ {
+  "prompt": "A year on Earth has twelve",
+  "answer": "months",
+  "logprob": -1.176156997680664,
+  "greedy": " months, and the year is coming to an end. The year is coming to"
+ },
+ {
+  "prompt": "The opposite of hot is",
+  "answer": "cold",
+  "logprob": -0.684787929058075,
+  "greedy": " cold.\n\nThat\u2019s the message of a new study that found that"
+ },
+ {
+  "prompt": "The opposite of ancient is",
+  "answer": "modern",
+  "logprob": -1.1920784711837769,
+  "greedy": " modern. The opposite of modern is ancient. The opposite of ancient is modern."
+ },
+ {
+  "prompt": "Cows produce a drink called",
+  "answer": "milk",
+  "logprob": -0.9340634346008301,
+  "greedy": " milk, which is a liquid made up of water, fat, and protein."
+ },
+ {
+  "prompt": "Bees produce a sweet substance called",
+  "answer": "honey",
+  "logprob": -0.5347098112106323,
+  "greedy": " honey that is used in many different ways. Honey is a natural preservative,"
+ },
+ {
+  "prompt": "The language most widely spoken in Mexico is",
+  "answer": "Spanish",
+  "logprob": -0.22812029719352722,
+  "greedy": " Spanish, but there are also many other languages spoken in the country. The most"
+ },
+ {
+  "prompt": "The currency of the United Kingdom is the",
+  "answer": "pound",
+  "logprob": -0.39167553186416626,
+  "greedy": " pound sterling. The pound is divided into 100 pence. The pound is"
+ },
+ {
+  "prompt": "The currency of Japan is the",
+  "answer": "yen",
+  "logprob": -0.1962200403213501,
+  "greedy": " yen. The yen is divided into 100 yen units. The y"
+ },
+ {
+  "prompt": "The human body pumps blood using the",
+  "answer": "heart",
+  "logprob": -0.6233708262443542,
+  "greedy": " heart, which is a pump that is driven by a muscle called the left ventricle"
+ },
+ {
+  "prompt": "The organ that filters blood is the",
+  "answer": "kidney",
+  "logprob": -1.0146390199661255,
+  "greedy": " kidney. It is a complex organ that is responsible for the removal of waste products"
+ },
+ {
+  "prompt": "A baby dog is called a",
+  "answer": "puppy",
+  "logprob": -1.9974392652511597,
+  "greedy": " \"puppy\" and a \"baby\" and a \"baby"
+ },
+ {
+  "prompt": "A baby cat is called a",
+  "answer": "kitten",
+  "logprob": -0.5957731604576111,
+  "greedy": " kitten, but a cat is a cat.\n\nA baby kitten"
+ }
+]
