@@ -111,6 +111,10 @@ more around it yourself, and treat a confirmed structural problem as
 stop-and-report, not something to train through. Ten minutes of reading is
 the cheapest insurance the run has — every data disaster in this project's
 history was visible in a decoded sample and invisible in every count.
+When the session trains no `.pt` slice (dream-distillation runs), the gate
+applies to the equivalent artifacts instead: `warm_start.py`'s corpus
+invariants + decoded join sample, and each dream cache's sidecar
+(`data/dream_s*.txt`) — read them the same way before the first cell.
 
 RECORD THE RESUME POINT: every time you start or restart training, note in your
 file which checkpoint it resumed from — train.py logs `resuming from

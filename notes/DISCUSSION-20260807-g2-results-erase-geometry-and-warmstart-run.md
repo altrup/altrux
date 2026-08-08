@@ -309,11 +309,18 @@ Regime unchanged unless stated: `--n-facts 4 --filler-tokens 40
 floor), binding-aware coverage gate ≥3/4 per seed cache, probes every 200
 at d800 (every 1600 on the ladder).
 
-**(0) Warm-start** (§3.1): corpus → checkpoint → battery recalibration →
-dream-sample acceptance check. Checkpoint hash into the run notes; commit
-the battery and checkpoint from the box (small files — ends the
-regeneration drift; this was the second consecutive run to lose the
-battery).
+**(0) Warm-start** (§3.1): corpus → checkpoint → **delete
+`data/knowledge_battery_mamba2_780m.json`** → first `--init-adapter`
+invocation rebuilds it → dream-sample acceptance check. The battery
+deletion is a written step, not a reminder: `load_or_build_battery`
+loads any existing file unconditionally and the json carries no adapter
+hash, so a forgotten deletion silently scores every cell against
+cold-weight baselines. **If the 400→800 fallback fires, the new
+checkpoint requires deleting the battery a second time.** Checkpoint
+hash into the run notes; commit the battery and checkpoint from the box
+(small files — ends the regeneration drift; this was the second
+consecutive run to lose the battery). The battery is inside gitignored
+`sft/data/` — committing it needs `git add -f`.
 
 **(1) Fresh dream caches**, seeds 1234/2345/3456, from the warm-started
 weights, coverage-gated; generator per-token states cached for B3 (or
@@ -327,13 +334,22 @@ within-seed contrasts stay valid, cross-seed pooling of absolute rates is
 tainted (the g2 stance).
 
 **(2) Operator picker: B1-raw vs B1-deflated, d800, 3 seeds**, paired
-within seed. Decision by the §3.4 rule (dominance → iso-learning damage at
-matched Δmargin with the ≥2/3-seed robustness guard → raw fallback).
-Winner is the session's erase operator.
+within seed, **plus a `--no-sleep` floor cell per seed** (probe-only,
+cheap, filename containing `nosleep` — `summarize_grid.apply_floor`
+keys on it). Without the floor cells Δ-installs and Δmargin are
+uncomputable and the §3.4 rule cannot be applied; the g2 floor does not
+transfer across the warm-start. Decision by the §3.4 rule (dominance →
+iso-learning damage at matched Δmargin with the ≥2/3-seed robustness
+guard → raw fallback). Winner is the session's erase operator.
 
 **(3) d800 baselines** on the new caches: A, B1 (winning operator),
 B2-fused-detached, B2-fused-deep, B3-fused, per-token-B2 bridge. The g2
-d800 numbers do not transfer across the warm-start.
+d800 numbers do not transfer across the warm-start. **Open with a rate
+probe: time one fused cell at `--distill-steps 20` and re-plan this
+step from the measured per-pass rate** — a fused pass (spine
+materialization + 512 batched counterfactuals) is heavier than an A
+pass, `--distill-steps 800` counts passes, and §3.5's ~15 min figure
+was token-parity with A@d800, a different budget than 800 fused passes.
 
 **(4) Saturation ladder**, seed 1234, d3200 (`--probe-every 1600`): A, B1,
 B2-fused-detached, B2-fused-deep. Stop rule: an arm flat between d800 and
@@ -342,7 +358,13 @@ is within 2× of B2-fused-detached's.
 
 **(5) Multi-sleep** per §3.7 — this session if there is room; else it is
 the next session's docket with (0)–(4)'s artifacts (checkpoint, caches)
-pulled home and reused.
+pulled home and reused. **Multi-sleep needs its own cache build per seed**
+(`--waves 4` consumes a different RNG stream, so the wave-1 facts and
+transcript differ from the single-sleep cache's — verified locally; a
+`--waves 4` cell against a single-sleep cache exits on the transcript
+check). Use explicit `--dream-cache` paths (e.g. `dream_cache_w4_s<seed>.pt`)
+and never pool step (2)–(4) numbers with step (5) numbers — different wake
+transcripts.
 
 **Local harness work before the box (TDD on the CPU fake backbone where
 testable):**
@@ -361,9 +383,12 @@ testable):**
   frozen-base control, per-wave dreams from the sleep-start snapshot
   (`62601d7` is the base — green on the CPU fake backbone only, unproven
   on hardware; treat as such).
-- Optional: `torch.compile(mode="reduce-overhead")` experiment for B1's
+- Box-side, early in the session (altrup: worth a shot, should be
+  quick): `torch.compile(mode="reduce-overhead")` experiment for B1's
   per-token loop (power-iteration v instead of SVD if deflated survives),
-  measured go/no-go. In-process seed-batching (batch-S) is dropped (§5).
+  measured go/no-go — time one B1 cell compiled vs not before committing
+  the picker cells to either path. Engineering only; results identical
+  either way. In-process seed-batching (batch-S) is dropped (§5).
 - Commit the erase-probe extensions; experimenter-command edits (§7).
 
 **Shutdown rule (new, after the g2 cache loss): terminate only after
