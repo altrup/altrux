@@ -34,6 +34,11 @@ touches the wake path.
                    counterfactual(B2): B1 with the ablation on a copy that is
                                        trained on and discarded; the intact
                                        state carries. B1 == B2 at token 1.
+                   counterfactual-commit
+                                 (B2'): B2, then at sleep end one real erase per
+                                       fact that passes a fresh-state margin
+                                       check -- the erase as verified memory
+                                       policy, not as training signal.
                    --ce-on-dream      : A's sequence, cross-entropy on the
                                        dream tokens instead of KL.
                    --deep             : B2 with the pass's losses accumulated
@@ -170,6 +175,7 @@ ARM_CARRY = {
     "ce-on-dream": "none",
     "drain": "drained",
     "counterfactual": "intact",
+    "counterfactual-commit": "committed",
     "drain-live": "drained",
     "sft-ref": "none",
     "no-sleep": "intact",
@@ -178,7 +184,7 @@ ARM_CARRY = {
     "b3-fused": "intact",
 }
 FUSED_ARMS = ("b2-fused-detached", "b2-fused-deep", "b3-fused")
-ARMS = ("replay", "drain", "counterfactual", "drain-live", *FUSED_ARMS)
+ARMS = ("replay", "drain", "counterfactual", "counterfactual-commit", "drain-live", *FUSED_ARMS)
 
 # The wake session's own question phrasing, reused verbatim as a rehearsal cue.
 USER_CUE = "{user} What is the code for the {entity}?"
@@ -306,13 +312,17 @@ def token_sha(ids: Sequence[int]) -> str:
     return hashlib.sha256(",".join(str(int(i)) for i in ids).encode()).hexdigest()
 
 
-def build_distractors(facts: Sequence[Fact], seed: int) -> dict[str, str]:
+def build_distractors(facts: Sequence[Fact], seed: int, taken: Sequence[str] = ()) -> dict[str, str]:
     """One fixed foil code per fact, drawn from its own RNG stream so the wake
     transcript's draws are unchanged. The margin metric (sec 4) scores the
     correct code against these, which is immune to the format prior and to the
-    digit-counting attractor that broke greedy exact match."""
+    digit-counting attractor that broke greedy exact match.
+
+    `taken` is every code already spoken for by an earlier wave (its facts and
+    its foils): multi-sleep draws a wave's foils from the same stream, and a
+    foil that is another wave's real code would score that fact as forgotten."""
     rng = random.Random(seed ^ DISTRACTOR_SALT)
-    taken = {f.code for f in facts}
+    taken = {f.code for f in facts} | set(taken)
     distractors: dict[str, str] = {}
     for fact in facts:
         code = " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS))
@@ -1134,7 +1144,7 @@ def main() -> None:
                      init_adapter=os.path.basename(args.init_adapter) if args.init_adapter else None)
 
     cache = None if args.build_dream_cache else load_dream_cache(cache_path)
-    distractors = cache.distractors if cache else {}
+    distractors = dict(cache.distractors) if cache else {}
     if cache is not None:
         print(f"[{ts()}] dream cache {cache_path}: {len(cache.dream_ids)} tokens "
               f"({cache.free_tokens} freely generated), transcript_sha {cache.transcript_sha[:12]} "
@@ -1242,8 +1252,14 @@ def main() -> None:
     carried = None
     seen: list[tuple[int, Fact]] = []
     fresh_baseline: dict[str, float] = {}
+    committed: set[str] = set()
     for wave in range(1, args.waves + 1):
         facts = all_facts[(wave - 1) * args.n_facts : wave * args.n_facts]
+        if wave > 1:
+            # Wave 1's foils come from the cache, so every arm shares them; later
+            # waves derive theirs, avoiding every code already in play.
+            distractors |= build_distractors(
+                facts, args.seed, taken=set(distractors.values()) | {f.code for _, f in seen})
         turns = build_turns(facts, args.filler_tokens, lambda s: len(tokenizer(s, add_special_tokens=False)["input_ids"]), rng)
         text = render_turns(turns, user_open, asst_open)
         transcript = encode(text)
@@ -1305,7 +1321,8 @@ def main() -> None:
         else:
             print(f"\n[{ts()}] === wave {wave} sleep: {mode} ===")
             carried = run_sleep(mode, model, opt, args, wave, carried, transcript, seen, chunk_len, cache,
-                                encode, decode, tokenizer, user_open, asst_open, emit, periodic_probe)
+                                encode, decode, tokenizer, user_open, asst_open, emit, periodic_probe,
+                                verify=lambda f: margin_probe(f, None), committed=committed)
 
         print(f"\n[{ts()}] === wave {wave} probes: fresh state, no context ===")
         probe_facts(seen, None, "probe", wave, True, fresh_baseline, step=args.distill_steps)
@@ -1404,6 +1421,44 @@ def generate_wave_dream(model, args, carried, facts, encode, decode, tokenizer,
         frozen=(teacher == "base"))
 
 
+def commit_erase(model, carried, seen, committed: set[str], encode, user_open: str, asst_open: str,
+                 verify, erase_op: str, emit, wave: int) -> list[str]:
+    """B2's commit step -- arm B2' (08-06 sec 3, "install-then-erase"). At the
+    end of a sleep, per fact: a fresh-state margin check, and only where it
+    passes does one real erase along that fact's own query land on the carried
+    state. The erase is a verified memory policy here, never a training signal;
+    its observable (freed capacity vs A's clearing-loss) only exists across
+    sleeps.
+
+    A fact commits once. Re-cutting along the same query at every later sleep
+    would charge the bystanders again to delete what is already gone.
+    """
+    import torch
+
+    fired: list[str] = []
+    for _, fact in seen:
+        if fact.entity in committed:
+            continue
+        margin, installed, *_ = verify(fact)
+        record = {"phase": "commit", "wave": wave, "fact": fact.entity, "margin": margin,
+                  "committed": bool(installed)}
+        if installed:
+            prompt = encode(f"{USER_CUE.format(user=user_open, entity=fact.entity)}"
+                            f"{asst_open} The code for the {fact.entity} is")
+            model.c_capture = []
+            with torch.no_grad():
+                model(prompt, state=copy_state(carried))
+            queries = group_by_layer(model.c_capture, len(model.layers))[-1]
+            model.c_capture = None
+            record["skipped_cone"] = erase_state(carried, queries, op=erase_op)
+            committed.add(fact.entity)
+            fired.append(fact.entity)
+        emit(record)
+        print(f"[{ts()}]  commit {fact.entity:<11} margin {margin:+7.3f} "
+              f"{'ERASED' if installed else 'held (not installed)'}", flush=True)
+    return fired
+
+
 def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
                 encode, decode, tokenizer, user_open, asst_open,
                 adapter_sha: str | None = None) -> DreamCache:
@@ -1456,7 +1511,8 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
 
 
 def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_len, cache,
-              encode, decode, tokenizer, user_open, asst_open, emit, periodic_probe):
+              encode, decode, tokenizer, user_open, asst_open, emit, periodic_probe,
+              verify=None, committed=None):
     """One sleep. Wave 1 distils the seed's cached dream, shared byte-identically
     across arms; a later wave generates its own from the state it carried in
     (sec 3.7). Returns the state carried into the next wake (None where the arm
@@ -1565,6 +1621,14 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
         print(f"[{ts()}] WARNING: the dream never rehearsed a fact -- reads never touched the bindings, so "
               f"nothing could distil. Seed the dream with --dream-prompt before reading anything into this arm.")
     print(f"[{ts()}] decoded dream:\n{''.join(dream.token_texts)!r}")
+
+    if mode == "counterfactual-commit":
+        if verify is None:
+            raise SystemExit("arm counterfactual-commit needs a fresh-state margin check to commit against")
+        print(f"\n[{ts()}] === wave {wave} commit step (fresh-state margin, then one real erase) ===")
+        model.eval()
+        commit_erase(model, carried, seen, set() if committed is None else committed,
+                     encode, user_open, asst_open, verify, args.erase_op, emit, wave)
 
     model.eval()
     torch.cuda.empty_cache()

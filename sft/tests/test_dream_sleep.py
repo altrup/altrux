@@ -629,6 +629,7 @@ def test_arm_carry_matches_the_registered_sequences():
         "ce-on-dream": "none",
         "drain": "drained",
         "counterfactual": "intact",
+        "counterfactual-commit": "committed",
         "drain-live": "drained",
         "sft-ref": "none",
         "no-sleep": "intact",
@@ -1107,7 +1108,7 @@ def test_run_sleep_stamps_the_fused_arm_and_the_warm_start_on_every_record(tmp_p
 
 
 def _wave_sleep(tmp_path, arm, wave, teacher="current", wake=None, model=None, records=None,
-                seen=None, transcript=None, **overrides):
+                seen=None, transcript=None, verify=None, committed=None, **overrides):
     """One sleep of a multi-sleep run, driven at the given wave."""
     from dream_sleep import run_sleep
 
@@ -1121,7 +1122,8 @@ def _wave_sleep(tmp_path, arm, wave, teacher="current", wake=None, model=None, r
     carried = run_sleep(arm, model, opt, args, wave, wake or built[2],
                         transcript if transcript is not None else built[5], seen, 3, cache,
                         encode, decode, _FakeTokenizer(), USER, ASST,
-                        (records if records is not None else []).append, lambda step: None)
+                        (records if records is not None else []).append, lambda step: None,
+                        verify=verify, committed=committed)
     return carried, cache
 
 
@@ -1207,3 +1209,79 @@ def test_sequential_sft_ref_trains_only_on_the_current_wave_s_facts(tmp_path, mo
     _wave_sleep(tmp_path, "sft-ref", wave=3, transcript=torch.tensor([[7, 8, 9]]))
 
     assert trained == [[7, 8, 9]]
+
+
+def test_distractors_never_reuse_a_code_another_wave_already_holds(tmp_path):
+    """Multi-sleep probes every wave's facts, so every wave needs foils -- and a
+    foil that is some other wave's real code would score that fact as forgotten."""
+    from dream_sleep import build_distractors
+
+    wave1 = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]
+    first = build_distractors(wave1, 1234)
+    wave2 = [Fact("marimba", "instrument", first["osprey"])]  # collides on purpose
+
+    second = build_distractors(wave2, 1234, taken=set(first.values()) | {f.code for f in wave1})
+
+    assert build_distractors(wave1, 1234) == first  # wave 1 unchanged by the new argument
+    assert set(second.values()).isdisjoint(set(first.values()) | {f.code for f in wave1 + wave2})
+
+
+def _commit_setup():
+    model, _, _, _ = _tiny_setup()
+    carried = FakeState([torch.randn(1, 1, 1, 4) for _ in model.layers])
+    facts = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]
+    return model, carried, [(1, f) for f in facts]
+
+
+def test_the_commit_step_erases_only_the_facts_that_verify():
+    """B2' (08-06 sec 3): install by counterfactual training, then per fact a
+    fresh-state margin check, and only where it passes does one real erase land
+    on the carried state. The erase is a verified memory-policy step, never a
+    training signal."""
+    from dream_sleep import commit_erase
+
+    model, carried, seen = _commit_setup()
+    before = [s.clone() for s in carried.ssm_states]
+    records: list[dict] = []
+
+    fired = commit_erase(model, carried, seen, set(), _fake_io()[0], USER, ASST,
+                         lambda f: (2.0, f.entity == "osprey", 0.0, 0.0), "raw", records.append, 1)
+
+    assert fired == ["osprey"]
+    assert not torch.equal(carried.ssm_states[0], before[0])
+    assert [(r["fact"], r["committed"]) for r in records] == [("osprey", True), ("heron", False)]
+
+
+def test_a_fact_is_committed_once_and_never_re_erased():
+    """The commit is a policy step per fact, not a per-sleep tax on every fact
+    that ever installed -- re-cutting along the same query every sleep would
+    charge the bystanders again for nothing."""
+    from dream_sleep import commit_erase
+
+    model, carried, seen = _commit_setup()
+    committed: set[str] = set()
+    verify = lambda f: (2.0, True, 0.0, 0.0)  # noqa: E731
+
+    first = commit_erase(model, carried, seen, committed, _fake_io()[0], USER, ASST,
+                         verify, "raw", lambda r: None, 1)
+    settled = [s.clone() for s in carried.ssm_states]
+    second = commit_erase(model, carried, seen, committed, _fake_io()[0], USER, ASST,
+                          verify, "raw", lambda r: None, 2)
+
+    assert first == ["osprey", "heron"] and second == []
+    assert torch.equal(carried.ssm_states[0], settled[0])
+
+
+def test_the_commit_arm_moves_the_carried_state_and_plain_b2_does_not(tmp_path):
+    """The arm-level contrast B2' exists to measure: same training, different
+    state handed to the next wake."""
+    for arm, moves in (("counterfactual", False), ("counterfactual-commit", True)):
+        wake = FakeState([torch.randn(1, 1, 1, 4) for _ in range(2)])
+        before = wake.ssm_states[0].clone()
+        carried, _ = _wave_sleep(tmp_path, arm, wave=1, wake=wake,
+                                 verify=lambda f: (2.0, True, 0.0, 0.0), committed=set())
+        assert (not torch.equal(carried.ssm_states[0], before)) == moves
+
+
+def test_the_commit_arm_is_registered_as_carrying_a_committed_state():
+    assert ARM_CARRY["counterfactual-commit"] == "committed"
