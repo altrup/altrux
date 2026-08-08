@@ -1342,3 +1342,15 @@ def test_the_r_matrix_is_lower_triangular_over_the_run_s_sleeps():
     assert r_matrix_rows(r, waves=4)[0][0] == pytest.approx(0.0)
     assert r_matrix_rows(r, waves=4)[3][0] is None  # wave 4 did not exist at sleep 1
     assert cl_summary(r, waves=4)["bwt"] == pytest.approx((3 + 2 + 1) / 3)
+
+
+@pytest.mark.parametrize("wave", [1, 2, 3])
+def test_b3_fused_checks_its_pass_one_equivalence_at_every_sleep(tmp_path, wave):
+    """Sec 3.5: B3's spine is refreshed each sleep from that sleep's generator
+    snapshot, so the B3 == B2-fused-detached identity is machine-checked per
+    sleep, not once per run."""
+    records: list[dict] = []
+    _wave_sleep(tmp_path, "b3-fused", wave=wave, records=records, distill_steps=2)
+
+    checks = [r for r in records if r["phase"] == "equivalence"]
+    assert len(checks) == 1 and checks[0]["equivalent"]
