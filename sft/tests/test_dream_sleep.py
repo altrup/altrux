@@ -1101,3 +1101,109 @@ def test_run_sleep_stamps_the_fused_arm_and_the_warm_start_on_every_record(tmp_p
     checks = [r for r in records if r["phase"] == "equivalence"]
     assert bool(checks) == (arm == "b3-fused")
     assert all(r["equivalent"] for r in checks)
+
+
+# --- multi-sleep (sec 3.7) -----------------------------------------------
+
+
+def _wave_sleep(tmp_path, arm, wave, teacher="current", wake=None, model=None, records=None,
+                seen=None, transcript=None, **overrides):
+    """One sleep of a multi-sleep run, driven at the given wave."""
+    from dream_sleep import run_sleep
+
+    args = _sleep_args(waves=4, wave_teacher=teacher, **overrides)
+    built = _built_cache(tmp_path, args)
+    model = model or built[0]
+    opt = torch.optim.SGD(model.parameters(), lr=0.1)
+    cache, facts, encode, decode = built[3], built[4], built[6], built[7]
+    seen = seen if seen is not None else [(1, f) for f in facts] + [
+        (w, Fact(f"fact{w}", "thing", f"{w} {w} {w} {w} {w}")) for w in range(2, wave + 1)]
+    carried = run_sleep(arm, model, opt, args, wave, wake or built[2],
+                        transcript if transcript is not None else built[5], seen, 3, cache,
+                        encode, decode, _FakeTokenizer(), USER, ASST,
+                        (records if records is not None else []).append, lambda step: None)
+    return carried, cache
+
+
+def test_a_later_sleep_distils_a_dream_it_generated_itself(tmp_path):
+    """Sec 3.7: per-arm per-wave dreams, generated from the state that sleep
+    carried in, cued on that wave's facts only. Reusing the cached wave-1
+    dream would rehearse none of the new material."""
+    records: list[dict] = []
+    model, _, _, _ = _tiny_setup()
+    wake = FakeState([torch.randn(1, 1, 1, 4) for _ in range(2)])
+    states: list[object] = []
+    original = model.forward
+
+    def spy(ids, state=None):
+        if model.c_capture is not None and not states:
+            states.append([s.clone() for s in state.ssm_states])
+        return original(ids, state=state)
+
+    model.forward = spy
+    _, cache = _wave_sleep(tmp_path, "counterfactual", wave=2, wake=wake, model=model, records=records)
+
+    built = next(r for r in records if r["phase"] == "cache" and r["wave"] == 2)
+    assert built["cues_cover"] == ["fact2"]  # this wave's facts only
+    assert built["dream_generator"] == "student"
+    assert built["dream_tokens"] == 8
+    # Generated from this sleep's carried state, not the cached wave-1 one.
+    assert torch.equal(states[0][0], wake.ssm_states[0])
+    assert not torch.equal(states[0][0], cache.wake_state.ssm_states[0])
+
+
+def test_each_sleep_s_dream_comes_from_its_own_carried_state(tmp_path):
+    """The generator is the student as of that sleep's start, generating from
+    the state it carried in -- a different carry teaches a different dream."""
+    from dream_sleep import generate_wave_dream
+
+    args = _sleep_args(waves=4, wave_teacher="current")
+    model, _, _, _, _, _, encode, decode = _built_cache(tmp_path, args)
+    facts = [Fact("marimba", "instrument", "5 4 6 6 9")]
+    dreams = [generate_wave_dream(model, args, FakeState([torch.randn(1, 1, 1, 4) * scale for _ in range(2)]),
+                                  facts, encode, decode, _FakeTokenizer(), USER, ASST, teacher="current")
+              for scale in (1.0, 7.0)]
+
+    assert not torch.equal(dreams[0].logits, dreams[1].logits)
+
+
+def _generation_scales(tmp_path, teacher, wave):
+    model, _, _, _ = _tiny_setup()
+    model.head = LoRALinear(model.head, rank=2, alpha=4.0, dropout=0.0)
+    with torch.no_grad():
+        model.head.lora_B += 0.5
+    scales: list[float] = []
+    original = model.forward
+
+    def spy(ids, state=None):
+        if model.c_capture is not None:  # a generation step, not training
+            scales.append(model.head.scale)
+        return original(ids, state=state)
+
+    model.forward = spy
+    _wave_sleep(tmp_path, "counterfactual", wave=wave, teacher=teacher, model=model)
+    return scales
+
+
+def test_the_frozen_base_control_never_generates_from_the_trained_student(tmp_path):
+    """Sec 3.2's drift-contribution control: `--wave-teacher base` pins the
+    generator at the base at every sleep, while the registered protocol
+    (`current`) lets it drift with the student."""
+    for wave in (2, 3, 4):
+        base, current = _generation_scales(tmp_path, "base", wave), _generation_scales(tmp_path, "current", wave)
+        assert base and all(s == 0.0 for s in base)
+        assert current and all(s == 2.0 for s in current)
+
+
+def test_sequential_sft_ref_trains_only_on_the_current_wave_s_facts(tmp_path, monkeypatch):
+    """The standard CL baseline: wave by wave, each sleep seeing only its own
+    wake transcript -- which is where backward interference should appear."""
+    import dream_sleep
+
+    trained: list[list[int]] = []
+    monkeypatch.setattr(dream_sleep, "distill_sft",
+                        lambda model, opt, ids, *a, **k: trained.append(ids[0].tolist()) or 0)
+
+    _wave_sleep(tmp_path, "sft-ref", wave=3, transcript=torch.tensor([[7, 8, 9]]))
+
+    assert trained == [[7, 8, 9]]

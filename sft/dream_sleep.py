@@ -1009,7 +1009,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--arm", choices=ARMS, default="replay", help="Sleep protocol, per DISCUSSION sec 3 (default: %(default)s)")
     parser.add_argument("--sft-ref", action="store_true", help="Reference arm: CE on the wake transcript instead of a dream")
     parser.add_argument("--no-sleep", action="store_true", help="Floor arm: no training at all, wake state carried")
-    parser.add_argument("--waves", type=int, default=1, help="Wake/sleep waves; 2 adds a second wake on the carried state (default: %(default)s)")
+    parser.add_argument("--waves", type=int, default=1, help="Wake/sleep waves, each on the state the last one carried; the registered multi-sleep shape is 4 (default: %(default)s)")
     parser.add_argument("--wave-teacher", choices=("base", "current"), default=None,
                         help="Who generates the dream for waves after the first: the frozen base, or the model this run has trained. Required when --waves > 1.")
     parser.add_argument("--n-facts", type=int, default=4, help="Facts per wave -- the measured binding ceiling (default: %(default)s)")
@@ -1072,6 +1072,7 @@ def main() -> None:
         raise SystemExit("--ce-on-dream is arm A's sequence with a different objective; it is not a reference arm")
     if args.deep and args.arm != "counterfactual":
         raise SystemExit("--deep is a B2 cell (sec 6: deep-B1 is structurally confounded)")
+    validate_wave_args(args)
     mode = "sft-ref" if args.sft_ref else ("no-sleep" if args.no_sleep else
                                            ("ce-on-dream" if args.ce_on_dream else args.arm))
 
@@ -1456,11 +1457,14 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
 
 def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_len, cache,
               encode, decode, tokenizer, user_open, asst_open, emit, periodic_probe):
-    """One sleep, on the cached dream. Returns the state carried into the next
-    wake (None where the arm clears it)."""
+    """One sleep. Wave 1 distils the seed's cached dream, shared byte-identically
+    across arms; a later wave generates its own from the state it carried in
+    (sec 3.7). Returns the state carried into the next wake (None where the arm
+    clears it)."""
     import torch
 
     started = time.time()
+    wave_facts = [f for w, f in seen if w == wave]
     # B1-live's budget is the dream itself (one online pass), not --distill-steps.
     total = args.dream_tokens if mode == "drain-live" else args.distill_steps
 
@@ -1475,6 +1479,22 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
             periodic_probe(step + 1)
 
     needles = [f.entity for _, f in seen] + [f.code for _, f in seen]
+
+    # Before model.train(): generation is at fixed weights, in eval mode.
+    dream = None
+    if mode not in ("sft-ref", "drain-live"):
+        if wave == 1:
+            dream = dream_from_cache(cache, wake_state.ssm_states[0].device)
+        else:
+            dream = generate_wave_dream(model, args, wake_state, wave_facts, encode, decode,
+                                        tokenizer, user_open, asst_open, teacher=args.wave_teacher)
+            emit({"phase": "cache", "wave": wave, "arm": mode, "seed": args.seed,
+                  "dream_sha": token_sha(dream.tokens[0].tolist()),
+                  "dream_tokens": dream.tokens.shape[1],
+                  "free_tokens": sum(not f for f in dream.cue_flags),
+                  "cues_cover": [f.entity for f in wave_facts],
+                  "dream_generator": "base" if args.wave_teacher == "base" else "student"})
+
     model.train()
     if mode == "sft-ref":
         token_gradients = distill_sft(model, opt, transcript, args.distill_steps, chunk_len, on_step)
@@ -1493,7 +1513,6 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
         token_gradients = args.dream_tokens
         print()
     else:
-        dream = dream_from_cache(cache, wake_state.ssm_states[0].device)
         keep = target_keep_mask(dream.cue_flags) if dream.cue_flags else None
         if mode in ("replay", "ce-on-dream"):
             # Registered form: the chunk is the whole dream, one optimizer step
