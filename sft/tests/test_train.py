@@ -501,3 +501,35 @@ def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypa
         start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
     )
     assert Hooks.fired == []
+
+
+# ---------------------------------------------------------------------------
+# --max-steps: stop after N optimizer steps
+# ---------------------------------------------------------------------------
+
+def _run_to_max_steps(monkeypatch, tmp_path, max_steps, start_step=0):
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    # 10 examples of 41 tokens: 100 chunks of 4, far more than any step budget here.
+    train_ids = [_ids(41, seed=i) for i in range(10)]
+    args = _make_args(max_steps=max_steps, ckpt_every_tokens=10**9)
+
+    train.run_training(
+        FakeHooks, model, optimizer, list(model.parameters()), train_ids, [None] * 10,
+        [None] * 10, [None] * 10, "cpu", args,
+        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=start_step,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    )
+    return max(step for step, _ in train.iter_checkpoints())
+
+
+def test_max_steps_stops_the_run_at_that_many_optimizer_steps(monkeypatch, tmp_path):
+    assert _run_to_max_steps(monkeypatch, tmp_path, max_steps=3) == 3
+
+
+def test_max_steps_counts_global_step_so_a_resumed_run_finishes_the_budget(monkeypatch, tmp_path):
+    """The budget is a global_step ceiling, not "N more steps": resuming a
+    run that already took 2 of 3 steps leaves exactly one to take."""
+    assert _run_to_max_steps(monkeypatch, tmp_path, max_steps=3, start_step=2) == 3

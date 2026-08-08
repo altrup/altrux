@@ -720,6 +720,7 @@ def run_training(
     recall_ramp_steps = getattr(args, "recall_ramp_steps", 0)
     recall_ramp_shape = getattr(args, "recall_ramp_shape", "linear")
     segment_budget = math.inf if len(groups) == 1 else getattr(args, "mix_segment_tokens", 1_000_000)
+    max_steps = getattr(args, "max_steps", None) or math.inf
 
     global_step = start_step
     total_tokens = start_total_tokens
@@ -749,6 +750,9 @@ def run_training(
                 group["lr"] = args.lr * frac
 
     set_lr(global_step)
+
+    def budget_spent() -> bool:
+        return global_step >= max_steps
 
     trained_any = False
     orders: list[list[int]] = []
@@ -904,7 +908,7 @@ def run_training(
         window_tokens = 0.0
         prev_n_lines = 0
 
-        while any(s is not None for s in slots):
+        while any(s is not None for s in slots) and not budget_spent():
             recall_w = recall_weight_at(global_step, recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
 
             # Build the batched chunk: gather next chunk_len tokens from each slot.
@@ -1181,6 +1185,8 @@ def run_training(
                           batched_state=batched_state, group_state=group_state())
 
     for epoch in range(start_epoch, args.epochs):
+        if budget_spent():
+            break
         orders = [build_order(g, train_ids, epoch, keep) for g in groups]
         shares = [sum(resolve_share(s, train_ids) for s in g) for g in groups]
         ptrs = [0] * len(groups)
@@ -1201,7 +1207,7 @@ def run_training(
         elif epoch == start_epoch:
             ptrs[min(start_group_idx, len(groups) - 1)] = start_next_ptr
 
-        while any(ptrs[i] < len(orders[i]) for i in range(len(groups))):
+        while any(ptrs[i] < len(orders[i]) for i in range(len(groups))) and not budget_spent():
             available = [i for i in range(len(groups)) if ptrs[i] < len(orders[i])]
             if resume_group is not None and resume_group in available:
                 gi = resume_group
@@ -1238,6 +1244,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--warmup-steps", type=int, default=32, help="Linearly ramp the learning rate from 0 to --lr over this many optimizer steps, then hold at --lr -- 0 to disable. A pure function of global_step, so it resumes correctly with no extra checkpoint state.")
+    parser.add_argument("--max-steps", type=int, default=None, help="Stop after this many optimizer steps and save the final checkpoint (default: run to --epochs). Counts global_step, so a resumed run finishes the same budget rather than taking this many more.")
     parser.add_argument("--max-len", type=int, default=None, help="Skip examples longer than this (default: no limit)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward/backward chunk -- defaults to the model's own DEFAULT_CHUNK_LEN")
     parser.add_argument("--memory-window", type=int, default=None, help="Tokens per memory-subsystem write, for models that define set_memory_window (currently mamba2_2_7b_memory only; no-op otherwise) -- defaults to the model's own DEFAULT_MEMORY_WINDOW (1, i.e. a write every token, unless overridden). Must evenly divide --chunk-len. See docs/superpowers/specs/2026-07-02-chunked-memory-injection-design.md.")
