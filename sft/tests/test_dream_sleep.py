@@ -689,6 +689,60 @@ def test_build_cache_writes_a_loadable_cache_and_its_sidecar(tmp_path):
     assert "[CUE]" in sidecar and cache.dream_sha in sidecar
 
 
+def _warm_started_cache(tmp_path, args, adapter_sha):
+    """A cache built by a model whose head carries a non-zero adapter, so
+    "generated at the base" and "generated warm-started" are distinguishable in
+    the dream tokens themselves."""
+    from dream_sleep import build_cache
+
+    model, _, _, _ = _tiny_setup()
+    model.head = LoRALinear(model.head, rank=2, alpha=4.0, dropout=0.0)
+    with torch.no_grad():
+        # Asymmetric: a uniform shift moves every logit equally and no argmax.
+        model.head.lora_B.copy_(-torch.arange(model.head.lora_B.numel(),
+                                              dtype=model.head.lora_B.dtype).view_as(model.head.lora_B))
+    scales: list[float] = []
+    original = model.forward
+
+    def spy(ids, state=None):
+        if model.c_capture is not None:  # a generation step, not the wake pass
+            scales.append(model.head.scale)
+        return original(ids, state=state)
+
+    model.forward = spy
+    cache = build_cache(model, args, tmp_path / f"dream_{adapter_sha or 'base'}.pt",
+                        torch.tensor([[1, 2, 3, 4, 5, 6]]),
+                        [Fact("osprey", "bird", "1 2 3 4 5")], 3,
+                        *_fake_io(), _FakeTokenizer(), USER, ASST, adapter_sha=adapter_sha)
+    return cache, scales
+
+
+def test_a_warm_started_cache_is_generated_with_the_loaded_adapter_active(tmp_path):
+    """Sec 4(1): fresh dream caches are generated *from the warm-started
+    weights*. Zeroing the adapter for generation would make --init-adapter a
+    no-op on the one artifact every arm then distils."""
+    args = _sleep_args()
+
+    base, base_scales = _warm_started_cache(tmp_path, args, None)
+    warm, warm_scales = _warm_started_cache(tmp_path, args, "deadbeef")
+
+    assert base_scales and all(s == 0.0 for s in base_scales)
+    assert warm_scales and all(s == 2.0 for s in warm_scales)  # alpha/rank, adapters live
+    assert warm.dream_ids != base.dream_ids
+
+
+def test_the_cache_records_which_weights_generated_it(tmp_path):
+    from dream_sleep import load_dream_cache
+
+    args = _sleep_args()
+    base, _ = _warm_started_cache(tmp_path, args, None)
+    warm, _ = _warm_started_cache(tmp_path, args, "deadbeef")
+
+    assert base.generator == "base" and warm.generator == "deadbeef"
+    assert load_dream_cache(tmp_path / "dream_deadbeef.pt").generator == "deadbeef"
+    assert "deadbeef" in (tmp_path / "dream_s1234.txt").read_text()
+
+
 @pytest.mark.parametrize("arm", ["replay", "ce-on-dream", "drain", "counterfactual", "sft-ref"])
 def test_run_sleep_trains_every_arm_from_the_cached_dream(tmp_path, arm):
     from dream_sleep import run_sleep
