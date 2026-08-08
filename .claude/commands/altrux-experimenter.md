@@ -28,6 +28,7 @@ via the shutdown checklist — not a question.
 | Stop training | `tmux send-keys -t train C-c` |
 | Check it's alive | `tmux capture-pane -t train -p \| tail` or tail newest `sft/logs/train-*.log` |
 | Hold off the watchdog | `touch scripts/.watchdog-delay` (at least every 25 min while training is stopped) |
+| Pull artifacts home now | `touch scripts/.watchdog-fetch`, then read `scripts/.pull-receipt` |
 | End the run (irreversible) | `touch scripts/.watchdog-terminate` — only after the shutdown checklist |
 
 Whether this session even starts with training is decided by the notes (see
@@ -233,25 +234,36 @@ complete, going nowhere, unfixable crash). In order:
    you learned, what you'd want to discuss (for a success: what worked and
    why).
 3. Commit and push any code changes — code survives ONLY via git push.
-4. VERIFY THE DATA ARTIFACTS ARE HOME: confirm `scripts/lambda_pull.sh`
-   has actually run from the teammate's machine and every artifact this
-   session produced (dream caches, sidecars, battery, checkpoints) exists
-   locally there — echo the file list + sizes into the notes. "The pull
-   carries it" is an unchecked invariant, and it cost the g2 session its
-   entire cache set. If a rushed shutdown makes verification impossible,
-   write the artifacts down as UNRETRIEVED in the notes — never as
-   retrieved.
-5. `touch scripts/.watchdog-delay` — guarantees a full watchdog window
-   (~6 rsync pull cycles) so your final notes reach your teammate's machine.
+4. VERIFY THE ARTIFACTS ARE HOME: `touch scripts/.watchdog-fetch`, then wait
+   ~2 min (touch `.watchdog-delay` while you wait) for a fresh
+   `scripts/.pull-receipt` — the teammate's pull writes it back after every
+   successful pull: UTC timestamp plus the size of every artifact AS IT
+   EXISTS on their machine. Check every artifact this session produced
+   (dream caches, sidecars, battery, checkpoints, result jsonls, this run's
+   notes file) appears at a plausible size, and echo the receipt into the
+   notes. "The pull carries it" is an unchecked invariant, and it cost the
+   g2 session its entire cache set. A missing file or a stale header
+   timestamp: touch `.watchdog-fetch` once more and re-check; still missing
+   → step 5.
+5. RESCUE BRANCH: push `rescue/<run-timestamp>` carrying, MANDATORY, this
+   run's notes file and every result jsonl in `sft/logs/`, plus whatever
+   else you judge necessary for the run's results to survive. Hard limits:
+   50 MB per file, 1 GB total (GitHub rejects files over 100 MB). Never the
+   heavy `.pt` caches. Record everything left behind as UNRETRIEVED, with
+   sizes, in the notes — which ride the branch, so the record survives even
+   when the artifacts don't.
 6. `touch scripts/.watchdog-terminate` — the watchdog's next probe (within
-   ~1 min) does a final pull of logs/checkpoints/notes, then terminates the
-   instance. Irreversible; this is the LAST thing you do.
+   ~1 min) does a final pull (retried twice), terminates regardless, and
+   leaves a `PULL-FAILED-<timestamp>` file on the teammate's machine if the
+   final pull never succeeded. Irreversible; this is the LAST thing you do.
 
 ## The watchdog
 
 A watchdog on your teammate's machine (scripts/lambda_watchdog.sh run there,
 probing this instance over ssh) terminates the instance 30 minutes after
-train.py stops, whatever the reason. While you're actively investigating with
+train.py stops, whatever the reason. It also owns the pulling: every ~5
+minutes, on demand via `.watchdog-fetch`, and once more before it
+terminates. While you're actively investigating with
 training stopped, run `touch scripts/.watchdog-delay` — deliberately, when you
 check in on your work, at least every 25 minutes. If you're done (fixed and
 training restarted, or concluded it's unfixable), stop touching it.
@@ -262,20 +274,31 @@ out the remaining idle window.
 ## Persistence
 
 Everything on this instance is DESTROYED at termination. Two things survive:
-what you git push, and what your teammate's local machine rsyncs down via
-scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/, notes/). Therefore:
+what you git push, and what your teammate's machine rsyncs down via
+scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/, notes/, the
+sft/data/ artifacts). You cannot see their disk — `scripts/.pull-receipt`,
+which every successful pull writes back onto this instance (timestamp + the
+size of each file as it landed there), is the ONLY evidence a pull carried
+something. Read it; don't assume. Therefore:
 
 - Any code change: commit AND push promptly. Never leave fixes only in the
   working tree.
 - Write observations (health checks, anomalies, fixes, open questions) to
   this run's notes file (`notes/EXPERIMENT_NOTES-<timestamp>.md`, created
-  above) as you go, not at the end. Never commit notes/ from the instance —
-  the rsync pull carries it to your teammate's machine, where it gets
-  committed after the run; an instance-side commit would race that flow.
-- The rsync pull runs every ~5 minutes, so anything you write needs the
-  instance alive that much longer to survive. Whenever you finish your LAST
-  writes before going quiet, touch scripts/.watchdog-delay once more (step 4
-  of the shutdown checklist) so nothing is written and then immediately lost.
+  above) as you go, not at the end. Never commit notes/ from the instance on
+  main — the rsync pull carries it to your teammate's machine, where it gets
+  committed after the run; an instance-side commit would race that flow. The
+  one exception is a `rescue/<timestamp>` branch (shutdown checklist step 5),
+  which exists precisely because the pull didn't carry them.
+- The teammate's watchdog pulls every ~5 minutes, so anything you write needs
+  the instance alive that much longer to survive. You can also ask for a pull
+  RIGHT NOW — `touch scripts/.watchdog-fetch` — and should, whenever you've
+  just produced something expensive (a dream cache, a battery, a finished
+  result jsonl) rather than betting it on the next cycle. The next probe
+  pulls, deletes the marker, and the fresh `.pull-receipt` is how you know it
+  worked. Whenever you finish your LAST writes before going quiet, touch
+  scripts/.watchdog-delay once more so nothing is written and then
+  immediately lost.
 
 ## Monitoring
 

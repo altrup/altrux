@@ -12,14 +12,14 @@ On the **local** machine — must stay awake and online for the whole run,
 it's the only thing that can stop the billing:
 
 ```bash
-./scripts/lambda_watchdog.sh &      # terminates the instance when idle; key stays local
-./scripts/lambda_pull.sh --follow   # rescues logs/checkpoints/notes/data every 5 min
+./scripts/lambda_watchdog.sh   # pulls every 5 min; terminates when idle; key stays local
 ```
 
-That's the whole local side — the watchdog does a final pull (including
-`mem_state.pt`) by itself right before it terminates, so nothing needs to be
-run by hand at the end. The `--follow` loop is still worth running alongside:
-it bounds what a *hard* crash loses, where no graceful terminate ever happens.
+That's the whole local side. The watchdog owns the pulling — on a schedule,
+on demand when the instance touches `scripts/.watchdog-fetch`, and once more
+(including `mem_state.pt`) right before it terminates — so nothing needs to be
+run by hand at the end. `lambda_pull.sh --follow` does the scheduled half on
+its own, for a watchdog-less session.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
@@ -36,9 +36,10 @@ Datasets under `sft/data/` are gitignored and expensive to build, so they
 travel by rsync in both directions and are archived on the local machine:
 
 1. The box generates an artifact the local machine doesn't have.
-2. `lambda_pull.sh` brings it home — every 5 minutes under `--follow`, and
-   worth running by hand the moment generation or filtering finishes, so the
-   artifacts are safe before the long training phase starts.
+2. `lambda_pull.sh` brings it home — every 5 minutes under the watchdog, and
+   the moment generation or filtering finishes if the box touches
+   `scripts/.watchdog-fetch`, so the artifacts are safe before the long
+   training phase starts.
 3. The next `lambda_launch.sh` uploads it again, path-preserving, alongside the
    resume checkpoints. **The box only generates what isn't in that upload.**
 
@@ -92,10 +93,10 @@ when torch changes, or the import will fail at runtime.
 Unless `--no-watch` is passed, launch also starts a **local tmux session
 `altrux`** with everything in one place:
 
-- window `watch` — the billing-protection stack: `lambda_pull.sh --follow`
-  (top pane) plus `lambda_watchdog.sh --arm-after-training` (bottom pane),
-  both targeting the instance it just launched. So you don't have to remember
-  to start them by hand — the box is protected from the moment it's up.
+- window `watch` — the billing-protection stack:
+  `lambda_watchdog.sh --arm-after-training` against the instance it just
+  launched, pulling artifacts and terminating when idle. So you don't have to
+  remember to start it by hand — the box is protected from the moment it's up.
   `--arm-after-training` keeps the watchdog from terminating the box during
   the minutes-long setup before `train.py` exists (see below).
 - window `train` — ssh'd into the remote `train` tmux (training/setup output,
@@ -241,7 +242,16 @@ itemizes the files it actually brought down — so it's safe to fire off
 repeatedly during a session. Do exactly that when data generation or filtering
 finishes: it archives the new artifacts locally (see "Training-data artifacts"
 above) before the hours-long training phase, rather than betting them on the
-box surviving.
+box surviving. Normally the watchdog fires it for you (on its schedule, or
+when the box touches `scripts/.watchdog-fetch`).
+
+Every successful pull writes a receipt back to
+`<remote_repo>/scripts/.pull-receipt` on the instance: a UTC timestamp, this
+machine's hostname and repo path, and one `size path` line per pulled file **as
+it exists here**. A session on the instance can't see this disk, so the receipt
+is its only evidence that what it produced arrived — the shutdown checklist in
+`.claude/commands/altrux-experimenter.md` has it read one before terminating. A
+receipt that fails to write is a warning, never a failed pull.
 
 `mem_state.pt` — a checkpoint's full internal model state, written by
 `sft/train.py` — is excluded unless `--with-mem-state` is passed. It's large
@@ -281,26 +291,32 @@ awake and online for the whole run, or nothing stops the billing.
 be started *before* training exists — during a long setup/data-gen — without
 terminating the box prematurely. `lambda_launch.sh` uses this when it
 auto-starts the watchdog; a plain manual `lambda_watchdog.sh` alongside an
-already-training run doesn't need it. Run it alongside the pull loop:
+already-training run doesn't need it.
 
-```bash
-./scripts/lambda_watchdog.sh &
-./scripts/lambda_pull.sh --follow
-```
+It also owns the pulling: `lambda_pull.sh` runs every `--pull-interval`
+seconds (default 300), and immediately whenever a probe finds
+`scripts/.watchdog-fetch` on the instance — how a session there asks for its
+artifacts to go home *now*, e.g. the moment a cache finishes building. The
+marker is deleted once consumed, pull or no pull; the fresh
+`scripts/.pull-receipt` is what says it worked.
 
-Right before terminating, it runs `lambda_pull.sh` twice: once for the
-resume-critical files, then once with `--with-mem-state` for the large
-`mem_state.pt`. A graceful terminate is the only moment that knows a run is
-over, so it's the only place `mem_state.pt` can be rescued automatically —
-the `--follow` loop deliberately skips it. Both pulls are best-effort and
-separately bounded (`--pull-timeout`, default 900s; `--mem-state-timeout`,
-default 3600s): the terminate happens whether they succeed, fail, or time
-out, because an unbounded billing leak is the one thing this script exists to
-prevent. Small files go first so a timeout can't starve the files a resume
-actually needs. `--no-mem-state` skips the second pull (useful on a slow
-link — 8GB of `mem_state.pt` is ~8 min at 130 Mbit/s but ~14 hours at
-1.5 Mbit/s); `--no-pull` skips both. The unreachable path never pulls —
-there's nothing to pull from an instance that won't answer ssh.
+Right before terminating, it runs the final pull (retried twice, ~2 min apart)
+and then once more with `--with-mem-state` for the large `mem_state.pt`. A
+graceful terminate is the only moment that knows a run is over, so it's the
+only place `mem_state.pt` can be rescued automatically. Every stage is bounded
+(`--pull-timeout`, default 900s; `--mem-state-timeout`, default 3600s) and the
+terminate happens whether they succeed, fail, or time out, because an
+unbounded billing leak is the one thing this script exists to prevent. Small
+files go first so a timeout can't starve the files a resume actually needs; if
+the final pull never succeeded, the `mem_state.pt` stage is skipped (three
+failures in a row means ssh is gone, not slow) and a
+`scripts/PULL-FAILED-<UTC timestamp>` file is left **here**, naming the
+instance and the last error, so a lost run shows up in `git status` the same
+day instead of being discovered weeks later. `--no-mem-state` skips the
+mem_state stage (useful on a slow link — 8GB is ~8 min at 130 Mbit/s but ~14
+hours at 1.5 Mbit/s); `--no-pull` skips all pulling, scheduled included. The
+unreachable path never pulls — there's nothing to pull from an instance that
+won't answer ssh.
 
 "Training" = a process matching `--pattern` (default `train.py`; alternation
 works, e.g. `train.py|probe_recall.py` — what launch's auto-started watchdog
@@ -342,7 +358,7 @@ The instance is found via the API (expects exactly one active instance);
 set `LAMBDA_INSTANCE_ID`/`LAMBDA_INSTANCE_IP` in `scripts/.env` to target
 one explicitly. `--terminate-cmd "echo boom"` dry-runs the countdown.
 
-The `/experimenter` slash command (`.claude/commands/experimenter.md`)
+The `/altrux-experimenter` slash command (`.claude/commands/altrux-experimenter.md`)
 is the standing brief for a Claude Code session monitoring the run on the
 instance — it encodes the watchdog contract, the commit-and-push +
 `notes/EXPERIMENT_NOTES.md` persistence rules, and the give-up criteria.
