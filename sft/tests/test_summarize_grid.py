@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from summarize_grid import check_hashes, check_init_adapter, load_cells
+from summarize_grid import check_hashes, check_init_adapter, curve_rows, load_cells
 
 
 def _cell(path, arm, transcript_sha, dream_sha, wave2_dream_sha=None, init_adapter_sha256=None):
@@ -112,3 +112,99 @@ def test_cells_carry_the_new_columns(tmp_path):
     assert cell["token_gradients"] == 800
     assert cell["margin_install"] == 1
     assert cell["seed"] == "1234"
+
+
+def _rows(path):
+    return [json.loads(line) for line in open(path)]
+
+
+def _rewrite(path, rows):
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_the_cell_carries_its_erase_operator(tmp_path):
+    path = _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb")
+    rows = _rows(path)
+    for row in rows:
+        row["erase_op"] = "raw"
+    _rewrite(path, rows)
+
+    assert load_cells([str(path)])[0]["erase_op"] == "raw"
+
+
+def test_a_cell_that_changed_erase_operator_mid_run_is_refused(tmp_path):
+    path = _cell(tmp_path / "g2_drain_s1234.jsonl", "drain", "aa", "bb")
+    rows = _rows(path)
+    for i, row in enumerate(rows):
+        row["erase_op"] = "raw" if i else "deflated"
+    _rewrite(path, rows)
+
+    with pytest.raises(SystemExit, match="erase"):
+        load_cells([str(path)])
+
+
+def test_cells_with_different_erase_operators_still_pool(tmp_path):
+    """The picker grid deliberately runs raw and deflated cells side by side."""
+    for arm, op in (("drain_raw", "raw"), ("drain_deflated", "deflated")):
+        path = _cell(tmp_path / f"g2_{arm}_s1234.jsonl", arm, "aa", "bb")
+        rows = _rows(path)
+        for row in rows:
+            row["erase_op"] = op
+        _rewrite(path, rows)
+
+    assert {c["erase_op"] for c in _cells(tmp_path)} == {"raw", "deflated"}
+
+
+def test_a_failed_b3_equivalence_is_fatal_to_the_summary(tmp_path):
+    path = _cell(tmp_path / "g2_b3fused_s1234.jsonl", "b3-fused", "aa", "bb")
+    rows = _rows(path)
+    rows.append({"phase": "equivalence", "wave": 2, "arm": "b3-fused", "pass": 1,
+                 "abs_diff": 0.5, "equivalent": False})
+    _rewrite(path, rows)
+
+    with pytest.raises(SystemExit, match="equivalen"):
+        load_cells([str(path)])
+
+
+def test_a_passing_b3_equivalence_scores_normally(tmp_path):
+    path = _cell(tmp_path / "g2_b3fused_s1234.jsonl", "b3-fused", "aa", "bb")
+    rows = _rows(path)
+    rows.append({"phase": "equivalence", "wave": 1, "arm": "b3-fused", "pass": 1,
+                 "abs_diff": 0.0, "equivalent": True})
+    _rewrite(path, rows)
+
+    assert len(load_cells([str(path)])) == 1
+
+
+def _curve_cell(path, arm, points, floor_only_final=False):
+    """points: {step: (margin, ppl_delta)} for the single fact 'osprey'."""
+    rows = [{"phase": "cache", "wave": 1, "arm": arm, "seed": 1234,
+             "transcript_sha": "aa", "dream_sha": "bb"},
+            {"phase": "done", "arm": arm, "seed": 1234}]
+    for step, (margin, dppl) in points.items():
+        rows.append({"phase": "probe", "wave": 1, "arm": arm, "step": step, "fact": "osprey",
+                     "code": "1 2", "match": False, "logprob_delta": 0.0, "paraphrase_rate": 0.0,
+                     "margin": margin, "margin_install": False})
+        rows.append({"phase": "locality", "wave": 1, "arm": arm, "step": step,
+                     "ppl_delta": dppl, "lost": 0, "items": 24})
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return path
+
+
+def test_curves_correct_each_probe_step_against_the_floor_at_the_same_step(tmp_path):
+    _curve_cell(tmp_path / "g2_nosleep_s1234.jsonl", "nosleep", {200: (1.0, 0.0), 400: (2.0, 0.0)})
+    _curve_cell(tmp_path / "g2_drain_s1234.jsonl", "drain", {200: (3.0, 0.1), 400: (5.0, 0.3)})
+
+    rows = curve_rows(_cells(tmp_path))
+    drain = [r for r in rows if r["arm"] == "drain"]
+
+    assert [(r["step"], r["dmargin"], r["dppl"]) for r in drain] == [(200, 2.0, 0.1), (400, 3.0, 0.3)]
+
+
+def test_curves_fall_back_to_the_final_floor_when_the_step_is_missing(tmp_path):
+    _curve_cell(tmp_path / "g2_nosleep_s1234.jsonl", "nosleep", {400: (2.0, 0.0)})
+    _curve_cell(tmp_path / "g2_drain_s1234.jsonl", "drain", {200: (3.0, 0.1), 400: (5.0, 0.3)})
+
+    drain = [r for r in curve_rows(_cells(tmp_path)) if r["arm"] == "drain"]
+
+    assert [(r["step"], r["dmargin"]) for r in drain] == [(200, 1.0), (400, 3.0)]

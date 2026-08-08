@@ -25,6 +25,20 @@ from probes_common import MARGIN_INSTALL as INSTALL_NATS
 
 def cell(path: str) -> dict[str, object] | None:
     rows = [json.loads(line) for line in open(path)]
+    failed = [r for r in rows if r["phase"] == "equivalence" and not r.get("equivalent")]
+    if failed:
+        where = ", ".join("sleep {} (abs_diff {:.3g})".format(r.get("wave"), r.get("abs_diff", 0.0))
+                          for r in failed)
+        raise SystemExit(
+            f"{path}: B3-fused's pass-1 equivalence to B2-fused-detached FAILED at {where} -- "
+            f"the arm did not distil the spine it claims to. Nothing in this cell is scoreable."
+        )
+    ops = {r.get("erase_op") for r in rows}
+    if len(ops) > 1:
+        raise SystemExit(
+            f"{path}: {len(ops)} distinct erase_op values ({', '.join(sorted(str(o) for o in ops))}) in one "
+            f"cell -- the operator is a cell-level variable; rerun the cell under a single --erase-op."
+        )
     loc = [r for r in rows if r["phase"] == "locality"]
     # A running cell already carries locality records from its periodic probes,
     # and its dream/sleep records are not written until sleep ends -- pooling one
@@ -40,11 +54,17 @@ def cell(path: str) -> dict[str, object] | None:
     # read at the last point, the curve at all of them.
     last = max((r.get("step") or 0) for r in probe) if probe else 0
     final = [r for r in probe if (r.get("step") or 0) == last]
+    steps: dict[tuple[int, int], dict[str, float]] = collections.defaultdict(dict)
+    for r in probe:
+        if r.get("margin") is not None:
+            steps[(r.get("wave") or 1, r.get("step") or 0)][r["fact"]] = r["margin"]
+    dppl_at = {(r.get("wave") or 1, r.get("step") or 0): r["ppl_delta"] for r in loc}
     name = os.path.basename(path).split(".jsonl")[0]
     name = name[3:] if name.startswith("g2_") else name
     arm, _, seed = name.rpartition("_s")
     return {
-        "arm": arm, "seed": seed, "path": path,
+        "arm": arm, "seed": seed, "path": path, "erase_op": next(iter(ops), None),
+        "steps": dict(steps), "dppl_at": dppl_at,
         "transcript_sha": cache.get("transcript_sha"), "dream_sha": cache.get("dream_sha"),
         "init_adapter": {r.get("init_adapter_sha256") for r in rows},
         "wave2_shas": [(r.get("wave"), r.get("dream_sha")) for r in rows
@@ -97,6 +117,56 @@ def apply_floor(cells: list[dict[str, object]]) -> int:
     return false_positives
 
 
+def curve_rows(cells: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The probe curve of every cell: floor-corrected Δmargin and dPPL at each
+    probe point (DISCUSSION-20260807 sec 3.4 rule 2 reads damage at matched
+    Δmargin, which the endpoint alone cannot answer). The floor is the seed's
+    no-sleep cell at the same probe step where it has one -- the no-sleep arm
+    trains on nothing, so its final margin stands in everywhere else."""
+    floor: dict[tuple[str, tuple[int, int], str], float] = {}
+    final_floor: dict[tuple[str, str], float] = {}
+    for c in cells:
+        if c["arm"] != "nosleep":
+            continue
+        for key, facts in c["steps"].items():
+            for fact, m in facts.items():
+                floor[(str(c["seed"]), key, fact)] = m
+        for fact, m in c["fact_margin"].items():
+            final_floor[(str(c["seed"]), fact)] = m
+
+    rows: list[dict[str, object]] = []
+    for c in cells:
+        for key in sorted(c["steps"]):
+            deltas = []
+            for fact, m in c["steps"][key].items():
+                base = floor.get((str(c["seed"]), key, fact), final_floor.get((str(c["seed"]), fact)))
+                if base is not None:
+                    deltas.append(m - base)
+            if not deltas:
+                continue
+            rows.append({
+                "arm": c["arm"], "seed": str(c["seed"]), "erase_op": c["erase_op"],
+                "wave": key[0], "step": key[1], "n": len(deltas),
+                "dmargin": sum(deltas) / len(deltas),
+                "dinstall": sum(d >= INSTALL_NATS for d in deltas),
+                "dppl": c["dppl_at"].get(key),
+            })
+    return rows
+
+
+def print_curves(cells: list[dict[str, object]]) -> None:
+    rows = curve_rows(cells)
+    for seed in sorted({str(r["seed"]) for r in rows}):
+        print(f"\nseed {seed} -- probe curves (Δmargin floor-corrected per step)")
+        print(f"{'arm':22} {'erase':9} {'wave':>4} {'step':>6} {'dmarg':>7} {'dinst':>6} {'dPPL':>8}")
+        for r in sorted(rows, key=lambda r: (r["arm"], r["wave"], r["step"])):
+            if str(r["seed"]) != seed:
+                continue
+            dppl = "     n/a" if r["dppl"] is None else f"{r['dppl']:+8.4f}"
+            print(f"{r['arm']:22} {str(r['erase_op'] or '-'):9} {r['wave']:>4} {r['step']:>6} "
+                  f"{r['dmargin']:+7.2f} {r['dinstall']:>3}/{r['n']:<2} {dppl}")
+
+
 def check_hashes(cells: list[dict[str, object]]) -> None:
     """Every cell of a seed distilled the same wake transcript and the same
     dream, or nothing is pooled. Scoped to wave 1: in the multi-sleep grid a
@@ -133,7 +203,7 @@ def check_init_adapter(cells: list[dict[str, object]]) -> str | None:
     return next(iter(shas), None)
 
 
-def main(pattern: str) -> None:
+def main(pattern: str, curves: bool = False) -> None:
     paths = sorted(glob.glob(pattern))
     cells = load_cells(paths)
     skipped = [p for p in paths if p not in {c["path"] for c in cells}]
@@ -153,11 +223,15 @@ def main(pattern: str) -> None:
         print(f"raw-margin floor: the untrained no-sleep arm clears the {INSTALL_NATS:.1f}-nat bar on "
               f"{false_positives}/{floor_n} facts -- read dmarg/dinst (floor-corrected), not marg/inst")
 
-    print(f"\n{'arm':22} {'seed':5} {'rehrs':>6} {'bound':>6} {'misb':>5} {'ic':>4} {'marg':>7} "
+    if curves:
+        print_curves(cells)
+        return
+
+    print(f"\n{'arm':22} {'seed':5} {'erase':9} {'rehrs':>6} {'bound':>6} {'misb':>5} {'ic':>4} {'marg':>7} "
           f"{'inst':>5} {'dmarg':>7} {'dinst':>6} {'EM':>4} {'dlogp':>7} {'para':>5} {'tokgrad':>8} "
           f"{'lost':>6} {'dPPL':>8}")
     for c in cells:
-        print(f"{c['arm']:22} {c['seed']:5} {c['rehearse']:6.3f} {c['bound_cov']:>4}/4 {c['misbound']:>5} "
+        print(f"{c['arm']:22} {c['seed']:5} {str(c['erase_op'] or '-'):9} {c['rehearse']:6.3f} {c['bound_cov']:>4}/4 {c['misbound']:>5} "
               f"{c['ic']:>2}/4 {c['margin']:+7.2f} {c['margin_install']:>2}/{c['n']:<2} "
               f"{c['dmargin']:+7.2f} {c['dinstall']:>3}/{c['dn']:<2} {c['install']:>2}/{c['n']:<1} "
               f"{c['dlp']:+7.3f} {c['para']:5.2f} {c['token_gradients']:>8} "
@@ -182,4 +256,5 @@ def main(pattern: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "logs/g2_*_s*.jsonl")
+    argv = [a for a in sys.argv[1:] if a != "--curves"]
+    main(argv[0] if argv else "logs/g2_*_s*.jsonl", curves="--curves" in sys.argv[1:])
