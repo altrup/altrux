@@ -2,7 +2,7 @@
 # The saturation ladder (DISCUSSION-20260807 sec 4(4)), seed 1234, one rung per
 # invocation:
 #
-#   INIT_ADAPTER=../models/mamba2_780m/checkpoints/warm_start.pt ERASE_OP=deflated ./run_ladder.sh 3200 [arm...]
+#   INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ERASE_OP=deflated ./run_ladder.sh 3200 [arm...]
 #
 # Cells are named <arm>_d<steps> so summarize_grid.py's default glob picks them
 # up and pools each rung as its own arm, alongside seed 1234's no-sleep cell --
@@ -29,8 +29,8 @@ stamp() { date +%H:%M:%S; }
 init_adapter=${INIT_ADAPTER:-}
 if [ -z "$init_adapter" ]; then
   echo "refusing to run: INIT_ADAPTER is unset, and sec 3.1 registers the warm start for the whole" >&2
-  echo "session, ladder included. Pass the checkpoint:" >&2
-  echo "  INIT_ADAPTER=../models/mamba2_780m/checkpoints/warm_start.pt ./run_ladder.sh $steps" >&2
+  echo "session, ladder included. Pass the checkpoint dir (a train.py step-N/):" >&2
+  echo "  INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ./run_ladder.sh $steps" >&2
   echo "or INIT_ADAPTER=none for a deliberate cold run (the g2 reference shape)." >&2
   exit 2
 fi
@@ -39,7 +39,7 @@ if [ "$init_adapter" = none ]; then
   echo "[$(stamp)] === COLD RUN: INIT_ADAPTER=none, no warm start -- not the sec 3.1 protocol ==="
 else
   init_flag="--init-adapter $init_adapter"
-  [ -f "$init_adapter" ] || { echo "no warm-start checkpoint at $init_adapter" >&2; exit 2; }
+  [ -d "$init_adapter" ] || { echo "no warm-start checkpoint dir at $init_adapter" >&2; exit 2; }
 fi
 echo "[$(stamp)] === ladder d$steps | erase op $erase_op | warm start ${init_adapter} | arms ${arms[*]} ==="
 

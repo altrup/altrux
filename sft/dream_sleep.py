@@ -311,6 +311,26 @@ def file_sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def load_init_adapter(model, ckpt: str | Path, rank: int, alpha: float) -> str:
+    """Load a train.py checkpoint directory into an already-LoRA-attached
+    model and return its trainable.pt SHA-256 (the hash stamped on every
+    record). A rank/alpha mismatch is fatal: a warm start that silently
+    half-applied would be indistinguishable in the results from one that
+    worked."""
+    from train import load_checkpoint
+
+    ckpt = Path(ckpt)
+    config = json.loads((ckpt / "lora_config.json").read_text())
+    if (config["rank"], float(config["alpha"])) != (rank, float(alpha)):
+        raise ValueError(
+            f"{ckpt} was trained at LoRA rank {config['rank']} alpha {config['alpha']}, "
+            f"this run is rank {rank} alpha {alpha} -- the adapters do not correspond. "
+            f"Retrain the warm start at this run's config, or run at the checkpoint's."
+        )
+    load_checkpoint(model, ckpt)
+    return file_sha(ckpt / "trainable.pt")
+
+
 def token_sha(ids: Sequence[int]) -> str:
     """SHA-256 over a token sequence. A registered invariant ships with its
     machine check (sec 2): every result file records these and the summarizer
@@ -1071,8 +1091,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kl-temp", type=float, default=1.0, help="Distillation temperature (default: %(default)s)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward chunk (default: the model's DEFAULT_CHUNK_LEN)")
     parser.add_argument("--init-adapter", default=None,
-                        help="Warm-start adapter checkpoint (warm_start trainer's save_adapter output) loaded into "
-                             "the model before the dream cache, the battery or any training; its SHA-256 is stamped "
+                        help="Warm-start checkpoint directory (a train.py step-N/ dir) loaded into the model before "
+                             "the dream cache, the battery or any training; its trainable.pt SHA-256 is stamped "
                              "on every record and the summarizer refuses to pool cells that disagree")
     parser.add_argument("--lora-rank", type=int, default=DEFAULT_RANK)
     parser.add_argument("--lora-alpha", type=float, default=DEFAULT_ALPHA)
@@ -1130,10 +1150,8 @@ def main() -> None:
         raise SystemExit(f"model {model_name} has no c_capture hook -- this harness is for mamba2_780m")
     adapter_sha = None
     if args.init_adapter:
-        from lora import load_adapter
-        loaded = load_adapter(model, args.init_adapter, args.lora_rank, args.lora_alpha)
-        adapter_sha = file_sha(args.init_adapter)
-        print(f"[{ts()}] warm start {args.init_adapter}: {loaded} tensors, sha256 {adapter_sha[:12]}")
+        adapter_sha = load_init_adapter(model, args.init_adapter, args.lora_rank, args.lora_alpha)
+        print(f"[{ts()}] warm start {args.init_adapter}: sha256 {adapter_sha[:12]}")
     model.eval()
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN
@@ -1155,7 +1173,7 @@ def main() -> None:
     out_file = out_path.open("w")
 
     emit = make_emit(out_file, erase_op=args.erase_op, init_adapter_sha256=adapter_sha,
-                     init_adapter=os.path.basename(args.init_adapter) if args.init_adapter else None)
+                     init_adapter=Path(args.init_adapter).resolve().name if args.init_adapter else None)
 
     cache = None if args.build_dream_cache else load_dream_cache(cache_path)
     distractors = dict(cache.distractors) if cache else {}

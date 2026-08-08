@@ -196,49 +196,65 @@ def _adapter_model(rank: int = 2, alpha: float = 4.0) -> nn.Module:
     return apply_lora(model, ["0"], rank=rank, alpha=alpha, dropout=0.0)
 
 
-def test_a_saved_adapter_round_trips_into_a_freshly_initialised_model(tmp_path):
-    from lora import adapter_state_dict, load_adapter, save_adapter
+def _write_checkpoint(monkeypatch, tmp_path, model, rank: int, alpha: float):
+    """A real train.py checkpoint directory (trainable.pt + lora_config.json),
+    which is what --init-adapter takes."""
+    import train
+
+    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-3)
+    return train.save_checkpoint(
+        model, optimizer, step=1, epoch=0, slots=[None], next_ptr=0,
+        total_tokens=1.0, lora_rank=rank, lora_alpha=alpha,
+    )
+
+
+def _trainable(model) -> dict[str, torch.Tensor]:
+    return {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
+
+
+def test_a_train_checkpoint_round_trips_into_a_freshly_initialised_model(monkeypatch, tmp_path):
+    from dream_sleep import load_init_adapter
 
     torch.manual_seed(0)
     trained = _adapter_model()
     with torch.no_grad():
         for p in trained.parameters():
             p += 0.5
-    ckpt = tmp_path / "warm_start.pt"
-    save_adapter(trained, ckpt, rank=2, alpha=4.0)
+    ckpt = _write_checkpoint(monkeypatch, tmp_path, trained, rank=2, alpha=4.0)
 
     torch.manual_seed(1)
     fresh = _adapter_model()
-    expected = adapter_state_dict(trained)
-    assert any(not torch.equal(v, expected[k]) for k, v in adapter_state_dict(fresh).items())
+    expected = _trainable(trained)
+    assert any(not torch.equal(v, expected[k]) for k, v in _trainable(fresh).items())
 
-    load_adapter(fresh, ckpt, rank=2, alpha=4.0)
+    sha = load_init_adapter(fresh, ckpt, rank=2, alpha=4.0)
 
-    for name, tensor in adapter_state_dict(fresh).items():
+    for name, tensor in _trainable(fresh).items():
         torch.testing.assert_close(tensor, expected[name])
+    from dream_sleep import file_sha
+    assert sha == file_sha(ckpt / "trainable.pt")
 
 
 @pytest.mark.parametrize("rank,alpha", [(4, 4.0), (2, 8.0)])
-def test_an_adapter_from_a_different_lora_config_refuses_to_load(tmp_path, rank, alpha):
-    from lora import load_adapter, save_adapter
+def test_an_adapter_from_a_different_lora_config_refuses_to_load(monkeypatch, tmp_path, rank, alpha):
+    from dream_sleep import load_init_adapter
 
-    ckpt = tmp_path / "warm_start.pt"
-    save_adapter(_adapter_model(rank=rank, alpha=alpha), ckpt, rank=rank, alpha=alpha)
+    ckpt = _write_checkpoint(monkeypatch, tmp_path, _adapter_model(rank=rank, alpha=alpha), rank, alpha)
 
     with pytest.raises(ValueError, match="rank|alpha"):
-        load_adapter(_adapter_model(rank=2, alpha=4.0), ckpt, rank=2, alpha=4.0)
+        load_init_adapter(_adapter_model(rank=2, alpha=4.0), ckpt, rank=2, alpha=4.0)
 
 
-def test_an_adapter_missing_a_trained_parameter_refuses_to_load(tmp_path):
-    from lora import load_adapter, save_adapter
+def test_a_checkpoint_of_an_unrelated_model_refuses_to_load(monkeypatch, tmp_path):
+    from dream_sleep import load_init_adapter
 
-    ckpt = tmp_path / "warm_start.pt"
-    partial = _adapter_model()
-    del partial.marker_delta.delta
-    save_adapter(partial, ckpt, rank=2, alpha=4.0)
+    other = nn.Sequential(nn.Linear(4, 4))
+    other[0].weight.requires_grad_(True)
+    ckpt = _write_checkpoint(monkeypatch, tmp_path, other, rank=2, alpha=4.0)
 
-    with pytest.raises(ValueError, match="marker_delta"):
-        load_adapter(_adapter_model(), ckpt, rank=2, alpha=4.0)
+    with pytest.raises(RuntimeError):
+        load_init_adapter(_adapter_model(), ckpt, rank=2, alpha=4.0)
 
 
 def test_every_result_record_carries_the_warm_start_hash():
@@ -272,7 +288,7 @@ def test_the_warm_start_checkpoint_is_optional_and_absent_by_default():
     from dream_sleep import build_parser
 
     assert build_parser().parse_args([]).init_adapter is None
-    assert build_parser().parse_args(["--init-adapter", "w.pt"]).init_adapter == "w.pt"
+    assert build_parser().parse_args(["--init-adapter", "ckpt/step-400"]).init_adapter == "ckpt/step-400"
 
 
 def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
@@ -285,7 +301,7 @@ def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
     import dream_sleep
 
     source = inspect.getsource(dream_sleep.main)
-    load = source.index("load_adapter(")
+    load = source.index("load_init_adapter(")
     assert load < source.index("load_or_build_battery(")
     assert load < source.index("build_cache(")
     assert load < source.index("load_dream_cache(")
