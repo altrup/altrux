@@ -6,10 +6,13 @@ The protocol and the arm sequences are registered in
 notes/DISCUSSION-20260806-dream-distillation-ab-postmortem.md sec 3, which
 supersedes the 08-05 file's sequences -- implemented here verbatim. Wake is
 exactly stock: no gate, no erase, no new parameters. The erase fires only
-inside a sleep, is hard-coded at gamma = 1.0 with the state's top singular
-direction deflated out (sec 3a's probe result -- sub-1 gamma is both a no-op
-under the mixer's gated RMSNorm and an invitation to compensate), and never
-touches the wake path.
+inside a sleep, at gamma = 1.0 (sec 3a's probe result -- sub-1 gamma is both a
+no-op under the mixer's gated RMSNorm and an invitation to compensate), along
+the student's own current read query; `--erase-op` picks the operator (raw
+query, or the query with the state's top singular direction deflated out --
+DISCUSSION-20260807 sec 3.4's picker decides which). The direction is
+differentiable -- the cut follows the query -- while the deflation basis v is
+always stop-gradiented. The erase never touches the wake path.
 
   wake          -- the consolidation-null generator's transcript: --n-facts
                    entity->code facts separated by --filler-tokens of
@@ -502,6 +505,14 @@ def dream_sidecar_text(cache: DreamCache) -> str:
     if in_cue:
         parts.append("[/CUE]")
     return "".join(parts)
+
+
+def sidecar_path(cache_path: Path) -> Path:
+    """Where a cache's decoded sidecar lives: beside it, named after it. The
+    default cache (dream_cache_s<seed>.pt) keeps its historical dream_s<seed>.txt,
+    so a multi-sleep cache in the same directory gets its own file instead of
+    overwriting the single-sleep one."""
+    return cache_path.with_name(cache_path.stem.replace("dream_cache", "dream", 1) + ".txt")
 
 
 def write_dream_sidecar(cache: DreamCache, path: str | Path) -> None:
@@ -1573,7 +1584,7 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
         generator=adapter_sha or "base",
     )
     save_dream_cache(cache, cache_path)
-    sidecar = cache_path.parent / f"dream_s{args.seed}.txt"
+    sidecar = sidecar_path(cache_path)
     write_dream_sidecar(cache, sidecar)
     print(f"[{ts()}] wrote {cache_path} and {sidecar}")
     print(f"[{ts()}] transcript_sha {cache.transcript_sha}\n[{ts()}] dream_sha      {cache.dream_sha}")

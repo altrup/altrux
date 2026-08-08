@@ -18,6 +18,7 @@ from dream_sleep import (
     dream_sidecar_text,
     load_dream_cache,
     save_dream_cache,
+    sidecar_path,
     target_keep_mask,
     token_sha,
 )
@@ -133,3 +134,11 @@ def test_sidecar_marks_the_cue_spans_in_the_decoded_dream():
     assert "The" in text and " 5" in text
     assert " code is" in text.replace("[CUE]", "").replace("[/CUE]", "")
     assert text.count("[CUE]") == 1 and text.count("[/CUE]") == 1
+
+
+def test_the_sidecar_follows_the_cache_filename(tmp_path):
+    """Two caches in one directory must not clobber each other's sidecar --
+    the multi-sleep cache sits beside the single-sleep one."""
+    assert sidecar_path(tmp_path / "dream_cache_s1234.pt") == tmp_path / "dream_s1234.txt"
+    assert sidecar_path(tmp_path / "dream_cache_w4_s1234.pt") == tmp_path / "dream_w4_s1234.txt"
+    assert sidecar_path(tmp_path / "picker.pt") == tmp_path / "picker.txt"

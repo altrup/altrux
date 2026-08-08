@@ -12,7 +12,7 @@
 # runs and machines for a cell to be comparable. Leaves pilot_*/smoke_* scratch
 # files and raw intermediates behind. Override with LAMBDA_DATA_ARTIFACTS in
 # scripts/.env; empty means don't sync data at all.
-DATA_ARTIFACTS="${LAMBDA_DATA_ARTIFACTS-train*.pt eval_*.pt dream_cache_*.pt dream_s*.txt knowledge_battery_*.json}"
+DATA_ARTIFACTS="${LAMBDA_DATA_ARTIFACTS-train*.pt eval_*.pt dream_cache_*.pt dream_*.txt knowledge_battery_*.json}"
 
 _data_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
