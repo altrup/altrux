@@ -86,6 +86,24 @@ asserted on every cell (full tables in the run notes):
    double-materialized spine (`1e0f95c`), B3's equivalence check holding two
    spines (`83ec296`). Standing lesson re-confirmed: green-on-fake-backbone
    is not evidence anything runs on hardware.
+9. **Extracted this debrief from the pulled jsonls (probe curves the run
+   notes never surfaced): A was already saturated at its FIRST probe —
+   step 200, i.e. its 200th pass over the dream — on all three seeds**
+   (per-fact-sum Δmargin 200→800: +40.3→+38.7, +17.9→+15.8, +37.9→+38.2;
+   flat-to-declining, redistribution visible from the first measurement —
+   viola at −8.9 by step 200). B1-deflated at step 800 has read the dream
+   1.6 times and is still climbing steeply on 2/3 seeds. **The shared
+   d800 budget therefore compared A two hundred passes past saturation
+   with B1 mid-climb on its second reading** — different regions of two
+   unrelated exposure curves. Consequences: (a) **the A-vs-B1
+   token-gradient efficiency ratio is UNMEASURABLE from existing data** —
+   A's true requirement is only bounded in (0, 69k], so the ratio lies
+   anywhere in ~0.1×–87×, direction unknown; the 349× figure (and any
+   "corrected" variant) is retired until fine probes produce a real
+   saturation point; (b) process lesson, standing: **probe floors must
+   sit BELOW the region where saturation is plausible** — d800 with
+   probe-every-200 hid a pass-≤200 saturation through two full runs and
+   a debrief.
 
 ## 2. Decisions registered this debrief
 
@@ -145,10 +163,13 @@ asserted on every cell (full tables in the run notes):
    and THE HEADLINE OF THE NEXT RUN** (altrup's direction, amending this
    file after its first dry-run pass). Mechanism, per dream: (i) during the
    teacher's generation pass, capture the raw per-layer read queries at
-   every fact-rehearsal position (binding scan locates them; sidecar
-   records per-fact contribution counts — a zero is loud); (ii) per layer,
+   every position that passes the **state-dependency gate** (§2.9.2 —
+   self-supervised, no fact knowledge; sidecar records per-fact
+   contribution counts via the validation overlay — a zero is loud);
+   (ii) per layer,
    one SVD of the raw captured queries → orthonormal basis, rank r chosen
-   by the frozen rank rule (below), capped at n-facts+1, every layer's
+   by the frozen rank rule (below), capped only by the prod-side address
+   budget (below — never by the known fact count), every layer's
    spectrum + chosen r printed into the cache sidecar; (iii) erase the
    dream-start state once: S ← S(I − VVᵀ) — a projection, never a sum of
    per-query cuts (a summed cut over correlated queries over-subtracts
@@ -165,9 +186,15 @@ asserted on every cell (full tables in the run notes):
    won the picker; harness asserts VᵀV = I for every final basis),
    **B4-qcm** (drop v₁, the query-consensus direction — budget-permitting;
    the direct test of 08-07 §6's query-common-mode question). Rank rule:
-   two candidates — largest ratio-gap σᵢ/σᵢ₊₁ within the first n-facts+1
-   slots, and σ > c·median(σ) (the median sits in the 128-direction noise
-   tail; c ≈ 3–5) — the pilot runs both on every layer's real spectrum,
+   two candidates — largest ratio-gap σᵢ/σᵢ₊₁, and σ > c·median(σ) (the
+   median sits in the 128-direction noise tail; c ≈ 3–5) — both searched
+   within a **prod-side address budget**: an eraser may spend at most a
+   fixed fraction of the state's address dimensions per sleep (~1/16 of
+   d_state, a resource constraint statable without any fact knowledge —
+   NEVER the injected fact count, which exists only in the harness;
+   caught by altrup after two fact-count caps leaked into this rule in
+   violation of §2.9.1) — the pilot runs both on every layer's real
+   spectrum,
    prints disagreements, and the simpler rule that behaves is FROZEN
    before the box session; a spectrum with no clean structure is a
    stop-and-think finding, not a silent truncation. Framing, recorded:
@@ -198,6 +225,228 @@ asserted on every cell (full tables in the run notes):
    delivers gradient-through-the-whole-trajectory for free, which was the
    question's substance. The 2×2 template in §3 is retained for that
    eventuality.
+9. **Third-sitting amendments (B4 refinements, all altrup+Claude same
+   day):**
+   1. **Prod-validity is a standing design constraint on the eraser
+      (altrup): no ground-truth fact knowledge anywhere in the mechanism
+      path.** The known facts are evaluation instruments only. This
+      rejects fact-aware capture (probe-forced fact questions, and the
+      binding-scan position gate) as the *mechanism* — both survive as
+      validation overlays.
+   2. **Capture gate = state-dependency, self-supervised**: re-score the
+      dream's tokens under a blank (fresh) state with the same weights;
+      capture queries at positions where the with-state and blank-state
+      predictions diverge sharply (threshold from the pilot, printed).
+      A memory read is a position where the state changed the prediction —
+      defined by the state, not by a fact list. Generic reads ("the")
+      drop out automatically. Validation, printed per cache: agreement
+      (precision/recall) between the gate and the binding scan's
+      rehearsal positions.
+   3. **The warm start is RETRAINED next session, with a new special
+      token `<|endofconversation|>`** appended to every rendered
+      conversation (boundary-marker family, matching `<|endoftext|>`;
+      NOT named "end of dream" — a token means what its data placement
+      teaches, and the corpus teaches conversation-end; dream-end is a
+      sampling-time interpretation). Same regime (800 steps, 2 epochs,
+      pinned corpus). Consequence, priced and accepted (~2 box-hours):
+      the old-regime anchor cells (A, B1-deflated, no-sleep floors × 3
+      seeds), battery, and caches are rebuilt under the new adapter;
+      the 08-08 numbers become the old-adapter record and are never
+      paired cross-adapter. §3's "do NOT retrain" pin is superseded by
+      this registration.
+   4. **Dream termination**: eos (`<|endoftext|>` = end of assistant
+      turn in this corpus) is UNBANNED in dream sampling; the dream ends
+      when the model emits `<|endofconversation|>`, with `--dream-tokens`
+      demoted to a hard max (and a turn-count backstop if `<|eoc|>`
+      never fires). Dreams become variable-length and self-terminating.
+   5. **`<|endofconversation|>` as the dream-start steer**: prefixing the
+      dream with the boundary token conditions generation to open a
+      fresh conversation while the state (untouched by tokens) still
+      carries the wake memory — a single trained steer token, in-
+      distribution by construction. Registered as a pilot steer
+      candidate and the expected winner over hand-written prefixes; it
+      doubles as the multi-dream separator.
+   6. **The A-vs-B4 contrast is the targeting measurement — no new
+      control cell needed** (corrected in-debrief by altrup; a proposed
+      "reset-control" was struck when reading `distill_replay` confirmed
+      arm A's student ALREADY trains from a fresh state — `state=None`,
+      `dream_sleep.py:680` — an intact-state student would have zero KL
+      and could never learn). The spectrum as it actually stands:
+      **A = total denial** (blank student re-learns everything
+      state-dependent; diffuse signal; measured +7.72 / +1.055 dPPL /
+      836,800 token-grads), **B4 = targeted denial** (student keeps all
+      non-fact context — content the captured queries never implicate
+      cannot enter V — so the KL localizes on the facts),
+      **B1 = continuous targeted denial**. Pre-registered prediction:
+      B4 ≈ A on installs at materially lower damage and far fewer
+      effective token-gradients — "surgical A". If B4 ≈ A on damage too,
+      targeting buys nothing over blanket amnesia and the SVD apparatus
+      is decoration.
+   7. **Scrub-state is rejected; scrub-capture is parked** (§5 entry);
+      **lucid/on-policy dreaming is a named future direction** (§6).
+10. **Fourth-sitting decisions — the run's FINAL shape. This subsection
+    supersedes any earlier line it contradicts; a fresh session should
+    treat §2.10 + §3 + §4 as the complete spec.**
+    1. **Arms next run: A, B4-raw, B4-deflated. Nothing else** (altrup).
+       B1 leaves the block — the §2.7 carry-vs-once stakes are DEFERRED
+       to a later dream-set run (pairing B4 against 08-08's B1 is
+       invalid cross-adapter and cross-regime). B2tok seeds and the
+       fused-deflated rerun are struck from the docket.
+    2. **The hundreds-of-passes regime is retired program-wide**
+       (altrup: "A was supposed to be the literature control, not
+       something we made up"). Replay-literature norm (from model
+       knowledge — `RESEARCH-20260805`'s prior-art note records no
+       exposure norms): many distinct replay samples × ~1–3 exposures
+       each (DGR: fresh generator samples per batch; LLM synthetic
+       rehearsal: corpus upfront, 1–3 epochs); nobody trains hundreds
+       of epochs on one tiny sample. Next run: **one pass per dream**;
+       one optional multi-epoch variant cell (~3 epochs over the set)
+       prices the repeat knob. Motivating data in §1.9.
+    3. **Per-dream erasers** (altrup, overriding a pooled-eraser
+       proposal): each dream's V is built from that dream's own gated
+       captures and applied to that dream's fresh wake-state copy —
+       "each dream denies what it reads; everything else stays."
+       Recorded counter (Claude, once, accepted-and-overruled): the
+       rank budget already prevented pooled-V growth with N, and
+       per-dream bases are noisier estimates of the same fact subspace
+       (~4–8 queries per SVD). The pilot prints per-dream basis sizes
+       and cross-dream V-overlap so the noise cost is measured, not
+       argued. (Per-SLEEP rebuild in multi-sleep is unchanged — the
+       eraser tracks the state, which changes at sleep boundaries.)
+    4. **Carry matrix, pinned.** Student weights carry across the whole
+       dream set (one optimizer trajectory — resetting them per dream
+       would leave only dream N's learning). Student state resets at
+       every dream boundary: A from blank, B4 from a fresh erased copy
+       of the wake state (never erase-once-then-carry: carried state
+       would ferry dream k's re-written facts into dream k+1).
+       Teacher weights and logits are the frozen sleep-start snapshot,
+       cached. **All dreams are generated upfront at cache build**,
+       each from a fresh copy of the intact wake state: pairing
+       requires one shared set (generation is nondeterministic), and
+       interleaving generation with training couldn't change the
+       dreams anyway — the generator is the sleep-start snapshot by
+       registration; generation that tracks the student is the parked
+       lucid direction (§6.8).
+    5. **Probes at every dream boundary**: the full round (4-fact
+       install + battery dPPL), seconds-to-tens-of-seconds each,
+       rate-checked in the opening smoke (degrade to every-other
+       boundary if it measurably drags, recorded). The per-dream
+       install/damage curve is a primary deliverable — the step-200
+       blind spot (§1.9) is the lesson.
+    6. **The eraser goal block — what every gate/weighting/rank choice
+       optimizes (altrup: the goal matters as much as the details).**
+       Prime directive: a starting state that behaves identically to
+       the intact wake state EXCEPT where the state was supplying
+       remembered content — the KL gap opens at memory reads and
+       nowhere else. Proxies, scored on the actual wake state (oracle
+       labels allowed — validation side): **target removal** (% readout
+       removed along oracle fact-read queries; too low → no
+       consolidation pressure, degenerates toward a do-nothing cell)
+       vs **collateral removal** (% readout removed along context reads
+       and battery-item queries; too high → damage + violates
+       leave-context-in, degenerates toward A). Every scheme is a point
+       on this plane; better = closer to (100%, 0%). Decision
+       procedure, lexicographic: (i) discard schemes failing mechanical
+       sanity (VᵀV=I, address budget, non-pathological cross-dream
+       stability); (ii) a dominating scheme wins; (iii) else highest
+       target-removal among schemes with collateral below the knee of
+       the pilot's own collateral distribution; (iv) ties break toward
+       simplicity (fewer constants, hard before weighted, plainer rank
+       rule); (v) full table + chosen point into the pilot report, and
+       **the freeze happens at a team check-in — experimenter proposes,
+       team ratifies, then frozen for the box.** Named NON-goals:
+       label accuracy (precision/recall vs the binding scan is
+       diagnostic only — the state, not the labels, is what the eraser
+       touches); and **downstream install numbers — the pilot must
+       never pick the gate by mini-training outcomes** (tuning the
+       mechanism on the experiment's own metric; it would also overfit
+       per-dream noise). The eraser is chosen on state geometry alone;
+       the box run measures whether it works, blind.
+    7. **Gate-pilot design** (hard-vs-weighted + thresholds + rank
+       rule, one instrumented run): capture EVERYTHING during the
+       pilot generation (every position's query, both distributions,
+       divergence D_t) so every scheme is evaluated OFFLINE from one
+       run (harness-only instrumentation; prod runs one frozen
+       scheme). Test 1 — separability: D_t distributions for
+       binding-scan fact positions vs all else, AUC per dream and
+       pooled; **kill-condition: if fact reads don't separate from
+       context reads on divergence, the gate concept fails — stop and
+       rethink before any harness is built on it.** Test 2 — bake-off
+       over {hard@swept-τ, divergence-weighted+floor, weighted-capped
+       (√D or clip)}: per scheme build each dream's per-layer V and
+       score (a) subspace fidelity vs the oracle basis (principal
+       angles), (b) THE DECISION METRIC — the target-vs-collateral
+       erase tradeoff of §2.10.6 measured by applying V to the wake
+       state, (c) cross-dream stability. Deliverable: one table,
+       scheme × {AUC, P/R at operating point, oracle overlap, target
+       removed, collateral removed, rank distribution}; frozen choice
+       + constants per §2.10.6(v).
+    8. **Steer prefix: candidates and criterion.** Candidates —
+       **no-prefix** (the incumbent: every dream this program has ever
+       generated starts bare, and 08-08's free spans rehearsed 4/4
+       from state alone), `<|endofconversation|>`, `<|eoc|>[USER]`,
+       `<|eoc|>[USER]␣` (literal-space variant), and the
+       instruction-text fallback ("<|eoc|> You are now dreaming,
+       generate dreams based on past events [USER]") — measured, not
+       argued, though the 780m's instruction-following prior is ~nil.
+       Token candidates are re-checked after the §3(0) retrain (the
+       pilot's old adapter has never seen `<|eoc|>`). **Criterion:
+       coverage FEASIBILITY, not rehearsal-rate maximization** (altrup)
+       — a candidate qualifies if every fact appears somewhere across
+       an affordable set (N ≤ ~16 with headroom); among qualifiers
+       take the simplest, never the densest (density-optimizing would
+       re-create the cue-stuffed dreams this regime retired). Unrelated
+       and off-topic dreams are explicitly fine.
+    9. **Packing is MIXED, with a small recap fraction** (altrup's
+       hallucination concern, sharpened: packing exclusively unrelated
+       conversations after `<|eoc|>` trains the model to IGNORE ITS
+       STATE at the boundary — an anti-recall signal aimed at the
+       exact position every dream starts from). Most packed boundaries
+       are followed by an unrelated conversation (clean fresh-start);
+       a small fraction (~⅓ or less — the filler-synthetic
+       regurgitation rejection is the watch-item, and the acceptance
+       check's repeat clause is the alarm) are followed by a
+       MECHANICAL RECAP of the preceding conversation (quote/shuffle
+       earlier turns into a short follow-up exchange). Post-boundary
+       distribution becomes "maybe new, maybe recall" — dream
+       semantics, trained. In prod the `<|eoc|>`-means-dreaming
+       association is TRAINED, never prompted; when that vision
+       matures, align with the 2.7B chain corpus's `[SLEEP]`-token
+       convention instead of inventing a parallel one.
+    10. **Sampling policy** — day/wake generation: `<|endoftext|>`
+        normal (ends the agent's turn); `<|endofconversation|>`
+        **masked from logits** (sleep is system-triggered; the model
+        can never put itself to sleep). Dream generation: both freely
+        sampled; `<|endoftext|>` is dream-internal turn structure and
+        ends nothing; `<|endofconversation|>` ends the dream
+        (`--dream-tokens` a hard max, turn-count backstop). Wake is
+        teacher-forced in-experiment, so the day-side mask is a
+        registered runtime/backend policy, not next-run code.
+    11. **Rich wake transcripts**: wake = facts + heterogeneous
+        distractor content (the existing bystander machinery —
+        off-format facts, different relation templates — plus a slice
+        of ordinary ultrachat dialogue), because the A-vs-B4 contrast
+        is entirely about non-fact state content and 40 tokens of
+        filler starves it, and real waking holds many things (08-07
+        §2.7 pre-cleared capacity: 7–11 items bind fine).
+        **Automated collision guard**: the transcript builder checks
+        distractor text against fact names/codes AND battery answer
+        strings and refuses to build on overlap (the parcel→shipment
+        precedent). **Context-leakage probe class**: post-training
+        fresh-state QA on distractor content — neither arm should
+        install it; leakage = untargeted consolidation, measured at
+        its origin. **Sequencing constraint: the pilot runs on the NEW
+        wake shape** — N, prefix, and gate thresholds all inherit from
+        rehearsal rates off the rich state; a crowded state may lower
+        them, and "un-cued dreams can't cover facts from a realistic
+        state" (kill-condition firing) would itself be a headline
+        regime finding, learned locally for free.
+    12. **A's mechanics, for the record after an in-debrief
+        misstatement**: `distill_replay` trains the student from a
+        FRESH state (`state=None`, `sft/dream_sleep.py:680`) — an
+        intact-state student would have zero KL and could never learn.
+        A = total denial; B4 = targeted denial; the A-vs-B4 pairing IS
+        the targeting measurement (§2.9.6).
 
 ## 3. Next run plan — in order, on the box (GH200)
 
@@ -221,34 +470,46 @@ Regime unchanged unless stated: `--n-facts 4 --filler-tokens 40
 --probe-every 200`, floor-corrected margin, `--init-adapter` the step-800
 warm start (`models/mamba2_780m/checkpoints/epoch-2/step-800`, trainable.pt
 sha256 `d4bf2e3527befd5f78234a1baf3238624a956f78d3c24f1091d048be9ea08669` —
-pulled home; re-upload with the launch, do NOT retrain a new warm start:
-every registered pairing depends on this exact adapter). The three 512-token
-seed caches and the battery likewise travel back with the launch
-(`lambda_data_artifacts.sh` now carries `sft/data` by default — §6.3).
+pulled home; SUPERSEDED by §2.9.3: the session opens by retraining the
+warm start with `<|endofconversation|>` and rebuilding anchors, floors,
+battery, and caches under the new adapter, whose hash replaces this pin in
+the run notes. The 08-08 caches/battery still travel back for the
+old-adapter record and the conditional deep block.
+
+**(0) Warm-start retrain** (§2.9.3): rendered corpus with
+`<|endofconversation|>` appended per conversation, 800 steps / 2 epochs,
+acceptance check per §2.1's token-level threshold (now also counting
+`<|endofconversation|>` emission sanity in a decoded dream); then battery
+deletion + rebuild, anchor cells (A, B1-deflated, no-sleep × 3 seeds,
+old regime) rerun under the new adapter.
 
 **(1) The B4 block — the session's headline (altrup), merged with the
-regime bridge.** Per seed (all three): build the multi-dream cache — N
-fresh un-spliced steered dreams (N and the steer prefix from the pilot),
-teacher logits + captured fact queries + per-layer spectra in the cache;
-aggregate binding gate ≥k dreams per fact. Arms on the shared dream set,
-all at normal-training footprint (co-schedulable — these are NOT fused
-cells; the 08-08 solo-tenant rules don't apply to them): **B4-raw,
-B4-deflated** (B4-qcm budget-permitting), plus the bridge controls **A**
-and **B1-deflated** on the same sets. Budget semantics per §3(2)'s pin:
-`--distill-steps` stays the TOTAL step budget, spread p ≈ 800/N per
-dream; B4's erase re-applied at each dream start (idempotent). Read
-everything on the standing frame (ratio), paired against the 08-08
-same-seed d800 numbers. Two registered verdicts come out of this block:
-the regime adoption rule (§3(2)) and the B4-vs-B1 stakes (§2.7).
+regime bridge. Arms: A, B4-raw, B4-deflated — NOTHING ELSE (§2.10.1;
+B4-qcm only on explicit leftover budget).** Per seed (all three): build
+the multi-dream cache — N fresh un-spliced dreams from the RICH wake
+transcript (§2.10.11), each self-terminating (§2.10.10), steer prefix
+per the pilot's §2.10.8 verdict, teacher logits + gated captured queries
++ per-layer spectra + per-dream erasers in the cache; aggregate coverage
+gate ≥k dreams per fact; sanity read per the standing rule (decoded
+dream + termination-reason counts + repeat counts) before any cell.
+Training per §2.10.4's carry matrix: **one pass per dream** (§2.10.2; the
+optional ~3-epoch variant cell prices repetition), probes at every dream
+boundary (§2.10.5). All three arms are ordinary sequence training —
+co-schedulable; the 08-08 solo-tenant rules don't apply to them (A
+doubles as the total-denial endpoint of §2.9.6's spectrum — no separate
+reset cell exists). Read
+everything on the standing frame (ratio), against this session's own
+floors (08-08 numbers are old-adapter record only). The block's
+registered verdicts: the A-vs-B4 targeting stakes (§2.9.6) and the
+raw-vs-deflated aggregate operator question.
 
-**(2) B2tok-deflated, seeds 2345/3456** — completes the gentlest-arm
-measurement to 3 seeds; per-token cells, cheap, co-schedulable.
+**(2) STRUCK (§2.10.1)**: B2tok seeds, the fused-deflated rerun, and
+B1-deflated's d12800 rung are all off this docket. B1's rung claim and
+the §2.7 carry-vs-once stakes wait for a later dream-set run that
+invites B1 back.
 
-**(3) Budget-permitting, in order**: the fused family's deflated rerun —
-B2fd-deflated + one B3f-deflated pairing (licenses the §2.2 substitute) —
-under the STANDING 08-08 footprint rules (solo tenant, `--cf-batch 128`;
-the checkpointing refactor is deferred, so these numbers are still
-valid); then B1-deflated d12800; then the competition probe (both below).
+**(3) Budget-permitting**: the multi-epoch A/B4 variant cell (§2.10.2),
+then the competition probe (below).
 
 **(4, CONDITIONAL — §2.8) The deep block** — runs only if B4's results
 leave the depth question standing and the checkpointing harness has been
@@ -300,21 +561,21 @@ teacher logits cached per dream; the whole set shared by every arm
 (the shared-dream invariant, pluralized — the *set* hash asserted into
 every result jsonl, layout and hash shape the implementer's call);
 aggregate binding gate: every fact bound in ≥k dreams (k from the pilot).
-**Budget semantics, pinned: `--distill-steps` stays the TOTAL optimizer-step
-budget for the cell (800), spread p ≈ 800/N passes per dream — not
-per-dream** — so the pairing against the 08-08 d800 numbers is at matched
-total steps within each arm's own currency. Arms: per step (1).
-**Adoption rule: the new regime
-wins iff its install-to-forgetting ratio ≥ the old regime's same-seed pairs
-AND retrieval (EM/para) is not worse; multi-sleep then runs on the winner.**
-Old and new regime numbers are never pooled (different dreams).
+**Budget semantics, superseded by §2.10.2: ONE pass per dream** — the
+hundreds-of-passes regime is retired; the optional multi-epoch variant
+cell is the only place repetition appears, priced separately. Arms: per
+step (1). The old-regime adoption rule is moot — the retrain (§2.9.3)
+severed cross-adapter pairing, so the old regime is simply retired and
+this regime stands on its own floors; multi-sleep runs on it.
+Old and new regime numbers are never pooled (different dreams, different
+adapter).
 
-**Detail for step (3)'s tail items**: B1-deflated d12800 (seed 1234,
-`--probe-every 1600`; it alone holds a rung claim, §1.6); the competition
-probe — one paired cell, seed 1234, `--n-facts 2` vs the existing 4-fact
+**Detail for step (3)'s tail item**: the competition
+probe — one paired cell, seed 1234, `--n-facts 2` vs the 4-fact
 result, same wake-transcript template: if per-fact margins at 2 facts
 exceed the 4-fact per-fact margins materially, within-cone competition
-gains direct support.
+gains direct support. (B1-deflated's d12800 rung left the docket with B1
+— §2.10.1.)
 
 **(5) Multi-sleep: NOT this session** (§2.4). Next-next session, on the
 bridge's winning regime, per 08-07 §3.7's arm list amended by whatever §2.3
@@ -325,9 +586,11 @@ where testable, but §1.8 stands — hardware-shaped code needs a hardware
 smoke, so step (1) opens with one short B4 cell at a token budget before
 committing the block)
 
-- **The B4 harness** (the gate's centerpiece): (a) query capture at
-  fact-rehearsal positions during cache build (reuse `Model.c_capture` —
-  the capture plumbing `erase_probe.py` already uses), per-fact counts to
+- **The B4 harness** (the gate's centerpiece): (a) query capture behind
+  the state-dependency gate (§2.9.2) during cache build (reuse
+  `Model.c_capture` — the capture plumbing `erase_probe.py` already
+  uses; the blank-state re-score pass, the divergence threshold plumbing,
+  and the binding-scan validation overlay), per-fact counts to
   the sidecar; (b) the per-layer SVD aggregate: shared basis, both rank
   rules computed and printed (§2.7), the three variant post-processings
   (raw / deflated-vs-state-top-dirs with re-orthonormalization / qcm),
@@ -362,13 +625,14 @@ committing the block)
   `dream_cache_s1234.pt` — do not regenerate), 512 tokens, temp 0.7,
   distinct generation seeds, on this machine (`HSA_OVERRIDE_GFX_VERSION`
   set; the manual mixer loop is slow here — overnight is acceptable, local
-  time is free). The prefix/pilot circularity is resolved deliberately:
-  draft 2–3 candidate prefixes (short, non-instruction — e.g. a bare
-  marker-format opening), run the pilot over all candidates, select on
-  per-fact rehearsal rate, record every candidate's numbers. Output:
-  per-fact rehearsal rate → N = smallest count where every fact is bound in
-  ≥k dreams with ~1.5× headroom, k = 2 unless the rates argue otherwise
-  (record the reasoning). The pilot additionally reports, per §2.7:
+  time is free). Candidates and criterion per §2.10.8 — {no-prefix,
+  `<|eoc|>`, `<|eoc|>[USER]`, `<|eoc|>[USER]␣`, instruction-text
+  fallback}, selected on coverage FEASIBILITY, never rehearsal-rate
+  maximization; token candidates re-checked after the §3(0) retrain
+  (the pilot's old adapter has never seen `<|eoc|>`); the pilot runs on
+  the RICH wake shape (§2.10.11 sequencing). Output: N = smallest count
+  where every fact is bound in ≥k dreams with ~1.5× headroom, k = 2
+  unless the rates argue otherwise (record the reasoning). The pilot additionally reports, per §2.7:
   per-fact **within-dream repeat counts** (B4's re-installation window),
   and the per-layer **σ spectra of the captured queries with both rank
   rules applied** — where the rules disagree, print it; the surviving
@@ -377,6 +641,25 @@ committing the block)
   N > ~16 dreams under the best candidate, the no-splicing regime is
   unaffordable as specced — stop, report, and the bridge is redesigned
   (stronger steering) rather than launched.**
+- **Tokenizer + termination plumbing**: `<|endofconversation|>` into the
+  model interface's `SPECIAL_TOKENS`, `prepare_data.py` appending it per
+  conversation, dream sampling unbanning eos and stopping on
+  `<|endofconversation|>` with the `--dream-tokens` max and turn-count
+  backstop (§2.9.4) — all TDD-able locally; the retrain itself is box
+  work (§3(0); no local training).
+- **Mixed packing** (§2.10.9): `prepare_data.py` packs 2–3 conversations
+  per example with `<|endofconversation|>` between and at the end; a
+  small fraction of boundaries followed by a mechanical same-conversation
+  recap exchange instead of an unrelated conversation. Post-`<|eoc|>`
+  acceptance clause: after the retrain, a decode conditioned on
+  `<|eoc|>` alone must open a fresh well-formed `[USER]` conversation
+  (floor set from its first measurement).
+- **Rich wake transcript builder** (§2.10.11): facts + bystander items +
+  ultrachat slice; the automated fact/battery collision guard (refuses
+  to build on overlap); the context-leakage probe class.
+- **Gate-pilot instrumentation** (§2.10.7): capture-everything cache
+  path for pilot runs + the offline scheme-sweep/scoring tooling
+  producing the §2.10.7 table.
 - `summarize_grid.py`: extend to the multi-dream cache jsonls; investigate
   the `--fallback final_floor` no-rows behaviour the run notes flagged
   (ladder tables were computed by hand this run).
@@ -432,6 +715,26 @@ committing the block)
   discriminant (fails even the cos-0.6 two-vector case). Threshold rules
   must be scale-invariant, σ₁-robust, and tail-aware — hence §2.7's two
   candidates and the pilot bake-off.
+- **Scrub-state initialization** (run the dream once with the B1-style
+  erase hook, no training, use the final state to train from position 0)
+  — rejected on two contaminations: (a) time travel — the student's
+  start state contains all 512 dream writes including the tokens it is
+  then trained to predict, breaking the teacher/student same-history
+  pairing; (b) the facts return via writes — the hook ablates reads
+  only, so the dream's rehearsal text re-writes the facts into the
+  scrubbed state, and with no hook at training time nothing cuts them
+  again. The salvage — **scrub-captured queries** (harvest the erased
+  pass's read directions, state discarded) — is PARKED, not registered:
+  try it only if the state-dependency-gated teacher capture measurably
+  misses (altrup lukewarm).
+- **Fact-aware eraser construction** (probe-forced fact questions;
+  binding-scan position gating of the capture) — rejected as mechanism
+  by §2.9.1's prod-validity constraint; retained as validation overlays
+  only.
+- **A separate "reset-control" cell** — struck (§2.9.6): the blank-state
+  student is not a new arm, it is arm A as implemented
+  (`distill_replay`, fresh state, `dream_sleep.py:680`). The targeting
+  question is answered by the existing A-vs-B4 pairing.
 - **Erase at fixed token intervals ("chunk-boundary erase")** as the
   B1/B4 midpoint — proposed and withdrawn this debrief: an arbitrary
   hard-coded joint; dream boundaries are the semantic joints, and the
@@ -467,13 +770,42 @@ committing the block)
    ~linearly, if compounding is the mechanism).
 7. **The ~0.75 query common mode** (08-07 §6) — now directly testable:
    B4-qcm is its first designed cell.
-8. Carried unchanged: warm-start's effect on dream binding (multi-sleep
+8. **Lucid / on-policy dream distillation** (named this debrief): the
+   student (erased start, live weights) samples the dream token by token;
+   the intact frozen teacher runs in parallel on the same stream and
+   supplies per-position logits; KL trains the student in the states it
+   actually visits, including post-error states — the standard cure for
+   the train-on-teacher/deploy-on-self mismatch, and the closest
+   construction to "the dreamer steers the dream while the memory system
+   annotates it". Registered constraints: full student authorship without
+   rehearsal seeding reruns generate-while-draining (1/4 coverage, floor
+   — 08-06), so the viable form is teacher-seeded cue islands with
+   student-authored continuation; every pass produces a fresh dream, so
+   the shared-dream pairing across arms does not exist for this arm (its
+   comparisons are within-arm or vs-its-own-floor); per-token generation
+   economics (two forwards + backward per token, no cached teacher
+   logits). Future arm, not next-run work.
+9. Carried unchanged: warm-start's effect on dream binding (multi-sleep
    measures it), value-side erase, deflation-k under multi-cluster states,
    soft dreaming.
 
 ## 7. Housekeeping
 
 - Run notes banked as `6abf671` before discussion (flow rule).
+- **Fourth sitting (§2.10, same day)**: probe-curve extraction from the
+  pulled jsonls (§1.9), the arm reduction, the passes retirement, per-
+  dream erasers, the goal block, the gate-pilot design, mixed packing,
+  rich wake, and the A-mechanics correction (§2.10.12) — recorded after
+  the third sitting's commit was deliberately reverted so the file
+  lands as one unit. The next session (local gate work, then box) is
+  expected to run from THIS FILE COLD — §2.10 + §3 + §4 are the spec,
+  §2.7–2.9 the rationale; nothing load-bearing lives only in the
+  conversation. The re-dry-run before launch is still required and now
+  covers all of it.
+- The `altrux-debrief` command gains a standing rule from this session
+  (altrup): a DISCUSSION file must register the GOAL — what is being
+  optimized for, what the mechanism is FOR — with the same rigor as the
+  mechanism details. [implemented this debrief]
 - **Same-day amendment (B4)**: §2.7/2.8, the §3 reorder, and the §4/§5/§6
   changes above were added AFTER this file's first dry-run pass, in a
   second debrief sitting (altrup's direction). The B4 sections have NOT
