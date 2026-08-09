@@ -21,7 +21,11 @@ TARGET_LORA_MODULES = ["in_proj", "out_proj"]
 # — keep that separator a literal space to match the SFT training format exactly.
 USER_OPEN = "[USER]"
 ASST_OPEN = "[ASSISTANT]"
-SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN]
+# Conversation boundary, of the same family as <|endoftext|> (which ends an
+# assistant turn in this corpus). Named for what the data teaches it -- the end
+# of a conversation -- not for the dream-end reading sampling puts on it.
+EOC = "<|endofconversation|>"
+SPECIAL_TOKENS = [USER_OPEN, ASST_OPEN, EOC]
 
 # Default tokens per gradient-checkpointing block (see
 # Model.set_grad_checkpoint). This backbone carries no fast-weight memory, so

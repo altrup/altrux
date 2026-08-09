@@ -1,5 +1,6 @@
 from .model import (
     ASST_OPEN,
+    EOC,
     MODEL_ID,
     SPECIAL_TOKENS,
     TARGET_LORA_MODULES,
@@ -16,6 +17,7 @@ __all__ = [
     "TARGET_LORA_MODULES",
     "USER_OPEN",
     "ASST_OPEN",
+    "EOC",
     "SPECIAL_TOKENS",
     "Model",
     "load_base",

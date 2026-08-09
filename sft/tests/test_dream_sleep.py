@@ -1,5 +1,5 @@
-"""CPU tests for dream_sleep's pure pieces: the frozen-teacher bypass, the
-sampling ban, the state erase applied per layer, the paraphrase probes, and
+"""CPU tests for dream_sleep's pure pieces: the frozen-teacher bypass, dream
+termination, the state erase applied per layer, the paraphrase probes, and
 the dream's fact-rehearsal accounting."""
 
 import pytest
@@ -64,16 +64,9 @@ def test_frozen_teacher_zeroes_and_restores_the_marker_delta():
     assert model.marker_delta.delta.abs().max().item() == 0.25
 
 
-def test_sample_next_never_emits_a_banned_token():
-    logits = torch.full((1, 5), -20.0)
-    logits[0, 3] = 20.0  # EOS would dominate every sample
-    for _ in range(20):
-        assert sample_next(logits, temperature=1.0, banned=(3,)).item() != 3
-
-
 def test_sample_next_is_greedy_at_zero_temperature():
     logits = torch.tensor([[0.1, 5.0, 0.2]])
-    assert sample_next(logits, temperature=0.0, banned=()).item() == 1
+    assert sample_next(logits, temperature=0.0).item() == 1
 
 
 def test_erase_state_zeroes_each_layer_s_own_deflated_read():
@@ -393,23 +386,22 @@ def _moved(model, before) -> bool:
     return any(not torch.equal(p, b) for p, b in zip(model.parameters(), before, strict=True))
 
 
-def test_teacher_dream_caches_a_position_per_token_and_bans_eos():
+def test_teacher_dream_caches_a_position_per_token():
     model, _, wake, seed = _tiny_setup()
 
-    dream = teacher_dream(model, wake, seed, n_tokens=8, temperature=1.0, banned=(0,),
+    dream = teacher_dream(model, wake, seed, n_tokens=8, temperature=1.0,
                           drain=False, decode_token=lambda i: f"<{i}>", needles=["<1>"])
 
     assert dream.tokens.shape == (1, 8)
     assert dream.logits.shape[0] == 8
     assert all(len(q) == len(model.layers) for q in dream.queries) and len(dream.queries) == 8
-    assert 0 not in dream.tokens.tolist()[0]
     assert len(dream.token_texts) == 8
 
 
 def test_cue_schedule_forces_every_cue_into_the_dream_in_rotation():
     model, _, wake, seed = _tiny_setup()
 
-    dream = teacher_dream(model, wake, seed, n_tokens=24, temperature=1.0, banned=(),
+    dream = teacher_dream(model, wake, seed, n_tokens=24, temperature=1.0,
                           drain=False, decode_token=_sentences, needles=[],
                           cues=[[3, 4], [5, 6]], cue_every=6)
 
@@ -423,8 +415,8 @@ def test_cue_schedule_leaves_the_answer_slot_free_to_come_from_the_state():
     sampled, or the dream would be teacher-forced text rather than recall."""
     model, _, wake, seed = _tiny_setup()
 
-    a = teacher_dream(model, wake, seed, 20, 1.0, (), False, _sentences, [], cues=[[3, 4]], cue_every=5)
-    b = teacher_dream(model, wake, seed, 20, 1.0, (), False, _sentences, [], cues=[[3, 4]], cue_every=5)
+    a = teacher_dream(model, wake, seed, 20, 1.0, False, _sentences, [], cues=[[3, 4]], cue_every=5)
+    b = teacher_dream(model, wake, seed, 20, 1.0, False, _sentences, [], cues=[[3, 4]], cue_every=5)
 
     assert a.tokens.tolist() != b.tokens.tolist()
 
@@ -435,7 +427,7 @@ def test_cue_greedy_decodes_the_answer_span_deterministically():
     while the rest of the dream stays sampled."""
     model, _, wake, seed = _tiny_setup()
 
-    dream = teacher_dream(model, wake, seed, n_tokens=18, temperature=1.0, banned=(),
+    dream = teacher_dream(model, wake, seed, n_tokens=18, temperature=1.0,
                           drain=False, decode_token=_sentences, needles=[],
                           cues=[[3, 4]], cue_every=4, cue_greedy=3)
 
@@ -449,7 +441,7 @@ def test_cue_greedy_decodes_the_answer_span_deterministically():
 
 def test_no_cues_leaves_generation_untouched():
     model, _, wake, seed = _tiny_setup()
-    kwargs = dict(seed_ids=seed, n_tokens=8, temperature=0.0, banned=(), drain=False,
+    kwargs = dict(seed_ids=seed, n_tokens=8, temperature=0.0, drain=False,
                   decode_token=str, needles=[])
 
     torch.manual_seed(0)
@@ -460,9 +452,54 @@ def test_no_cues_leaves_generation_untouched():
     assert plain.tokens.tolist() == empty.tokens.tolist()
 
 
+def _forced(model, token_id: int):
+    """Bias the head so greedy decoding always emits `token_id`."""
+    with torch.no_grad():
+        model.head.weight.zero_()
+        model.head.bias.zero_()
+        model.head.bias[token_id] = 10.0
+    return model
+
+
+def test_teacher_dream_ends_at_the_conversation_end_token():
+    model, _, wake, seed = _tiny_setup()
+    _forced(model, 5)
+
+    dream = teacher_dream(model, wake, seed, n_tokens=16, temperature=0.0, drain=False,
+                          decode_token=str, needles=[], stop_id=5)
+
+    assert dream.stop_reason == "eoc"
+    assert dream.tokens.shape[1] < 16
+    assert dream.tokens.shape[1] == dream.logits.shape[0] == len(dream.token_texts)
+
+
+def test_teacher_dream_runs_to_the_token_budget_when_the_stop_token_never_fires():
+    model, _, wake, seed = _tiny_setup()
+    _forced(model, 4)
+
+    dream = teacher_dream(model, wake, seed, n_tokens=8, temperature=0.0, drain=False,
+                          decode_token=str, needles=[], stop_id=5)
+
+    assert dream.stop_reason == "max-tokens"
+    assert dream.tokens.shape == (1, 8)
+
+
+def test_teacher_dream_stops_on_the_turn_backstop_when_the_stop_token_never_fires():
+    """Unbanned eos is ordinary dream-internal turn structure, so a dream that
+    never emits <|eoc|> is bounded by turns as well as by tokens."""
+    model, _, wake, seed = _tiny_setup()
+    _forced(model, 4)
+
+    dream = teacher_dream(model, wake, seed, n_tokens=64, temperature=0.0, drain=False,
+                          decode_token=str, needles=[], stop_id=5, turn_id=4, max_turns=3)
+
+    assert dream.stop_reason == "turn-backstop"
+    assert dream.tokens.shape == (1, 3)
+
+
 def test_teacher_dream_drains_the_state_it_generates_from():
     model, _, wake, seed = _tiny_setup()
-    kwargs = dict(seed_ids=seed, n_tokens=6, temperature=0.0, banned=(), decode_token=str, needles=[])
+    kwargs = dict(seed_ids=seed, n_tokens=6, temperature=0.0, decode_token=str, needles=[])
 
     intact = teacher_dream(model, wake, drain=False, **kwargs)
     drained = teacher_dream(model, wake, drain=True, **kwargs)
@@ -472,7 +509,7 @@ def test_teacher_dream_drains_the_state_it_generates_from():
 
 def test_distill_replay_and_sft_take_their_optimizer_steps():
     model, opt, wake, seed = _tiny_setup()
-    dream = teacher_dream(model, wake, seed, 6, 0.0, (), False, str, [])
+    dream = teacher_dream(model, wake, seed, 6, 0.0, False, str, [])
     before = [p.detach().clone() for p in model.parameters()]
 
     distill_replay(model, opt, dream, steps=4, chunk_len=3, kl_temp=1.0, on_step=lambda s, l: None)
@@ -488,7 +525,7 @@ def test_distill_live_trains_online_and_returns_the_drained_state():
     before = [p.detach().clone() for p in model.parameters()]
     wake_before = wake.ssm_states[0].clone()
 
-    state, dream = distill_live(model, opt, wake, seed, n_tokens=5, temperature=1.0, banned=(0,),
+    state, dream = distill_live(model, opt, wake, seed, n_tokens=5, temperature=1.0,
                                 kl_temp=1.0, accum=1, decode_token=str, needles=[],
                                 on_step=lambda s, l: None)
 
@@ -498,7 +535,7 @@ def test_distill_live_trains_online_and_returns_the_drained_state():
 
 
 def _fixed_dream(model, wake, seed, n_tokens=4):
-    return teacher_dream(model, wake, seed, n_tokens, 0.0, (), False, str, [])
+    return teacher_dream(model, wake, seed, n_tokens, 0.0, False, str, [])
 
 
 def _counterfactual_run(in_place: bool, steps: int = 1, deep: bool = False):
@@ -691,7 +728,7 @@ def _built_cache(tmp_path, args):
     facts = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]
     transcript = torch.tensor([[1, 2, 3, 4, 5, 6]])
     cache = build_cache(model, args, tmp_path / "dream_cache_s1234.pt", transcript, facts, 3,
-                        encode, decode, _FakeTokenizer(), USER, ASST)
+                        encode, decode, _FakeTokenizer(), USER, ASST, None)
     return model, opt, wake, cache, facts, transcript, encode, decode
 
 
@@ -734,7 +771,7 @@ def _warm_started_cache(tmp_path, args, adapter_sha):
     cache = build_cache(model, args, tmp_path / f"dream_{adapter_sha or 'base'}.pt",
                         torch.tensor([[1, 2, 3, 4, 5, 6]]),
                         [Fact("osprey", "bird", "1 2 3 4 5")], 3,
-                        *_fake_io(), _FakeTokenizer(), USER, ASST, adapter_sha=adapter_sha)
+                        *_fake_io(), _FakeTokenizer(), USER, ASST, None, adapter_sha=adapter_sha)
     return cache, scales
 
 
@@ -774,7 +811,7 @@ def test_run_sleep_trains_every_arm_from_the_cached_dream(tmp_path, arm):
     records: list[dict] = []
 
     carried = run_sleep(arm, model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
-                        encode, decode, _FakeTokenizer(), USER, ASST, records.append,
+                        encode, decode, _FakeTokenizer(), USER, ASST, records.append, None,
                         lambda step: records.append({"phase": "periodic", "step": step}))
 
     assert _moved(model, before)
@@ -794,7 +831,7 @@ def test_run_sleep_cuts_along_the_operator_the_cell_was_launched_with(tmp_path):
         args = _sleep_args(erase_op=op)
         model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
         run_sleep("counterfactual", model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
-                  encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, lambda step: None)
+                  encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, lambda step: None, None)
         trained[op] = [p.detach().clone() for p in model.parameters()]
 
     assert any(not torch.equal(a, b) for a, b in zip(trained["raw"], trained["deflated"], strict=True))
@@ -808,7 +845,7 @@ def test_run_sleep_streams_the_probe_battery_on_the_registered_cadence(tmp_path)
     probes: list[int] = []
 
     run_sleep("counterfactual", model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
-              encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, probes.append)
+              encode, decode, _FakeTokenizer(), USER, ASST, lambda r: None, probes.append, None)
 
     assert probes == [2, 4]  # not at the last step -- the end-of-sleep battery covers that
 
@@ -833,7 +870,7 @@ def test_a_later_wave_generates_its_own_dream_from_the_carried_state(tmp_path):
 
     model.forward = spy
     dream = generate_wave_dream(model, args, carried, facts, encode, decode, _FakeTokenizer(),
-                                USER, ASST, teacher="base")
+                                USER, ASST, teacher="base", stop_id=None)
 
     assert dream.tokens.shape == (1, args.dream_tokens)
     assert len(dream.queries) == args.dream_tokens
@@ -860,13 +897,13 @@ def test_the_base_teacher_generates_with_the_adapters_bypassed(tmp_path):
 
     model.forward = spy
     generate_wave_dream(model, args, carried, [Fact("oboe", "instrument", "3 7 8 5 0")],
-                        encode, decode, _FakeTokenizer(), USER, ASST, teacher="base")
+                        encode, decode, _FakeTokenizer(), USER, ASST, teacher="base", stop_id=None)
     assert seen and all(s == 0.0 for s in seen)
     assert model.lora.scale == 3.0  # restored
 
     seen.clear()
     generate_wave_dream(model, args, carried, [Fact("oboe", "instrument", "3 7 8 5 0")],
-                        encode, decode, _FakeTokenizer(), USER, ASST, teacher="current")
+                        encode, decode, _FakeTokenizer(), USER, ASST, teacher="current", stop_id=None)
     assert seen and all(s == 3.0 for s in seen)  # alpha/rank
 
 
@@ -1142,7 +1179,7 @@ def test_run_sleep_stamps_the_fused_arm_and_the_warm_start_on_every_record(tmp_p
     emit = make_emit(buf, erase_op=args.erase_op, init_adapter_sha256="deadbeef", init_adapter="warm_start.pt")
 
     carried = run_sleep(arm, model, opt, args, 1, wake, transcript, [(1, f) for f in facts], 3, cache,
-                        encode, decode, _FakeTokenizer(), USER, ASST, emit, lambda step: None)
+                        encode, decode, _FakeTokenizer(), USER, ASST, emit, lambda step: None, None)
 
     records = [json.loads(line) for line in buf.getvalue().splitlines()]
     assert _moved(model, before)
@@ -1174,7 +1211,7 @@ def _wave_sleep(tmp_path, arm, wave, teacher="current", wake=None, model=None, r
     carried = run_sleep(arm, model, opt, args, wave, wake or built[2],
                         transcript if transcript is not None else built[5], seen, 3, cache,
                         encode, decode, _FakeTokenizer(), USER, ASST,
-                        (records if records is not None else []).append, lambda step: None,
+                        (records if records is not None else []).append, lambda step: None, None,
                         verify=verify, committed=committed)
     return carried, cache
 
@@ -1215,7 +1252,8 @@ def test_each_sleep_s_dream_comes_from_its_own_carried_state(tmp_path):
     model, _, _, _, _, _, encode, decode = _built_cache(tmp_path, args)
     facts = [Fact("marimba", "instrument", "5 4 6 6 9")]
     dreams = [generate_wave_dream(model, args, FakeState([torch.randn(1, 1, 1, 4) * scale for _ in range(2)]),
-                                  facts, encode, decode, _FakeTokenizer(), USER, ASST, teacher="current")
+                                  facts, encode, decode, _FakeTokenizer(), USER, ASST, teacher="current",
+                                  stop_id=None)
               for scale in (1.0, 7.0)]
 
     assert not torch.equal(dreams[0].logits, dreams[1].logits)

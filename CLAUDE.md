@@ -44,7 +44,8 @@ Each model is a folder in `models/` at the repo root containing `model.py` (impl
 | `QUANTIZE_LORA_BASE` | `bool` (optional) | If set and `True`, `load_base` quantizes `TARGET_LORA_MODULES` to 4-bit via `models.common.quantize_lora_targets` (QLoRA). Omitted entirely (not just `False`) by models that use plain full-precision LoRA — callers should read it with `getattr(model_mod, "QUANTIZE_LORA_BASE", False)`. |
 | `USER_OPEN` | `str` | Bare user-turn role marker, registered as a tokenizer special token. Callers append a literal `" "` separator before content. |
 | `ASST_OPEN` | `str` | Bare assistant-turn role marker, registered as a tokenizer special token. Callers append a literal `" "` separator before content. |
-| `SPECIAL_TOKENS` | `list[str]` | `[USER_OPEN, ASST_OPEN]` — the list passed to `tokenizer.add_special_tokens` |
+| `EOC` | `str` (optional) | Conversation-boundary marker (`<|endofconversation|>`), registered as a tokenizer special token. Read with `getattr(model_mod, "EOC", None)` — a model that omits it renders no boundary and its dreams end only on the token budget or the turn backstop. |
+| `SPECIAL_TOKENS` | `list[str]` | The list passed to `tokenizer.add_special_tokens` — the role markers plus `EOC` where the model defines one |
 | `Model` | `nn.Module` | Inference wrapper class |
 | `load_base(device)` | `fn` | Load raw HF model (used by sft) |
 | `load_inference(device)` | `fn` | Load and wrap for inference (used by backend) |
