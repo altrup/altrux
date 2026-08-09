@@ -108,10 +108,11 @@ asserted on every cell (full tables in the run notes):
    (§3 deep block). Reopen clause: B3 returns as an arm only if multi-sleep
    shows drift-linked anomalies in the B2 family.
 3. **B-family consolidation is DELIBERATELY NOT DECIDED** (altrup): the
-   deep block's numbers come first. Recorded as a proposal only: B1-deflated
-   survives unconditionally; one B2-family representative chosen on the
-   install-to-forgetting ratio under deflated from {B2fd, B2-deep, B2tok}
-   after the deep block reports; target is two B arms into multi-sleep.
+   next run's numbers come first. Recorded as a proposal only: B1-deflated
+   survives unconditionally; the other slot is chosen on the
+   install-to-forgetting ratio from {B4 variants, B2tok, B2fd, B2-deep if
+   run} after the B4 block reports; target is two B arms into multi-sleep.
+   (Amended same-day: B4 joined the candidate set with §2.7.)
 4. **Multi-sleep is deferred a third time — explicitly deferred, not
    dropped** (altrup). It remains the decisive test of the
    no-catastrophic-forgetting claim (§1.1) and runs next-next session on
@@ -135,7 +136,68 @@ asserted on every cell (full tables in the run notes):
    should use far less VRAM. Next session **re-measures with a
    `--distill-steps 20` rate+footprint probe before scheduling anything**
    and re-derives the concurrency rule from the measurement — do not
-   inherit the solo-tenant rule.
+   inherit the solo-tenant rule. (Amended same-day by decision 8: the
+   refactor is now deferred, so until it actually lands the 08-08
+   footprint rules — solo tenant, ≥65 GB free, `--cf-batch 128` — REMAIN
+   VALID for any fused cell; the staleness declaration activates when the
+   refactor does.)
+7. **B4 — per-dream erase-then-replay — is registered as a new arm family
+   and THE HEADLINE OF THE NEXT RUN** (altrup's direction, amending this
+   file after its first dry-run pass). Mechanism, per dream: (i) during the
+   teacher's generation pass, capture the raw per-layer read queries at
+   every fact-rehearsal position (binding scan locates them; sidecar
+   records per-fact contribution counts — a zero is loud); (ii) per layer,
+   one SVD of the raw captured queries → orthonormal basis, rank r chosen
+   by the frozen rank rule (below), capped at n-facts+1, every layer's
+   spectrum + chosen r printed into the cache sidecar; (iii) erase the
+   dream-start state once: S ← S(I − VVᵀ) — a projection, never a sum of
+   per-query cuts (a summed cut over correlated queries over-subtracts
+   into a sign-flipped anti-memory; worked example in the debrief
+   transcript) and never σ-scaled (partial cuts compound as (1−γ)^N
+   across N per-dream re-applications; projections are idempotent, so
+   damage is independent of N); (iv) train the student on the dream as
+   ORDINARY sequence training through the native SSD kernel against the
+   teacher's cached logits — full BPTT, normal-training footprint, no
+   spine, no cf-batch, no checkpointing. Variants, all from the same
+   shared per-layer SVD: **B4-raw** (V as-is), **B4-deflated** (each
+   column of V deflated against `state_top_dirs(S, k=1)` then
+   re-orthonormalized — the faithful aggregate port of the operator that
+   won the picker; harness asserts VᵀV = I for every final basis),
+   **B4-qcm** (drop v₁, the query-consensus direction — budget-permitting;
+   the direct test of 08-07 §6's query-common-mode question). Rank rule:
+   two candidates — largest ratio-gap σᵢ/σᵢ₊₁ within the first n-facts+1
+   slots, and σ > c·median(σ) (the median sits in the 128-direction noise
+   tail; c ≈ 3–5) — the pilot runs both on every layer's real spectrum,
+   prints disagreements, and the simpler rule that behaves is FROZEN
+   before the box session; a spectrum with no clean structure is a
+   stop-and-think finding, not a silent truncation. Framing, recorded:
+   B1 = (erase every token, live student query), B4 = (erase once per
+   dream, frozen teacher aggregate) — opposite corners of a 2×2. B4's
+   single root projector means the projector-composition pathology that
+   forbids deep-B1 does not exist for it: B4 is the one erase arm whose
+   full BPTT is legitimate, and it gets it for free. Registered fallback
+   variant if frozen-B4 badly underperforms B1: recompute the aggregate
+   from the *student's current* queries each pass (the (once, live)
+   corner) before concluding that carry is essential. Registered failure
+   mode to watch: within-dream re-installation — after a fact's first
+   rehearsal the state serves it again, so B4's pressure is per-dream,
+   not per-read; the window is small iff dreams are non-repetitive, so
+   the pilot measures per-fact within-dream repeat counts. Stakes,
+   pre-registered: B4 ≈ B1-deflated's ratio at normal-training cost →
+   carry was never the essential ingredient and the mechanism story
+   simplifies enormously; B1 ≫ B4 → carry is the ingredient, B4 becomes
+   the cheap screening arm, B1 keeps the mechanism crown. Either outcome
+   is informative. Dreams veering off the facts is explicitly fine and
+   plausibly protective (interleaved rehearsal of the general
+   distribution); coverage stays aggregate-across-dreams, and no dream is
+   penalized for wandering.
+8. **The B2-deep 2×2 and the spine-checkpointing refactor are DEMOTED to
+   conditional** (altrup, reversing this file's earlier deep-first
+   ordering): checkpointing comes OFF the launch gate, and the deep block
+   runs only if B4's numbers leave the depth question standing — B4
+   delivers gradient-through-the-whole-trajectory for free, which was the
+   question's substance. The 2×2 template in §3 is retained for that
+   eventuality.
 
 ## 3. Next run plan — in order, on the box (GH200)
 
@@ -148,9 +210,11 @@ local by definition. Push (commits and this file) before any launch:
 `lambda_setup.sh` clones from GitHub, so unpushed fixes don't exist on a
 box.
 
-Budget guidance (not a cap): plan ~6 h. Priority on overrun: deep block >
-regime bridge > everything else; the bridge may split to the following
-session whole rather than run half.
+Budget guidance (not a cap): plan ~6 h. Priority on overrun: the B4 block
+(which subsumes the regime bridge) > B2tok seeds > fused-deflated rerun >
+ladder/competition extras. The conditional deep block (§2.8) is not in
+this session's budget unless B4's results summon it AND the checkpointing
+harness exists.
 
 Regime unchanged unless stated: `--n-facts 4 --filler-tokens 40
 --dream-tokens 512 --dream-temp 0.7 --lr 1e-4 --distill-steps 800
@@ -162,16 +226,38 @@ every registered pairing depends on this exact adapter). The three 512-token
 seed caches and the battery likewise travel back with the launch
 (`lambda_data_artifacts.sh` now carries `sft/data` by default — §6.3).
 
-**(0) Footprint re-probe** (§2.6): `--distill-steps 20` on
-`b2-fused-detached` and `b2-fused-deep`, checkpointed spine — record
-step/s and peak VRAM for both, then set the session's scheduling rule from
-the measurement.
+**(1) The B4 block — the session's headline (altrup), merged with the
+regime bridge.** Per seed (all three): build the multi-dream cache — N
+fresh un-spliced steered dreams (N and the steer prefix from the pilot),
+teacher logits + captured fact queries + per-layer spectra in the cache;
+aggregate binding gate ≥k dreams per fact. Arms on the shared dream set,
+all at normal-training footprint (co-schedulable — these are NOT fused
+cells; the 08-08 solo-tenant rules don't apply to them): **B4-raw,
+B4-deflated** (B4-qcm budget-permitting), plus the bridge controls **A**
+and **B1-deflated** on the same sets. Budget semantics per §3(2)'s pin:
+`--distill-steps` stays the TOTAL step budget, spread p ≈ 800/N per
+dream; B4's erase re-applied at each dream start (idempotent). Read
+everything on the standing frame (ratio), paired against the 08-08
+same-seed d800 numbers. Two registered verdicts come out of this block:
+the regime adoption rule (§3(2)) and the B4-vs-B1 stakes (§2.7).
 
-**(1) The deep block** — seed 1234, the existing 512-token cache, this
+**(2) B2tok-deflated, seeds 2345/3456** — completes the gentlest-arm
+measurement to 3 seeds; per-token cells, cheap, co-schedulable.
+
+**(3) Budget-permitting, in order**: the fused family's deflated rerun —
+B2fd-deflated + one B3f-deflated pairing (licenses the §2.2 substitute) —
+under the STANDING 08-08 footprint rules (solo tenant, `--cf-batch 128`;
+the checkpointing refactor is deferred, so these numbers are still
+valid); then B1-deflated d12800; then the competition probe (both below).
+
+**(4, CONDITIONAL — §2.8) The deep block** — runs only if B4's results
+leave the depth question standing and the checkpointing harness has been
+built. Retained spec: seed 1234, the existing 512-token cache, this
 run's floor cells transfer (same adapter, battery, cache). A 2×2 on
 {B2-fused-detached, B2-fused-deep} × {raw, deflated}; B2fd-raw exists
-(+1.88 / 2-4 / +1.448), so three new fused cells, plus the substitute
-pairing and the missing B2tok seeds:
+(+1.88 / 2-4 / +1.448), so three new fused cells. The block opens with its
+own `--distill-steps 20` rate+footprint probe of the checkpointed arms
+(§2.6's re-measurement) and takes `--cf-batch`/co-scheduling from that:
 
     MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.. \
       PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -182,18 +268,14 @@ pairing and the missing B2tok seeds:
       --arm $arm --out logs/g3_${arm}_${op}_s1234.jsonl
 
     # TEMPLATE, deliberately incomplete: --cf-batch (and any co-scheduling)
-    #   comes from step (0)'s re-probe, never from the stale 128 ceiling
-    #   (sec 2.6). Arm spellings are pinned at gate close from
+    #   comes from this block's opening re-probe, never from the 128 ceiling
+    #   (sec 2.6 as amended). Arm spellings are pinned at gate close from
     #   `dream_sleep.py --help` and echoed into the run notes — whether deep
     #   is `--arm b2-fused-deep` or `--arm b2-fused-detached --deep`, and
     #   whether checkpointing is a flag or unconditional for deep, are the
     #   implementer's call, recorded.
     # $arm ∈ {B2-fused-detached (deflated only), B2-fused-deep (raw AND
     #   deflated)}
-    # plus: B3-fused deflated once (licenses the §2.2 substitute iff it matches
-    #   B2fd-deflated the way it matched under raw)
-    # plus: B2tok (per-token bridge) deflated, seeds 2345 and 3456 (completes
-    #   the gentlest-arm measurement to 3 seeds)
 
 Read the deep-vs-detached contrast per operator on the standing frame
 (ratio, not Δmargin). This block also delivers the fused family's first
@@ -207,7 +289,8 @@ arm can install them — the "regenerate at tighter --cue-every" warning in
 the 08-08 session logs belongs to it, not to the 512-token cache (verified
 against both sidecars this debrief).
 
-**(2) The regime bridge** — same seeds and wake transcripts, paired against
+**The bridge-regime spec (the cache and rules step (1) builds on)** — same
+seeds and wake transcripts, paired against
 this run's d800 numbers. Per seed: build a **multi-dream cache** — N fresh
 free-running dreams (N sized by the §4 pilot), **no cue splicing**
 (`--cue-every`/`--cue-greedy` absent), each dream opened by the registered
@@ -220,35 +303,46 @@ aggregate binding gate: every fact bound in ≥k dreams (k from the pilot).
 **Budget semantics, pinned: `--distill-steps` stays the TOTAL optimizer-step
 budget for the cell (800), spread p ≈ 800/N passes per dream — not
 per-dream** — so the pairing against the 08-08 d800 numbers is at matched
-total steps within each arm's own currency. Arms: A, B1-deflated,
-plus the B2 variant the deep block favored. **Adoption rule: the new regime
+total steps within each arm's own currency. Arms: per step (1).
+**Adoption rule: the new regime
 wins iff its install-to-forgetting ratio ≥ the old regime's same-seed pairs
 AND retrieval (EM/para) is not worse; multi-sleep then runs on the winner.**
 Old and new regime numbers are never pooled (different dreams).
 
-**(3) Budget-permitting, in order**: B1-deflated d12800 (seed 1234,
+**Detail for step (3)'s tail items**: B1-deflated d12800 (seed 1234,
 `--probe-every 1600`; it alone holds a rung claim, §1.6); the competition
 probe — one paired cell, seed 1234, `--n-facts 2` vs the existing 4-fact
 result, same wake-transcript template: if per-fact margins at 2 facts
 exceed the 4-fact per-fact margins materially, within-cone competition
 gains direct support.
 
-**(4) Multi-sleep: NOT this session** (§2.4). Next-next session, on the
+**(5) Multi-sleep: NOT this session** (§2.4). Next-next session, on the
 bridge's winning regime, per 08-07 §3.7's arm list amended by whatever §2.3
 consolidation decides.
 
 ## 4. Local work before the box (launch gate; TDD on the CPU fake backbone
 where testable, but §1.8 stands — hardware-shaped code needs a hardware
-smoke, so the box session opens with (0) as its smoke)
+smoke, so step (1) opens with one short B4 cell at a token budget before
+committing the block)
 
-- **Spine gradient-checkpointing** for the deep path: phase 2 of
-  `spine_states` (the per-token walk) wrapped in `torch.utils.checkpoint`
-  over a MixerState flatten/unflatten closure (run notes' option (a));
-  boundary states stored, block states + branch graphs recomputed during
-  backward. Equality test: checkpointed-deep gradients ≡ materialized-deep
-  gradients on the fake backbone at a rank where the erase is
-  non-degenerate (h*p=4, per `1517985`), plus checkpointed-detached ≡
-  current-detached loss.
+- **The B4 harness** (the gate's centerpiece): (a) query capture at
+  fact-rehearsal positions during cache build (reuse `Model.c_capture` —
+  the capture plumbing `erase_probe.py` already uses), per-fact counts to
+  the sidecar; (b) the per-layer SVD aggregate: shared basis, both rank
+  rules computed and printed (§2.7), the three variant post-processings
+  (raw / deflated-vs-state-top-dirs with re-orthonormalization / qcm),
+  and a test asserting VᵀV = I for every final basis; (c) erase-at-
+  dream-start plumbing + the B4 arm flag(s); (d) tests: projection
+  idempotence (applying the eraser twice ≡ once), erased-readout-is-zero
+  along every captured query for the raw variant on the fake backbone at
+  h*p=4, and a repeat-application test across N≥3 mock dreams (damage
+  independent of N).
+- **Spine gradient-checkpointing — OFF THE GATE, conditional (§2.8)**:
+  built only if the deep block is summoned. Retained spec: phase 2 of
+  `spine_states` wrapped in `torch.utils.checkpoint` over a MixerState
+  flatten/unflatten closure (run notes' option (a)); equality tests:
+  checkpointed-deep gradients ≡ materialized-deep on the fake backbone at
+  h*p=4 (per `1517985`), checkpointed-detached ≡ current-detached loss.
 - **Multi-dream cache format + training loop**: N dreams + per-dream teacher
   logits per seed cache file; per-pass iteration over the dream set; per-arm
   step currencies unchanged within each dream.
@@ -274,7 +368,12 @@ smoke, so the box session opens with (0) as its smoke)
   per-fact rehearsal rate, record every candidate's numbers. Output:
   per-fact rehearsal rate → N = smallest count where every fact is bound in
   ≥k dreams with ~1.5× headroom, k = 2 unless the rates argue otherwise
-  (record the reasoning). **Kill-condition: if covering all 4 facts needs
+  (record the reasoning). The pilot additionally reports, per §2.7:
+  per-fact **within-dream repeat counts** (B4's re-installation window),
+  and the per-layer **σ spectra of the captured queries with both rank
+  rules applied** — where the rules disagree, print it; the surviving
+  rule is frozen into the spec before the box. **Kill-condition: if
+  covering all 4 facts needs
   N > ~16 dreams under the best candidate, the no-splicing regime is
   unaffordable as specced — stop, report, and the bridge is redesigned
   (stronger steering) rather than launched.**
@@ -311,38 +410,76 @@ smoke, so the box session opens with (0) as its smoke)
   saturated, holding no rung).
 - **Treating the 08-08 fused footprint numbers as standing hardware
   findings** — declared stale (§2.6); they describe deleted code once the
-  checkpointing lands.
+  checkpointing lands (which is now conditional — see §2.6's amendment).
+- **B4 aggregate as a sum of per-query cuts** — over-subtracts along the
+  shared cone into a sign-flipped anti-memory (at cos 0.92, a state
+  component along the consensus direction lands at ≈ −0.9× its original
+  value); the uniform-downscale correction (scale every cut by
+  1/(1+Σ overlaps)) is exact only in the fully symmetric case and leaks
+  ∝ asymmetry. The projection S(I − VVᵀ) IS the completed version of the
+  scaled-sum idea (inverse-Gram cross-corrections), so the sum forms are
+  strictly dominated.
+- **σ-scaled partial erase** (cut each direction in proportion to its
+  singular value): σ measures the query set, not the state's content;
+  partial cuts leave re-amplifiable residue (γ-sweep precedent, 08-07
+  §2.5); and a non-projection eraser compounds as (1−γ)^N under B4's
+  per-dream re-application — damage would depend on N. All-or-nothing per
+  direction, γ = 1.
+- **Hard-coded σ thresholds** ("top half", mean-based midpoint
+  (σ_min+σ_max)/2): top-half cuts ~64 of 128 address dims (~5 signal, ~59
+  noise); the midpoint is dominated by the common-mode outlier σ₁ and
+  keeps ONLY the contested direction while dropping every fact
+  discriminant (fails even the cos-0.6 two-vector case). Threshold rules
+  must be scale-invariant, σ₁-robust, and tail-aware — hence §2.7's two
+  candidates and the pilot bake-off.
+- **Erase at fixed token intervals ("chunk-boundary erase")** as the
+  B1/B4 midpoint — proposed and withdrawn this debrief: an arbitrary
+  hard-coded joint; dream boundaries are the semantic joints, and the
+  multi-dream regime already provides them (altrup). Revisit only if B4's
+  within-dream re-installation window measures large AND dream generation
+  cannot be made less repetitive.
 
 ## 6. Open questions
 
-1. **Does BPTT through the spine change B2's ratio, under either operator?**
-   — §3(1), the session's headline question (altrup's priority).
-2. **Is A's saturation a repetition artifact?** — §3(2)'s A-cell answers
-   directly (fresh dreams accumulating where repeated dreams redistribute
-   would dissolve much of the competition story).
-3. **Within-cone competition** (`viola`: bound, rehearsed, anti-installed,
+1. **B4 vs B1: is carry the essential ingredient, or is the erase?** —
+   §2.7's pre-registered stakes; the session's headline question
+   (altrup's priority). Subsidiary: raw vs deflated at aggregate level,
+   the qcm variant, and the within-dream re-installation window.
+2. **Does BPTT through the spine change B2's ratio, under either
+   operator?** — demoted with the deep block (§2.8); answered only if B4
+   leaves it standing.
+3. **Is A's saturation a repetition artifact?** — the B4 block's A-cell
+   answers directly (fresh dreams accumulating where repeated dreams
+   redistribute would dissolve much of the competition story).
+4. **Within-cone competition** (`viola`: bound, rehearsed, anti-installed,
    monotonically worsening) — §3(3)'s 2-vs-4-fact probe; also watch for
    loser-facts in every multi-dream cell.
-4. **The retrieval gap, B-family edition**: the warm start moved A's
+5. **The retrieval gap, B-family edition**: the warm start moved A's
    retrieval but no B arm has ever retrieved anything (EM/para 0 across the
-   family). If B1-deflated's d12800 rung and the regime bridge both leave it
-   at zero, "installs a preference, never a retrievable answer" may be the
-   erase mechanism's ceiling — worth a named measurement before multi-sleep
-   bets on B1.
-5. **The mechanism/outcome contradiction** (§1.3): why does a near-absent
+   family). If B4 also retrieves nothing at d800-equivalent budgets,
+   "installs a preference, never a retrievable answer" may be the erase
+   mechanism's ceiling — worth a named measurement before multi-sleep
+   bets on the family.
+6. **The mechanism/outcome contradiction** (§1.3): why does a near-absent
    single-shot erase win cumulatively? The carry-compounding hypothesis is
    unmeasured; a cheap instrument would be battery dPPL vs token index
    within one B1 cell (raw's damage should grow super-linearly, deflated's
    ~linearly, if compounding is the mechanism).
-6. **The ~0.75 query common mode** (08-07 §6) — still alive since deflation
-   survived; unchanged.
-7. Carried unchanged: warm-start's effect on dream binding (multi-sleep
+7. **The ~0.75 query common mode** (08-07 §6) — now directly testable:
+   B4-qcm is its first designed cell.
+8. Carried unchanged: warm-start's effect on dream binding (multi-sleep
    measures it), value-side erase, deflation-k under multi-cluster states,
    soft dreaming.
 
 ## 7. Housekeeping
 
 - Run notes banked as `6abf671` before discussion (flow rule).
+- **Same-day amendment (B4)**: §2.7/2.8, the §3 reorder, and the §4/§5/§6
+  changes above were added AFTER this file's first dry-run pass, in a
+  second debrief sitting (altrup's direction). The B4 sections have NOT
+  been dry-run — **re-run the cold-agent pass after the gate work lands
+  and before any launch**; the first pass's findings on the pre-amendment
+  file are recorded below and remain folded in.
 - The banked notes end in a stale rsync-clobber fragment (the superseded
   "session operator: RAW" text glued after the DEFLATED verdict, lines
   ~780–785). Trimmed in a follow-up commit this debrief — the DEFLATED
