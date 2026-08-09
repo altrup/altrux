@@ -61,6 +61,16 @@ act on.
    autonomous experimenter session reading it cold: concrete commands,
    flags, checkpoint names, and thresholds — not vibes.
 
+   Details alone are not enough: **register the GOAL with the same rigor
+   as the mechanism** — what each apparatus is FOR, what quantity every
+   knob-decision optimizes, and the named non-goals (what must NOT be
+   optimized, e.g. tuning a mechanism on the experiment's own outcome
+   metric). A spec whose knobs all have owners but whose objective lives
+   in nobody's head is not actionable cold: the experimenter will make
+   each choice locally reasonably and globally wrong. The 08-08 debrief's
+   eraser goal block (prime directive → measurable proxies → lexicographic
+   decision procedure → non-goals) is the reference shape.
+
 5. **Dry-run the file before committing it.** Spawn a subagent (Opus-class,
    no conversation context — only the codebase, like a real experimenter
    session) that loads the altrux-experimenter skill in explicit DRY-RUN
