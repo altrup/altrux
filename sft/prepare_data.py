@@ -40,7 +40,9 @@ def _worker_init(model_name: str, max_len: int) -> None:
     _worker_eoc = getattr(mod, "EOC", None)
 
 
-def _worker_format(group: list[tuple[str, list[dict]]]) -> tuple[list[int], list[bool], int | None]:
+def _worker_format(
+    group: list[tuple[str, list[dict]]],
+) -> tuple[list[int], list[bool], int | None, int]:
     return format_pack(group, _worker_tokenizer, _worker_max_len, *_worker_markers, _worker_eoc)
 
 
@@ -174,20 +176,27 @@ def pack_records(records: list[dict], rng: random.Random,
 
 def format_pack(group: list[tuple[str, list[dict]]], tokenizer, max_len: int,
                 user_open: str, asst_open: str,
-                eoc: str | None) -> tuple[list[int], list[bool], int | None]:
+                eoc: str | None) -> tuple[list[int], list[bool], int | None, int]:
     """One packed example: every conversation of `group` in order, each closed
-    by `eoc`. `max_len` bounds the whole example, not each conversation."""
+    by `eoc`. `max_len` bounds the whole example, not each conversation, so a
+    conversation with no budget left is dropped whole; the returned count is
+    how many of `group` actually landed, which is what the boundary invariant
+    is checked against."""
     ids: list[int] = []
     mask: list[bool] = []
     question_offset: int | None = None
+    packed = 0
     for _kind, messages in group:
         part_ids, part_mask, qoff = format_conversation(
             messages, tokenizer, max_len - len(ids), user_open, asst_open, eoc)
+        if not part_ids:
+            break
         if qoff is not None and question_offset is None:
             question_offset = len(ids) + qoff
         ids.extend(part_ids)
         mask.extend(part_mask)
-    return ids, mask, question_offset
+        packed += 1
+    return ids, mask, question_offset, packed
 
 
 def iter_records(args) -> list[dict]:
@@ -207,28 +216,34 @@ def iter_records(args) -> list[dict]:
         return records
 
 
-def report_packing(groups, all_ids, tokenizer, eoc: str | None, user_open: str) -> None:
+def report_packing(groups, packed_counts, all_ids, tokenizer, eoc: str | None,
+                   user_open: str) -> None:
     """Structural invariants whose correct value is zero, plus decoded text
     either side of one boundary of each kind (root CLAUDE.md: counts confirm
     the generator did what it was told, never that what it was told was right)."""
     eoc_id = tokenizer.convert_tokens_to_ids(eoc)
     user_id = tokenizer.convert_tokens_to_ids(user_open)
     unterminated = sum(1 for ids in all_ids if not len(ids) or int(ids[-1]) != eoc_id)
-    miscounted = sum(1 for group, ids in zip(groups, all_ids, strict=True)
-                     if int((ids == eoc_id).sum()) != len(group))
+    miscounted = sum(1 for packed, ids in zip(packed_counts, all_ids, strict=True)
+                     if int((ids == eoc_id).sum()) != packed)
     unopened = sum(1 for ids in all_ids
                    for i in range(len(ids) - 1)
                    if int(ids[i]) == eoc_id and int(ids[i + 1]) != user_id)
-    kinds = [kind for group in groups for kind, _ in group[1:]]
-    print(f"[{ts()}] packing: {len(all_ids)} examples, {sum(len(g) for g in groups)} conversations, "
+    dropped = sum(len(group) - packed
+                  for group, packed in zip(groups, packed_counts, strict=True))
+    kinds = [kind for group, packed in zip(groups, packed_counts, strict=True)
+             for kind, _ in group[1:packed]]
+    print(f"[{ts()}] packing: {len(all_ids)} examples, {sum(packed_counts)} conversations, "
           f"{len(kinds)} boundaries ({kinds.count('recap')} recap, {kinds.count('fresh')} fresh)")
     print(f"[{ts()}]   examples not ending at a boundary : {unterminated}  (must be 0)")
     print(f"[{ts()}]   boundaries != conversations packed: {miscounted}  (must be 0)")
     print(f"[{ts()}]   boundaries not opening a new turn : {unopened}  (must be 0)")
+    print(f"[{ts()}]   conversations dropped by --max-len: {dropped}  (informational)")
 
     for want in ("fresh", "recap"):
-        found = next(((group, ids) for group, ids in zip(groups, all_ids, strict=True)
-                      if want in [k for k, _ in group[1:]]), None)
+        found = next(((group[:packed], ids)
+                      for group, packed, ids in zip(groups, packed_counts, all_ids, strict=True)
+                      if want in [k for k, _ in group[1:packed]]), None)
         if found is None:
             print(f"[{ts()}]   no {want} boundary in this dataset")
             continue
@@ -282,6 +297,7 @@ def main() -> None:
     groups = (pack_records(records, random.Random(args.seed), args.recap_rate) if args.pack
               else [[("fresh", r.get("messages", []))] for r in records])
     kept_groups: list[list[tuple[str, list[dict]]]] = []
+    packed_counts: list[int] = []
     tokenizer = build_tokenizer(model_mod)
 
     def formatted():
@@ -297,16 +313,17 @@ def main() -> None:
                 yield format_pack(group, tokenizer, args.max_len,
                                   model_mod.USER_OPEN, model_mod.ASST_OPEN, eoc)
 
-    for i, (ids, mask, qoff) in enumerate(formatted()):
+    for i, (ids, mask, qoff, packed) in enumerate(formatted()):
         print(f"\r[{ts()}] {i + 1}/{len(groups)}", end="", flush=True)
         if keep(ids, mask, qoff):
             kept_groups.append(groups[i])
+            packed_counts.append(packed)
         else:
             skipped += 1
     print()
 
     if eoc:
-        report_packing(kept_groups, all_ids, tokenizer, eoc, model_mod.USER_OPEN)
+        report_packing(kept_groups, packed_counts, all_ids, tokenizer, eoc, model_mod.USER_OPEN)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

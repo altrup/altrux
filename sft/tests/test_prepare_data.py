@@ -153,7 +153,7 @@ def test_packing_puts_two_or_three_conversations_behind_boundaries(tokenizer):
     eoc_id = tokenizer.convert_tokens_to_ids(EOC)
     user_id = tokenizer.convert_tokens_to_ids(USER_OPEN)
     for group in groups:
-        ids, mask, _ = format_pack(group, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
+        ids, mask, _, _ = format_pack(group, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
         assert len(ids) == len(mask)
         assert ids[-1] == eoc_id
         assert ids.count(eoc_id) == len(group)
@@ -161,6 +161,21 @@ def test_packing_puts_two_or_three_conversations_behind_boundaries(tokenizer):
         for i, token in enumerate(ids[:-1]):
             if token == eoc_id:
                 assert ids[i + 1] == user_id
+
+
+def test_a_conversation_that_does_not_fit_is_dropped_whole(tokenizer):
+    eoc_id = tokenizer.convert_tokens_to_ids(EOC)
+    group = [("fresh", _conv(0)), ("fresh", _conv(1))]
+    full, _, _, packed = format_pack(group, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
+    assert packed == 2
+
+    budget = full.index(eoc_id) + 3  # room for the first conversation and no more
+    ids, mask, _, packed = format_pack(group, tokenizer, budget, USER_OPEN, ASST_OPEN, EOC)
+
+    assert packed == 1
+    assert ids.count(eoc_id) == packed
+    assert ids[-1] == eoc_id
+    assert len(ids) == len(mask)
 
 
 def test_every_boundary_is_a_recap_at_rate_one():
