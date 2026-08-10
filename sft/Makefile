@@ -203,11 +203,13 @@ dream-sleep:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u dream_sleep.py $(ARGS) 2>&1 | tee logs/dream-sleep-$(shell date +%Y%m%d-%H%M%S).log
 
-# Warm-start SFT (DISCUSSION-20260807 sec 3.1): ordinary chat data rendered
-# into the repo's marker format by prepare_data.py, then 400 train.py steps at
-# 1e-4 and dream_sleep's LoRA config -- the checkpoint every dream_sleep cell
-# loads with --init-adapter (models/$(MODEL_NAME)/checkpoints/epoch-1/step-400;
-# --keep-ckpts 1 leaves that one and nothing else). ~1000 ultrachat
+# Warm-start SFT (DISCUSSION-20260808 sec 2.9.3): ordinary chat data rendered
+# into the repo's marker format by prepare_data.py, then 800 train.py steps /
+# 2 epochs at 1e-4 and dream_sleep's LoRA config -- the checkpoint every
+# dream_sleep cell loads with --init-adapter
+# (models/$(MODEL_NAME)/checkpoints/epoch-2/step-800; --keep-ckpts 1 leaves
+# that one and nothing else; sec 2.1 records 400 steps as an acceptance
+# FAIL, 77% plain-] emissions). ~1000 ultrachat
 # conversations is the registered ~4000-turn corpus, packed 2-3 to an example
 # behind <|endofconversation|> (DISCUSSION-20260808 sec 2.10.9) -- the retrain
 # that teaches the boundary token. Run this before the dream cache and before
@@ -220,7 +222,7 @@ warm-start:
 		--max-examples 1000 --max-len 4096 --pack --output data/warm_start.pt && \
 	   HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u train.py --data data/warm_start.pt \
-		--max-steps 400 --lr 1e-4 --chunk-len 512 \
+		--max-steps 800 --epochs 2 --lr 1e-4 --chunk-len 512 \
 		--lora-rank 16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1 $(ARGS); \
 	 } 2>&1 | tee logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log
 

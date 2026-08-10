@@ -484,7 +484,14 @@ harness exists.
 
 Regime unchanged unless stated: `--n-facts 4 --filler-tokens 40
 --dream-tokens 512 --dream-temp 0.7 --lr 1e-4 --distill-steps 800
---probe-every 200`, floor-corrected margin, `--init-adapter` the step-800
+--probe-every 200`, floor-corrected margin. [Gate-close margin notes:
+(a) for SET-cache cells (`--dreams N`) the budget flags are `--dreams N
+--dream-epochs 1 --probe-every-dream 1`; `--distill-steps`/`--probe-every`
+do not apply to a set. (b) Rich-wake integers, pinned to what the §4 pilot
+actually ran (its N/coverage numbers are conditioned on this transcript
+shape): `--wake-bystanders 3 --wake-nearcone 2 --wake-dialogue 2`.
+(c) Deep-arm spellings, resolved: both `--arm b2-fused-deep` and
+`--arm b2-fused-detached` exist as their own arm names.] `--init-adapter` the step-800
 warm start (`models/mamba2_780m/checkpoints/epoch-2/step-800`, trainable.pt
 sha256 `d4bf2e3527befd5f78234a1baf3238624a956f78d3c24f1091d048be9ea08669` —
 pulled home; SUPERSEDED by §2.9.3: the session opens by retraining the
@@ -494,11 +501,15 @@ the run notes. The 08-08 caches/battery still travel back for the
 old-adapter record and the conditional deep block.
 
 **(0) Warm-start retrain** (§2.9.3): rendered corpus with
-`<|endofconversation|>` appended per conversation, 800 steps / 2 epochs,
-acceptance check per §2.1's token-level threshold (now also counting
+`<|endofconversation|>` appended per conversation, 800 steps / 2 epochs
+(`make warm-start` — the target's default IS this regime as of the gate-close
+edit), acceptance check per §2.1's token-level threshold (now also counting
 `<|endofconversation|>` emission sanity in a decoded dream); then battery
-deletion + rebuild, anchor cells (A, B1-deflated, no-sleep × 3 seeds,
-old regime) rerun under the new adapter.
+deletion + rebuild — verbatim, before any cell:
+`rm sft/data/knowledge_battery_mamba2_780m.json` (the old-adapter battery
+travels to the box via the artifact upload and `load_or_build_battery`
+silently reuses it — there is no rebuild flag) — anchor cells (A,
+B1-deflated, no-sleep × 3 seeds, old regime) rerun under the new adapter.
 
 **(1) The B4 block — the session's headline (altrup), merged with the
 regime bridge. Arms: A, B4-raw, B4-deflated — NOTHING ELSE (§2.10.1;
