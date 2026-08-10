@@ -20,6 +20,17 @@ call yourself and record the decision + reasoning in this run's notes file.
 If something is genuinely undecidable and blocking, that's a stop-and-report
 via the shutdown checklist — not a question.
 
+## Local invocation — gate work only, no launch authority
+
+This command can also be invoked on the teammate's local machine (the repo at
+its local path, the ROCm card, no `train` tmux, no `~/altrux` clone). There
+your scope is the newest DISCUSSION note's LOCAL work only — launch-gate
+items and the local pilot — with NO authority to launch, fund, or attach to
+instances; treat every box-side section below (tmux layout, watchdog,
+shutdown checklist) as not applicable. The launch gate binds in both
+directions: a box session that finds gate work missing stops and reports,
+and a local session never compensates by starting box work itself.
+
 ## Quick reference
 
 | Action | Command |
@@ -113,9 +124,12 @@ stop-and-report, not something to train through. Ten minutes of reading is
 the cheapest insurance the run has — every data disaster in this project's
 history was visible in a decoded sample and invisible in every count.
 When the session trains no `.pt` slice (dream-distillation runs), the gate
-applies to the equivalent artifacts instead: the warm-start corpus
-(`make sanity-sample ARGS="--data data/warm_start.pt"`), and each dream cache's sidecar
-(`data/dream_s*.txt`) — read them the same way before the first cell.
+applies to the equivalent artifacts instead: the warm-start corpus when this
+session renders it (`make warm-start` writes `data/warm_start.pt` — sanity-sample
+it between the render and the train; a session that doesn't retrain has no
+corpus file at all, the warm start survives only as its checkpoint), and each
+dream cache's sidecar (`data/dream_s*.txt` — the glob covers single-dream and
+dream-set sidecars alike) — read them the same way before the first cell.
 
 RECORD THE RESUME POINT: every time you start or restart training, note in your
 file which checkpoint it resumed from — train.py logs `resuming from
