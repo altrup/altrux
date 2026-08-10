@@ -245,6 +245,22 @@ Settings used for a real H100 run of `mamba2_2_7b_memory`:
 make resume ARGS="--data data/train_memory.pt --eos-weight 32 --batch-size 12 --chunk-len 4 --accum-tokens 1024 --ckpt-every-tokens 24576"
 ```
 
+**`acceptance_check.py`** — the warm-start acceptance check of
+`notes/DISCUSSION-20260808-headline-collapse-deep-block-and-regime-bridge.md`
+§2.1, scored over a dream cache's free-running spans (`--cache
+data/dream_set_s1234.pt`, single-dream or set). A warm start is accepted when
+plain `]` tokens are under 35% of marker-slot emissions and no token is
+non-ASCII; both clauses count **token ids**, because `[USER]` decodes
+identically whether it is the registered special token or the ordinary tokens
+that spell it, and separating those is the whole point. The steer prefix is
+excluded (authored, not emitted), a cache with no marker-slot emission at all
+fails rather than passing vacuously, and the exit status is the verdict:
+
+```bash
+HF_HOME=../.cache/huggingface PYTHONPATH=.. MODEL_NAME=mamba2_2_7b \
+  uv run --no-sync python acceptance_check.py --cache data/dream_set_s1234.pt
+```
+
 **`measure_knobs.py`** — diagnostic for the memory subsystem's data-dependent write knobs (`eta`/`theta`/`alpha`): runs a checkpoint (`--ckpt models/.../step-N`) or a fresh init (no flag) over the first `--tokens` of a real example and prints the actual per-token knob distributions, `knob_proj` pre-activations, the residual magnitude feeding them, and the fast-weight rms trajectory. Answers "is the memory actually writing/retaining" directly — the thing to check first if `surprise` in the training logs sits flat at ~1.0 (the zeroed-memory value against unit-rms targets) or `w1_abs_max` trends toward zero. Run with the same env vars as the Makefile targets:
 
 ```bash
