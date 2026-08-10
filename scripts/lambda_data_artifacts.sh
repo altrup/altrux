@@ -7,14 +7,15 @@
 # the finished train_*/eval_* artifacts and their scored *-filtered variants
 # (whose embedded per-item scores make any threshold policy a local
 # filter_items.py --rescore away), plus the dream-sleep grid's shared inputs --
-# the per-seed dream caches every arm distils, their decoded sidecars, and the
+# the per-seed dream caches and multi-dream set caches every arm distils (with
+# their pilot captures and gate jsonls), their decoded sidecars, and the
 # self-calibrated knowledge battery, all of which must stay identical across
 # runs and machines for a cell to be comparable. Leaves pilot_*/smoke_* scratch
 # files and raw intermediates behind. Override with LAMBDA_DATA_ARTIFACTS in
 # scripts/.env. Empty or unset means the defaults: to deliberately sync
 # nothing, set a non-matching pattern (e.g. "none-*") — an empty string
 # silently disabling the pull is how the g2 caches were lost.
-DATA_ARTIFACTS="${LAMBDA_DATA_ARTIFACTS:-train*.pt eval_*.pt dream_cache_*.pt dream_*.txt knowledge_battery_*.json}"
+DATA_ARTIFACTS="${LAMBDA_DATA_ARTIFACTS:-train*.pt eval_*.pt dream_cache_*.pt dream_set_*.pt dream_set_*.jsonl dream_*.txt knowledge_battery_*.json}"
 
 _data_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
