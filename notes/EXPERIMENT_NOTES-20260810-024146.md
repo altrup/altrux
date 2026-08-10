@@ -154,7 +154,16 @@ predicts the fake backbone cannot catch.
 3. **Gate semantics amended** (§2.9.2 margin, altrup): the gate SELECTS
    B4's queries, it does not VALIDATE dreams — empty gate ⇒ empty eraser,
    build continues (`3dadf44`).
-4. **Scheme freeze: still open.** Proposal on the table: freeze the
+4. **Scheme freeze: RESOLVED as a procedure freeze (altrup, ratified).**
+   The box does NOT inherit a family or constant. It runs the offline
+   sweep on its own 2.7B pilot capture — all four families × all three
+   variants, one scorer invocation per variant — and takes whatever
+   §2.10.6's lexicographic procedure picks, full table into the run
+   notes. The procedure is the frozen object: it sees state geometry
+   only, never install outcomes. (For the record, the 780M table had
+   hard best-or-tied on target at every τ — but one capture, one
+   substrate, deflated only, no seeds: not evidence to bet a family on.)
+   [Superseded detail follows, kept for context:] Proposal on the table: freeze the
    hard-gate family + ratio-gap now, re-derive the threshold constant from
    the 2.7B on-box capture. NOTE for the box: the 6.7%/4.0% row is the
    DEFLATED variant only — raw and qcm were never scored offline (deferred
