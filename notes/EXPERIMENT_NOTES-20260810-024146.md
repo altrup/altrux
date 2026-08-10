@@ -142,6 +142,30 @@ predicts the fake backbone cannot catch.
    pre-sleep): union-of-erasers projection at sleep exit; implementation
    deferred to the multi-sleep docket.
 
+## Morning check-in outcomes (2026-08-10, altrup + Claude)
+
+1. **Substrate switch ratified and registered** (§2.10.14): next run is plain
+   Mamba2-2.7B; `models/mamba2_2_7b` built (wrapper shared by import from
+   780m); pilot re-runs on-box post-retrain.
+2. **Overnight decision 2 (per-dream mojibake acceptance): RATIFIED.**
+   **Decision 4 (scorer sparse-coverage pooling): RATIFIED.**
+   **Decision 3 (instruct 0.25 threshold): expired with the substrate
+   switch.**
+3. **Gate semantics amended** (§2.9.2 margin, altrup): the gate SELECTS
+   B4's queries, it does not VALIDATE dreams — empty gate ⇒ empty eraser,
+   build continues (`3dadf44`).
+4. **Scheme freeze: still open.** Proposal on the table: freeze the
+   hard-gate family + ratio-gap now, re-derive the threshold constant from
+   the 2.7B on-box capture. NOTE for the box: the 6.7%/4.0% row is the
+   DEFLATED variant only — raw and qcm were never scored offline (deferred
+   to the box deliberately: the 2.7B capture supersedes this one and box
+   iteration is faster). Score all three variants from the on-box capture
+   before the freeze's constant is set. Context for reading the numbers:
+   chance for a rank-r/128 projector is ~r/128 ≈ 2–3%, so deflated target
+   is ~2–3× chance at 1.7:1 selectivity; registered risk — B4 erases ONCE
+   per dream, so a shallow cut has no B1-style compounding and may
+   under-pressure installs (the §2.7 stakes cover this outcome).
+
 ## Team decisions queued for the morning check-in (nothing frozen)
 
 1. **Kill-condition disposition** (§4): stop-redesign vs post-retrain re-pilot
