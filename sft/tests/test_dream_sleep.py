@@ -1444,3 +1444,43 @@ def test_b3_fused_checks_its_pass_one_equivalence_at_every_sleep(tmp_path, wave)
 
     checks = [r for r in records if r["phase"] == "equivalence"]
     assert len(checks) == 1 and checks[0]["equivalent"]
+
+
+# --- context-leakage probe (DISCUSSION-20260808 sec 2.10.11) -----------------
+
+
+def _leak_items():
+    from erase_probe import Bystander
+
+    return [Bystander("clara", "Where does Clara live?", "Clara lives in Lisbon.",
+                      f"{USER} Where does Clara live?{ASST} Clara lives in", " Lisbon")]
+
+
+def test_the_leakage_probe_scores_distractor_content_against_its_own_floor():
+    from dream_sleep import probe_leakage
+
+    items = _leak_items()
+    records: list[dict] = []
+    floor = probe_leakage(items, lambda p, a: ("nowhere.", -6.0), records.append,
+                          "replay", 1, "leak_floor", (".", "\n"))
+    assert floor == {"clara": -6.0}
+
+    records.clear()
+    probe_leakage(items, lambda p, a: (" Lisbon.", -0.5), records.append,
+                  "replay", 1, "leakage", (".", "\n"), baseline=floor, step=800)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["phase"] == "leakage" and record["item"] == "clara" and record["kind"] == "offformat"
+    assert record["match"] is True
+    assert record["logprob_delta"] == pytest.approx(5.5)
+
+
+def test_the_leakage_probe_reports_a_miss_as_a_miss():
+    from dream_sleep import probe_leakage
+
+    records: list[dict] = []
+    probe_leakage(_leak_items(), lambda p, a: ("Oslo.", -4.0), records.append,
+                  "replay", 1, "leakage", (".", "\n"))
+
+    assert records[0]["match"] is False and records[0]["logprob_delta"] is None

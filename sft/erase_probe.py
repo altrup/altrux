@@ -41,7 +41,9 @@ import argparse
 import copy
 import json
 import random
+import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -101,11 +103,118 @@ class Bystander:
         self.prompt, self.answer, self.cls = prompt, answer, cls
 
 
-def build_nearcone(n: int, rng: random.Random, user_open: str, asst_open: str) -> list[Bystander]:
+def collisions(text: str, facts: Sequence[Fact], battery_answers: Sequence[str]) -> list[str]:
+    """Every fact name, fact code or battery answer `text` mentions, matched on
+    word boundaries. Non-empty means this content cannot sit in a wake
+    transcript: probing it would be probing something else (the parcel ->
+    shipment precedent)."""
+    low = text.lower()
+    needles = [f.entity for f in facts] + [f.code for f in facts] + list(battery_answers)
+    return sorted({n for n in needles if re.search(rf"\b{re.escape(n.lower())}\b", low)})
+
+
+def assert_no_collisions(items: Sequence[Bystander], facts: Sequence[Fact],
+                         battery_answers: Sequence[str]) -> None:
+    """Refuse to build a wake transcript whose distractor content overlaps what
+    the run measures. The pools are filtered before sampling, so this firing
+    means a filter was bypassed, not that a draw was unlucky."""
+    bad = {item.label: hit for item in items
+           if (hit := collisions(f"{item.question} {item.statement}", facts, battery_answers))}
+    if bad:
+        raise SystemExit(
+            "wake transcript refused: distractor content collides with what this run measures -- "
+            + "; ".join(f"{label} -> {', '.join(hits)}" for label, hits in sorted(bad.items()))
+        )
+
+
+def build_dialogue(records: Sequence[dict], n: int, rng: random.Random, user_open: str,
+                   asst_open: str, facts: Sequence[Fact],
+                   battery_answers: Sequence[str]) -> list[Bystander]:
+    """n ordinary chat exchanges drawn from `records` ({"messages": [...]}),
+    shaped as probe items so the same fresh-state QA that scores a bystander
+    scores them. Conversations mentioning a fact or a battery answer are
+    skipped -- real prose is filtered, not repaired."""
+    out: list[Bystander] = []
+    skipped = 0
+    for i in rng.sample(range(len(records)), len(records)):
+        if len(out) == n:
+            break
+        messages = records[i].get("messages", [])
+        pair = next(((messages[j]["content"], messages[j + 1]["content"])
+                     for j in range(len(messages) - 1)
+                     if messages[j]["role"] == "user" and messages[j + 1]["role"] == "assistant"), None)
+        if pair is None:
+            continue
+        question, answer = (" ".join(p.split())[:200] for p in pair)
+        if collisions(f"{question} {answer}", facts, battery_answers):
+            skipped += 1
+            continue
+        out.append(Bystander(f"dialogue{len(out)}", question, answer,
+                             f"{user_open} {question}{asst_open}", f" {answer}", "dialogue"))
+    if len(out) < n:
+        raise SystemExit(
+            f"wake transcript refused: only {len(out)} of {n} dialogue exchanges are free of the "
+            f"facts and the battery answers ({skipped} skipped over {len(records)} candidates). "
+            f"Widen the candidate pool or lower the dialogue count."
+        )
+    print(f"[{ts()}] wake dialogue: kept {len(out)} of {len(records)} candidates ({skipped} skipped on collision)")
+    return out
+
+
+def build_wake_items(facts: Sequence[Fact], bystanders: int, nearcone: int, dialogue: int,
+                     dialogue_records: Sequence[dict], rng: random.Random, user_open: str,
+                     asst_open: str, battery_answers: Sequence[str]):
+    """The rich wake transcript's items (sec 2.10.11): the facts plus
+    heterogeneous distractor content -- off-format bystanders, near-cone
+    numeric bystanders, and a slice of ordinary dialogue -- shuffled together.
+
+    The A-vs-B4 contrast is entirely about non-fact state content, which 40
+    tokens of filler starves. Returns (items, distractors); `distractors` is
+    what the context-leakage probe scores.
+    """
+    avoid = [f.entity for f in facts] + list(battery_answers)
+    distractors = build_bystanders(bystanders, rng, user_open, asst_open, avoid=avoid)
+    distractors += build_nearcone(nearcone, rng, user_open, asst_open, avoid=avoid)
+    distractors += build_dialogue(dialogue_records, dialogue, rng, user_open, asst_open,
+                                  facts, battery_answers)
+    assert_no_collisions(distractors, facts, battery_answers)
+    items = [*facts, *distractors]
+    rng.shuffle(items)
+    return items, distractors
+
+
+def report_distractors(decoded: str, distractors: Sequence[Bystander]) -> None:
+    """Structural invariants for the distractor half of a rich wake transcript,
+    plus decoded text around the first item of each class."""
+    if not distractors:
+        return
+    misstated = sum(1 for d in distractors if decoded.count(d.statement) != 1)
+    duplicates = len(distractors) - len({d.label for d in distractors})
+    classes = {d.cls for d in distractors}
+    print(f"[{ts()}]   distractors: {len(distractors)} -- "
+          + ", ".join(f"{sum(d.cls == c for d in distractors)} {c}" for c in sorted(classes)))
+    print(f"[{ts()}]   distractors not stated exactly once: {misstated}  (must be 0)")
+    print(f"[{ts()}]   duplicate distractor labels        : {duplicates}  (must be 0)")
+    for cls in sorted(classes):
+        first = next(d for d in distractors if d.cls == cls)
+        at = decoded.find(first.statement)
+        print(f"[{ts()}]   sample around the first {cls} item ({first.label}):\n"
+              f"    ...{decoded[max(0, at - 150) : at + 200]!r}...")
+
+
+def _pool(values: Sequence[str], rng: random.Random, avoid: Sequence[str]) -> list[str]:
+    """A pool drawn without replacement, minus anything the run measures.
+    Identical rng consumption to a plain sample when nothing is avoided."""
+    kept = [v for v in values if v.lower() not in {a.lower() for a in avoid}]
+    return rng.sample(kept, len(kept))
+
+
+def build_nearcone(n: int, rng: random.Random, user_open: str, asst_open: str,
+                   avoid: Sequence[str] = ()) -> list[Bystander]:
     """n numeric-but-off-relation facts: spaced digits like a code, different
     relation. Digit counts (3, 4) differ from CODE_DIGITS so no answer can
     collide with a code as a full string."""
-    senders, firms = rng.sample(SENDERS, len(SENDERS)), rng.sample(FIRMS, len(FIRMS))
+    senders, firms = _pool(SENDERS, rng, avoid), _pool(FIRMS, rng, avoid)
     out = []
     for i in range(n):
         if i % 2 == 0:
@@ -159,11 +268,13 @@ def build_sweep(entities: list[str]) -> list[tuple[str, str]]:
     return out
 
 
-def build_bystanders(n: int, rng: random.Random, user_open: str, asst_open: str) -> list[Bystander]:
+def build_bystanders(n: int, rng: random.Random, user_open: str, asst_open: str,
+                     avoid: Sequence[str] = ()) -> list[Bystander]:
     """n off-format facts, cycling three relation templates with fillers drawn
     without replacement. `stem` is the assistant prefix the probe leaks, so the
-    answer log-prob is scored on the value alone."""
-    pools = {k: rng.sample(v, len(v)) for k, v in
+    answer log-prob is scored on the value alone. `avoid` drops pool entries
+    that would collide with what the run measures."""
+    pools = {k: _pool(v, rng, avoid) for k, v in
              (("people", PEOPLE), ("cities", CITIES), ("events", EVENTS),
               ("weekdays", WEEKDAYS), ("objects", OBJECTS), ("weights", WEIGHTS))}
     out = []

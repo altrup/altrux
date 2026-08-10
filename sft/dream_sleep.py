@@ -120,9 +120,11 @@ from consolidation_null import (
     build_turns,
     cue_rungs,
     exact_match,
+    extract_answer,
     fmt_duration,
     generate,
     kl_loss,
+    normalize,
     render_turns,
     replay_step,
     report_transcript,
@@ -130,7 +132,15 @@ from consolidation_null import (
     target_logprob,
     ts,
 )
-from erase_probe import deflate, group_by_layer, rank1_erase, state_top_dirs
+from erase_probe import (
+    build_mixed_turns,
+    build_wake_items,
+    deflate,
+    group_by_layer,
+    rank1_erase,
+    report_distractors,
+    state_top_dirs,
+)
 from lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
 from probes_common import (
     BATTERY_CANDIDATES,
@@ -157,6 +167,12 @@ CONE_SKIP = 0.05
 
 DREAM_TOKENS = 512
 PRINT_EVERY = 16
+# The wake transcript's ordinary-dialogue slice (sec 2.10.11), drawn from a
+# split the warm start never trains on. Most candidates are discarded by the
+# collision guard, so the pool is far larger than any slice.
+WAKE_DIALOGUE_SOURCE = "HuggingFaceH4/ultrachat_200k"
+WAKE_DIALOGUE_SPLIT = "test_sft"
+WAKE_DIALOGUE_POOL = 400
 # A self-terminating dream ends on <|eoc|>; this bounds the pathological case
 # where it never comes and the model just keeps opening turns (sec 2.9.4).
 DREAM_MAX_TURNS = 32
@@ -383,6 +399,44 @@ def target_keep_mask(cue_flags: Sequence[bool]) -> list[bool]:
     learned."""
     n = len(cue_flags)
     return [t + 1 >= n or not cue_flags[t + 1] for t in range(n)]
+
+
+def load_dialogue_records(n: int = WAKE_DIALOGUE_POOL) -> list[dict]:
+    """Candidate conversations for the wake transcript's dialogue slice."""
+    from datasets import load_dataset
+
+    print(f"[{ts()}] loading {n} {WAKE_DIALOGUE_SOURCE} candidates for the wake dialogue slice")
+    ds = load_dataset(WAKE_DIALOGUE_SOURCE, split=f"{WAKE_DIALOGUE_SPLIT}[:{n}]")
+    return [{"messages": r["messages"]} for r in ds]
+
+
+def probe_leakage(items, answer_probe, emit, arm: str, wave: int, phase: str,
+                  stops: Sequence[str], baseline: dict[str, float] | None = None,
+                  step: int | None = None) -> dict[str, float]:
+    """Fresh-state QA on the wake transcript's distractor content (sec 2.10.11).
+
+    Neither arm should install any of it: A denies the student the whole state
+    and B4 denies only what the dream read, so distractor content is what
+    "targeted" is supposed to leave alone. A rising log-prob here is untargeted
+    consolidation, measured at its origin. Returns each item's log-prob, which
+    is the floor a later call is read against."""
+    logprobs: dict[str, float] = {}
+    hits = 0
+    for i, item in enumerate(items):
+        generation, logprob = answer_probe(item.prompt, item.answer.strip())
+        answer, truth = extract_answer(generation, stops), normalize(item.answer)
+        matched = answer == truth or answer.startswith(truth + " ")
+        logprobs[item.label] = logprob
+        hits += matched
+        delta = logprob - baseline[item.label] if baseline and item.label in baseline else None
+        emit({"phase": phase, "wave": wave, "arm": arm, "step": step, "item": item.label,
+              "kind": item.cls, "answer": item.answer.strip(), "greedy": generation,
+              "match": matched, "logprob": logprob, "logprob_delta": delta})
+        print(f"[{ts()}]  {phase} w{wave}{'' if step is None else f' s{step}'} {item.label:<11} "
+              f"{'HIT ' if matched else 'miss'} lp {logprob:+.3f}"
+              f"{'' if delta is None else f' (d {delta:+.3f})'} "
+              f"| running leak {hits / (i + 1):.2f} | {generation[:40]!r}", flush=True)
+    return logprobs
 
 
 def binding_coverage(text: str, facts: Sequence[Fact]) -> tuple[dict[str, int], dict[str, int]]:
@@ -1110,6 +1164,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Who generates the dream for waves after the first: the frozen base, or the model this run has trained. Required when --waves > 1.")
     parser.add_argument("--n-facts", type=int, default=4, help="Facts per wave -- the measured binding ceiling (default: %(default)s)")
     parser.add_argument("--filler-tokens", type=int, default=40, help="Filler tokens between consecutive facts (default: %(default)s)")
+    parser.add_argument("--wake-bystanders", type=int, default=0,
+                        help="Off-format bystander items in the wake transcript -- non-fact state content the "
+                             "A-vs-B4 targeting contrast is about (default: %(default)s)")
+    parser.add_argument("--wake-nearcone", type=int, default=0,
+                        help="Numeric-but-off-relation bystander items in the wake transcript (default: %(default)s)")
+    parser.add_argument("--wake-dialogue", type=int, default=0,
+                        help=f"Ordinary {WAKE_DIALOGUE_SOURCE} exchanges mixed into the wake transcript "
+                             "(default: %(default)s)")
     parser.add_argument("--dream-tokens", type=int, default=DREAM_TOKENS, help="Dream length per sleep (default: %(default)s)")
     parser.add_argument("--dream-temp", type=float, default=1.0, help="Dream sampling temperature (default: %(default)s)")
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
@@ -1340,9 +1402,12 @@ def main() -> None:
         print(f"[{ts()}]  held-out ppl {ppl:.3f}  (dPPL {ppl - base_ppl:+.4f})")
 
     # ---- waves ------------------------------------------------------------
+    rich_wake = bool(args.wake_bystanders or args.wake_nearcone or args.wake_dialogue)
+    dialogue_records = load_dialogue_records() if args.wake_dialogue else []
     carried = None
     seen: list[tuple[int, Fact]] = []
     fresh_baseline: dict[str, float] = {}
+    leak_baseline: dict[str, float] = {}
     committed: set[str] = set()
     r_matrix: dict[tuple[int, int], dict[str, float]] = {}
     for wave in range(1, args.waves + 1):
@@ -1352,13 +1417,24 @@ def main() -> None:
             # waves derive theirs, avoiding every code already in play.
             distractors |= build_distractors(
                 facts, args.seed, taken=set(distractors.values()) | {f.code for _, f in seen})
-        turns = build_turns(facts, args.filler_tokens, lambda s: len(tokenizer(s, add_special_tokens=False)["input_ids"]), rng)
+        token_len = lambda s: len(tokenizer(s, add_special_tokens=False)["input_ids"])  # noqa: E731
+        if rich_wake:
+            items, wake_distractors = build_wake_items(
+                facts, args.wake_bystanders, args.wake_nearcone, args.wake_dialogue,
+                dialogue_records, rng, user_open, asst_open,
+                [str(item["answer"]) for item in battery])
+            turns = build_mixed_turns(items, args.filler_tokens, token_len, rng)
+        else:
+            wake_distractors = []
+            turns = build_turns(facts, args.filler_tokens, token_len, rng)
         text = render_turns(turns, user_open, asst_open)
         transcript = encode(text)
         print(f"\n[{ts()}] === wave {wave} wake ===")
         report_transcript(text, decode(transcript[0].cpu()), facts, turns, transcript.shape[1])
+        report_distractors(decode(transcript[0].cpu()), wake_distractors)
         emit({"phase": "transcript", "wave": wave, "arm": mode, "tokens": transcript.shape[1],
-              "facts": [f.entity for f in facts]})
+              "facts": [f.entity for f in facts],
+              "distractors": [d.label for d in wake_distractors]})
 
         if args.build_dream_cache:
             build_cache(model, args, cache_path, transcript, facts, chunk_len,
@@ -1384,6 +1460,10 @@ def main() -> None:
         # but the transcript -- what every later log-prob delta is measured against.
         print(f"[{ts()}] fresh-state floor, wave {wave} facts")
         fresh_baseline |= probe_facts([(wave, f) for f in facts], None, "floor", wave, False, None)
+        if wake_distractors:
+            print(f"[{ts()}] fresh-state floor, wave {wave} distractor content")
+            leak_baseline |= probe_leakage(wake_distractors, answer_probe, emit, mode, wave,
+                                           "leak_floor", stops)
 
         if wave == 1:
             # The cached wake state, not a fresh forward: it is the state the
@@ -1421,6 +1501,9 @@ def main() -> None:
         scored: dict[str, dict[str, object]] = {}
         probe_facts(seen, None, "probe", wave, True, fresh_baseline, step=args.distill_steps,
                     collect=scored)
+        if wake_distractors:
+            probe_leakage(wake_distractors, answer_probe, emit, mode, wave, "leakage", stops,
+                          baseline=leak_baseline, step=args.distill_steps)
         locality(wave, step=args.distill_steps)
 
         # Column `wave` of the R-matrix, streamed the moment the sleep produces

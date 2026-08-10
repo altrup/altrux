@@ -121,3 +121,90 @@ def test_the_deflation_basis_is_detached_from_the_state_it_is_read_from():
     basis = state_top_dirs(s, 1)
     assert not basis.requires_grad
     assert deflate(c, basis).requires_grad  # through c only
+
+
+# --- the rich wake transcript (DISCUSSION-20260808 sec 2.10.11) --------------
+
+import random
+
+import pytest
+
+from consolidation_null import Fact
+from erase_probe import (
+    build_bystanders,
+    build_dialogue,
+    build_mixed_turns,
+    build_wake_items,
+    collisions,
+)
+
+USER, ASST = "[USER]", "[ASSISTANT]"
+FACTS = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]
+BATTERY = ["Paris", "Tokyo", "Tuesday", "honey"]
+
+
+def test_bystander_pools_drop_the_values_they_are_told_to_avoid():
+    plain = build_bystanders(6, random.Random(0), USER, ASST)
+    assert any("Paris" in b.statement for b in plain)  # sanity: the pool has it
+
+    avoided = build_bystanders(6, random.Random(0), USER, ASST, avoid=BATTERY)
+    for b in avoided:
+        assert not collisions(f"{b.question} {b.statement}", FACTS, BATTERY)
+
+
+def test_collisions_names_every_overlapping_string():
+    assert collisions("The parcel left Paris on Tuesday.", FACTS, BATTERY) == ["Paris", "Tuesday"]
+    assert collisions("The osprey was seen at dawn.", FACTS, BATTERY) == ["osprey"]
+    assert collisions("The reading was 1 2 3 4 5 exactly.", FACTS, BATTERY) == ["1 2 3 4 5"]
+    assert collisions("A quiet afternoon by the water.", FACTS, BATTERY) == []
+
+
+def test_dialogue_slice_skips_conversations_that_collide():
+    records = [
+        {"messages": [{"role": "user", "content": "Where is the Louvre?"},
+                      {"role": "assistant", "content": "It is in Paris."}]},
+        {"messages": [{"role": "user", "content": "How do I store bread?"},
+                      {"role": "assistant", "content": "Keep it in a cloth bag."}]},
+    ]
+    items = build_dialogue(records, 1, random.Random(0), USER, ASST, FACTS, BATTERY)
+
+    assert len(items) == 1
+    assert items[0].cls == "dialogue"
+    assert "bread" in items[0].question
+    assert items[0].prompt.startswith(USER) and ASST in items[0].prompt
+
+
+def test_the_dialogue_slice_refuses_rather_than_under_deliver():
+    records = [{"messages": [{"role": "user", "content": "Where is the Louvre?"},
+                             {"role": "assistant", "content": "It is in Paris."}]}]
+    with pytest.raises(SystemExit):
+        build_dialogue(records, 1, random.Random(0), USER, ASST, FACTS, BATTERY)
+
+
+def test_wake_items_carry_facts_and_distractors_and_never_collide():
+    records = [{"messages": [{"role": "user", "content": f"How do I store bread {i}?"},
+                             {"role": "assistant", "content": f"Keep it in a cloth bag {i}."}]}
+               for i in range(20)]
+    items, distractors = build_wake_items(
+        FACTS, bystanders=3, nearcone=2, dialogue=2, dialogue_records=records,
+        rng=random.Random(0), user_open=USER, asst_open=ASST, battery_answers=BATTERY)
+
+    assert len(items) == len(FACTS) + 7
+    assert len(distractors) == 7
+    assert [i for i in items if isinstance(i, Fact)] == FACTS or set(FACTS) <= set(items)
+    for d in distractors:
+        assert not collisions(f"{d.question} {d.statement}", FACTS, BATTERY)
+
+    turns = build_mixed_turns(items, 4, lambda s: len(s.split()), random.Random(0))
+    text = " ".join(t for _, t in turns)
+    for fact in FACTS:
+        assert text.count(fact.code) == 1
+
+
+def test_a_colliding_distractor_stops_the_build():
+    from erase_probe import Bystander, assert_no_collisions
+
+    bad = Bystander("x", "Where is it?", "The parcel left Paris.", "p", " Paris")
+    with pytest.raises(SystemExit):
+        assert_no_collisions([bad], FACTS, BATTERY)
+    assert_no_collisions([], FACTS, BATTERY)
