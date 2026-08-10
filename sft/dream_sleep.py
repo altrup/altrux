@@ -2255,11 +2255,14 @@ def battery_read_queries(model, items, wake_state, encode, n_layers: int):
     import torch
 
     out: dict[str, list[list[torch.Tensor]]] = {}
+    # The caller may hand over a state state_to already moved to CPU for the
+    # cache; the forward runs wherever the model is.
+    device = next(model.parameters()).device
     with torch.no_grad():
         for i, item in enumerate(items):
             prompt = str(item["prompt"])
-            ids = encode(prompt)
-            state = copy_state(wake_state)
+            ids = encode(prompt).to(device)
+            state = state_to(copy_state(wake_state), device)
             positions: list[list[torch.Tensor]] = []
             for t in range(ids.shape[1]):
                 model.c_capture = []

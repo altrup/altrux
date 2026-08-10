@@ -1773,3 +1773,18 @@ def test_a_slot_that_stays_degenerate_is_a_stop_and_think(tmp_path, monkeypatch)
     with pytest.raises(SystemExit, match="degenerate"):
         _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ")
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU to cross devices")
+def test_battery_read_queries_follow_the_model_device_not_the_callers():
+    """build_dream_set hands over a wake state that state_to already moved to
+    CPU for the cache; the battery forward must run wherever the model is
+    (sec 1.8 -- the all-CPU fake backbone can never catch this)."""
+    from dream_sleep import battery_read_queries
+
+    model, _, wake, _ = _tiny_setup()
+    model = model.to("cuda")
+    out = battery_read_queries(model, [{"prompt": "hi"}], wake,
+                               encode=lambda text: torch.tensor([[1, 2]], device="cuda"),
+                               n_layers=len(model.layers))
+    assert list(out) == ["hi"] and len(out["hi"]) == 2
