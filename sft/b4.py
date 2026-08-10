@@ -101,13 +101,21 @@ def rank_median(sigma: torch.Tensor, budget: int, c: float = MEDIAN_C) -> int:
     return max(1, min(sum(1 for x in s if x > threshold), budget, len(s)))
 
 
-def aggregate_basis(queries: Sequence[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+def aggregate_basis(queries: Sequence[torch.Tensor],
+                    weights: Sequence[float] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """One SVD over one dream's gated queries for one layer. Returns
     (V, sigma): V's rows are the right-singular directions, most energetic
-    first, and sigma is that layer's spectrum (printed into the sidecar)."""
+    first, and sigma is that layer's spectrum (printed into the sidecar).
+
+    `weights` scales each query's row before the SVD, which is how the pilot's
+    divergence-weighted schemes (sec 2.10.7) enter: a position's influence on
+    the basis is its weight. Prod's frozen scheme passes none (all ones).
+    """
     import torch
 
     m = torch.stack([q.reshape(-1).float() for q in queries])
+    if weights is not None:
+        m = m * torch.tensor([float(w) for w in weights]).unsqueeze(1)
     _, sigma, vh = torch.linalg.svd(m, full_matrices=False)
     return vh, sigma
 

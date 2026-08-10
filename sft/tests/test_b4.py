@@ -193,3 +193,14 @@ def test_an_empty_basis_slice_stays_empty_rather_than_raising():
     into a stop-and-think failure, so the primitive must not blow up first."""
     v, _ = aggregate_basis(_queries(m=1))
     assert variant_basis(v, rank=1, variant="qcm", ssm_state=_ssm()).shape[0] == 0
+
+
+def test_weighting_pulls_the_basis_toward_the_heavier_queries():
+    """The pilot's divergence-weighted schemes (sec 2.10.7) enter here: a
+    position's influence on the basis is its weight, and a zero weight is a
+    position the basis never saw."""
+    q = [torch.tensor([[1.0, 0, 0, 0, 0, 0, 0, 0]]), torch.tensor([[0.0, 1, 0, 0, 0, 0, 0, 0]])]
+
+    v, sigma = aggregate_basis(q, weights=[1.0, 0.0])
+
+    assert abs(abs(float(v[0, 0])) - 1.0) < 1e-5 and float(sigma[1]) < 1e-6

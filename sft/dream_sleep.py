@@ -2115,7 +2115,7 @@ def blank_state_logits(model, tokens, chunk_len: int, frozen: bool):
 
 
 def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], wake_state,
-                rank_rule: str):
+                rank_rule: str, weights: Sequence[float] | None = None):
     """Per layer: ONE SVD over this dream's gated queries, both rank rules
     computed inside the prod-side address budget, and all three variants
     post-processed from that one shared basis (sec 2.7).
@@ -2131,7 +2131,7 @@ def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], 
     ranks: dict[str, list[int]] = {rule: [] for rule in RANK_RULES}
     bases: dict[str, list[torch.Tensor]] = {variant: [] for variant in VARIANTS}
     for layer in range(n_layers):
-        v_full, sigma = aggregate_basis([queries[t][layer] for t in gate])
+        v_full, sigma = aggregate_basis([queries[t][layer] for t in gate], weights)
         budget = address_budget(v_full.shape[1])
         chosen = {"ratio-gap": rank_ratio_gap(sigma, budget), "median": rank_median(sigma, budget)}
         for rule, r in chosen.items():
