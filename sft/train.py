@@ -522,6 +522,19 @@ def save_checkpoint(
 
 def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
     state = torch.load(path / "trainable.pt", map_location="cpu", weights_only=True)
+    # A checkpoint from before a special token was registered carries fewer
+    # marker_delta rows than the model. Missing rows stay at MarkerDelta's
+    # zero init -- exactly "this token's delta is untrained". Shrinking is
+    # not migrated: fewer model rows than checkpoint rows stays an error.
+    key = "marker_delta.delta"
+    current = dict(model.named_parameters()).get(key)
+    if key in state and current is not None and state[key].shape[0] < current.shape[0]:
+        rows = state[key].shape[0]
+        print(f"padding {key} {rows} -> {current.shape[0]} rows; "
+              f"rows past {rows} keep their zero (untrained) init")
+        padded = torch.zeros_like(current.detach().cpu())
+        padded[:rows] = state[key]
+        state[key] = padded
     result = model.load_state_dict(state, strict=False)
     loaded = len(state) - len(result.unexpected_keys)
     print(f"loaded {loaded}/{len(state)} trainable tensors from {path}")

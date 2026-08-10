@@ -533,3 +533,41 @@ def test_max_steps_counts_global_step_so_a_resumed_run_finishes_the_budget(monke
     """The budget is a global_step ceiling, not "N more steps": resuming a
     run that already took 2 of 3 steps leaves exactly one to take."""
     assert _run_to_max_steps(monkeypatch, tmp_path, max_steps=3, start_step=2) == 3
+
+
+# ---------------------------------------------------------------------------
+# load_checkpoint -- marker_delta rows grown by a new special token
+# ---------------------------------------------------------------------------
+
+class _MarkerHolder(torch.nn.Module):
+    def __init__(self, rows: int):
+        super().__init__()
+        self.delta = torch.nn.Parameter(torch.zeros(rows, 4))
+
+
+class _MarkerModel(torch.nn.Module):
+    def __init__(self, rows: int):
+        super().__init__()
+        self.marker_delta = _MarkerHolder(rows)
+
+
+def test_load_checkpoint_pads_marker_delta_grown_by_a_new_special_token(tmp_path, capsys):
+    old = _MarkerModel(rows=2)
+    with torch.no_grad():
+        old.marker_delta.delta.copy_(torch.arange(8.0).reshape(2, 4))
+    torch.save(old.state_dict(), tmp_path / "trainable.pt")
+
+    new = _MarkerModel(rows=3)
+    train.load_checkpoint(new, tmp_path)
+
+    assert torch.equal(new.marker_delta.delta[:2], old.marker_delta.delta)
+    assert torch.equal(new.marker_delta.delta[2], torch.zeros(4))
+    assert "marker_delta" in capsys.readouterr().out  # the pad is loud
+
+
+def test_load_checkpoint_still_rejects_a_shrunk_marker_delta(tmp_path):
+    old = _MarkerModel(rows=3)
+    torch.save(old.state_dict(), tmp_path / "trainable.pt")
+
+    with pytest.raises(RuntimeError):
+        train.load_checkpoint(_MarkerModel(rows=2), tmp_path)
