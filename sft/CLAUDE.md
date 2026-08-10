@@ -28,6 +28,14 @@ The model is selected via `MODEL_NAME` in `.env`. This controls which package in
 
 `--sleep-chain-rate` (0.1) gates *all* of the below: an episode's rates only apply if its chain drew into the sleeping fraction, so every sleep/split/fact count in a regen log is ~10% of what the per-episode rates alone imply. Then `prepare_chains.py --mid-sleep-rate` only fires on episodes ≥ `--mid-sleep-min-len` (4096 default; 1536 used in practice) that have a turn boundary in their middle third. LongAlign/babilong episodes are single-QA (turn boundaries only at position 0 and the answer start) so they never qualify; ultrachat only qualifies when tokenized uncapped (`prepare_data.py --max-len`, default 32768 — the old 1024 cap made the set empty and mid-sleep a silent no-op in every dataset before 2026-07-21). Always check the regen log's mid-conversation counter before assuming the signal exists. `--split-episode-rate` (with `--split-min-part`) creates natural-continuation-across-sleep signal from multi-turn corpora; single-QA episodes only split (`--split-qa-rate`) when they carry a `question_offsets` entry from `prepare_data.py` (babilong yes, LongAlign never — fail closed); babilong's question+answer tail is only 8–12 tokens (the document is thousands), so any length floor applied to *both* sides of a split-QA cut disqualifies the entire corpus at once — a zero split-tail counter in a regen log means a constraint reached the tail, not bad luck; `--sentence-sleep-rate` reaches inside single-QA document turns via sentence boundaries (built 2026-07-21, deliberately unused until the 396-reproduction question is settled — see `notes/DISCUSSION-20260721-peak-reproducibility.md`).
 
+## The local datasets cache has a stray file where ultrachat's dir belongs
+
+`.cache/huggingface/datasets/HuggingFaceH4___ultrachat_200k` is a 96-byte
+*file* on this box, so any `load_dataset("HuggingFaceH4/ultrachat_200k")` dies
+with `NotADirectoryError` before it downloads anything (hit by
+`dream_sleep.py --wake-dialogue`). Remove that file to let the cache directory
+be created; a fresh box has no such artifact.
+
 ## Rented-CUDA box gotchas (found 2026-08-06, A10)
 
 - **First `make test` on a fresh instance looks hung.** `tests/test_mixer_fused.py`'s
