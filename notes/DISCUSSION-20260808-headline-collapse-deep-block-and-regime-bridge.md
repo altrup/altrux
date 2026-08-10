@@ -465,6 +465,33 @@ asserted on every cell (full tables in the run notes):
         the pilot's cross-dream V-overlap). A's multi-sleep carry
         (blank) is registered where it always was, 08-07 §3.7's docket.
 
+    14. **SUBSTRATE SWITCH: the next run is plain Mamba2-2.7B, not 780M
+        (altrup, 2026-08-10, post-pilot).** Motivation: the §4 pilot showed
+        generator quality is the binding constraint on the un-spliced
+        regime (coverage {1,1,1,4}/20 no-prefix, {3,0,0,0}/20
+        instruction-text; drift, verbatim loops, one-shot rehearsal — see
+        `EXPERIMENT_NOTES-20260810-024146.md`), scale attacks exactly
+        that, and §2.9.3's retrain already severs every cross-run pairing
+        — the rebuild is paid either way, so the switch is uniquely cheap
+        NOW. The A-vs-B4 ranking-transfer risk (arms differ in
+        sensitivity to dream quality) is also retired by measuring on the
+        stronger generator directly. Consequences, priced: per-token cost
+        ~3.5×; arms are A + B4-raw + B4-deflated only (ordinary sequence
+        training, co-schedulable — the reduction is what makes this
+        affordable); cut to 2 seeds before cutting cells on overrun; the
+        steer/coverage pilot re-runs ON THE BOX post-retrain (the local
+        card's 8 GB makes 2.7B local pilots marginal); the block opens
+        with a binding-capacity smoke (4-fact wake, cue-free) because
+        every capacity number on record was measured on 780M and is
+        assumed, not known, at 2.7B. Mechanics: a new plain
+        `models/mamba2_2_7b` folder (thin adaptation of `mamba2_780m` —
+        `state-spaces/mamba2-2.7b`, same interface, same SPECIAL_TOKENS
+        incl. `<|eoc|>`; `mamba2_2_7b_memory` is the memory-augmented
+        variant and is NOT this); every §3 command reads
+        `MODEL_NAME=mamba2_2_7b` and checkpoint paths under
+        `models/mamba2_2_7b/`. Dream-quality expectation, registered
+        honestly: coherence/looping improve with high confidence,
+        rehearsal FREQUENCY is the unknown the on-box pilot measures.
 ## 3. Next run plan — in order, on the box (GH200)
 
 **LAUNCH GATE: no box until every item in §4's local-harness block is
