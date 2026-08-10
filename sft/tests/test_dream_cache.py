@@ -17,6 +17,7 @@ from dream_sleep import (
     aggregate_binding,
     assert_aggregate_binding,
     dream_bases,
+    report_dream_set,
     binding_coverage,
     build_distractors,
     dream_seed_text,
@@ -24,6 +25,7 @@ from dream_sleep import (
     load_dream_cache,
     save_dream_cache,
     scored_keep,
+    write_dream_set_sidecar,
     sidecar_path,
     target_keep_mask,
     token_sha,
@@ -289,3 +291,40 @@ def test_an_eraser_that_would_remove_nothing_is_a_stop_and_think_failure():
 
     with pytest.raises(SystemExit):
         dream_bases(queries, gate=[0], wake_state=state, rank_rule="ratio-gap")
+
+
+def _bound_set() -> DreamSetCache:
+    cache = _set()
+    for dream in cache.dreams:
+        dream.token_texts = [f"The code for the {f.entity} is {f.code}." for f in FACTS]
+        dream.gate_positions = [0, 1]
+    return cache
+
+
+def test_the_set_report_prints_the_artifact_and_passes_a_bound_set(capsys):
+    """Root CLAUDE.md's sanity rule for a dream set: termination reasons,
+    per-dream basis sizes, cross-dream V-overlap, the gate's agreement with the
+    binding scan, within-dream repeats, and a decoded dream start."""
+    report_dream_set(_bound_set(), min_dreams=2, rank_rule="ratio-gap")
+    out = capsys.readouterr().out
+
+    for expected in ("termination reasons", "within-dream repeats", "gate vs binding scan",
+                     "cross-dream V-overlap", ">>PREFIX>>", ">>FREE>>",
+                     "aggregate binding gate PASSED"):
+        assert expected in out
+
+
+def test_the_set_report_refuses_an_underbound_set():
+    with pytest.raises(SystemExit):
+        report_dream_set(_set(), min_dreams=2, rank_rule="ratio-gap")
+
+
+def test_the_set_sidecar_carries_the_prefix_the_spectra_and_both_rank_rules(tmp_path):
+    path = tmp_path / "dream_set_s1234.txt"
+    write_dream_set_sidecar(_bound_set(), path)
+    text = path.read_text()
+
+    assert "steer prefix" in text and "gate threshold" in text
+    assert "per-layer spectra" in text
+    assert "ratio-gap=" in text and "median=" in text
+    assert "dreams bound per fact" in text
