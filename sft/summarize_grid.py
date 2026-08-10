@@ -16,12 +16,41 @@ import collections
 import glob
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from probes_common import MARGIN_INSTALL as INSTALL_NATS
+
+
+def arm_and_seed(name: str) -> tuple[str, str]:
+    """Split a cell's filename into its arm and its seed.
+
+    The seed is the `_s<digits>` token, not "everything after the last _s":
+    `lad_A_s1234_d3200` is arm `lad_A_d3200` at seed 1234, and reading its seed
+    as `1234_d3200` matched no floor cell, which is why the ladder's Δ columns
+    came out empty (and were computed by hand) in the 08-08 run. The rung stays
+    in the arm so two rungs of one ladder never pool as one cell.
+    """
+    name = name[3:] if name.startswith("g2_") else name
+    match = re.search(r"_s(\d+)(?=$|_)", name)
+    if not match:
+        arm, _, seed = name.rpartition("_s")
+        return arm, seed
+    return name[: match.start()] + name[match.end():], match.group(1)
+
+
+def aggregate_bound(dreams: list[dict[str, object]]) -> int:
+    """Facts bound in at least one dream of the set (DISCUSSION-20260808
+    sec 3): coverage is aggregate across dreams, and no dream is penalized for
+    wandering off the facts."""
+    bound: dict[str, int] = collections.defaultdict(int)
+    for record in dreams:
+        for entity, n in dict(record.get("bound_by_fact", {})).items():
+            bound[entity] += int(n)
+    return sum(n > 0 for n in bound.values())
 
 
 def cell(path: str) -> dict[str, object] | None:
@@ -46,7 +75,8 @@ def cell(path: str) -> dict[str, object] | None:
     # reads as an arm that rehearsed nothing and took no gradients.
     if not loc or not any(r["phase"] == "done" for r in rows):
         return None
-    dream = next((r for r in rows if r["phase"] == "dream"), None)
+    dreams = [r for r in rows if r["phase"] == "dream"]
+    dream = dreams[0] if dreams else None
     cache = next((r for r in rows if r["phase"] == "cache" and r.get("wave") == 1), {})
     sleep = next((r for r in rows if r["phase"] == "sleep"), {})
     ic = [r for r in rows if r["phase"] == "in_context"]
@@ -60,19 +90,20 @@ def cell(path: str) -> dict[str, object] | None:
         if r.get("margin") is not None:
             steps[(r.get("wave") or 1, r.get("step") or 0)][r["fact"]] = r["margin"]
     dppl_at = {(r.get("wave") or 1, r.get("step") or 0): r["ppl_delta"] for r in loc}
-    name = os.path.basename(path).split(".jsonl")[0]
-    name = name[3:] if name.startswith("g2_") else name
-    arm, _, seed = name.rpartition("_s")
+    arm, seed = arm_and_seed(os.path.basename(path).split(".jsonl")[0])
     return {
         "arm": arm, "seed": seed, "path": path, "erase_op": next(iter(ops), None),
         "steps": dict(steps), "dppl_at": dppl_at,
         "transcript_sha": cache.get("transcript_sha"), "dream_sha": cache.get("dream_sha"),
+        "set_sha": cache.get("set_sha"), "dreams": cache.get("dreams"),
         "init_adapter": {r.get("init_adapter_sha256") for r in rows},
         "wave2_shas": [(r.get("wave"), r.get("dream_sha")) for r in rows
                        if r["phase"] == "cache" and r.get("wave", 1) > 1],
-        "rehearse": dream["rehearsal_fraction"] if dream else 0.0,
-        "bound_cov": dream.get("bound_cov", 0) if dream else 0,
-        "misbound": dream.get("misbound", 0) if dream else 0,
+        "rehearse": dream.get("rehearsal_fraction") if dream else 0.0,
+        "bound_cov": aggregate_bound(dreams) if cache.get("set_sha") else
+                     (dream.get("bound_cov", 0) if dream else 0),
+        "misbound": (sum(sum(r.get("misbound_by_fact", {}).values()) for r in dreams)
+                     if cache.get("set_sha") else (dream.get("misbound", 0) if dream else 0)),
         "free_tokens": cache.get("free_tokens", 0),
         "token_gradients": sleep.get("token_gradients", 0),
         "ic": sum(r["match"] for r in ic),
@@ -185,7 +216,7 @@ def check_hashes(cells: list[dict[str, object]]) -> None:
     for c in cells:
         by_seed[str(c["seed"])].append(c)
     for seed, group in sorted(by_seed.items()):
-        for field in ("transcript_sha", "dream_sha"):
+        for field in ("transcript_sha", "dream_sha", "set_sha"):
             values = {str(c[field]) for c in group}
             if len(values) > 1:
                 for c in group:
@@ -224,8 +255,10 @@ def main(pattern: str, curves: bool = False) -> None:
     check_hashes(cells)
     adapter = check_init_adapter(cells)
     seeds = sorted({str(c["seed"]) for c in cells})
+    sets = {str(c["set_sha"])[:12] for c in cells if c["set_sha"]}
     print(f"{len(cells)} cells, seeds {', '.join(seeds)}; wave-1 dream hashes agree within every seed; "
-          f"{f'warm start {adapter[:12]}' if adapter else 'no warm start'}")
+          f"{f'warm start {adapter[:12]}' if adapter else 'no warm start'}"
+          + (f"; dream set(s) {', '.join(sorted(sets))}" if sets else ""))
     false_positives = apply_floor(cells)
     floor_n = sum(c["dn"] for c in cells if c["arm"] == "nosleep")
     if floor_n:
@@ -240,7 +273,10 @@ def main(pattern: str, curves: bool = False) -> None:
           f"{'inst':>5} {'dmarg':>7} {'dinst':>6} {'EM':>4} {'dlogp':>7} {'para':>5} {'tokgrad':>8} "
           f"{'lost':>6} {'dPPL':>8}")
     for c in cells:
-        print(f"{c['arm']:22} {c['seed']:5} {str(c['erase_op'] or '-'):9} {c['rehearse']:6.3f} {c['bound_cov']:>4}/4 {c['misbound']:>5} "
+        # A dream set has no single-dream rehearsal fraction: its coverage is
+        # aggregate across the set, which is what the bound column already says.
+        rehearse = "     -" if c["rehearse"] is None else f"{c['rehearse']:6.3f}"
+        print(f"{c['arm']:22} {c['seed']:5} {str(c['erase_op'] or '-'):9} {rehearse} {c['bound_cov']:>4}/4 {c['misbound']:>5} "
               f"{c['ic']:>2}/4 {c['margin']:+7.2f} {c['margin_install']:>2}/{c['n']:<2} "
               f"{c['dmargin']:+7.2f} {c['dinstall']:>3}/{c['dn']:<2} {c['install']:>2}/{c['n']:<1} "
               f"{c['dlp']:+7.3f} {c['para']:5.2f} {c['token_gradients']:>8} "
