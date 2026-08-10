@@ -619,7 +619,16 @@ committing the block)
   only warns, it must gate).
 - **Pin the verbatim arm spellings** for §3(1)'s template from
   `dream_sleep.py --help` and echo them into this file's margin or the run
-  notes at gate close.
+  notes at gate close. [PINNED at gate close, from `--help`: `--arm replay`
+  (A), `--arm b4-raw`, `--arm b4-deflated`, `--arm b4-qcm`; a dream-SET
+  cache accepts exactly these four. Set cache: `--build-dream-cache
+  --dreams N` → `data/dream_set_s<seed>.pt` (+ `.pilot.pt` under
+  `--pilot-capture`); epochs knob `--dream-epochs` counts passes over the
+  set; binding gate `--bind-min-dreams` (default 2); gate threshold
+  `--gate-threshold` (nats, pilot-frozen); rank rule `--rank-rule
+  {ratio-gap,median}`; rich wake `--wake-bystanders/--wake-nearcone/
+  --wake-dialogue` (default 0 — the box docket passes them explicitly);
+  probes `--probe-every-dream`.]
 - **The local pilot (before any format is frozen): ~20 steered
   free-running dreams** against the seed-1234 wake transcript (extract from
   `dream_cache_s1234.pt` — do not regenerate), 512 tokens, temp 0.7,

@@ -263,13 +263,13 @@ def recommend(rows: Sequence[dict[str, object]]) -> dict[str, object] | None:
     live = [r for r in rows if r["ok"]]
     if not live:
         return None
+    # Step (ii) is a scheme that dominates EVERY other, not one that merely
+    # nothing beats: a nonempty Pareto front always exists, so the weaker
+    # reading would answer from iteration order and step (iii) would be dead.
     for row in live:
-        better = [o for o in live if o is not row
-                  and o["target_removed"] >= row["target_removed"]
-                  and o["collateral_removed"] <= row["collateral_removed"]
-                  and (o["target_removed"] > row["target_removed"]
-                       or o["collateral_removed"] < row["collateral_removed"])]
-        if not better:
+        if all(o["target_removed"] <= row["target_removed"]
+               and o["collateral_removed"] >= row["collateral_removed"]
+               for o in live if o is not row):
             return row
     knee = statistics.median(float(r["collateral_removed"]) for r in live)
     under = [r for r in live if float(r["collateral_removed"]) <= knee] or live

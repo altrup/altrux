@@ -152,6 +152,30 @@ def test_the_weighted_families_weight_the_queries_entering_the_svd():
 # ---- the deliverable (sec 2.10.7) -----------------------------------------
 
 
+def _row(scheme, target, collateral, family="hard", ok=True):
+    return {"scheme": scheme, "family": family, "target_removed": target,
+            "collateral_removed": collateral, "ok": ok}
+
+
+def test_a_pareto_front_with_no_dominator_falls_through_to_the_knee():
+    """Sec 2.10.6(ii) is a scheme that dominates ALL the others, not merely one
+    nothing beats -- a nonempty Pareto front always exists, so the weaker
+    reading would answer from iteration order and never reach step (iii)."""
+    front = [_row("mid", 0.80, 0.10), _row("greedy", 0.90, 0.20), _row("timid", 0.70, 0.05)]
+
+    # knee = median collateral (0.10); the highest target under it is `mid`.
+    assert recommend(front)["scheme"] == "mid"
+    assert recommend(list(reversed(front)))["scheme"] == "mid"
+    assert recommend([front[1], front[2], front[0]])["scheme"] == "mid"
+
+
+def test_a_scheme_that_dominates_every_other_wins_at_step_two():
+    front = [_row("mid", 0.80, 0.10), _row("greedy", 0.90, 0.20), _row("timid", 0.70, 0.05),
+             _row("dominator", 0.95, 0.05)]
+
+    assert recommend(front)["scheme"] == "dominator"
+
+
 def test_the_recommendation_is_lexicographic_and_defers_the_freeze_to_the_team():
     rows = [
         {"scheme": "dominated", "target_removed": 0.5, "collateral_removed": 0.4, "ok": True},
