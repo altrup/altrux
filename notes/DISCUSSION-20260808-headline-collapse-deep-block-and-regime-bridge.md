@@ -447,6 +447,23 @@ asserted on every cell (full tables in the run notes):
         intact-state student would have zero KL and could never learn.
         A = total denial; B4 = targeted denial; the A-vs-B4 pairing IS
         the targeting measurement (§2.9.6).
+    13. **B4's sleep-exit carry, registered post-gate (altrup,
+        2026-08-09)**: the state a B4 sleep carries into the next wake
+        is the wake state ablated by ALL dreams' reads — per-dream
+        ablation during training, the union at sleep exit ("the dreams
+        collectively denied it, so it lives in weights now").
+        Construction: stack every dream's final V rows, re-orthonormalize,
+        project ONCE — never apply per-dream erasers sequentially (a
+        product of complement projectors is order-dependent and not a
+        projection; the union projection is idempotent, the §2.7
+        argument again). Implementation deferred to the multi-sleep
+        docket — set caches refuse `--waves > 1` until then, and the
+        code's current `ARM_CARRY` intact-state line is a placeholder
+        this supersedes. Watch-item, measured not argued: union rank vs
+        the per-SLEEP address budget (per-dream d_state/16 caps can
+        union past d_state/16 when cross-dream overlap is low — read
+        the pilot's cross-dream V-overlap). A's multi-sleep carry
+        (blank) is registered where it always was, 08-07 §3.7's docket.
 
 ## 3. Next run plan — in order, on the box (GH200)
 
