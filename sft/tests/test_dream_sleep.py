@@ -9,11 +9,16 @@ import torch.nn as nn
 from consolidation_null import Fact
 from dream_sleep import (
     ARM_CARRY,
+    CachedDream,
+    distill_dream_set,
     distill_counterfactual,
     distill_live,
     distill_replay,
     distill_sft,
     erase_ssm,
+    erased_start,
+    fact_read_positions,
+    gate_agreement,
     erase_state,
     frozen_teacher,
     paraphrase_prompts,
@@ -296,7 +301,7 @@ def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
     source = inspect.getsource(dream_sleep.main)
     load = source.index("load_init_adapter(")
     assert load < source.index("load_or_build_battery(")
-    assert load < source.index("build_cache(")
+    assert load < source.index("build_dream_set if args.dreams else build_cache")
     assert load < source.index("load_dream_cache(")
 
 
@@ -682,6 +687,9 @@ def test_ce_on_dream_trains_on_the_dream_tokens_instead_of_the_teacher_logits():
 
 def test_arm_carry_matches_the_registered_sequences():
     assert ARM_CARRY == {
+        "b4-raw": "intact",
+        "b4-deflated": "intact",
+        "b4-qcm": "intact",
         "replay": "none",
         "ce-on-dream": "none",
         "drain": "drained",
@@ -1484,3 +1492,109 @@ def test_the_leakage_probe_reports_a_miss_as_a_miss():
                   "replay", 1, "leakage", (".", "\n"))
 
     assert records[0]["match"] is False and records[0]["logprob_delta"] is None
+
+
+# ---- B4's dream-set training loop (DISCUSSION-20260808 sec 2.10.3-2.10.5) --
+
+
+def _cached(model, wake, seed, n_tokens=4):
+    """A CachedDream carrying a per-layer rank-1 eraser, as the cache builder
+    writes it."""
+    dream = _fixed_dream(model, wake, seed, n_tokens)
+    bases = [torch.nn.functional.normalize(torch.randn(1, 4), dim=-1) for _ in model.layers]
+    return CachedDream(
+        dream_ids=[int(i) for i in dream.tokens[0]],
+        token_texts=dream.token_texts,
+        teacher_logits=dream.logits,
+        cue_flags=[False] * n_tokens,
+        prefix_len=1,
+        stop_reason="eoc",
+        divergence=[0.0] * n_tokens,
+        gate_positions=[1],
+        queries=[[q for q in dream.queries[1]]],
+        spectra=[[1.0] for _ in model.layers],
+        ranks={"ratio-gap": [1] * len(model.layers), "median": [1] * len(model.layers)},
+        bases={v: bases for v in ("raw", "deflated", "qcm")},
+    )
+
+
+def test_arm_a_still_trains_from_a_blank_state():
+    """Sec 2.9.6/2.10.12: A is total denial and `init_state=None` is what makes
+    it so -- adding B4's start state must not have touched it."""
+    model, opt, wake, seed = _tiny_setup()
+    dream = _fixed_dream(model, wake, seed)
+    seen = []
+    model.forward = _recording(model, seen)
+
+    distill_replay(model, opt, dream, steps=1, chunk_len=4, kl_temp=1.0, on_step=lambda s, l: None)
+
+    assert seen[0] is None
+
+
+def _recording(model, seen):
+    original = model.__class__.forward
+
+    def forward(ids, state=None):
+        seen.append(None if state is None else state.ssm_states[0].clone())
+        return original(model, ids, state)
+
+    return forward
+
+
+def test_b4_starts_every_dream_from_a_fresh_erased_copy_of_the_wake_state():
+    """Sec 2.10.4's carry matrix: never erase-once-then-carry. Dream k+1's
+    start state must be the wake state's own erasure, not dream k's leftovers."""
+    model, opt, wake, seed = _tiny_setup(rows=4)
+    dreams = [_cached(model, wake, seed), _cached(model, wake, seed)]
+    seen = []
+    model.forward = _recording(model, seen)
+
+    distill_dream_set(model, opt, dreams, wake, variant="raw", epochs=1, kl_temp=1.0,
+                      on_step=lambda s, l: None, on_boundary=lambda i, s: None)
+
+    starts = [s for s in seen if s is not None]
+    for start, dream in zip(starts, dreams, strict=True):
+        torch.testing.assert_close(start, erased_start(wake, dream.bases["raw"]).ssm_states[0])
+
+
+def test_the_dream_set_probes_at_every_boundary_and_carries_the_weights():
+    model, opt, wake, seed = _tiny_setup(rows=4)
+    dreams = [_cached(model, wake, seed) for _ in range(3)]
+    before = [p.detach().clone() for p in model.parameters()]
+    boundaries: list[int] = []
+
+    distill_dream_set(model, opt, dreams, wake, variant=None, epochs=2, kl_temp=1.0,
+                      on_step=lambda s, l: None, on_boundary=lambda i, s: boundaries.append(i))
+
+    assert boundaries == [0, 1, 2]
+    assert _moved(model, before)  # one optimizer trajectory across the whole set
+
+
+def test_fact_read_positions_are_the_bound_rehearsals_only():
+    facts = [Fact("osprey", "bird", "5 9 7 9 7")]
+    texts = ["The ", "code ", "for ", "the ", "osprey ", "is ", "5 9 7 9 7", "."]
+
+    positions = fact_read_positions(texts, facts)
+
+    assert positions["osprey"] == [6]
+    assert fact_read_positions(["The ", "code ", "is ", "5 9 7 9 7", "."], facts)["osprey"] == []
+
+
+def test_gate_agreement_scores_the_gate_against_the_binding_scan():
+    """Diagnostic only (sec 2.10.6's named non-goal) -- but a zero per-fact
+    contribution is loud."""
+    agreement = gate_agreement([6, 7], {"osprey": [6], "heron": []})
+
+    assert agreement["precision"] == 0.5 and agreement["recall"] == 1.0
+    assert agreement["per_fact"] == {"osprey": 1, "heron": 0}
+
+
+def test_a_dream_records_the_steer_prefix_it_was_seeded_with():
+    """Sec 4: the prefix is what every arm's keep mask has to exclude, so the
+    dream carries its length rather than each arm re-deriving it."""
+    model, _, wake, _ = _tiny_setup()
+
+    dream = teacher_dream(model, wake, torch.tensor([[1, 2, 3]]), n_tokens=6, temperature=0.0,
+                          drain=False, decode_token=str, needles=[])
+
+    assert dream.prefix_len == 3

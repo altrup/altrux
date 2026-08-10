@@ -24,6 +24,11 @@ always stop-gradiented. The erase never touches the wake path.
                    persists it with the wake state, the teacher logits and
                    queries, distractor codes and sha-256 hashes of both token
                    sequences. Every arm loads it; no arm generates.
+                   --dreams N builds the multi-dream set instead (sec 2.10.4):
+                   N dreams generated upfront, each from a fresh copy of the
+                   intact wake state, each carrying its own gated queries,
+                   per-layer spectra and eraser. The SET hash rides every
+                   result record.
   sleep --arm   -- replay        (A):  student teacher-forced over the cached
                                        dream from a FRESH state, KL to the
                                        cached logits; the chunk is the whole
@@ -57,6 +62,15 @@ always stop-gradiented. The erase never touches the wake path.
                                        state trajectory, constant across
                                        passes. Equals b2-fused-detached at
                                        pass 1, machine-checked every sleep.
+                   b4-raw / b4-deflated / b4-qcm
+                                 (B4): erase ONCE per dream (a projection along
+                                       the frozen teacher's aggregate of the
+                                       state-dependency-gated read queries),
+                                       then ordinary sequence training against
+                                       the cached logits -- full BPTT, no
+                                       spine. Needs a multi-dream cache
+                                       (--dreams N); the variant names the
+                                       post-processing of the shared SVD.
                    drain-live         : one online adapters-on pass. Retired
                                        (sec 6), kept for reference.
                    --sft-ref          : the CE-on-raw-text convention, on the
@@ -132,6 +146,18 @@ from consolidation_null import (
     target_logprob,
     ts,
 )
+from b4 import (
+    RANK_RULES,
+    VARIANTS,
+    address_budget,
+    aggregate_basis,
+    erase_state_subspace,
+    gated_positions,
+    rank_median,
+    rank_ratio_gap,
+    state_divergence,
+    variant_basis,
+)
 from erase_probe import (
     build_mixed_turns,
     build_wake_items,
@@ -195,8 +221,14 @@ CUE_STOPS = (".", "\n")
 # leaves every prior run's wake transcript bit-identical.
 DISTRACTOR_SALT = 0x5EED
 
+# B4 (sec 2.7): one erase per dream, from the frozen teacher's aggregate. The
+# arm name carries the variant, since the variant IS the operator being
+# compared -- there is no --erase-op axis crossing it.
+B4_ARMS = {f"b4-{variant}": variant for variant in VARIANTS}
+
 # What each arm hands to the next wake, per the sec 3 sequences.
 ARM_CARRY = {
+    **dict.fromkeys(B4_ARMS, "intact"),
     "replay": "none",
     "ce-on-dream": "none",
     "drain": "drained",
@@ -210,7 +242,17 @@ ARM_CARRY = {
     "b3-fused": "intact",
 }
 FUSED_ARMS = ("b2-fused-detached", "b2-fused-deep", "b3-fused")
-ARMS = ("replay", "drain", "counterfactual", "counterfactual-commit", "drain-live", *FUSED_ARMS)
+ARMS = ("replay", "drain", "counterfactual", "counterfactual-commit", "drain-live",
+        *FUSED_ARMS, *B4_ARMS)
+# Arms a multi-dream cache runs (sec 2.10.1): A and the B4 family, nothing else.
+DREAM_SET_ARMS = ("replay", *B4_ARMS)
+# Gate threshold in nats of KL(with-state || blank-state). A placeholder until
+# the sec 4 pilot freezes it on real spectra -- always pass it explicitly.
+GATE_THRESHOLD = 1.0
+RANK_RULE = "ratio-gap"
+# Facts must bind in at least this many dreams of a set (sec 3's aggregate
+# coverage gate); the pilot may raise it.
+BIND_MIN_DREAMS = 2
 
 # The wake session's own question phrasing, reused verbatim as a rehearsal cue.
 USER_CUE = "{user} What is the code for the {entity}?"
@@ -401,6 +443,59 @@ def target_keep_mask(cue_flags: Sequence[bool]) -> list[bool]:
     return [t + 1 >= n or not cue_flags[t + 1] for t in range(n)]
 
 
+def scored_keep(cue_flags: Sequence[bool], prefix_len: int) -> list[bool]:
+    """`target_keep_mask` over the steer prefix as well as the cue spans
+    (sec 4): prefix tokens condition the dream through state only, in every
+    arm, so they are masked as TARGETS exactly the way cue text is -- and
+    position prefix_len-1 is kept, because it predicts the first free token."""
+    return target_keep_mask([cue or t < prefix_len for t, cue in enumerate(cue_flags)])
+
+
+def fact_read_positions(token_texts: Sequence[str], facts: Sequence[Fact]) -> dict[str, list[int]]:
+    """Token positions inside a BOUND rehearsal of each fact's code -- the
+    binding scan, as positions rather than counts.
+
+    Sec 2.9.1: this is a VALIDATION overlay. Nothing in the eraser's path may
+    call it; it exists to score the state-dependency gate after the fact.
+    """
+    text = "".join(token_texts)
+    spans, pos = [], 0
+    for piece in token_texts:
+        spans.append((pos, pos + len(piece)))
+        pos += len(piece)
+    out: dict[str, list[int]] = {}
+    for fact in facts:
+        hits: set[int] = set()
+        at = text.find(fact.code)
+        while at != -1:
+            start = max(text.rfind(stop, 0, at) for stop in CUE_STOPS) + 1
+            ends = [text.find(stop, at) for stop in CUE_STOPS]
+            end = min([e for e in ends if e != -1], default=len(text))
+            if fact.entity.lower() in text[start:end].lower():
+                hits |= {i for i, (lo, hi) in enumerate(spans) if lo < at + len(fact.code) and hi > at}
+            at = text.find(fact.code, at + 1)
+        out[fact.entity] = sorted(hits)
+    return out
+
+
+def gate_agreement(gate: Sequence[int], fact_positions: dict[str, list[int]]) -> dict[str, object]:
+    """Precision/recall of the state-dependency gate against the binding scan,
+    plus each fact's contribution count (sec 2.9.2).
+
+    Diagnostic only -- sec 2.10.6 names label accuracy a NON-goal, since the
+    state and not the labels is what the eraser touches. A fact contributing
+    zero gated positions is still loud: the eraser cannot address what it never
+    captured.
+    """
+    reads = {t for positions in fact_positions.values() for t in positions}
+    gated = set(gate)
+    hit = len(gated & reads)
+    return {"precision": hit / len(gated) if gated else 0.0,
+            "recall": hit / len(reads) if reads else 0.0,
+            "gated": len(gated), "read_positions": len(reads),
+            "per_fact": {e: len(gated & set(p)) for e, p in fact_positions.items()}}
+
+
 def load_dialogue_records(n: int = WAKE_DIALOGUE_POOL) -> list[dict]:
     """Candidate conversations for the wake transcript's dialogue slice."""
     from datasets import load_dataset
@@ -514,6 +609,7 @@ class Dream:
     skipped_cone: int
     cue_flags: list[bool] = field(default_factory=list)  # True where the token was spliced in as a cue
     stop_reason: str = "max-tokens"  # one of STOP_REASONS
+    prefix_len: int = 0  # steer-prefix tokens, never scored (sec 2.10.8)
 
 
 @dataclass
@@ -537,6 +633,11 @@ class DreamCache:
     distractors: dict[str, str]
     facts: list[tuple[str, str, str]]  # entity, category, code
     stop_reason: str = "max-tokens"
+    # The steer prefix (sec 2.10.8), as text and as its token count: prefix
+    # tokens condition the dream through state only and are excluded from every
+    # arm's scored positions.
+    dream_prompt: str = ""
+    prefix_len: int = 0
     transcript_sha: str = ""
     dream_sha: str = ""
     # Which weights emitted this dream: "base" or the --init-adapter SHA-256.
@@ -557,6 +658,106 @@ class DreamCache:
         return sum(not flag for flag in self.cue_flags)
 
 
+@dataclass
+class CachedDream:
+    """One dream of a multi-dream cache (sec 2.10.4).
+
+    Carries everything a B4 cell needs and nothing it has to recompute: the
+    tokens, the frozen teacher's logits, the state-dependency gate's decision
+    (its per-position divergence and the positions it kept), the raw queries at
+    those positions, each layer's spectrum with both rank rules' answers, and
+    the eraser itself -- one orthonormal basis per layer per variant, all three
+    from the same shared SVD.
+    """
+
+    dream_ids: list[int]
+    token_texts: list[str]
+    teacher_logits: torch.Tensor  # (T, V), cpu float32
+    cue_flags: list[bool]
+    prefix_len: int
+    stop_reason: str
+    divergence: list[float]  # D_t at every position
+    gate_positions: list[int]
+    queries: list[list[torch.Tensor]]  # gated positions x n_layers
+    spectra: list[list[float]]  # per layer
+    ranks: dict[str, list[int]]  # rank rule -> per-layer r
+    bases: dict[str, list[torch.Tensor]]  # variant -> per-layer (r, n), rows orthonormal
+    dream_sha: str = ""
+
+    def __post_init__(self) -> None:
+        self.dream_sha = self.dream_sha or token_sha(self.dream_ids)
+
+    @property
+    def free_tokens(self) -> int:
+        return sum(not flag for flag in self.cue_flags)
+
+
+def dream_set_sha(dreams: Sequence[CachedDream]) -> str:
+    """The set hash asserted into every result jsonl (sec 3): over the dreams'
+    own hashes in order, so a reordered or substituted set is a different set."""
+    return hashlib.sha256("\n".join(d.dream_sha for d in dreams).encode()).hexdigest()
+
+
+@dataclass
+class DreamSetCache:
+    """The N-dream cache the literature-shaped regime distils (sec 2.10.4).
+
+    Every dream is generated upfront, each from a fresh copy of the INTACT wake
+    state, by the sleep-start snapshot; the whole set is shared by every arm,
+    which is what makes an A-vs-B4 pairing a comparison of arms.
+    """
+
+    seed: int
+    transcript_ids: list[int]
+    wake_state: object
+    dreams: list[CachedDream]
+    distractors: dict[str, str]
+    facts: list[tuple[str, str, str]]  # entity, category, code
+    dream_prompt: str = ""
+    gate_threshold: float = GATE_THRESHOLD
+    rank_rule: str = RANK_RULE
+    generator: str = "base"
+    transcript_sha: str = ""
+    set_sha: str = ""
+
+    def __post_init__(self) -> None:
+        self.transcript_sha = self.transcript_sha or token_sha(self.transcript_ids)
+        self.set_sha = self.set_sha or dream_set_sha(self.dreams)
+
+    @property
+    def fact_list(self) -> list[Fact]:
+        return [Fact(*f) for f in self.facts]
+
+
+def aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact]) -> dict[str, int]:
+    """How many dreams of the set bind each fact (sec 3). Coverage is aggregate
+    across dreams -- no dream is penalized for wandering off the facts, which
+    sec 2.7 calls explicitly fine and plausibly protective."""
+    counts = {f.entity: 0 for f in facts}
+    for dream in dreams:
+        bound, _ = binding_coverage("".join(dream.token_texts), facts)
+        for entity, n in bound.items():
+            counts[entity] += n > 0
+    return counts
+
+
+def assert_aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact],
+                             min_dreams: int) -> dict[str, int]:
+    """The aggregate binding gate. Unlike the single-dream report, which only
+    warns, this REFUSES the cache (sec 4): a fact bound in too few dreams is a
+    fact no arm can install, and the whole set's numbers would be conditioned
+    on it."""
+    counts = aggregate_binding(dreams, facts)
+    short = {e: n for e, n in counts.items() if n < min_dreams}
+    if short:
+        raise SystemExit(
+            f"aggregate binding gate FAILED: {short} bound in fewer than {min_dreams} of "
+            f"{len(dreams)} dreams. A fact the set never binds is one no arm can install -- "
+            f"raise --dreams, or revisit the steer prefix, before running any cell."
+        )
+    return counts
+
+
 def save_dream_cache(cache: DreamCache, path: str | Path) -> None:
     import torch
 
@@ -564,19 +765,28 @@ def save_dream_cache(cache: DreamCache, path: str | Path) -> None:
     torch.save(cache, path)
 
 
-def load_dream_cache(path: str | Path) -> DreamCache:
-    """Load and re-verify. A cache whose tokens no longer hash to what it was
-    saved with is refused outright: every downstream number is conditioned on
-    the arms having seen the same tokens."""
+def load_dream_cache(path: str | Path) -> DreamCache | DreamSetCache:
+    """Load and re-verify, either shape. A cache whose tokens no longer hash to
+    what it was saved with is refused outright: every downstream number is
+    conditioned on the arms having seen the same tokens."""
     import torch
 
     # The cache holds a MixerState, not just tensors, so weights_only is off --
     # it is this repo's own artifact, written by the cache builder.
-    cache: DreamCache = torch.load(path, map_location="cpu", weights_only=False)
+    cache = torch.load(path, map_location="cpu", weights_only=False)
+    if isinstance(cache, DreamSetCache):
+        for i, dream in enumerate(cache.dreams):
+            if token_sha(dream.dream_ids) != dream.dream_sha:
+                raise SystemExit(f"dream set {path} is corrupt: dream {i}'s tokens do not match its sha-256")
+        if token_sha(cache.transcript_ids) != cache.transcript_sha or dream_set_sha(cache.dreams) != cache.set_sha:
+            raise SystemExit(f"dream set {path} is corrupt: the set no longer matches its recorded sha-256")
+        return cache
     # Unpickling restores __dict__ without __init__, so a cache written before
     # the field existed has no attribute to read.
     cache.generator = getattr(cache, "generator", "base")
     cache.stop_reason = getattr(cache, "stop_reason", "max-tokens")
+    cache.dream_prompt = getattr(cache, "dream_prompt", "")
+    cache.prefix_len = getattr(cache, "prefix_len", 0)
     for name, ids, recorded in (("transcript", cache.transcript_ids, cache.transcript_sha),
                                 ("dream", cache.dream_ids, cache.dream_sha)):
         if token_sha(ids) != recorded:
@@ -615,6 +825,8 @@ def write_dream_sidecar(cache: DreamCache, path: str | Path) -> None:
     header = [
         f"seed {cache.seed}   dream_sha {cache.dream_sha}   transcript_sha {cache.transcript_sha}",
         f"generated by: {cache.generator}   ended: {cache.stop_reason}",
+        f"steer prefix: {cache.dream_prompt!r} ({cache.prefix_len} tokens, excluded from every "
+        f"arm's scored positions)",
         f"{len(cache.dream_ids)} dream tokens, {cache.free_tokens} freely generated, "
         f"{len(cache.dream_ids) - cache.free_tokens} spliced cue text",
         "facts: " + ", ".join(f"{f.entity}={f.code} (foil {cache.distractors[f.entity]})" for f in facts),
@@ -637,6 +849,7 @@ def dream_from_cache(cache: DreamCache, device) -> Dream:
         token_texts=cache.token_texts,
         skipped_cone=0,
         cue_flags=cache.cue_flags,
+        prefix_len=cache.prefix_len,
     )
 
 
@@ -755,11 +968,13 @@ def teacher_dream(
         skipped_cone=skipped,
         cue_flags=cue_flags[:kept],
         stop_reason=stop_reason,
+        prefix_len=len(seed_ids[0]),
     )
 
 
 def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp: float, on_step,
-                   fresh_state: bool = False, keep: Sequence[bool] | None = None, ce: bool = False) -> int:
+                   fresh_state: bool = False, keep: Sequence[bool] | None = None, ce: bool = False,
+                   init_state=None) -> int:
     """Arm A sequence 3: the student is teacher-forced over the dream from a
     FRESH state, in chunks, KL to the cached logits (`ce` swaps that for plain
     cross-entropy on the dream tokens -- the CE-on-dream decomposition cell).
@@ -773,6 +988,11 @@ def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp
     chunk instead of only at pass boundaries, so no chunk is privileged --
     under the carried schedule only chunk 0 ever follows a reset, and that is
     the only condition the fresh-state probes measure.
+
+    `init_state` is what a reset resets TO: `None` is arm A -- total denial,
+    the student re-learns everything state-dependent from blank -- and B4
+    passes a fresh copy of the erased wake state instead (sec 2.9.6). Every
+    reset takes its own copy, so a multi-epoch pass starts where pass 1 did.
     """
     import torch.nn.functional as F
 
@@ -783,7 +1003,7 @@ def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp
     for step in range(steps):
         c, reset = replay_step(step, n_chunks, fresh_state)
         if reset:
-            state = None
+            state = None if init_state is None else copy_state(init_state)
         lo, hi = c * chunk_len, min((c + 1) * chunk_len, length)
         scored = [t for t in range(lo, hi) if (keep is None or keep[t]) and not (ce and t + 1 >= length)]
         if not scored:
@@ -802,6 +1022,60 @@ def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp
         opt.zero_grad(set_to_none=True)
         tokens += len(scored)
         on_step(step, loss.item())
+    return tokens
+
+
+def erased_start(wake_state, bases: Sequence[torch.Tensor]):
+    """A fresh copy of the wake state with one dream's eraser applied ONCE.
+
+    Sec 2.10.4 pins this: never erase-once-then-carry. A carried state would
+    ferry dream k's re-written facts into dream k+1, and the projection is
+    idempotent precisely so that re-deriving it per dream costs nothing.
+    """
+    state = copy_state(wake_state)
+    erase_state_subspace(state, bases)
+    return state
+
+
+def dream_from_cached(cached: CachedDream, device) -> Dream:
+    import torch
+
+    return Dream(
+        tokens=torch.tensor([cached.dream_ids], dtype=torch.long, device=device),
+        logits=cached.teacher_logits,
+        queries=cached.queries,
+        final_state=None,
+        token_texts=cached.token_texts,
+        skipped_cone=0,
+        cue_flags=cached.cue_flags,
+        stop_reason=cached.stop_reason,
+    )
+
+
+def distill_dream_set(model, opt, dreams: Sequence[CachedDream], wake_state, variant: str | None,
+                      epochs: int, kl_temp: float, on_step, on_boundary) -> int:
+    """Sec 2.10.4's carry matrix over the whole dream set.
+
+    Student WEIGHTS carry across the set -- one optimizer trajectory, since
+    resetting them per dream would leave only dream N's learning. Student STATE
+    resets at every dream boundary: `variant=None` is arm A, from blank;
+    a B4 variant starts each dream from a fresh erased copy of the wake state.
+
+    Each dream is ORDINARY sequence training against its cached teacher logits
+    -- the chunk is the whole dream, full BPTT through the model's own sequence
+    path, no spine and no per-token loop. `epochs` is 1 in the registered form
+    (sec 2.10.2's one pass per dream); the multi-epoch cell prices repetition.
+    """
+    tokens = step = 0
+    for i, cached in enumerate(dreams):
+        dream = dream_from_cached(cached, wake_state.ssm_states[0].device)
+        start = None if variant is None else erased_start(wake_state, cached.bases[variant])
+        tokens += distill_replay(
+            model, opt, dream, steps=epochs, chunk_len=dream.tokens.shape[1], kl_temp=kl_temp,
+            on_step=lambda s, loss, base=step: on_step(base + s, loss),
+            keep=scored_keep(cached.cue_flags, cached.prefix_len), init_state=start)
+        step += epochs
+        on_boundary(i, step)
     return tokens
 
 
@@ -1177,6 +1451,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
     parser.add_argument("--cue-greedy", type=int, default=12, help="Tokens after each cue decoded greedily -- the recalled code, which temperature sampling almost never gets right (default: %(default)s)")
     parser.add_argument("--cue-every", type=int, default=0, help="Force a fact's question stem into the dream every N tokens, cycling the wave's facts; 0 leaves generation free (default: %(default)s)")
+    parser.add_argument("--dreams", type=int, default=0,
+                        help="Build/expect a multi-dream cache of N dreams instead of the single-dream one "
+                             "(sec 2.10.4's literature-shaped regime); 0 is the single-dream cache "
+                             "(default: %(default)s)")
+    parser.add_argument("--dream-epochs", type=int, default=1,
+                        help="Passes per dream in a dream set. The registered form is one (sec 2.10.2); the "
+                             "multi-epoch variant cell prices repetition (default: %(default)s)")
+    parser.add_argument("--gate-threshold", type=float, default=GATE_THRESHOLD,
+                        help="State-dependency gate (sec 2.9.2): capture a position's read queries when the "
+                             "with-state and blank-state next-token distributions diverge by at least this "
+                             "many nats. Frozen by the pilot (default: %(default)s)")
+    parser.add_argument("--rank-rule", choices=RANK_RULES, default=RANK_RULE,
+                        help="Which rank rule truncates each layer's SVD; both are computed and printed either "
+                             "way (sec 2.7) (default: %(default)s)")
+    parser.add_argument("--bind-min-dreams", type=int, default=BIND_MIN_DREAMS,
+                        help="Aggregate binding gate: every fact must bind in at least this many dreams of the "
+                             "set, or the cache build fails (default: %(default)s)")
+    parser.add_argument("--probe-every-dream", type=int, default=1,
+                        help="Run the full probe round at every Nth dream boundary; 2 is the registered "
+                             "degradation if probes measurably drag (default: %(default)s)")
     parser.add_argument("--build-dream-cache", action="store_true",
                         help="Generate this seed's teacher dream, write the cache and its decoded sidecar, and stop. "
                              "Every arm then loads that one dream; no arm generates.")
@@ -1230,11 +1524,15 @@ def main() -> None:
         raise SystemExit("--ce-on-dream is arm A's sequence with a different objective; it is not a reference arm")
     if args.deep and args.arm != "counterfactual":
         raise SystemExit("--deep is a B2 cell (sec 6: deep-B1 is structurally confounded)")
+    if args.dream_epochs < 1:
+        raise SystemExit("--dream-epochs is passes per dream; it cannot be below 1")
+    if args.dreams and args.waves > 1:
+        raise SystemExit("a dream set is single-sleep this run (sec 2.4 defers multi-sleep); --waves 1")
     validate_wave_args(args)
     mode = "sft-ref" if args.sft_ref else ("no-sleep" if args.no_sleep else
                                            ("ce-on-dream" if args.ce_on_dream else args.arm))
 
-    cache_path = Path(args.dream_cache or f"data/dream_cache_s{args.seed}.pt")
+    cache_path = Path(args.dream_cache or default_cache_path(args.seed, args.dreams))
     if not args.build_dream_cache and not cache_path.exists():
         raise SystemExit(
             f"no dream cache at {cache_path}. Every arm distils the one dream this seed's cache holds -- "
@@ -1290,15 +1588,32 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_file = out_path.open("w")
 
-    emit = make_emit(out_file, erase_op=args.erase_op, init_adapter_sha256=adapter_sha,
-                     init_adapter=Path(args.init_adapter).resolve().name if args.init_adapter else None)
-
     cache = None if args.build_dream_cache else load_dream_cache(cache_path)
+    is_set = isinstance(cache, DreamSetCache)
+    if is_set and args.arm not in DREAM_SET_ARMS and not (args.sft_ref or args.no_sleep):
+        raise SystemExit(f"{cache_path} is a dream set, which runs arms {DREAM_SET_ARMS} only (sec 2.10.1)")
+    if is_set and args.waves > 1:
+        raise SystemExit(f"{cache_path} is a dream set and multi-sleep is deferred (sec 2.4); --waves 1")
+    if args.arm in B4_ARMS and not is_set:
+        raise SystemExit(f"arm {args.arm} erases once per dream and needs a dream set; {cache_path} holds one dream")
+
+    # The dream-SET hash rides every record (sec 3), the way the single-dream
+    # hashes already ride the cache record.
+    emit = make_emit(out_file, erase_op=args.erase_op, init_adapter_sha256=adapter_sha,
+                     init_adapter=Path(args.init_adapter).resolve().name if args.init_adapter else None,
+                     dream_set_sha=cache.set_sha if is_set else None)
+
     distractors = dict(cache.distractors) if cache else {}
-    if cache is not None:
+    if is_set:
+        print(f"[{ts()}] dream set {cache_path}: {len(cache.dreams)} dreams, set_sha {cache.set_sha[:12]}, "
+              f"transcript_sha {cache.transcript_sha[:12]}, prefix {cache.dream_prompt!r}, "
+              f"gate {cache.gate_threshold} nats, rank rule {cache.rank_rule}, "
+              f"generated by {cache.generator[:12]}")
+    elif cache is not None:
         print(f"[{ts()}] dream cache {cache_path}: {len(cache.dream_ids)} tokens "
               f"({cache.free_tokens} freely generated), transcript_sha {cache.transcript_sha[:12]} "
               f"dream_sha {cache.dream_sha[:12]}, generated by {cache.generator[:12]}")
+    if cache is not None:
         if cache.generator != (adapter_sha or "base"):
             raise SystemExit(
                 f"dream cache {cache_path} was generated by {cache.generator[:12]} but this cell runs at "
@@ -1437,9 +1752,10 @@ def main() -> None:
               "distractors": [d.label for d in wake_distractors]})
 
         if args.build_dream_cache:
-            build_cache(model, args, cache_path, transcript, facts, chunk_len,
-                        encode, decode, tokenizer, user_open, asst_open, stop_id,
-                        adapter_sha=adapter_sha)
+            builder = build_dream_set if args.dreams else build_cache
+            builder(model, args, cache_path, transcript, facts, chunk_len,
+                    encode, decode, tokenizer, user_open, asst_open, stop_id,
+                    adapter_sha=adapter_sha)
             out_file.close()
             print(f"\n[{ts()}] cache built; every arm of seed {args.seed} now distils this dream")
             return
@@ -1450,11 +1766,20 @@ def main() -> None:
                     f"wave-1 transcript does not match {cache_path}'s: this cell would distil a dream generated "
                     f"from a different wake session. Rebuild the cache for seed {args.seed}."
                 )
-            emit({"phase": "cache", "wave": 1, "arm": mode, "seed": args.seed, "path": str(cache_path),
-                  "transcript_sha": cache.transcript_sha, "stop_reason": cache.stop_reason, "dream_sha": cache.dream_sha,
-                  "dream_tokens": len(cache.dream_ids), "free_tokens": cache.free_tokens,
-                  "cue_tokens": len(cache.dream_ids) - cache.free_tokens,
-                  "dream_generator": cache.generator})
+            record = {"phase": "cache", "wave": 1, "arm": mode, "seed": args.seed, "path": str(cache_path),
+                      "transcript_sha": cache.transcript_sha, "dream_generator": cache.generator}
+            if is_set:
+                record |= {"dreams": len(cache.dreams), "set_sha": cache.set_sha,
+                           "dream_shas": [d.dream_sha for d in cache.dreams],
+                           "dream_prompt": cache.dream_prompt, "gate_threshold": cache.gate_threshold,
+                           "rank_rule": cache.rank_rule,
+                           "stop_reasons": [d.stop_reason for d in cache.dreams],
+                           "dream_tokens": [len(d.dream_ids) for d in cache.dreams]}
+            else:
+                record |= {"stop_reason": cache.stop_reason, "dream_sha": cache.dream_sha,
+                           "dream_tokens": len(cache.dream_ids), "free_tokens": cache.free_tokens,
+                           "cue_tokens": len(cache.dream_ids) - cache.free_tokens}
+            emit(record)
 
         # The fresh-state floor for this wave's facts, before they are anywhere
         # but the transcript -- what every later log-prob delta is measured against.
@@ -1538,6 +1863,14 @@ def main() -> None:
           "steps": args.distill_steps})
     out_file.close()
     print(f"\n[{ts()}] done -> {out_path}")
+
+
+def default_cache_path(seed: int, dreams: int) -> Path:
+    """Where this seed's cache lives. A multi-dream build writes the set path,
+    and an arm cell picks a set up automatically once one exists for the seed
+    -- which cache was chosen is printed, so the preference is never silent."""
+    dream_set = Path(f"data/dream_set_s{seed}.pt")
+    return dream_set if dreams or dream_set.exists() else Path(f"data/dream_cache_s{seed}.pt")
 
 
 def state_to(state, device):
@@ -1740,6 +2073,8 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
         distractors=build_distractors(facts, args.seed),
         facts=[(f.entity, f.category, f.code) for f in facts],
         stop_reason=dream.stop_reason,
+        dream_prompt=args.dream_prompt,
+        prefix_len=seed_ids.shape[1],
         generator=adapter_sha or "base",
     )
     save_dream_cache(cache, cache_path)
@@ -1749,6 +2084,262 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
     print(f"[{ts()}] transcript_sha {cache.transcript_sha}\n[{ts()}] dream_sha      {cache.dream_sha}")
     report_dream(cache)
     return cache
+
+
+def blank_state_logits(model, tokens, chunk_len: int, frozen: bool):
+    """Re-score a dream's own tokens under a BLANK state at the same weights --
+    the gate's denominator (sec 2.9.2). A memory read is a position where the
+    state changed the prediction, which is defined by the state and not by any
+    fact list, so generic reads drop out on their own."""
+    with (frozen_teacher(model) if frozen else contextlib.nullcontext()):
+        logits, _ = run_chunks(model, tokens, None, chunk_len, "blank re-score", keep_logits=True)
+    return logits[0].float()
+
+
+def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], wake_state,
+                rank_rule: str):
+    """Per layer: ONE SVD over this dream's gated queries, both rank rules
+    computed inside the prod-side address budget, and all three variants
+    post-processed from that one shared basis (sec 2.7).
+
+    Returns (spectra, ranks, bases): every layer's spectrum and both rules'
+    answers go to the sidecar, so a spectrum with no clean structure is visible
+    as a stop-and-think finding rather than a silent truncation.
+    """
+    import torch
+
+    n_layers = len(queries[0])
+    spectra: list[list[float]] = []
+    ranks: dict[str, list[int]] = {rule: [] for rule in RANK_RULES}
+    bases: dict[str, list[torch.Tensor]] = {variant: [] for variant in VARIANTS}
+    for layer in range(n_layers):
+        v_full, sigma = aggregate_basis([queries[t][layer] for t in gate])
+        budget = address_budget(v_full.shape[1])
+        chosen = {"ratio-gap": rank_ratio_gap(sigma, budget), "median": rank_median(sigma, budget)}
+        for rule, r in chosen.items():
+            ranks[rule].append(r)
+        spectra.append([float(x) for x in sigma])
+        for variant in VARIANTS:
+            basis = variant_basis(v_full, chosen[rank_rule], variant, wake_state.ssm_states[layer])
+            if basis.shape[0] == 0:
+                raise SystemExit(
+                    f"layer {layer}'s {variant} basis came out empty at rank {chosen[rank_rule]} over "
+                    f"{len(gate)} gated queries -- an eraser that removes nothing. Sec 2.7 calls a spectrum "
+                    f"with no structure a stop-and-think finding, not a silent truncation."
+                )
+            identity = basis @ basis.T
+            if not bool((identity - torch.eye(basis.shape[0])).abs().max() < 1e-4):
+                raise SystemExit(f"layer {layer}'s {variant} basis is not orthonormal (sec 2.7 asserts V^T V = I)")
+            bases[variant].append(basis.cpu())
+    return spectra, ranks, bases
+
+
+def basis_overlap(a: torch.Tensor, b: torch.Tensor) -> float:
+    """Fraction of the smaller subspace two bases share -- the mean squared
+    principal cosine. Sec 2.10.3 prices per-dream erasers' noise with this
+    rather than arguing about it."""
+    if a.numel() == 0 or b.numel() == 0:
+        return 0.0
+    return float((a.float() @ b.float().T).pow(2).sum() / min(a.shape[0], b.shape[0]))
+
+
+def report_dream_set(cache: DreamSetCache, min_dreams: int, rank_rule: str) -> dict[str, object]:
+    """The artifact, not just the counts (root CLAUDE.md), for a dream set:
+    termination reasons, per-dream basis sizes, cross-dream V-overlap, the
+    gate's agreement with the binding scan, per-fact within-dream repeat counts
+    (B4's re-installation window, sec 2.7), and a decoded sample of one dream's
+    start. The aggregate binding gate fires at the end -- it REFUSES the cache
+    rather than warning (sec 4)."""
+    facts = cache.fact_list
+    print(f"\n[{ts()}] === dream set: {len(cache.dreams)} dreams, set_sha {cache.set_sha[:12]} ===")
+    reasons = {reason: sum(d.stop_reason == reason for d in cache.dreams) for reason in STOP_REASONS}
+    print(f"[{ts()}] termination reasons: {reasons}")
+    for i, dream in enumerate(cache.dreams):
+        bound, misbound = binding_coverage("".join(dream.token_texts), facts)
+        agreement = gate_agreement(dream.gate_positions, fact_read_positions(dream.token_texts, facts))
+        sizes = [len(b) for b in dream.bases[VARIANTS[0]]]
+        print(f"[{ts()}]  dream {i}: {len(dream.dream_ids)} tokens, ended {dream.stop_reason}, "
+              f"{len(dream.gate_positions)} gated positions, basis rank "
+              f"{min(sizes)}-{max(sizes)} over {len(sizes)} layers ({rank_rule})")
+        print(f"[{ts()}]    within-dream repeats {bound}  (misbound {misbound})")
+        print(f"[{ts()}]    gate vs binding scan: precision {agreement['precision']:.2f} "
+              f"recall {agreement['recall']:.2f}, per-fact contribution {agreement['per_fact']}")
+        for entity, n in agreement["per_fact"].items():
+            if n == 0:
+                print(f"[{ts()}]    NOTE: the gate captured no read of {entity} in this dream -- "
+                      f"the eraser cannot address what it never captured.")
+    for variant in VARIANTS:
+        overlaps = [basis_overlap(a.bases[variant][i], b.bases[variant][i])
+                    for a, b in zip(cache.dreams, cache.dreams[1:], strict=False)
+                    for i in range(len(a.bases[variant]))]
+        if overlaps:
+            print(f"[{ts()}] cross-dream V-overlap ({variant}): mean {sum(overlaps) / len(overlaps):.3f}, "
+                  f"max {max(overlaps):.3f}")
+    first = cache.dreams[0]
+    print(f"[{ts()}] decoded start of dream 0 (prefix + first free tokens):\n"
+          f"  >>PREFIX>> {''.join(first.token_texts[:first.prefix_len])!r} "
+          f">>FREE>> {''.join(first.token_texts[first.prefix_len:first.prefix_len + 48])!r}")
+    counts = assert_aggregate_binding(cache.dreams, facts, min_dreams)
+    print(f"[{ts()}] aggregate binding gate PASSED (>= {min_dreams} dreams per fact): {counts}")
+    return {"stop_reasons": reasons, "binding": counts}
+
+
+def write_dream_set_sidecar(cache: DreamSetCache, path: str | Path) -> None:
+    facts = cache.fact_list
+    lines = [
+        f"seed {cache.seed}   set_sha {cache.set_sha}   transcript_sha {cache.transcript_sha}",
+        f"generated by: {cache.generator}   {len(cache.dreams)} dreams",
+        f"steer prefix: {cache.dream_prompt!r}   gate threshold {cache.gate_threshold} nats "
+        f"   rank rule {cache.rank_rule}",
+        "facts: " + ", ".join(f"{f.entity}={f.code} (foil {cache.distractors[f.entity]})" for f in facts),
+        "dreams bound per fact: " + ", ".join(f"{e}={n}" for e, n in aggregate_binding(cache.dreams, facts).items()),
+        "",
+    ]
+    for i, dream in enumerate(cache.dreams):
+        bound, misbound = binding_coverage("".join(dream.token_texts), facts)
+        agreement = gate_agreement(dream.gate_positions, fact_read_positions(dream.token_texts, facts))
+        lines += [
+            f"--- dream {i}  sha {dream.dream_sha[:12]}  {len(dream.dream_ids)} tokens  "
+            f"ended {dream.stop_reason} ---",
+            f"within-dream repeats: {bound}   misbound: {misbound}",
+            f"gate: {len(dream.gate_positions)} positions, precision {agreement['precision']:.3f} "
+            f"recall {agreement['recall']:.3f}, per-fact contribution {agreement['per_fact']}",
+            "per-layer rank: " + "  ".join(f"{rule}={dream.ranks[rule]}" for rule in RANK_RULES),
+            "per-layer spectra: " + "; ".join(
+                " ".join(f"{s:.3g}" for s in spectrum) for spectrum in dream.spectra),
+            "".join(dream.token_texts),
+            "",
+        ]
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text("\n".join(lines))
+
+
+def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
+                    encode, decode, tokenizer, user_open, asst_open, stop_id: int | None,
+                    adapter_sha: str | None = None) -> DreamSetCache:
+    """The multi-dream cache (sec 2.10.4): N dreams generated upfront, EACH
+    from a fresh copy of the intact wake state by the sleep-start snapshot,
+    each gated and reduced to its own per-layer eraser.
+
+    Generation is nondeterministic, so pairing requires one shared set; and
+    interleaving generation with training could not change the dreams anyway --
+    the generator is the sleep-start snapshot by registration.
+    """
+    import torch
+
+    print(f"\n[{ts()}] === building a {args.dreams}-dream set for seed {args.seed} -> {cache_path} ===")
+    wake_state = run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
+
+    seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt))
+    prefix_len = seed_ids.shape[1]
+    needles = [f.entity for f in facts] + [f.code for f in facts]
+    print(f"[{ts()}] steer prefix {args.dream_prompt!r} -> {prefix_len} tokens, excluded from every "
+          f"arm's scored positions; gate threshold {args.gate_threshold} nats, rank rule {args.rank_rule}")
+
+    model.eval()
+    dreams: list[CachedDream] = []
+    started = time.time()
+    for i in range(args.dreams):
+        torch.manual_seed(args.seed * 1000 + i)
+        print(f"\n[{ts()}] --- dream {i + 1}/{args.dreams} (generation seed {args.seed * 1000 + i}) ---")
+        dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
+                              drain=False, decode_token=lambda i: decode([i]), needles=needles,
+                              frozen=adapter_sha is None, stop_id=stop_id,
+                              turn_id=tokenizer.eos_token_id)
+        blank = blank_state_logits(model, dream.tokens, chunk_len, frozen=adapter_sha is None)
+        divergence = state_divergence(dream.logits, blank)
+        gate = gated_positions(divergence, args.gate_threshold, prefix_len, dream.cue_flags)
+        print(f"[{ts()}]  state-dependency gate: {len(gate)} of {len(dream.token_texts)} positions "
+              f"(D_t median {float(divergence.median()):.3f}, max {float(divergence.max()):.3f})")
+        if not gate:
+            raise SystemExit(
+                f"no position of dream {i} passed the state-dependency gate at {args.gate_threshold} nats. "
+                f"An eraser needs captured queries: lower --gate-threshold, or take the divergence "
+                f"distribution printed above as the sec 2.10.7 kill-condition firing."
+            )
+        spectra, ranks, bases = dream_bases(dream.queries, gate, wake_state, args.rank_rule)
+        dreams.append(CachedDream(
+            dream_ids=[int(t) for t in dream.tokens[0].tolist()],
+            token_texts=dream.token_texts,
+            teacher_logits=dream.logits.cpu(),
+            cue_flags=dream.cue_flags,
+            prefix_len=prefix_len,
+            stop_reason=dream.stop_reason,
+            divergence=[float(d) for d in divergence],
+            gate_positions=gate,
+            queries=[[c.cpu() for c in dream.queries[t]] for t in gate],
+            spectra=spectra,
+            ranks=ranks,
+            bases=bases,
+        ))
+        elapsed = time.time() - started
+        print(f"[{ts()}]  dream {i + 1} cached; {fmt_duration(elapsed)} elapsed, "
+              f"ETA {fmt_duration(elapsed / (i + 1) * (args.dreams - i - 1))}", flush=True)
+
+    cache = DreamSetCache(
+        seed=args.seed,
+        transcript_ids=[int(t) for t in transcript[0].tolist()],
+        wake_state=state_to(wake_state, torch.device("cpu")),
+        dreams=dreams,
+        distractors=build_distractors(facts, args.seed),
+        facts=[(f.entity, f.category, f.code) for f in facts],
+        dream_prompt=args.dream_prompt,
+        gate_threshold=args.gate_threshold,
+        rank_rule=args.rank_rule,
+        generator=adapter_sha or "base",
+    )
+    save_dream_cache(cache, cache_path)
+    sidecar = sidecar_path(cache_path)
+    write_dream_set_sidecar(cache, sidecar)
+    print(f"\n[{ts()}] wrote {cache_path} and {sidecar}")
+    report_dream_set(cache, args.bind_min_dreams, args.rank_rule)
+    return cache
+
+
+def run_dream_set_sleep(mode, model, opt, args, wave, wake_state, seen, cache: DreamSetCache,
+                        emit, periodic_probe, on_step, started: float) -> object:
+    """One sleep over a dream set (sec 2.10.4/2.10.5). Arms A and B4 only --
+    both are ordinary sequence training, which is what makes them
+    co-schedulable and what makes B4's full BPTT legitimate (sec 2.7)."""
+    variant = B4_ARMS.get(mode)
+    facts = [f for _, f in seen]
+    probe_seconds = 0.0
+    train_started = time.time()
+
+    def on_boundary(index: int, step: int) -> None:
+        nonlocal probe_seconds
+        dream = cache.dreams[index]
+        bound, misbound = binding_coverage("".join(dream.token_texts), facts)
+        emit({"phase": "dream", "wave": wave, "arm": mode, "dream": index, "step": step,
+              "dream_sha": dream.dream_sha, "tokens": len(dream.dream_ids),
+              "stop_reason": dream.stop_reason, "gated_positions": len(dream.gate_positions),
+              "basis_rank": [len(b) for b in dream.bases[variant]] if variant else None,
+              "bound_by_fact": bound, "misbound_by_fact": misbound,
+              "bound_cov": sum(v > 0 for v in bound.values())})
+        if index % args.probe_every_dream:
+            return
+        print()
+        at = time.time()
+        periodic_probe(step)
+        probe_seconds += time.time() - at
+
+    tokens = distill_dream_set(model, opt, cache.dreams, wake_state, variant, args.dream_epochs,
+                               args.kl_temp, on_step, on_boundary)
+    train_seconds = time.time() - train_started - probe_seconds
+    # Sec 2.10.5: the boundary probe round is a primary deliverable, but it is
+    # rate-checked rather than assumed cheap.
+    print(f"\n[{ts()}] boundary probes {fmt_duration(probe_seconds)} against "
+          f"{fmt_duration(train_seconds)} of training")
+    if probe_seconds > train_seconds:
+        print(f"[{ts()}] WARNING: boundary probes cost more than the training they measure -- "
+              f"rerun with --probe-every-dream 2 and record the deviation.")
+    emit({"phase": "sleep", "wave": wave, "arm": mode, "dreams": len(cache.dreams),
+          "epochs": args.dream_epochs, "steps": len(cache.dreams) * args.dream_epochs,
+          "token_gradients": tokens, "probe_seconds": probe_seconds,
+          "train_seconds": train_seconds, "seconds": time.time() - started})
+    print(f"[{ts()}] {tokens} token-gradients over {len(cache.dreams)} dreams "
+          f"x {args.dream_epochs} epoch(s) in {fmt_duration(time.time() - started)}")
+    return wake_state
 
 
 def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_len, cache,
@@ -1762,8 +2353,11 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
 
     started = time.time()
     wave_facts = [f for w, f in seen if w == wave]
-    # B1-live's budget is the dream itself (one online pass), not --distill-steps.
-    total = args.dream_tokens if mode == "drain-live" else args.distill_steps
+    # A dream set's budget is one pass per dream (sec 2.10.2), and B1-live's is
+    # the dream itself -- neither is --distill-steps.
+    dream_set = isinstance(cache, DreamSetCache) and mode not in ("sft-ref", "no-sleep")
+    total = (len(cache.dreams) * args.dream_epochs if dream_set else
+             args.dream_tokens if mode == "drain-live" else args.distill_steps)
 
     def on_step(step: int, loss: float) -> None:
         emit({"phase": "kl", "wave": wave, "arm": mode, "step": step, "loss": loss,
@@ -1771,9 +2365,18 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
         rate = (step + 1) / (time.time() - started)
         print(f"\r[{ts()}]  {mode} step {step + 1}/{total} loss {loss:.4f} "
               f"{rate:.2f} step/s ETA {fmt_duration((total - step - 1) / rate)}", end="", flush=True)
-        if args.probe_every and (step + 1) % args.probe_every == 0 and step + 1 < total:
+        if args.probe_every and not dream_set and (step + 1) % args.probe_every == 0 and step + 1 < total:
             print()
             periodic_probe(step + 1)
+
+    if dream_set:
+        # Probes ride the dream boundaries instead of a step counter (sec 2.10.5).
+        model.train()
+        carried = run_dream_set_sleep(mode, model, opt, args, wave, wake_state, seen, cache,
+                                      emit, periodic_probe, on_step, started)
+        model.eval()
+        torch.cuda.empty_cache()
+        return carried
 
     needles = [f.entity for _, f in seen] + [f.code for _, f in seen]
 
@@ -1810,7 +2413,7 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
         token_gradients = args.dream_tokens
         print()
     else:
-        keep = target_keep_mask(dream.cue_flags) if dream.cue_flags else None
+        keep = scored_keep(dream.cue_flags, dream.prefix_len) if dream.cue_flags else None
         if mode in ("replay", "ce-on-dream"):
             # Registered form: the chunk is the whole dream, one optimizer step
             # per pass, from a fresh state. --chunk-len is the bridge cell.

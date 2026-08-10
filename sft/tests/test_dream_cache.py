@@ -11,13 +11,19 @@ import torch
 
 from consolidation_null import Fact
 from dream_sleep import (
+    CachedDream,
     DreamCache,
+    DreamSetCache,
+    aggregate_binding,
+    assert_aggregate_binding,
+    dream_bases,
     binding_coverage,
     build_distractors,
     dream_seed_text,
     dream_sidecar_text,
     load_dream_cache,
     save_dream_cache,
+    scored_keep,
     sidecar_path,
     target_keep_mask,
     token_sha,
@@ -142,3 +148,144 @@ def test_the_sidecar_follows_the_cache_filename(tmp_path):
     assert sidecar_path(tmp_path / "dream_cache_s1234.pt") == tmp_path / "dream_s1234.txt"
     assert sidecar_path(tmp_path / "dream_cache_w4_s1234.pt") == tmp_path / "dream_w4_s1234.txt"
     assert sidecar_path(tmp_path / "picker.pt") == tmp_path / "picker.txt"
+
+
+# ---- the multi-dream cache (DISCUSSION-20260808 sec 2.10.4) ----------------
+
+
+def _cached_dream(dream_ids=(3, 4, 5, 6), texts=None) -> CachedDream:
+    return CachedDream(
+        dream_ids=list(dream_ids),
+        token_texts=texts or [f"<{i}>" for i in dream_ids],
+        teacher_logits=torch.randn(len(dream_ids), 5),
+        cue_flags=[False] * len(dream_ids),
+        prefix_len=1,
+        stop_reason="eoc",
+        divergence=[0.0] * len(dream_ids),
+        gate_positions=[1, 2],
+        queries=[[torch.randn(1, 2)], [torch.randn(1, 2)]],
+        spectra=[[1.0, 0.1]],
+        ranks={"ratio-gap": [1], "median": [1]},
+        bases={v: [torch.eye(2)[:1]] for v in ("raw", "deflated", "qcm")},
+    )
+
+
+def _set(dream_ids=((3, 4, 5, 6), (7, 8, 9, 10))) -> DreamSetCache:
+    return DreamSetCache(
+        seed=1234,
+        transcript_ids=[1, 2, 3],
+        wake_state=FakeState([torch.zeros(1, 1, 1, 2)]),
+        dreams=[_cached_dream(ids) for ids in dream_ids],
+        distractors={f.entity: "0 0 0 0 0" for f in FACTS},
+        facts=[(f.entity, f.category, f.code) for f in FACTS],
+        dream_prompt="",
+        gate_threshold=1.0,
+    )
+
+
+def test_the_dream_set_round_trips_through_disk(tmp_path):
+    path = tmp_path / "dream_set_s1234.pt"
+    cache = _set()
+    save_dream_cache(cache, path)
+    loaded = load_dream_cache(path)
+
+    assert isinstance(loaded, DreamSetCache)
+    assert [d.dream_ids for d in loaded.dreams] == [d.dream_ids for d in cache.dreams]
+    assert loaded.set_sha == cache.set_sha
+    assert loaded.dreams[0].bases.keys() == {"raw", "deflated", "qcm"}
+
+
+def test_the_set_hash_covers_every_dream_and_their_order():
+    """Sec 3: the *set* hash is what a result jsonl asserts, so no cell can
+    silently distil a different collection of dreams."""
+    assert _set().set_sha == _set().set_sha
+    assert _set(((3, 4, 5, 6), (7, 8, 9, 11))).set_sha != _set().set_sha
+    assert _set(((7, 8, 9, 10), (3, 4, 5, 6))).set_sha != _set().set_sha
+
+
+def test_loading_rejects_a_set_whose_dream_tokens_no_longer_match(tmp_path):
+    path = tmp_path / "dream_set_s1234.pt"
+    save_dream_cache(_set(), path)
+    corrupted = torch.load(path, weights_only=False)
+    corrupted.dreams[1].dream_ids[0] = 99
+    torch.save(corrupted, path)
+
+    with pytest.raises(SystemExit):
+        load_dream_cache(path)
+
+
+def test_aggregate_binding_counts_the_dreams_each_fact_binds_in():
+    dreams = [
+        _cached_dream(texts=["The code for the osprey is 5 9 7 9 7."]),
+        _cached_dream(texts=["The code for the osprey is 5 9 7 9 7. And again 5 9 7 9 7 osprey."]),
+        _cached_dream(texts=["Nothing about birds here."]),
+    ]
+
+    counts = aggregate_binding(dreams, FACTS)
+
+    assert counts["osprey"] == 2  # dreams, not rehearsals
+    assert counts["heron"] == 0
+
+
+def test_the_aggregate_gate_refuses_a_set_a_fact_is_underbound_in():
+    """Sec 4: the per-dream gate is retired for these caches and the aggregate
+    one GATES -- today's single-dream report only warns."""
+    bound = [_cached_dream(texts=[f"The code for the {f.entity} is {f.code}."]) for f in FACTS]
+    with pytest.raises(SystemExit):
+        assert_aggregate_binding(bound, FACTS, min_dreams=2)
+
+    assert_aggregate_binding(bound * 2, FACTS, min_dreams=2)
+
+
+def test_the_steer_prefix_is_excluded_from_the_scored_positions():
+    """Sec 4: prefix tokens influence the dream through state only, in EVERY
+    arm. Position prefix_len-1 predicts the first free token and is kept."""
+    keep = scored_keep([False] * 5, prefix_len=2)
+
+    assert keep == [False, True, True, True, True]
+
+
+def test_the_prefix_and_the_cue_mask_compose():
+    keep = scored_keep([False, False, True, False], prefix_len=1)
+
+    # position 0 is the last prefix token and predicts the first free one.
+    assert keep == [True, False, True, True]
+
+
+def test_dream_bases_share_one_svd_per_layer_across_all_three_variants():
+    """Sec 2.7: both rank rules are computed and printed for every layer, the
+    spectrum is kept, and the three variants come from the SAME shared basis."""
+    torch.manual_seed(0)
+    state = FakeState([torch.randn(1, 2, 2, 16) for _ in range(2)])
+    queries = [[torch.randn(1, 16) for _ in range(2)] for _ in range(6)]
+
+    spectra, ranks, bases = dream_bases(queries, gate=[0, 2, 4], wake_state=state,
+                                        rank_rule="ratio-gap")
+
+    assert len(spectra) == 2 and set(ranks) == {"ratio-gap", "median"}
+    assert all(len(r) == 2 for r in ranks.values())
+    for variant in ("raw", "deflated", "qcm"):
+        for basis in bases[variant]:
+            torch.testing.assert_close(basis @ basis.T, torch.eye(basis.shape[0]), atol=1e-5, rtol=0)
+
+
+def test_the_rank_rule_flag_picks_which_rule_truncates():
+    torch.manual_seed(0)
+    state = FakeState([torch.randn(1, 2, 2, 64)])
+    # Six near-parallel queries: one dominant direction, the rest noise, so the
+    # two rules can disagree on where to cut.
+    base = torch.randn(1, 64)
+    queries = [[base + 0.01 * torch.randn(1, 64)] for _ in range(6)]
+
+    _, ranks, _ = dream_bases(queries, list(range(6)), state, "ratio-gap")
+
+    assert all(r >= 1 for rule in ranks.values() for r in rule)
+
+
+def test_an_eraser_that_would_remove_nothing_is_a_stop_and_think_failure():
+    torch.manual_seed(0)
+    state = FakeState([torch.randn(1, 2, 2, 16)])
+    queries = [[torch.randn(1, 16)]]
+
+    with pytest.raises(SystemExit):
+        dream_bases(queries, gate=[0], wake_state=state, rank_rule="ratio-gap")
