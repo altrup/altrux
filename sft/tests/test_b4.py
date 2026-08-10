@@ -204,3 +204,15 @@ def test_weighting_pulls_the_basis_toward_the_heavier_queries():
     v, sigma = aggregate_basis(q, weights=[1.0, 0.0])
 
     assert abs(abs(float(v[0, 0])) - 1.0) < 1e-5 and float(sigma[1]) < 1e-6
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU to cross devices")
+def test_variant_basis_deflates_cpu_rows_against_a_gpu_state():
+    # Captured queries come off the cache on CPU while the wake state lives on
+    # the GPU; the deflated variant must not assume one device (sec 1.8: the
+    # all-CPU fake backbone can never catch this).
+    v_full = torch.linalg.svd(torch.randn(6, 16), full_matrices=False).Vh
+    state = torch.randn(1, 2, 4, 16, device="cuda")
+    basis = variant_basis(v_full, 3, "deflated", state)
+    assert basis.device.type == "cpu"
+    assert torch.allclose(basis @ basis.T, torch.eye(len(basis)), atol=1e-5)

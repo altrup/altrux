@@ -149,7 +149,8 @@ def variant_basis(v_full: torch.Tensor, rank: int, variant: str,
     if variant == "deflated":
         if ssm_state is None:
             raise ValueError("the deflated variant needs the state it will be applied to")
-        rows = deflate(rows, state_top_dirs(ssm_state, DEFLATE_K)[0])
+        # Cached queries live on CPU while the wake state lives on the GPU.
+        rows = deflate(rows, state_top_dirs(ssm_state, DEFLATE_K)[0].to(rows.device))
     return orthonormalize(rows)
 
 
