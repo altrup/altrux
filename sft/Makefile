@@ -208,15 +208,16 @@ dream-sleep:
 # 1e-4 and dream_sleep's LoRA config -- the checkpoint every dream_sleep cell
 # loads with --init-adapter (models/$(MODEL_NAME)/checkpoints/epoch-1/step-400;
 # --keep-ckpts 1 leaves that one and nothing else). ~1000 ultrachat
-# conversations is the registered ~4000-turn corpus. Run this before the dream
-# cache and before the battery is recalibrated. Box tool (rented CUDA
-# hardware).
+# conversations is the registered ~4000-turn corpus, packed 2-3 to an example
+# behind <|endofconversation|> (DISCUSSION-20260808 sec 2.10.9) -- the retrain
+# that teaches the boundary token. Run this before the dream cache and before
+# the battery is recalibrated. Box tool (rented CUDA hardware).
 warm-start:
 	@mkdir -p logs
 	@{ HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u prepare_data.py \
 		--hf-dataset HuggingFaceH4/ultrachat_200k \
-		--max-examples 1000 --max-len 4096 --output data/warm_start.pt && \
+		--max-examples 1000 --max-len 4096 --pack --output data/warm_start.pt && \
 	   HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u train.py --data data/warm_start.pt \
 		--max-steps 400 --lr 1e-4 --chunk-len 512 \
