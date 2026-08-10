@@ -20,6 +20,7 @@ from dream_sleep import (
     fact_read_positions,
     gate_agreement,
     load_dream_cache,
+    pilot_path,
     sidecar_path,
     erase_state,
     frozen_teacher,
@@ -1606,11 +1607,12 @@ def test_a_dream_records_the_steer_prefix_it_was_seeded_with():
 def _builder_args(**over):
     from types import SimpleNamespace
 
-    return SimpleNamespace(dreams=2, seed=1234, dream_prompt="", dream_tokens=6, dream_temp=1.0,
-                           gate_threshold=0.0, rank_rule="ratio-gap", bind_min_dreams=2, **over)
+    return SimpleNamespace(**{"dreams": 2, "seed": 1234, "dream_prompt": "", "dream_tokens": 6,
+                              "dream_temp": 1.0, "gate_threshold": 0.0, "rank_rule": "ratio-gap",
+                              "bind_min_dreams": 2, "pilot_capture": False, **over})
 
 
-def _build_set(tmp_path, decoded: str, **over):
+def _build_set(tmp_path, decoded: str, battery=None, **over):
     """Drive the real cache builder on the fake backbone. `decoded` is what
     every token decodes to, which is how the binding scan is steered."""
     from types import SimpleNamespace
@@ -1623,7 +1625,7 @@ def _build_set(tmp_path, decoded: str, **over):
                     [Fact("osprey", "bird", "5 9 7 9 7")], chunk_len=4,
                     encode=lambda text: torch.tensor([[1]]), decode=lambda ids: decoded,
                     tokenizer=SimpleNamespace(eos_token_id=None), user_open=USER, asst_open=ASST,
-                    stop_id=None)
+                    stop_id=None, battery=battery)
     return path
 
 
@@ -1676,3 +1678,47 @@ def test_every_epoch_restarts_each_dream_from_its_own_eraser():
     expected = [erased_start(wake, d.bases["raw"]).ssm_states[0] for d in dreams] * 2
     for start, want in zip(starts, expected, strict=True):
         torch.testing.assert_close(start, want)
+
+
+# ---- the gate pilot's capture-everything path (sec 2.10.7) -----------------
+
+
+def test_a_prod_cache_build_writes_no_pilot_capture(tmp_path):
+    """Harness-only instrumentation: a prod build is byte-for-byte what it was."""
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ")
+
+    assert not pilot_path(path).exists()
+
+
+def test_the_pilot_capture_holds_every_position_not_just_the_gated_ones(tmp_path):
+    """Sec 2.10.7: every scheme is evaluated OFFLINE from one run, so the
+    capture cannot be pre-filtered by the gate the prod cache happened to use."""
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ", pilot_capture=True)
+
+    cache, pilot = load_dream_cache(path), torch.load(pilot_path(path), weights_only=False)
+    for cached, captured in zip(cache.dreams, pilot.dreams, strict=True):
+        assert len(captured.queries) == len(cached.token_texts) > len(cached.gate_positions)
+        assert len(captured.divergence) == len(cached.token_texts)
+        assert all(len(per_layer) == 2 for per_layer in captured.queries)
+
+
+def test_the_pilot_capture_carries_the_state_and_facts_the_scorer_needs(tmp_path):
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ", pilot_capture=True)
+
+    pilot = torch.load(pilot_path(path), weights_only=False)
+
+    assert pilot.wake_state.ssm_states and pilot.facts == [("osprey", "bird", "5 9 7 9 7")]
+
+
+def test_the_pilot_capture_records_battery_read_queries_on_gpu_not_offline(tmp_path):
+    """The collateral pool sec 2.10.6 scores against needs a forward pass, so it
+    is captured here; the offline scorer only reads it."""
+    battery = [{"prompt": "q1", "answer": "a"}, {"prompt": "q2", "answer": "b"}]
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ",
+                      pilot_capture=True, battery=battery)
+
+    pilot = torch.load(pilot_path(path), weights_only=False)
+
+    assert sorted(pilot.battery_queries) == ["q1", "q2"]
+    assert all(len(per_layer) == 2 for positions in pilot.battery_queries.values()
+               for per_layer in positions)

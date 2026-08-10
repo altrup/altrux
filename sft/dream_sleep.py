@@ -158,6 +158,7 @@ from b4 import (
     state_divergence,
     variant_basis,
 )
+from gate_pilot import PilotCapture, PilotDream
 from erase_probe import (
     build_mixed_turns,
     build_wake_items,
@@ -819,6 +820,11 @@ def sidecar_path(cache_path: Path) -> Path:
     return cache_path.with_name(cache_path.stem.replace("dream_cache", "dream", 1) + ".txt")
 
 
+def pilot_path(cache_path: Path) -> Path:
+    """Where a pilot capture lives: beside its cache (sec 2.10.7)."""
+    return cache_path.with_suffix(".pilot.pt")
+
+
 def write_dream_sidecar(cache: DreamCache, path: str | Path) -> None:
     facts = cache.fact_list
     bound, misbound = binding_coverage("".join(cache.token_texts), facts)
@@ -1477,6 +1483,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--probe-every-dream", type=int, default=1,
                         help="Run the full probe round at every Nth dream boundary; 2 is the registered "
                              "degradation if probes measurably drag (default: %(default)s)")
+    parser.add_argument("--pilot-capture", action="store_true",
+                        help="Multi-dream cache builds only: also write the sec 2.10.7 gate-pilot capture "
+                             "beside the cache -- every position's read queries and D_t, plus the battery "
+                             "items' read queries, so gate_pilot.py can score every gating scheme offline. "
+                             "Harness instrumentation; the cache itself is unchanged")
     parser.add_argument("--build-dream-cache", action="store_true",
                         help="Generate this seed's teacher dream, write the cache and its decoded sidecar, and stop. "
                              "Every arm then loads that one dream; no arm generates.")
@@ -1761,7 +1772,8 @@ def main() -> None:
             builder = build_dream_set if args.dreams else build_cache
             builder(model, args, cache_path, transcript, facts, chunk_len,
                     encode, decode, tokenizer, user_open, asst_open, stop_id,
-                    adapter_sha=adapter_sha)
+                    adapter_sha=adapter_sha,
+                    **({"battery": battery} if args.dreams else {}))
             out_file.close()
             print(f"\n[{ts()}] cache built; every arm of seed {args.seed} now distils this dream")
             return
@@ -2220,9 +2232,37 @@ def write_dream_set_sidecar(cache: DreamSetCache, path: str | Path) -> None:
     Path(path).write_text("\n".join(lines))
 
 
+def battery_read_queries(model, items, wake_state, encode, n_layers: int):
+    """Each battery prompt's per-position, per-layer read queries, run from a
+    copy of the wake state (sec 2.10.7).
+
+    This is the on-GPU half of sec 2.10.6's collateral pool -- the offline
+    scorer reads these, it never runs a model. One token at a time, because the
+    chunked path issues no per-token capture.
+    """
+    import torch
+
+    out: dict[str, list[list[torch.Tensor]]] = {}
+    with torch.no_grad():
+        for i, item in enumerate(items):
+            prompt = str(item["prompt"])
+            ids = encode(prompt)
+            state = copy_state(wake_state)
+            positions: list[list[torch.Tensor]] = []
+            for t in range(ids.shape[1]):
+                model.c_capture = []
+                _, state = model(ids[:, t : t + 1], state=state)
+                positions.append([c.half().cpu() for c in group_by_layer(model.c_capture, n_layers)[0]])
+                model.c_capture = None
+            out[prompt] = positions
+            print(f"[{ts()}]  battery read queries {i + 1}/{len(items)}: {len(positions)} positions "
+                  f"from {prompt[:40]!r}", flush=True)
+    return out
+
+
 def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
                     encode, decode, tokenizer, user_open, asst_open, stop_id: int | None,
-                    adapter_sha: str | None = None) -> DreamSetCache:
+                    adapter_sha: str | None = None, battery=None) -> DreamSetCache:
     """The multi-dream cache (sec 2.10.4): N dreams generated upfront, EACH
     from a fresh copy of the intact wake state by the sleep-start snapshot,
     each gated and reduced to its own per-layer eraser.
@@ -2244,6 +2284,7 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
 
     model.eval()
     dreams: list[CachedDream] = []
+    pilot: list[PilotDream] = []
     started = time.time()
     for i in range(args.dreams):
         torch.manual_seed(args.seed * 1000 + i)
@@ -2278,6 +2319,16 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
             ranks=ranks,
             bases=bases,
         ))
+        if args.pilot_capture:
+            pilot.append(PilotDream(
+                dream_sha=dreams[-1].dream_sha,
+                token_texts=dream.token_texts,
+                divergence=[float(d) for d in divergence],
+                queries=[[c.half().cpu() for c in per_layer] for per_layer in dream.queries],
+                cue_flags=dream.cue_flags,
+                prefix_len=prefix_len,
+                stop_reason=dream.stop_reason,
+            ))
         elapsed = time.time() - started
         print(f"[{ts()}]  dream {i + 1} cached; {fmt_duration(elapsed)} elapsed, "
               f"ETA {fmt_duration(elapsed / (i + 1) * (args.dreams - i - 1))}", flush=True)
@@ -2302,6 +2353,18 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
     sidecar = sidecar_path(cache_path)
     write_dream_set_sidecar(cache, sidecar)
     print(f"\n[{ts()}] wrote {cache_path} and {sidecar}")
+    if args.pilot_capture:
+        capture = PilotCapture(
+            seed=args.seed, facts=cache.facts,
+            wake_state=cache.wake_state, dreams=pilot,
+            battery_queries=battery_read_queries(model, battery, wake_state, encode,
+                                                 len(model.layers)) if battery else {},
+            gate_threshold=args.gate_threshold, rank_rule=args.rank_rule, set_sha=cache.set_sha,
+        )
+        torch.save(capture, pilot_path(cache_path))
+        print(f"[{ts()}] pilot capture -> {pilot_path(cache_path)}: {len(pilot)} dreams, every "
+              f"position's queries and D_t, {len(capture.battery_queries)} battery prompts. "
+              f"Score it offline with gate_pilot.py.")
     return cache
 
 
