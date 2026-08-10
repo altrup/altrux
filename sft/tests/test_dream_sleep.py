@@ -1722,3 +1722,54 @@ def test_the_pilot_capture_records_battery_read_queries_on_gpu_not_offline(tmp_p
     assert sorted(pilot.battery_queries) == ["q1", "q2"]
     assert all(len(per_layer) == 2 for positions in pilot.battery_queries.values()
                for per_layer in positions)
+
+
+def test_dream_is_degenerate_flags_mojibake_and_tolerates_ordinary_unicode():
+    from dream_sleep import dream_is_degenerate
+
+    assert dream_is_degenerate("�" * 16)
+    assert dream_is_degenerate("fine text " + "�" + " more")   # any replacement char
+    assert dream_is_degenerate("ñ" * 100)                            # non-ASCII flood
+    assert not dream_is_degenerate("The code for the osprey is 5 9 7 9 7.")
+    assert not dream_is_degenerate('He said “hello” — that’s fine.')
+
+
+def test_a_degenerate_dream_is_regenerated_under_a_bumped_seed(tmp_path, monkeypatch, capsys):
+    """Sec 2.1's mojibake clause, enforced per dream: a degenerate dream never
+    enters the set; the slot is regenerated and counted, loudly."""
+    import dream_sleep as ds
+
+    real = ds.teacher_dream
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        dream = real(*args, **kwargs)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            dream.token_texts = ["�"] * len(dream.token_texts)
+        return dream
+
+    monkeypatch.setattr(ds, "teacher_dream", flaky)
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ")
+
+    cache = load_dream_cache(path)
+    assert len(cache.dreams) == 2
+    assert not any("�" in "".join(d.token_texts) for d in cache.dreams)
+    assert calls["n"] == 3  # two slots, one regeneration
+    assert "degenerate" in capsys.readouterr().out
+
+
+def test_a_slot_that_stays_degenerate_is_a_stop_and_think(tmp_path, monkeypatch):
+    import dream_sleep as ds
+
+    real = ds.teacher_dream
+
+    def always_bad(*args, **kwargs):
+        dream = real(*args, **kwargs)
+        dream.token_texts = ["�"] * len(dream.token_texts)
+        return dream
+
+    monkeypatch.setattr(ds, "teacher_dream", always_bad)
+    with pytest.raises(SystemExit, match="degenerate"):
+        _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ")
+    assert list(tmp_path.iterdir()) == []

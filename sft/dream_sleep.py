@@ -204,6 +204,9 @@ WAKE_DIALOGUE_POOL = 400
 # where it never comes and the model just keeps opening turns (sec 2.9.4).
 DREAM_MAX_TURNS = 32
 STOP_REASONS = ("eoc", "max-tokens", "turn-backstop")
+# Regeneration attempts for a dream that fails the per-dream acceptance check
+# (sec 2.1's mojibake clause). Content-free, so prod-valid (sec 2.9.1).
+DREAM_RETRIES = 2
 
 # Fused-B knobs (sec 3.5). `SPINE_BLOCK` trades the spine's sequential depth
 # (T/block whole-block forwards, then `block` batched token steps) against the
@@ -2104,6 +2107,15 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
     return cache
 
 
+def dream_is_degenerate(text: str) -> bool:
+    """Sec 2.1's mojibake clause, applied per dream: any replacement character
+    or a non-ASCII flood. Ordinary unicode punctuation (curly quotes, dashes)
+    stays acceptable. Content-free -- no fact knowledge (sec 2.9.1)."""
+    if not text or "�" in text:
+        return True
+    return sum(ord(c) > 127 for c in text) / len(text) > 0.2
+
+
 def blank_state_logits(model, tokens, chunk_len: int, frozen: bool):
     """Re-score a dream's own tokens under a BLANK state at the same weights --
     the gate's denominator (sec 2.9.2). A memory read is a position where the
@@ -2286,13 +2298,27 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
     dreams: list[CachedDream] = []
     pilot: list[PilotDream] = []
     started = time.time()
+    regenerated = 0
     for i in range(args.dreams):
-        torch.manual_seed(args.seed * 1000 + i)
-        print(f"\n[{ts()}] --- dream {i + 1}/{args.dreams} (generation seed {args.seed * 1000 + i}) ---")
-        dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
-                              drain=False, decode_token=lambda i: decode([i]), needles=needles,
-                              frozen=adapter_sha is None, stop_id=stop_id,
-                              turn_id=tokenizer.eos_token_id)
+        for attempt in range(DREAM_RETRIES + 1):
+            gen_seed = args.seed * 1000 + i + 100000 * attempt
+            torch.manual_seed(gen_seed)
+            print(f"\n[{ts()}] --- dream {i + 1}/{args.dreams} (generation seed {gen_seed}) ---")
+            dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
+                                  drain=False, decode_token=lambda i: decode([i]), needles=needles,
+                                  frozen=adapter_sha is None, stop_id=stop_id,
+                                  turn_id=tokenizer.eos_token_id)
+            if not dream_is_degenerate("".join(dream.token_texts)):
+                break
+            regenerated += 1
+            print(f"[{ts()}]  dream {i + 1} came out degenerate (attempt {attempt + 1} of "
+                  f"{DREAM_RETRIES + 1}); regenerating under a bumped seed")
+        else:
+            raise SystemExit(
+                f"dream slot {i} stayed degenerate through {DREAM_RETRIES + 1} attempts -- "
+                f"generation is off the rails at this temperature/adapter, not unlucky. "
+                f"Stop and rethink (sec 2.1's mojibake clause), don't truncate."
+            )
         blank = blank_state_logits(model, dream.tokens, chunk_len, frozen=adapter_sha is None)
         divergence = state_divergence(dream.logits, blank)
         gate = gated_positions(divergence, args.gate_threshold, prefix_len, dream.cue_flags)
@@ -2333,6 +2359,8 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
         print(f"[{ts()}]  dream {i + 1} cached; {fmt_duration(elapsed)} elapsed, "
               f"ETA {fmt_duration(elapsed / (i + 1) * (args.dreams - i - 1))}", flush=True)
 
+    print(f"\n[{ts()}] degenerate dreams regenerated: {regenerated}  "
+          f"(a rising count is an adapter/temperature finding, not noise)")
     cache = DreamSetCache(
         seed=args.seed,
         transcript_ids=[int(t) for t in transcript[0].tolist()],
