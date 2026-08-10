@@ -19,6 +19,8 @@ from dream_sleep import (
     erased_start,
     fact_read_positions,
     gate_agreement,
+    load_dream_cache,
+    sidecar_path,
     erase_state,
     frozen_teacher,
     paraphrase_prompts,
@@ -1550,7 +1552,7 @@ def test_b4_starts_every_dream_from_a_fresh_erased_copy_of_the_wake_state():
     model.forward = _recording(model, seen)
 
     distill_dream_set(model, opt, dreams, wake, variant="raw", epochs=1, kl_temp=1.0,
-                      on_step=lambda s, l: None, on_boundary=lambda i, s: None)
+                      on_step=lambda s, l: None, on_boundary=lambda i, e, s: None)
 
     starts = [s for s in seen if s is not None]
     for start, dream in zip(starts, dreams, strict=True):
@@ -1564,9 +1566,10 @@ def test_the_dream_set_probes_at_every_boundary_and_carries_the_weights():
     boundaries: list[int] = []
 
     distill_dream_set(model, opt, dreams, wake, variant=None, epochs=2, kl_temp=1.0,
-                      on_step=lambda s, l: None, on_boundary=lambda i, s: boundaries.append(i))
+                      on_step=lambda s, l: None,
+                      on_boundary=lambda i, e, s: boundaries.append((e, i)))
 
-    assert boundaries == [0, 1, 2]
+    assert boundaries == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
     assert _moved(model, before)  # one optimizer trajectory across the whole set
 
 
@@ -1598,3 +1601,78 @@ def test_a_dream_records_the_steer_prefix_it_was_seeded_with():
                           drain=False, decode_token=str, needles=[])
 
     assert dream.prefix_len == 3
+
+
+def _builder_args(**over):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(dreams=2, seed=1234, dream_prompt="", dream_tokens=6, dream_temp=1.0,
+                           gate_threshold=0.0, rank_rule="ratio-gap", bind_min_dreams=2, **over)
+
+
+def _build_set(tmp_path, decoded: str, **over):
+    """Drive the real cache builder on the fake backbone. `decoded` is what
+    every token decodes to, which is how the binding scan is steered."""
+    from types import SimpleNamespace
+
+    from dream_sleep import build_dream_set
+
+    model = TinyModel()
+    path = tmp_path / "dream_set_s1234.pt"
+    build_dream_set(model, _builder_args(**over), path, torch.tensor([[1, 2, 3]]),
+                    [Fact("osprey", "bird", "5 9 7 9 7")], chunk_len=4,
+                    encode=lambda text: torch.tensor([[1]]), decode=lambda ids: decoded,
+                    tokenizer=SimpleNamespace(eos_token_id=None), user_open=USER, asst_open=ASST,
+                    stop_id=None)
+    return path
+
+
+def test_a_failed_aggregate_gate_leaves_no_cache_on_disk(tmp_path):
+    """Sec 4's gate has to REFUSE the cache, not annotate it: an arm cell
+    prefers a set cache whenever one exists for the seed, so a refused build
+    that left its file behind would poison every later cell silently."""
+    with pytest.raises(SystemExit):
+        _build_set(tmp_path, "nothing to see here. ")
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_bound_set_is_written_with_its_sidecar(tmp_path):
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ")
+
+    cache = load_dream_cache(path)
+    assert len(cache.dreams) == 2 and cache.set_sha
+    assert all(d.gate_positions and d.bases["raw"] for d in cache.dreams)
+    assert sidecar_path(path).exists()
+
+
+def test_dream_epochs_interleave_full_passes_over_the_set():
+    """Sec 2.10.2's variant cell is ~3 epochs over the SET: dream 1..N, then
+    1..N again. Massed back-to-back repeats of each dream would rebuild the
+    hundreds-of-passes-on-one-dream regime that cell exists to price against."""
+    model, opt, wake, seed = _tiny_setup(rows=4)
+    dreams = [_cached(model, wake, seed) for _ in range(3)]
+    order: list[tuple[int, int]] = []
+
+    distill_dream_set(model, opt, dreams, wake, variant=None, epochs=2, kl_temp=1.0,
+                      on_step=lambda s, l: None,
+                      on_boundary=lambda i, epoch, s: order.append((epoch, i)))
+
+    assert order == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+
+
+def test_every_epoch_restarts_each_dream_from_its_own_eraser():
+    """The state reset is per boundary, not per set: epoch 2's dream k starts
+    from the same erased copy epoch 1's did, never from epoch 1's leftovers."""
+    model, opt, wake, seed = _tiny_setup(rows=4)
+    dreams = [_cached(model, wake, seed) for _ in range(2)]
+    seen = []
+    model.forward = _recording(model, seen)
+
+    distill_dream_set(model, opt, dreams, wake, variant="raw", epochs=2, kl_temp=1.0,
+                      on_step=lambda s, l: None, on_boundary=lambda i, e, s: None)
+
+    starts = [s for s in seen if s is not None]
+    expected = [erased_start(wake, d.bases["raw"]).ssm_states[0] for d in dreams] * 2
+    for start, want in zip(starts, expected, strict=True):
+        torch.testing.assert_close(start, want)

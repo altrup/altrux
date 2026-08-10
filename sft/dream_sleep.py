@@ -1063,19 +1063,25 @@ def distill_dream_set(model, opt, dreams: Sequence[CachedDream], wake_state, var
 
     Each dream is ORDINARY sequence training against its cached teacher logits
     -- the chunk is the whole dream, full BPTT through the model's own sequence
-    path, no spine and no per-token loop. `epochs` is 1 in the registered form
-    (sec 2.10.2's one pass per dream); the multi-epoch cell prices repetition.
+    path, no spine and no per-token loop.
+
+    `epochs` counts passes over the SET, not over each dream: dream 1..N, then
+    1..N again. That is the replay-literature shape sec 2.10.2's variant cell
+    exists to price; massing a dream's repeats back to back would rebuild the
+    hundreds-of-passes-on-one-dream regime that same section retires. One
+    epoch is the registered form.
     """
     tokens = step = 0
-    for i, cached in enumerate(dreams):
-        dream = dream_from_cached(cached, wake_state.ssm_states[0].device)
-        start = None if variant is None else erased_start(wake_state, cached.bases[variant])
-        tokens += distill_replay(
-            model, opt, dream, steps=epochs, chunk_len=dream.tokens.shape[1], kl_temp=kl_temp,
-            on_step=lambda s, loss, base=step: on_step(base + s, loss),
-            keep=scored_keep(cached.cue_flags, cached.prefix_len), init_state=start)
-        step += epochs
-        on_boundary(i, step)
+    for epoch in range(epochs):
+        for i, cached in enumerate(dreams):
+            dream = dream_from_cached(cached, wake_state.ssm_states[0].device)
+            start = None if variant is None else erased_start(wake_state, cached.bases[variant])
+            tokens += distill_replay(
+                model, opt, dream, steps=1, chunk_len=dream.tokens.shape[1], kl_temp=kl_temp,
+                on_step=lambda s, loss, base=step: on_step(base + s, loss),
+                keep=scored_keep(cached.cue_flags, cached.prefix_len), init_state=start)
+            step += 1
+            on_boundary(i, epoch, step)
     return tokens
 
 
@@ -2288,11 +2294,14 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
         rank_rule=args.rank_rule,
         generator=adapter_sha or "base",
     )
+    # The report gates (sec 4), so it runs BEFORE anything is written: an arm
+    # cell prefers a set cache whenever one exists for the seed, so a refused
+    # build that left its file behind would poison every later cell silently.
+    report_dream_set(cache, args.bind_min_dreams, args.rank_rule)
     save_dream_cache(cache, cache_path)
     sidecar = sidecar_path(cache_path)
     write_dream_set_sidecar(cache, sidecar)
     print(f"\n[{ts()}] wrote {cache_path} and {sidecar}")
-    report_dream_set(cache, args.bind_min_dreams, args.rank_rule)
     return cache
 
 
@@ -2306,11 +2315,12 @@ def run_dream_set_sleep(mode, model, opt, args, wave, wake_state, seen, cache: D
     probe_seconds = 0.0
     train_started = time.time()
 
-    def on_boundary(index: int, step: int) -> None:
+    def on_boundary(index: int, epoch: int, step: int) -> None:
         nonlocal probe_seconds
         dream = cache.dreams[index]
         bound, misbound = binding_coverage("".join(dream.token_texts), facts)
-        emit({"phase": "dream", "wave": wave, "arm": mode, "dream": index, "step": step,
+        emit({"phase": "dream", "wave": wave, "arm": mode, "dream": index, "epoch": epoch,
+              "step": step,
               "dream_sha": dream.dream_sha, "tokens": len(dream.dream_ids),
               "stop_reason": dream.stop_reason, "gated_positions": len(dream.gate_positions),
               "basis_rank": [len(b) for b in dream.bases[variant]] if variant else None,
