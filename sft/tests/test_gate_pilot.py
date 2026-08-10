@@ -196,3 +196,33 @@ def test_the_table_is_written_beside_the_capture_and_the_freeze_is_a_human_call(
     assert (tmp_path / "dream_set_s1234.gate_pilot.jsonl").exists()
     assert "hard@" in table and "weighted@" in table
     assert "RECOMMENDS" in table and "team" in table
+
+
+def _factless(seed: int) -> PilotDream:
+    """A dream that rehearses nothing -- the binding scan finds no fact read.
+    15 of 20 dreams in the first real capture looked like this."""
+    dream = _dream(seed)
+    dream.token_texts = ["nothing "] * len(dream.token_texts)
+    return dream
+
+
+def test_a_factless_dream_does_not_fail_the_scheme(tmp_path):
+    """Sparse coverage is the finding, not a scorer crash: dreams without
+    fact reads still contribute collateral and stability; target and oracle
+    pool over the dreams that have reads."""
+    capture = _capture()
+    capture.dreams.append(_factless(3))
+
+    row = score_scheme(capture, "hard@q50", 0.5, "hard", "raw", "ratio-gap")
+
+    assert row["ok"], row.get("why")
+    assert row["dreams_with_reads"] == 2 and row["dreams_scored"] == 3
+
+
+def test_a_capture_with_no_fact_reads_anywhere_fails_the_scheme():
+    capture = _capture()
+    capture.dreams = [_factless(1), _factless(2)]
+
+    row = score_scheme(capture, "hard@q50", 0.5, "hard", "raw", "ratio-gap")
+
+    assert not row["ok"] and "no fact read" in row["why"]

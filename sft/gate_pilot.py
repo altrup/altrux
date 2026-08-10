@@ -209,36 +209,48 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
     recall: list[float] = []
     gated: list[int] = []
     per_dream_bases: list[list[torch.Tensor]] = []
+    with_reads = 0
     for dream in capture.dreams:
         gate = gated_positions(torch.tensor(dream.divergence), tau, dream.prefix_len, dream.cue_flags)
-        reads, fact_pos = oracle_positions(dream, facts)
-        if not gate or not fact_pos:
+        if not gate:
             return {"scheme": name, "family": family, "tau": tau, "ok": False,
-                    "why": "no gated positions" if not gate else "the binding scan found no fact read",
+                    "why": "no gated positions",
                     "target_removed": 0.0, "collateral_removed": 0.0}
+        # A dream without fact reads is sparse coverage, not a scheme failure
+        # (15 of 20 dreams in the first real capture): it still contributes
+        # collateral and stability; target and oracle pool over the rest.
+        reads, fact_pos = oracle_positions(dream, facts)
         weights = scheme_weights([dream.divergence[t] for t in gate], family)
         try:
             _, chosen, bases = dream_bases(dream.queries, gate, capture.wake_state, rank_rule, weights)
-            _, _, oracle = dream_bases(dream.queries, fact_pos, capture.wake_state, rank_rule)
+            oracle = (dream_bases(dream.queries, fact_pos, capture.wake_state, rank_rule)[2]
+                      if fact_pos else None)
         except SystemExit as failure:  # an empty or non-orthonormal basis is a scheme failure here
             return {"scheme": name, "family": family, "tau": tau, "ok": False,
                     "why": str(failure).split("--")[0].strip(),
                     "target_removed": 0.0, "collateral_removed": 0.0}
         basis = bases[variant]
         per_dream_bases.append(basis)
+        with_reads += bool(fact_pos)
         others = [t for t in eligible_positions(dream) if t not in set(fact_pos)]
         for layer, v in enumerate(basis):
             state = capture.wake_state.ssm_states[layer]
-            target += readout_removals(state, v, [dream.queries[t][layer] for t in fact_pos])
             context += readout_removals(state, v, [dream.queries[t][layer] for t in others])
             batt += readout_removals(state, v, [per_layer[layer] for per_layer in battery])
-            overlaps.append(basis_overlap(v, oracle[variant][layer]))
+            if fact_pos:
+                target += readout_removals(state, v, [dream.queries[t][layer] for t in fact_pos])
+                overlaps.append(basis_overlap(v, oracle[variant][layer]))
         for rule in RANK_RULES:
             ranks[rule] += chosen[rule]
-        agreement = gate_agreement(gate, reads)
-        precision.append(float(agreement["precision"]))
-        recall.append(float(agreement["recall"]))
+        if fact_pos:
+            agreement = gate_agreement(gate, reads)
+            precision.append(float(agreement["precision"]))
+            recall.append(float(agreement["recall"]))
         gated.append(len(gate))
+    if not target:
+        return {"scheme": name, "family": family, "tau": tau, "ok": False,
+                "why": "no fact read anywhere in the capture -- the plane's target axis is unmeasurable",
+                "target_removed": 0.0, "collateral_removed": 0.0}
     stability = [basis_overlap(a[layer], b[layer])
                  for a, b in zip(per_dream_bases, per_dream_bases[1:], strict=False)
                  for layer in range(len(a))]
@@ -246,6 +258,7 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
         "scheme": name, "family": family, "tau": tau, "ok": True, "why": "",
         "gated_positions": _mean(gated), "precision": _mean(precision), "recall": _mean(recall),
         "oracle_overlap": _mean(overlaps), "stability": _mean(stability),
+        "dreams_scored": len(per_dream_bases), "dreams_with_reads": with_reads,
         "target_removed": _mean(target) or 0.0,
         "collateral_removed": _mean(context + batt) or 0.0,
         "context_removed": _mean(context), "battery_removed": _mean(batt),
