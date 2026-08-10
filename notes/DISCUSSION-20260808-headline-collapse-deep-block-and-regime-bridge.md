@@ -241,7 +241,14 @@ asserted on every cell (full tables in the run notes):
       defined by the state, not by a fact list. Generic reads ("the")
       drop out automatically. Validation, printed per cache: agreement
       (precision/recall) between the gate and the binding scan's
-      rehearsal positions.
+      rehearsal positions. [Amended 2026-08-10 (altrup): the gate SELECTS
+      B4's queries; it is NOT a dream-validity requirement. A dream with
+      an empty gate gets an empty eraser — it read nothing from the
+      state, so there is nothing to deny and it contributes no denial
+      pressure — loudly counted, build continues; an empty variant basis
+      (e.g. qcm over one query) is likewise a NOTE. The only gate-level
+      stop-and-think is the pilot's separability kill-condition, which
+      tests the gate CONCEPT, not any one dream.]
    3. **The warm start is RETRAINED next session, with a new special
       token `<|endofconversation|>`** appended to every rendered
       conversation (boundary-marker family, matching `<|endoftext|>`;

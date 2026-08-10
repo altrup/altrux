@@ -2138,11 +2138,22 @@ def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], 
     """
     import torch
 
-    n_layers = len(queries[0])
+    n_layers = len(wake_state.ssm_states)
     spectra: list[list[float]] = []
     ranks: dict[str, list[int]] = {rule: [] for rule in RANK_RULES}
     bases: dict[str, list[torch.Tensor]] = {variant: [] for variant in VARIANTS}
     for layer in range(n_layers):
+        # The gate selects B4's queries; it is not a dream-validity
+        # requirement. No gated queries -> an empty eraser: the dream read
+        # nothing from the state, so there is nothing to deny.
+        if not gate:
+            d_state = wake_state.ssm_states[layer].shape[-1]
+            spectra.append([])
+            for rule in RANK_RULES:
+                ranks[rule].append(0)
+            for variant in VARIANTS:
+                bases[variant].append(torch.zeros(0, d_state))
+            continue
         v_full, sigma = aggregate_basis([queries[t][layer] for t in gate], weights)
         budget = address_budget(v_full.shape[1])
         chosen = {"ratio-gap": rank_ratio_gap(sigma, budget), "median": rank_median(sigma, budget)}
@@ -2152,13 +2163,11 @@ def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], 
         for variant in VARIANTS:
             basis = variant_basis(v_full, chosen[rank_rule], variant, wake_state.ssm_states[layer])
             if basis.shape[0] == 0:
-                raise SystemExit(
-                    f"layer {layer}'s {variant} basis came out empty at rank {chosen[rank_rule]} over "
-                    f"{len(gate)} gated queries -- an eraser that removes nothing. Sec 2.7 calls a spectrum "
-                    f"with no structure a stop-and-think finding, not a silent truncation."
-                )
+                print(f"[{ts()}]  NOTE: layer {layer}'s {variant} basis is empty at rank "
+                      f"{chosen[rank_rule]} over {len(gate)} gated queries -- this dream's "
+                      f"{variant} eraser removes nothing at this layer.")
             identity = basis @ basis.T
-            if not bool((identity - torch.eye(basis.shape[0])).abs().max() < 1e-4):
+            if basis.shape[0] and not bool((identity - torch.eye(basis.shape[0])).abs().max() < 1e-4):
                 raise SystemExit(f"layer {layer}'s {variant} basis is not orthonormal (sec 2.7 asserts V^T V = I)")
             bases[variant].append(basis.cpu())
     return spectra, ranks, bases
@@ -2184,6 +2193,10 @@ def report_dream_set(cache: DreamSetCache, min_dreams: int, rank_rule: str) -> d
     print(f"\n[{ts()}] === dream set: {len(cache.dreams)} dreams, set_sha {cache.set_sha[:12]} ===")
     reasons = {reason: sum(d.stop_reason == reason for d in cache.dreams) for reason in STOP_REASONS}
     print(f"[{ts()}] termination reasons: {reasons}")
+    gateless = sum(not d.gate_positions for d in cache.dreams)
+    if gateless:
+        print(f"[{ts()}] dreams with an empty gate (empty eraser, no denial pressure): "
+              f"{gateless} of {len(cache.dreams)}")
     for i, dream in enumerate(cache.dreams):
         bound, misbound = binding_coverage("".join(dream.token_texts), facts)
         agreement = gate_agreement(dream.gate_positions, fact_read_positions(dream.token_texts, facts))
@@ -2328,11 +2341,11 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
         print(f"[{ts()}]  state-dependency gate: {len(gate)} of {len(dream.token_texts)} positions "
               f"(D_t median {float(divergence.median()):.3f}, max {float(divergence.max()):.3f})")
         if not gate:
-            raise SystemExit(
-                f"no position of dream {i} passed the state-dependency gate at {args.gate_threshold} nats. "
-                f"An eraser needs captured queries: lower --gate-threshold, or take the divergence "
-                f"distribution printed above as the sec 2.10.7 kill-condition firing."
-            )
+            # Not a failure: the gate selects B4's queries, it does not
+            # validate dreams. This dream read nothing from the state, so its
+            # eraser is empty and it contributes no denial pressure.
+            print(f"[{ts()}]  NOTE: no position passed the gate at {args.gate_threshold} nats -- "
+                  f"this dream's eraser is empty (B4 starts it from the intact wake state).")
         spectra, ranks, bases = dream_bases(dream.queries, gate, wake_state, args.rank_rule)
         dreams.append(CachedDream(
             dream_ids=[int(t) for t in dream.tokens[0].tolist()],

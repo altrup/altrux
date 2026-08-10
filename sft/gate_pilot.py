@@ -212,10 +212,10 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
     with_reads = 0
     for dream in capture.dreams:
         gate = gated_positions(torch.tensor(dream.divergence), tau, dream.prefix_len, dream.cue_flags)
+        # An empty gate is an empty eraser, not a scheme failure -- the dream
+        # contributes nothing at this tau (mirrors the builder's semantics).
         if not gate:
-            return {"scheme": name, "family": family, "tau": tau, "ok": False,
-                    "why": "no gated positions",
-                    "target_removed": 0.0, "collateral_removed": 0.0}
+            continue
         # A dream without fact reads is sparse coverage, not a scheme failure
         # (15 of 20 dreams in the first real capture): it still contributes
         # collateral and stability; target and oracle pool over the rest.
@@ -247,6 +247,10 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
             precision.append(float(agreement["precision"]))
             recall.append(float(agreement["recall"]))
         gated.append(len(gate))
+    if not per_dream_bases:
+        return {"scheme": name, "family": family, "tau": tau, "ok": False,
+                "why": "no gated positions at this tau anywhere in the capture",
+                "target_removed": 0.0, "collateral_removed": 0.0}
     if not target:
         return {"scheme": name, "family": family, "tau": tau, "ok": False,
                 "why": "no fact read anywhere in the capture -- the plane's target axis is unmeasurable",

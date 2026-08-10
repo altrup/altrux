@@ -1788,3 +1788,33 @@ def test_battery_read_queries_follow_the_model_device_not_the_callers():
                                encode=lambda text: torch.tensor([[1, 2]], device="cuda"),
                                n_layers=len(model.layers))
     assert list(out) == ["hi"] and len(out["hi"]) == 2
+
+
+def test_an_empty_gate_yields_an_empty_eraser_not_a_failure(tmp_path):
+    """The gate selects B4's queries; it is NOT a dream-validity requirement
+    (altrup, 2026-08-10). A dream the state never influenced has nothing to
+    deny: its eraser is empty and its B4 start state is the intact wake state."""
+    path = _build_set(tmp_path, "The code for the osprey is 5 9 7 9 7. ",
+                      gate_threshold=1e9)
+
+    cache = load_dream_cache(path)
+    assert len(cache.dreams) == 2
+    for dream in cache.dreams:
+        assert dream.gate_positions == [] and dream.queries == []
+        assert all(b.shape[0] == 0 for b in dream.bases["raw"])
+    wake = FakeState([torch.randn(1, 2, 1, 4) for _ in range(len(cache.dreams[0].bases["raw"]))])
+    torch.testing.assert_close(
+        erased_start(wake, cache.dreams[0].bases["raw"]).ssm_states[0], wake.ssm_states[0])
+
+
+def test_a_single_query_dream_with_an_empty_qcm_basis_still_builds(tmp_path, capsys):
+    """qcm drops v1; with one gated query that leaves nothing. An empty
+    variant basis is a loud NOTE, never a refused cache."""
+    from dream_sleep import dream_bases
+
+    wake = FakeState([torch.randn(1, 2, 1, 4)])
+    queries = [[torch.tensor([[1.0, 0.0, 0.0, 0.0]])]]
+    _, _, bases = dream_bases(queries, [0], wake, "ratio-gap")
+
+    assert bases["qcm"][0].shape[0] == 0
+    assert "empty" in capsys.readouterr().out

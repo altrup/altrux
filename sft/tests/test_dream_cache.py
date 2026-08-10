@@ -284,13 +284,19 @@ def test_the_rank_rule_flag_picks_which_rule_truncates():
     assert all(r >= 1 for rule in ranks.values() for r in rule)
 
 
-def test_an_eraser_that_would_remove_nothing_is_a_stop_and_think_failure():
+def test_an_empty_variant_basis_is_a_note_not_a_refusal(capsys):
+    """The gate selects B4's queries; it does not validate dreams (altrup,
+    2026-08-10). One gated query leaves qcm empty -- that dream's qcm eraser
+    removes nothing at this layer, loudly, and the build continues."""
     torch.manual_seed(0)
     state = FakeState([torch.randn(1, 2, 2, 16)])
     queries = [[torch.randn(1, 16)]]
 
-    with pytest.raises(SystemExit):
-        dream_bases(queries, gate=[0], wake_state=state, rank_rule="ratio-gap")
+    _, _, bases = dream_bases(queries, gate=[0], wake_state=state, rank_rule="ratio-gap")
+
+    assert bases["qcm"][0].shape[0] == 0
+    assert bases["raw"][0].shape[0] == 1
+    assert "empty" in capsys.readouterr().out
 
 
 def _bound_set() -> DreamSetCache:
