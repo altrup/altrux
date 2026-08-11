@@ -495,3 +495,59 @@ def test_merging_refuses_overlapping_offsets_not_coincidental_short_dreams():
     clash = _set_cache(1234, [1, 2, 3], [_dream([16, 17])], dream_seed_offset=0)
     with pytest.raises(SystemExit, match="offset"):
         merge_dream_sets([a, clash])
+
+
+def test_weighted_gating_changes_the_basis_and_is_recorded():
+    """The chosen operator is raw + weighted (DISCUSSION sec 2.10.6 procedure,
+    altrup's call): the basis weights each gated query by its divergence
+    instead of treating every kept position alike. Prod built bases with no
+    weights at all, so this is the axis the sweep explored and the run path
+    could not execute."""
+    import torch
+
+    from dream_sleep import dream_bases
+    from gate_pilot import scheme_weights
+
+    torch.manual_seed(0)
+    state = FakeState([torch.randn(1, 2, 2, 16) for _ in range(2)])
+    queries = [[torch.randn(1, 16) for _ in range(2)] for _ in range(6)]
+    gate = list(range(6))
+    divergence = [0.05, 0.05, 0.05, 0.05, 0.05, 6.0]
+
+    _, _, plain = dream_bases(queries, gate, state, "ratio-gap")
+    _, _, weighted = dream_bases(queries, gate, state, "ratio-gap",
+                                 scheme_weights([divergence[t] for t in gate], "weighted"))
+
+    assert not torch.allclose(plain["raw"][0], weighted["raw"][0])
+
+
+def test_rebasing_recomputes_erasers_without_touching_the_dreams():
+    """The gating family changes only how cached queries are weighted into the
+    SVD, so an existing cache can be re-based instead of regenerating 300
+    dreams. The dreams, their hashes and the set hash must come through
+    untouched -- a re-based cache is the SAME experiment with a different
+    eraser."""
+    import torch
+
+    from dream_sleep import rebase_dream_set
+
+    torch.manual_seed(0)
+    dreams = []
+    for _ in range(2):
+        d = _dream([10, 11, 12, 13])
+        d.divergence = [0.05, 0.05, 0.05, 6.0]
+        d.gate_positions = [0, 1, 2, 3]
+        d.queries = [[torch.randn(1, 16)] for _ in range(4)]
+        d.bases = {"raw": [torch.zeros(1, 16)]}
+        dreams.append(d)
+    cache = _set_cache(1234, [1, 2, 3], dreams,
+                       wake_state=FakeState([torch.randn(1, 2, 2, 16)]))
+    before_shas = [d.dream_sha for d in cache.dreams]
+    before_set = cache.set_sha
+
+    rebased = rebase_dream_set(cache, "weighted", "ratio-gap")
+
+    assert [d.dream_sha for d in rebased.dreams] == before_shas
+    assert rebased.set_sha == before_set
+    assert rebased.gate_family == "weighted"
+    assert not torch.allclose(rebased.dreams[0].bases["raw"][0], torch.zeros(1, 16))

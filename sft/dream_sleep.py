@@ -773,6 +773,7 @@ class DreamSetCache:
     distractors: dict[str, str]
     facts: list[tuple[str, str, str]]  # entity, category, code
     dream_seed_offset: int = 0
+    gate_family: str = "hard"
     dream_prompt: str = ""
     gate_threshold: float = GATE_THRESHOLD
     rank_rule: str = RANK_RULE
@@ -816,6 +817,42 @@ def assert_aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact
             f"raise --dreams, or revisit the steer prefix, before running any cell."
         )
     return counts
+
+
+def rebase_dream_set(cache: "DreamSetCache", family: str, rank_rule: str) -> "DreamSetCache":
+    """Recompute every dream's erasers under a different gating family.
+
+    The family changes only how the cached queries are WEIGHTED into each
+    layer's SVD; the dreams, their queries and their divergences are already
+    stored, so nothing is regenerated and every dream hash — and the set hash —
+    is unchanged. A re-based cache is the same experiment carrying a different
+    eraser.
+    """
+    from gate_pilot import scheme_weights
+
+    for dream in cache.dreams:
+        gate = dream.gate_positions
+        if not gate:
+            continue
+        weights = (None if family == "hard"
+                   else scheme_weights([dream.divergence[t] for t in gate], family))
+        spectra, ranks, bases = dream_bases(dream.queries, gate, cache.wake_state,
+                                            rank_rule, weights)
+        dream.spectra, dream.ranks, dream.bases = spectra, ranks, bases
+    cache.gate_family = family
+    cache.rank_rule = rank_rule
+    return cache
+
+
+def run_rebase(args, cache_path: Path) -> None:
+    """The --rebase-gate-family mode: recomputes erasers from cached queries,
+    no model and no generation, so it runs and returns before the run path."""
+    rebased = rebase_dream_set(load_dream_cache(cache_path), args.rebase_gate_family,
+                               args.rank_rule)
+    save_dream_cache(rebased, cache_path)
+    write_dream_set_sidecar(rebased, sidecar_path(cache_path))
+    print(f"[{ts()}] re-based {cache_path}: {len(rebased.dreams)} dreams now carry "
+          f"{args.rebase_gate_family} erasers, set_sha {rebased.set_sha[:12]} unchanged")
 
 
 def run_merge(args, cache_path: Path) -> None:
@@ -1573,6 +1610,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
     parser.add_argument("--cue-greedy", type=int, default=12, help="Tokens after each cue decoded greedily -- the recalled code, which temperature sampling almost never gets right (default: %(default)s)")
     parser.add_argument("--cue-every", type=int, default=0, help="Force a fact's question stem into the dream every N tokens, cycling the wave's facts; 0 leaves generation free (default: %(default)s)")
+    parser.add_argument("--gate-family", default="hard",
+                        choices=("hard", "weighted", "sqrt", "clip", "power2", "power3"),
+                        help="How gated queries are weighted into the SVD. hard treats every "
+                             "kept position alike; the rest weight by state-dependency "
+                             "divergence (sec 2.10.7's bake-off axis)")
+    parser.add_argument("--rebase-gate-family", default=None,
+                        choices=("hard", "weighted", "sqrt", "clip", "power2", "power3"),
+                        help="Recompute an existing --dream-cache's erasers under this family "
+                             "and rewrite it. The dreams, queries and divergences are unchanged, "
+                             "so no generation is repeated.")
     parser.add_argument("--merge-dream-sets", nargs="+", default=None, metavar="CACHE",
                         help="Merge these set caches (built concurrently with disjoint "
                              "--dream-seed-offset) into one at --dream-cache, report it, and "
@@ -1671,6 +1718,9 @@ def main() -> None:
     cache_path = Path(args.dream_cache or default_cache_path(args.seed, args.dreams))
     if args.merge_dream_sets:
         run_merge(args, cache_path)
+        return
+    if args.rebase_gate_family:
+        run_rebase(args, cache_path)
         return
     if not args.build_dream_cache and not cache_path.exists():
         raise SystemExit(
@@ -2496,7 +2546,12 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
             # eraser is empty and it contributes no denial pressure.
             print(f"[{ts()}]  NOTE: no position passed the gate at {args.gate_threshold} nats -- "
                   f"this dream's eraser is empty (B4 starts it from the intact wake state).")
-        spectra, ranks, bases = dream_bases(dream.queries, gate, wake_state, args.rank_rule)
+        from gate_pilot import scheme_weights
+
+        family = getattr(args, "gate_family", "hard")
+        weights = (None if family == "hard"
+                   else scheme_weights([dream.divergence[t] for t in gate], family))
+        spectra, ranks, bases = dream_bases(dream.queries, gate, wake_state, args.rank_rule, weights)
         dreams.append(CachedDream(
             dream_ids=[int(t) for t in dream.tokens[0].tolist()],
             token_texts=dream.token_texts,
@@ -2535,6 +2590,7 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
         distractors=build_distractors(facts, args.seed),
         facts=[(f.entity, f.category, f.code) for f in facts],
         dream_seed_offset=getattr(args, "dream_seed_offset", 0),
+        gate_family=getattr(args, "gate_family", "hard"),
         dream_prompt=args.dream_prompt,
         gate_threshold=args.gate_threshold,
         rank_rule=args.rank_rule,
