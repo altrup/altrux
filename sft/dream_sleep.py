@@ -257,6 +257,9 @@ RANK_RULE = "ratio-gap"
 # Facts must bind in at least this many dreams of a set (sec 3's aggregate
 # coverage gate); the pilot may raise it.
 BIND_MIN_DREAMS = 2
+# Below this a dream carries no content to double-count, and two builds can
+# produce it identically without having shared a seed offset.
+MIN_DISTINCT_DREAM_TOKENS = 8
 
 # The wake session's own question phrasing, reused verbatim as a rehearsal cue.
 USER_CUE = "{user} What is the code for the {entity}?"
@@ -881,7 +884,7 @@ def merge_dream_sets(caches: Sequence["DreamSetCache"]) -> "DreamSetCache":
     if not caches:
         raise SystemExit("merge_dream_sets: nothing to merge")
     first = caches[0]
-    seen: dict[int, int] = {}
+    seen: dict[str, int] = {}
     dreams: list[CachedDream] = []
     for i, cache in enumerate(caches):
         if cache.transcript_ids != first.transcript_ids:
@@ -893,13 +896,20 @@ def merge_dream_sets(caches: Sequence["DreamSetCache"]) -> "DreamSetCache":
             raise SystemExit(
                 f"merge_dream_sets: cache {i} has generator {cache.generator[:12]}, "
                 f"first has {first.generator[:12]} -- a different teacher wrote those dreams.")
-        offset = getattr(cache, "dream_seed_offset", 0)
-        if offset in seen:
-            raise SystemExit(
-                f"merge_dream_sets: cache {i} and cache {seen[offset]} were both built at "
-                f"--dream-seed-offset {offset}, so they generated the same dreams.")
-        seen[offset] = i
-        dreams.extend(cache.dreams)
+        for dream in cache.dreams:
+            # A dream that terminated immediately ("[ASSISTANT] <eoc>") is
+            # byte-identical across seeds for an innocent reason and carries no
+            # content to double-count. A repeated REAL dream means two builds
+            # shared a --dream-seed-offset.
+            if len(dream.dream_ids) > MIN_DISTINCT_DREAM_TOKENS:
+                if dream.dream_sha in seen:
+                    raise SystemExit(
+                        f"merge_dream_sets: cache {i} repeats a {len(dream.dream_ids)}-token "
+                        f"dream already in cache {seen[dream.dream_sha]} "
+                        f"(sha {dream.dream_sha[:12]}) -- two builds shared a "
+                        f"--dream-seed-offset.")
+                seen[dream.dream_sha] = i
+            dreams.append(dream)
     merged = copy.copy(first)
     merged.dreams = dreams
     merged.set_sha = dream_set_sha(dreams)

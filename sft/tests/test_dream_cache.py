@@ -487,12 +487,15 @@ def test_merging_refuses_overlapping_offsets_not_coincidental_short_dreams():
     from dream_sleep import merge_dream_sets
 
     empty = _dream([1, 2, 3])
-    a = _set_cache(1234, [1, 2, 3], [empty, _dream([10, 11])], dream_seed_offset=0)
-    b = _set_cache(1234, [1, 2, 3], [_dream([12, 13]), _dream([14, 15])], dream_seed_offset=20)
+    real = _dream(list(range(100, 130)))
+    a = _set_cache(1234, [1, 2, 3], [empty, real])
+    b = _set_cache(1234, [1, 2, 3], [_dream([1, 2, 3]), _dream(list(range(200, 230)))])
+
+    # both sets carry the same 3-token instant-termination dream: allowed
     merged = merge_dream_sets([a, b])
     assert len(merged.dreams) == 4
 
-    clash = _set_cache(1234, [1, 2, 3], [_dream([16, 17])], dream_seed_offset=0)
+    clash = _set_cache(1234, [1, 2, 3], [_dream(list(range(100, 130)))])
     with pytest.raises(SystemExit, match="offset"):
         merge_dream_sets([a, clash])
 
