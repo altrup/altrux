@@ -1819,3 +1819,20 @@ def test_a_single_query_dream_with_an_empty_qcm_basis_still_builds(tmp_path, cap
 
     assert bases["qcm"][0].shape[0] == 0
     assert "empty" in capsys.readouterr().out
+
+
+def test_dream_seed_offset_makes_parallel_builds_disjoint(tmp_path):
+    """A set's generation seeds are derived from --seed, so two processes on
+    the same wake state produce IDENTICAL dreams -- parallel builds would
+    duplicate instead of extending the set. The offset shifts the derivation
+    so N processes cover disjoint dream indices."""
+    from dream_sleep import dream_generation_seed
+
+    base = [dream_generation_seed(1234, i, attempt=0, offset=0) for i in range(20)]
+    shifted = [dream_generation_seed(1234, i, attempt=0, offset=20) for i in range(20)]
+
+    assert len(set(base)) == 20
+    assert not set(base) & set(shifted)
+    # a retry must not collide with another process's slot either
+    retry = dream_generation_seed(1234, 0, attempt=1, offset=0)
+    assert retry not in set(base) | set(shifted)

@@ -1490,6 +1490,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
     parser.add_argument("--cue-greedy", type=int, default=12, help="Tokens after each cue decoded greedily -- the recalled code, which temperature sampling almost never gets right (default: %(default)s)")
     parser.add_argument("--cue-every", type=int, default=0, help="Force a fact's question stem into the dream every N tokens, cycling the wave's facts; 0 leaves generation free (default: %(default)s)")
+    parser.add_argument("--dream-seed-offset", type=int, default=0,
+                        help="Shift this build's generation seeds, so several processes can "
+                             "extend one wake state's dream set concurrently instead of "
+                             "regenerating identical dreams")
     parser.add_argument("--dreams", type=int, default=0,
                         help="Build/expect a multi-dream cache of N dreams instead of the single-dream one "
                              "(sec 2.10.4's literature-shaped regime); 0 is the single-dream cache "
@@ -2319,6 +2323,19 @@ def battery_read_queries(model, items, wake_state, encode, n_layers: int):
     return out
 
 
+def dream_generation_seed(seed: int, index: int, attempt: int, offset: int = 0) -> int:
+    """The generation seed for dream `index` of a set.
+
+    `offset` shifts the whole block so that several processes can extend ONE
+    wake state's set concurrently: without it every process derives the same
+    seeds from --seed and produces byte-identical dreams, duplicating work
+    instead of covering more of the distribution. Retry attempts live in a
+    band far above any offset, so a regeneration cannot collide with another
+    process's slot.
+    """
+    return seed * 1000 + offset + index + 1_000_000 * attempt
+
+
 def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
                     encode, decode, tokenizer, user_open, asst_open, stop_id: int | None,
                     adapter_sha: str | None = None, battery=None) -> DreamSetCache:
@@ -2351,7 +2368,8 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
     regenerated = 0
     for i in range(args.dreams):
         for attempt in range(DREAM_RETRIES + 1):
-            gen_seed = args.seed * 1000 + i + 100000 * attempt
+            gen_seed = dream_generation_seed(args.seed, i, attempt,
+                                             getattr(args, 'dream_seed_offset', 0))
             torch.manual_seed(gen_seed)
             print(f"\n[{ts()}] --- dream {i + 1}/{args.dreams} (generation seed {gen_seed}) ---")
             dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
