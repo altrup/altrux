@@ -205,3 +205,78 @@ def test_recap_of_a_conversation_with_no_complete_exchange_is_empty():
     import random
 
     assert recap_messages([{"role": "user", "content": "hello?"}], random.Random(0)) == []
+
+
+def test_a_recap_can_target_an_earlier_conversation_not_only_the_last():
+    """The failure this fixes: recapping only the conversation just closed
+    teaches RECENCY recall, which is exactly the bias that left the two
+    earliest facts of a wake transcript at zero spontaneous rehearsals."""
+    import random
+
+    records = [{"messages": _conv(i)} for i in range(60)]
+    groups = pack_records(records, random.Random(0), recap_rate=1.0)
+
+    triples = [g for g in groups if len(g) == 3 and g[2][0] == "recap"]
+    assert triples, "no 3-pack ending in a recap to inspect"
+    # Across the corpus, some recap quotes reach past the conversation
+    # immediately before them to the one that opened the pack.
+    reached_back = 0
+    for group in triples:
+        quoted = group[2][1][1]["content"]
+        first_answer = group[0][1][1]["content"][:20]
+        if first_answer in quoted:
+            reached_back += 1
+    assert reached_back > 0
+
+
+def test_an_enumerating_recap_quotes_several_pairs_and_invents_nothing():
+    import random
+
+    from prepare_data import recap_messages
+
+    # Six pairs, so the quotable head half still holds several: enumeration is
+    # capped by what survives truncation, never by inventing filler.
+    messages = [
+        {"role": "user", "content": "First question about gardening."},
+        {"role": "assistant", "content": "First answer about gardening."},
+        {"role": "user", "content": "Second question about beekeeping."},
+        {"role": "assistant", "content": "Second answer about beekeeping."},
+        {"role": "user", "content": "Third question about composting."},
+        {"role": "assistant", "content": "Third answer about composting."},
+    ]
+    for _ in range(len(messages)):
+        messages.append({"role": "user", "content": "Tail question."})
+        messages.append({"role": "assistant", "content": "Tail answer."})
+    recap = recap_messages(messages, random.Random(0), n_pairs=2)
+
+    text = " ".join(m["content"] for m in recap)
+    quoted = text.split('"')[1::2]
+
+    assert len(set(quoted)) == 4  # two distinct pairs, question and answer each
+    # Every quoted fragment comes from the source conversation: the only words
+    # the builder contributes are its own fixed scaffolding.
+    for fragment in quoted:
+        assert any(fragment in m["content"] for m in messages)
+
+
+def test_a_recap_quotes_from_the_head_of_its_source_conversation():
+    """--max-len truncation drops a conversation's TAIL turns, so a recap that
+    quoted a tail pair would ask the model to recall text that never made it
+    into the example: hallucination training. Quoting from the head keeps the
+    quoted turn on the right side of any truncation."""
+    import random
+
+    from prepare_data import recap_messages
+
+    messages = []
+    for i in range(8):
+        messages.append({"role": "user", "content": f"Question {i} about gardening."})
+        messages.append({"role": "assistant", "content": f"Answer {i} about gardening."})
+
+    for seed in range(25):
+        recap = recap_messages(messages, random.Random(seed))
+        text = " ".join(m["content"] for m in recap)
+        quoted = [q for q in text.split('"')[1::2]]
+        for fragment in quoted:
+            index = next(i for i, m in enumerate(messages) if fragment in m["content"])
+            assert index < len(messages) // 2, f"recap reached into the tail: {fragment!r}"

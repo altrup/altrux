@@ -125,21 +125,37 @@ def _quote(text: str) -> str:
     return head[: stop + 1] if stop > 0 else head
 
 
-def recap_messages(messages: list[dict], rng: random.Random) -> list[dict]:
-    """A mechanical follow-up exchange that quotes one of the preceding
-    conversation's own user/assistant pairs, chosen at random.
+def recap_messages(messages: list[dict], rng: random.Random, n_pairs: int = 1) -> list[dict]:
+    """A mechanical follow-up exchange that quotes the preceding conversation's
+    own user/assistant pairs, chosen at random.
 
     Packing exclusively unrelated conversations after the boundary would train
     the model to ignore its state exactly where every dream starts
     (DISCUSSION-20260808 sec 2.10.9); a recap makes the post-boundary
     distribution "maybe new, maybe recall". Every content word is quoted, so no
     model is called and nothing is invented.
+
+    `n_pairs` > 1 asks for several exchanges in one answer. A single-pair recap
+    teaches recall of ONE item; a dream needs to sweep the state, which is what
+    the enumerating shape trains.
     """
     pairs = [(messages[i]["content"], messages[i + 1]["content"])
              for i in range(len(messages) - 1)
              if messages[i]["role"] == "user" and messages[i + 1]["role"] == "assistant"]
     if not pairs:
         return []
+    # Only the head half is quotable: --max-len truncation drops a
+    # conversation's tail turns, and a recap quoting a dropped turn would train
+    # recall of text the example never contained.
+    pairs = pairs[: max(1, len(pairs) // 2)]
+    if n_pairs > 1:
+        rng.shuffle(pairs)
+        chosen = pairs[:n_pairs]
+        recalled = " ".join(f'You asked: "{_quote(q)}" I said: "{_quote(a)}"' for q, a in chosen)
+        return [
+            {"role": "user", "content": "Can you go over everything we discussed earlier?"},
+            {"role": "assistant", "content": recalled},
+        ]
     question, answer = pairs[rng.randrange(len(pairs))]
     return [
         {"role": "user", "content": "What did I ask you about earlier?"},
@@ -162,7 +178,13 @@ def pack_records(records: list[dict], rng: random.Random,
         group: list[tuple[str, list[dict]]] = [("fresh", pending[at])]
         at += 1
         while len(group) < size:
-            recap = recap_messages(group[-1][1], rng) if rng.random() < recap_rate else []
+            # Recap a conversation drawn from anywhere in the pack so far, not
+            # only the one just closed: quoting the most recent conversation
+            # every time teaches recall of the most recent thing, the very bias
+            # that leaves a wake transcript's earliest items unrehearsed.
+            source = rng.choice([messages for _, messages in group])
+            n_pairs = rng.choice((1, 2, 3))
+            recap = recap_messages(source, rng, n_pairs) if rng.random() < recap_rate else []
             if recap:
                 group.append(("recap", recap))
             elif at < len(pending):
