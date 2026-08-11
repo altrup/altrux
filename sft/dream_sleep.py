@@ -574,6 +574,31 @@ def dream_seed_text(asst_open: str, prompt: str) -> str:
     return f"{asst_open} {prompt}" if prompt else f"{asst_open} "
 
 
+def longest_verbatim_run(dream_tokens: Sequence[str], transcript_tokens: Sequence[str],
+                         n: int = 12) -> int:
+    """Longest run of consecutive dream tokens appearing verbatim in the wake
+    transcript.
+
+    `copy_fraction` answers "how much of this dream is reused phrasing"; this
+    answers "did the dream REPLAY the transcript". They differ sharply: a dream
+    repeating wake sentences one at a time scores a high fraction with a run of
+    ~15, while a wholesale replay shows a run of hundreds.
+    """
+    if not dream_tokens or not transcript_tokens or n <= 0:
+        return 0
+    grams = {tuple(transcript_tokens[i : i + n]) for i in range(len(transcript_tokens) - n + 1)}
+    best = current = 0
+    covered = [False] * len(dream_tokens)
+    for i in range(len(dream_tokens) - n + 1):
+        if tuple(dream_tokens[i : i + n]) in grams:
+            for j in range(i, i + n):
+                covered[j] = True
+    for flag in covered:
+        current = current + 1 if flag else 0
+        best = max(best, current)
+    return best
+
+
 def copy_fraction(dream_tokens: Sequence[str], transcript_tokens: Sequence[str],
                   n: int = 12, cue_flags: Sequence[bool] | None = None) -> float:
     """Fraction of a dream's tokens that sit inside a run of at least `n`
@@ -2250,6 +2275,10 @@ def report_dream_set(cache: DreamSetCache, min_dreams: int, rank_rule: str) -> d
                       f"the eraser cannot address what it never captured.")
     copies = [copy_fraction(d.dream_ids[d.prefix_len :], cache.transcript_ids,
                             cue_flags=d.cue_flags[d.prefix_len :]) for d in cache.dreams]
+    longest = [longest_verbatim_run(d.dream_ids[d.prefix_len :], cache.transcript_ids)
+               for d in cache.dreams]
+    print(f"[{ts()}] longest verbatim run per dream: max {max(longest)} tokens "
+          f"(a run of hundreds is the transcript being REPLAYED; ~15 is a reused sentence)")
     print(f"[{ts()}] verbatim copying of the wake transcript: mean {sum(copies) / len(copies):.1%}, "
           f"max {max(copies):.1%}  (a dream that replays the wake is not a dream -- watch this "
           f"when the warm start is recall-heavy)")

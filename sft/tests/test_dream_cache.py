@@ -401,3 +401,22 @@ def test_copy_fraction_ignores_spliced_cue_tokens():
 
     assert copy_fraction(dream, transcript, n=6) == 1.0
     assert copy_fraction(dream, transcript, n=6, cue_flags=cue) == 0.0
+
+
+def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
+    """Two different failures wear the same name. A dream that reuses the
+    wake's phrasing sentence by sentence can score a high copied-token
+    FRACTION while never reproducing more than a line; a dream that replays
+    the transcript wholesale is a different object. The run length is what
+    distinguishes them."""
+    from dream_sleep import copy_fraction, longest_verbatim_run
+
+    transcript = [i for i in range(200)]
+    wholesale = transcript[10:150]                       # one long replay
+    scattered = (transcript[0:13] + [900 + i for i in range(40)]
+                 + transcript[50:63] + [800 + i for i in range(40)])
+
+    assert longest_verbatim_run(wholesale, transcript) == len(wholesale)
+    assert longest_verbatim_run(scattered, transcript) == 13
+    # the fraction cannot tell them apart nearly as well
+    assert copy_fraction(scattered, transcript) > 0.2
