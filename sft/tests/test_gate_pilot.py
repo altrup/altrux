@@ -294,3 +294,35 @@ def test_every_family_is_reachable_from_the_sweep_list():
 
     for family in FAMILIES:
         assert len(scheme_weights([0.1, 0.4], family)) == 2
+
+
+def test_expmed_is_scale_invariant_where_a_bare_exponential_is_not():
+    """exp(D) hides a scale constant: it is really exp(D/T) with T=1 nat, so
+    rescaling the divergences changes the weighting's character. Dividing by
+    the capture's own median makes the exponent dimensionless, which is the
+    scale-invariance sec 5 requires of any threshold rule."""
+    from gate_pilot import scheme_weights
+
+    d = [0.02, 0.05, 0.4, 6.0]
+    scaled = [10 * x for x in d]
+
+    def shape(w):
+        total = sum(w)
+        return [x / total for x in w]
+
+    assert shape(scheme_weights(d, "expmed")) == pytest.approx(
+        shape(scheme_weights(scaled, "expmed")), abs=1e-9)
+    # the power families share that property; a bare exp would not
+    assert shape(scheme_weights(d, "power3")) == pytest.approx(
+        shape(scheme_weights(scaled, "power3")), abs=1e-9)
+
+
+def test_expmed_sits_between_the_power_families_in_steepness():
+    from gate_pilot import scheme_weights
+
+    d = [0.02, 0.05, 6.0]
+
+    def tail(w):
+        return w[-1] / sum(w)
+
+    assert tail(scheme_weights(d, "weighted")) < tail(scheme_weights(d, "expmed"))

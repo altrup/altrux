@@ -88,7 +88,7 @@ class PilotCapture:
 # The tau grid: quantiles of the capture's OWN pooled D_t, so the sweep is
 # scale-free and lands where the distribution actually is.
 QUANTILES = (0.0, 0.5, 0.75, 0.9, 0.95, 0.99)
-FAMILIES = ("hard", "weighted", "sqrt", "clip", "power2", "power3")
+FAMILIES = ("hard", "weighted", "sqrt", "clip", "power2", "power3", "expmed")
 # Below this the fact reads do not separate from context reads and sec 2.10.7's
 # kill-condition fires.
 MIN_AUC = 0.6
@@ -165,6 +165,15 @@ def scheme_weights(divergence: Sequence[float], family: str) -> list[float]:
         return [x * x for x in d]
     if family == "power3":
         return [x * x * x for x in d]
+    if family == "expmed":
+        # exp(D / median D): the exponent is dimensionless, so unlike a bare
+        # exp(D) -- which is exp(D/T) with T = 1 nat silently assumed -- the
+        # weighting's shape does not move when the divergences are rescaled,
+        # and its steepness adapts to each capture's own spread.
+        scale = statistics.median([x for x in d if x > 0]) if any(x > 0 for x in d) else 0.0
+        if scale <= 0:
+            return [1.0] * len(d)
+        return [math.exp(x / scale) for x in d]
     raise ValueError(f"unknown scheme family {family!r}; expected one of {FAMILIES}")
 
 

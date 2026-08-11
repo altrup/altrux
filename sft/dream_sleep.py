@@ -837,9 +837,12 @@ def rebase_dream_set(cache: "DreamSetCache", family: str, rank_rule: str) -> "Dr
         gate = dream.gate_positions
         if not gate:
             continue
+        # The cache stores queries for the GATED positions only, in gate order,
+        # while `gate` holds absolute token positions -- so the divergence is
+        # read by absolute position and the queries by their own index.
         weights = (None if family == "hard"
                    else scheme_weights([dream.divergence[t] for t in gate], family))
-        spectra, ranks, bases = dream_bases(dream.queries, gate, cache.wake_state,
+        spectra, ranks, bases = dream_bases(dream.queries, range(len(gate)), cache.wake_state,
                                             rank_rule, weights)
         dream.spectra, dream.ranks, dream.bases = spectra, ranks, bases
     cache.gate_family = family
@@ -1621,12 +1624,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cue-greedy", type=int, default=12, help="Tokens after each cue decoded greedily -- the recalled code, which temperature sampling almost never gets right (default: %(default)s)")
     parser.add_argument("--cue-every", type=int, default=0, help="Force a fact's question stem into the dream every N tokens, cycling the wave's facts; 0 leaves generation free (default: %(default)s)")
     parser.add_argument("--gate-family", default="hard",
-                        choices=("hard", "weighted", "sqrt", "clip", "power2", "power3"),
+                        choices=("hard", "weighted", "sqrt", "clip", "power2", "power3", "expmed"),
                         help="How gated queries are weighted into the SVD. hard treats every "
                              "kept position alike; the rest weight by state-dependency "
                              "divergence (sec 2.10.7's bake-off axis)")
     parser.add_argument("--rebase-gate-family", default=None,
-                        choices=("hard", "weighted", "sqrt", "clip", "power2", "power3"),
+                        choices=("hard", "weighted", "sqrt", "clip", "power2", "power3", "expmed"),
                         help="Recompute an existing --dream-cache's erasers under this family "
                              "and rewrite it. The dreams, queries and divergences are unchanged, "
                              "so no generation is repeated.")
