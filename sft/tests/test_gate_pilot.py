@@ -326,3 +326,18 @@ def test_expmed_sits_between_the_power_families_in_steepness():
         return w[-1] / sum(w)
 
     assert tail(scheme_weights(d, "weighted")) < tail(scheme_weights(d, "expmed"))
+
+
+def test_expmed_does_not_overflow_on_a_heavy_tailed_capture():
+    """The real captures run median ~0.02 against a max of ~15, so D/median
+    reaches ~750 and a naive exp() is beyond float range. Subtracting the max
+    is a global factor -- it rescales every weight equally and leaves the SVD's
+    subspace untouched -- so it costs nothing and keeps the family usable."""
+    from gate_pilot import scheme_weights
+
+    d = [0.02] * 50 + [0.05, 0.4, 15.0]
+    w = scheme_weights(d, "expmed")
+
+    assert all(x == x and x != float("inf") for x in w)
+    assert max(w) > 0
+    assert w[-1] == max(w)

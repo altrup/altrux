@@ -170,10 +170,15 @@ def scheme_weights(divergence: Sequence[float], family: str) -> list[float]:
         # exp(D) -- which is exp(D/T) with T = 1 nat silently assumed -- the
         # weighting's shape does not move when the divergences are rescaled,
         # and its steepness adapts to each capture's own spread.
-        scale = statistics.median([x for x in d if x > 0]) if any(x > 0 for x in d) else 0.0
+        positive = [x for x in d if x > 0]
+        scale = statistics.median(positive) if positive else 0.0
         if scale <= 0:
             return [1.0] * len(d)
-        return [math.exp(x / scale) for x in d]
+        # Subtracting the max is a global factor on every weight, so the SVD's
+        # subspace is unchanged; without it a capture whose max/median is ~750
+        # overflows outright.
+        top = max(d)
+        return [math.exp((x - top) / scale) for x in d]
     raise ValueError(f"unknown scheme family {family!r}; expected one of {FAMILIES}")
 
 
