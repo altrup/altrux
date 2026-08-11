@@ -326,7 +326,8 @@ def format_row(row: dict[str, object], pooled_auc: float) -> str:
 
 
 def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
-         min_auc: float = MIN_AUC, out: str | None = None) -> None:
+         min_auc: float = MIN_AUC, out: str | None = None,
+         families: Sequence[str] = FAMILIES) -> None:
     import torch
 
     from consolidation_null import ts
@@ -357,7 +358,7 @@ def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
     rows = []
     for q in QUANTILES:
         tau = quantile(pooled, q)
-        for family in FAMILIES:
+        for family in families:
             row = score_scheme(capture, f"{family}@q{int(q * 100)}", tau, family, variant, rank_rule)
             row["quantile"] = q
             rows.append(row)
@@ -408,7 +409,10 @@ if __name__ == "__main__":
                         help="Which rank rule truncates; both are reported (default: %(default)s)")
     parser.add_argument("--min-auc", type=float, default=MIN_AUC,
                         help="Sec 2.10.7's kill condition on test 1 (default: %(default)s)")
+    parser.add_argument("--families", nargs="+", default=list(FAMILIES), choices=list(FAMILIES),
+                        help="Weighting families to score (default: all). A subset lets an "
+                             "expensive sweep be split across processes.")
     parser.add_argument("--out", default=None,
                         help="Path stem for the table; .txt and .jsonl are appended (default: beside the capture)")
     args = parser.parse_args()
-    main(args.capture, args.variant, args.rank_rule, args.min_auc, args.out)
+    main(args.capture, args.variant, args.rank_rule, args.min_auc, args.out, args.families)
