@@ -575,7 +575,7 @@ def dream_seed_text(asst_open: str, prompt: str) -> str:
 
 
 def copy_fraction(dream_tokens: Sequence[str], transcript_tokens: Sequence[str],
-                  n: int = 12) -> float:
+                  n: int = 12, cue_flags: Sequence[bool] | None = None) -> float:
     """Fraction of a dream's tokens that sit inside a run of at least `n`
     consecutive tokens appearing verbatim in the wake transcript.
 
@@ -585,6 +585,12 @@ def copy_fraction(dream_tokens: Sequence[str], transcript_tokens: Sequence[str],
     dream set reports both. `n` is well above ordinary language reuse: short
     shared phrases ("the code for the") are not regurgitation.
     """
+    if cue_flags is not None:
+        # Spliced cue text is the wake session's own phrasing, so it matches
+        # the transcript by construction and says nothing about the model.
+        keep = [i for i, token in enumerate(dream_tokens)
+                if not (i < len(cue_flags) and cue_flags[i])]
+        dream_tokens = [dream_tokens[i] for i in keep]
     if not dream_tokens or not transcript_tokens or n <= 0:
         return 0.0
     grams: set[tuple[str, ...]] = {
@@ -2232,7 +2238,8 @@ def report_dream_set(cache: DreamSetCache, min_dreams: int, rank_rule: str) -> d
         print(f"[{ts()}]  dream {i}: {len(dream.dream_ids)} tokens, ended {dream.stop_reason}, "
               f"{len(dream.gate_positions)} gated positions, basis rank "
               f"{min(sizes)}-{max(sizes)} over {len(sizes)} layers ({rank_rule})")
-        copied = copy_fraction(dream.dream_ids[dream.prefix_len :], cache.transcript_ids)
+        copied = copy_fraction(dream.dream_ids[dream.prefix_len :], cache.transcript_ids,
+                               cue_flags=dream.cue_flags[dream.prefix_len :])
         print(f"[{ts()}]    within-dream repeats {bound}  (misbound {misbound})  "
               f"verbatim-copied from the wake transcript: {copied:.1%}")
         print(f"[{ts()}]    gate vs binding scan: precision {agreement['precision']:.2f} "
@@ -2241,7 +2248,8 @@ def report_dream_set(cache: DreamSetCache, min_dreams: int, rank_rule: str) -> d
             if n == 0:
                 print(f"[{ts()}]    NOTE: the gate captured no read of {entity} in this dream -- "
                       f"the eraser cannot address what it never captured.")
-    copies = [copy_fraction(d.dream_ids[d.prefix_len :], cache.transcript_ids) for d in cache.dreams]
+    copies = [copy_fraction(d.dream_ids[d.prefix_len :], cache.transcript_ids,
+                            cue_flags=d.cue_flags[d.prefix_len :]) for d in cache.dreams]
     print(f"[{ts()}] verbatim copying of the wake transcript: mean {sum(copies) / len(copies):.1%}, "
           f"max {max(copies):.1%}  (a dream that replays the wake is not a dream -- watch this "
           f"when the warm start is recall-heavy)")
@@ -2279,7 +2287,7 @@ def write_dream_set_sidecar(cache: DreamSetCache, path: str | Path) -> None:
             f"--- dream {i}  sha {dream.dream_sha[:12]}  {len(dream.dream_ids)} tokens  "
             f"ended {dream.stop_reason} ---",
             f"within-dream repeats: {bound}   misbound: {misbound}   "
-            f"verbatim-copied: {copy_fraction(dream.dream_ids[dream.prefix_len :], cache.transcript_ids):.1%}",
+            f"verbatim-copied: {copy_fraction(dream.dream_ids[dream.prefix_len :], cache.transcript_ids, cue_flags=dream.cue_flags[dream.prefix_len :]):.1%}",
             f"gate: {len(dream.gate_positions)} positions, precision {agreement['precision']:.3f} "
             f"recall {agreement['recall']:.3f}, per-fact contribution {agreement['per_fact']}",
             "per-layer rank: " + "  ".join(f"{rule}={dream.ranks[rule]}" for rule in RANK_RULES),

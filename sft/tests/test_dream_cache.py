@@ -386,3 +386,18 @@ def test_copy_fraction_is_zero_for_an_empty_dream():
     from dream_sleep import copy_fraction
 
     assert copy_fraction([], "a b c".split(), n=3) == 0.0
+
+
+def test_copy_fraction_ignores_spliced_cue_tokens():
+    """Cue splicing injects the wake session's own question phrasing, so those
+    tokens match the transcript BY CONSTRUCTION. Counting them as copying
+    inflates a cued set's score for a reason that has nothing to do with what
+    the model generated."""
+    from dream_sleep import copy_fraction
+
+    transcript = "what is the code for the clove the code for the clove is one two".split()
+    dream = "what is the code for the clove the code for the clove is one two".split()
+    cue = [True] * len(dream)
+
+    assert copy_fraction(dream, transcript, n=6) == 1.0
+    assert copy_fraction(dream, transcript, n=6, cue_flags=cue) == 0.0
