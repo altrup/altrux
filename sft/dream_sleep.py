@@ -817,6 +817,58 @@ def assert_aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact
     return counts
 
 
+def run_merge(args, cache_path: Path) -> None:
+    """The --merge-dream-sets mode: pure data, no model, so it runs before any
+    adapter is loaded and returns before the run path begins."""
+    merged = merge_dream_sets([load_dream_cache(p) for p in args.merge_dream_sets])
+    save_dream_cache(merged, cache_path)
+    write_dream_set_sidecar(merged, sidecar_path(cache_path))
+    print(f"[{ts()}] merged {len(args.merge_dream_sets)} caches -> {cache_path}: "
+          f"{len(merged.dreams)} dreams, set_sha {merged.set_sha[:12]}")
+    report_dream_set(merged, args.bind_min_dreams, args.rank_rule)
+
+
+def merge_dream_sets(caches: Sequence["DreamSetCache"]) -> "DreamSetCache":
+    """One dream set from several built concurrently with disjoint
+    `--dream-seed-offset`.
+
+    The arms share a dream set by registration and the summarizer checks that
+    sharing against the set hash, so the pieces have to become one artifact
+    rather than a convention. Everything that would make pooling meaningless is
+    refused rather than warned about: a different wake transcript is a
+    different state, a different generator is a different teacher, and a
+    repeated dream (two processes given the same offset) would count once as
+    coverage and twice as training.
+    """
+    if not caches:
+        raise SystemExit("merge_dream_sets: nothing to merge")
+    first = caches[0]
+    seen: dict[str, int] = {}
+    dreams: list[CachedDream] = []
+    for i, cache in enumerate(caches):
+        if cache.transcript_ids != first.transcript_ids:
+            raise SystemExit(
+                f"merge_dream_sets: cache {i} has a different wake transcript "
+                f"({token_sha(cache.transcript_ids)[:12]} vs {first.transcript_sha[:12]}) -- "
+                f"its dreams came from a different state and cannot pool.")
+        if cache.generator != first.generator:
+            raise SystemExit(
+                f"merge_dream_sets: cache {i} has generator {cache.generator[:12]}, "
+                f"first has {first.generator[:12]} -- a different teacher wrote those dreams.")
+        for dream in cache.dreams:
+            if dream.dream_sha in seen:
+                raise SystemExit(
+                    f"merge_dream_sets: cache {i} repeats a dream already in cache "
+                    f"{seen[dream.dream_sha]} (sha {dream.dream_sha[:12]}) -- identical dreams "
+                    f"mean two builds shared a --dream-seed-offset.")
+            seen[dream.dream_sha] = i
+            dreams.append(dream)
+    merged = copy.copy(first)
+    merged.dreams = dreams
+    merged.set_sha = dream_set_sha(dreams)
+    return merged
+
+
 def save_dream_cache(cache: DreamCache, path: str | Path) -> None:
     import torch
 
@@ -1521,6 +1573,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
     parser.add_argument("--cue-greedy", type=int, default=12, help="Tokens after each cue decoded greedily -- the recalled code, which temperature sampling almost never gets right (default: %(default)s)")
     parser.add_argument("--cue-every", type=int, default=0, help="Force a fact's question stem into the dream every N tokens, cycling the wave's facts; 0 leaves generation free (default: %(default)s)")
+    parser.add_argument("--merge-dream-sets", nargs="+", default=None, metavar="CACHE",
+                        help="Merge these set caches (built concurrently with disjoint "
+                             "--dream-seed-offset) into one at --dream-cache, report it, and "
+                             "stop. Refuses caches from a different wake transcript or "
+                             "generator, or any repeated dream.")
     parser.add_argument("--dream-seed-offset", type=int, default=0,
                         help="Shift this build's generation seeds, so several processes can "
                              "extend one wake state's dream set concurrently instead of "
@@ -1612,6 +1669,9 @@ def main() -> None:
                                            ("ce-on-dream" if args.ce_on_dream else args.arm))
 
     cache_path = Path(args.dream_cache or default_cache_path(args.seed, args.dreams))
+    if args.merge_dream_sets:
+        run_merge(args, cache_path)
+        return
     if not args.build_dream_cache and not cache_path.exists():
         raise SystemExit(
             f"no dream cache at {cache_path}. Every arm distils the one dream this seed's cache holds -- "
