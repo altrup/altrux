@@ -353,3 +353,36 @@ def test_the_set_builder_passes_cue_splicing_through_to_generation():
     assert "cues=cues" in call
     assert "cue_every=args.cue_every" in call
     assert "cue_greedy=args.cue_greedy" in call
+
+
+def test_copy_fraction_separates_a_quoting_dream_from_an_original_one():
+    """A dream trained on a recall-heavy corpus can degenerate into REPLAYING
+    the wake transcript verbatim instead of dreaming about it. Rehearsal
+    counting cannot see that -- a verbatim copy scores perfect coverage -- so
+    copying needs its own number."""
+    from dream_sleep import copy_fraction
+
+    transcript = ("the lighthouse keeper kept meticulous logs of every passing storm "
+                  "the bakery on the corner sells out of rye bread before noon").split()
+    verbatim = transcript[:14]
+    original = "what is the code for the clove i think it was mentioned earlier today".split()
+
+    assert copy_fraction(verbatim, transcript, n=6) == 1.0
+    assert copy_fraction(original, transcript, n=6) == 0.0
+
+
+def test_copy_fraction_counts_only_runs_at_least_n_long():
+    from dream_sleep import copy_fraction
+
+    transcript = "alpha beta gamma delta epsilon zeta eta theta".split()
+    # A 3-gram overlap is ordinary language reuse, not regurgitation.
+    short_overlap = "alpha beta gamma nothing further here at all".split()
+
+    assert copy_fraction(short_overlap, transcript, n=6) == 0.0
+    assert copy_fraction(short_overlap, transcript, n=3) > 0.0
+
+
+def test_copy_fraction_is_zero_for_an_empty_dream():
+    from dream_sleep import copy_fraction
+
+    assert copy_fraction([], "a b c".split(), n=3) == 0.0

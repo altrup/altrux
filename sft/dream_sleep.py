@@ -574,6 +574,30 @@ def dream_seed_text(asst_open: str, prompt: str) -> str:
     return f"{asst_open} {prompt}" if prompt else f"{asst_open} "
 
 
+def copy_fraction(dream_tokens: Sequence[str], transcript_tokens: Sequence[str],
+                  n: int = 12) -> float:
+    """Fraction of a dream's tokens that sit inside a run of at least `n`
+    consecutive tokens appearing verbatim in the wake transcript.
+
+    A recall-trained corpus can push generation from dreaming ABOUT the wake
+    into REPLAYING it. Rehearsal counting cannot see that -- a verbatim copy
+    scores perfect fact coverage -- so copying is measured separately, and a
+    dream set reports both. `n` is well above ordinary language reuse: short
+    shared phrases ("the code for the") are not regurgitation.
+    """
+    if not dream_tokens or not transcript_tokens or n <= 0:
+        return 0.0
+    grams: set[tuple[str, ...]] = {
+        tuple(transcript_tokens[i : i + n]) for i in range(len(transcript_tokens) - n + 1)
+    }
+    copied = [False] * len(dream_tokens)
+    for i in range(len(dream_tokens) - n + 1):
+        if tuple(dream_tokens[i : i + n]) in grams:
+            for j in range(i, i + n):
+                copied[j] = True
+    return sum(copied) / len(copied)
+
+
 def rehearsal_fraction(token_texts: Sequence[str], needles: Sequence[str]) -> tuple[float, dict[str, int]]:
     """Fraction of dream tokens whose characters fall inside an occurrence of
     a fact's entity or code, and the occurrence count per needle. A dream that
@@ -2204,13 +2228,19 @@ def report_dream_set(cache: DreamSetCache, min_dreams: int, rank_rule: str) -> d
         print(f"[{ts()}]  dream {i}: {len(dream.dream_ids)} tokens, ended {dream.stop_reason}, "
               f"{len(dream.gate_positions)} gated positions, basis rank "
               f"{min(sizes)}-{max(sizes)} over {len(sizes)} layers ({rank_rule})")
-        print(f"[{ts()}]    within-dream repeats {bound}  (misbound {misbound})")
+        copied = copy_fraction(dream.dream_ids[dream.prefix_len :], cache.transcript_ids)
+        print(f"[{ts()}]    within-dream repeats {bound}  (misbound {misbound})  "
+              f"verbatim-copied from the wake transcript: {copied:.1%}")
         print(f"[{ts()}]    gate vs binding scan: precision {agreement['precision']:.2f} "
               f"recall {agreement['recall']:.2f}, per-fact contribution {agreement['per_fact']}")
         for entity, n in agreement["per_fact"].items():
             if n == 0:
                 print(f"[{ts()}]    NOTE: the gate captured no read of {entity} in this dream -- "
                       f"the eraser cannot address what it never captured.")
+    copies = [copy_fraction(d.dream_ids[d.prefix_len :], cache.transcript_ids) for d in cache.dreams]
+    print(f"[{ts()}] verbatim copying of the wake transcript: mean {sum(copies) / len(copies):.1%}, "
+          f"max {max(copies):.1%}  (a dream that replays the wake is not a dream -- watch this "
+          f"when the warm start is recall-heavy)")
     for variant in VARIANTS:
         overlaps = [basis_overlap(a.bases[variant][i], b.bases[variant][i])
                     for a, b in zip(cache.dreams, cache.dreams[1:], strict=False)
@@ -2244,7 +2274,8 @@ def write_dream_set_sidecar(cache: DreamSetCache, path: str | Path) -> None:
         lines += [
             f"--- dream {i}  sha {dream.dream_sha[:12]}  {len(dream.dream_ids)} tokens  "
             f"ended {dream.stop_reason} ---",
-            f"within-dream repeats: {bound}   misbound: {misbound}",
+            f"within-dream repeats: {bound}   misbound: {misbound}   "
+            f"verbatim-copied: {copy_fraction(dream.dream_ids[dream.prefix_len :], cache.transcript_ids):.1%}",
             f"gate: {len(dream.gate_positions)} positions, precision {agreement['precision']:.3f} "
             f"recall {agreement['recall']:.3f}, per-fact contribution {agreement['per_fact']}",
             "per-layer rank: " + "  ".join(f"{rule}={dream.ranks[rule]}" for rule in RANK_RULES),
