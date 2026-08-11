@@ -88,7 +88,7 @@ class PilotCapture:
 # The tau grid: quantiles of the capture's OWN pooled D_t, so the sweep is
 # scale-free and lands where the distribution actually is.
 QUANTILES = (0.0, 0.5, 0.75, 0.9, 0.95, 0.99)
-FAMILIES = ("hard", "weighted", "sqrt", "clip")
+FAMILIES = ("hard", "weighted", "sqrt", "clip", "power2", "power3")
 # Below this the fact reads do not separate from context reads and sec 2.10.7's
 # kill-condition fires.
 MIN_AUC = 0.6
@@ -158,6 +158,13 @@ def scheme_weights(divergence: Sequence[float], family: str) -> list[float]:
     if family == "clip":
         cap = quantile(d, CLIP_QUANTILE)
         return [min(x, cap) for x in d]
+    # Super-linear: every other soft family is proportional (weighted) or
+    # flattening (sqrt, clip), so none of them concentrates the basis on the
+    # tail where fact reads sit. These do, without a binary cut.
+    if family == "power2":
+        return [x * x for x in d]
+    if family == "power3":
+        return [x * x * x for x in d]
     raise ValueError(f"unknown scheme family {family!r}; expected one of {FAMILIES}")
 
 

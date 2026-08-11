@@ -265,3 +265,32 @@ def test_readout_removals_handles_an_empty_query_list():
 
     basis = torch.linalg.qr(torch.randn(8, 2))[0].T.contiguous()
     assert readout_removals(torch.randn(1, 3, 4, 8), basis, []) == []
+
+
+def test_super_linear_families_sharpen_the_divergence_distinction():
+    """Every soft family was linear (weighted) or SUB-linear (sqrt, clip),
+    i.e. proportional or actively flattening. Fact reads live in the tail of
+    the divergence distribution, so a super-linear curve concentrates the
+    basis on them -- precision weighting without a binary cut."""
+    from gate_pilot import scheme_weights
+
+    d = [0.02, 0.05, 6.0]  # the measured shape: a long bulk and a small tail
+
+    linear = scheme_weights(d, "weighted")
+    square = scheme_weights(d, "power2")
+    cube = scheme_weights(d, "power3")
+
+    def tail_share(w):
+        return w[-1] / sum(w)
+
+    assert tail_share(square) > tail_share(linear)
+    assert tail_share(cube) > tail_share(square)
+    # sub-linear families go the other way, which is the gap this closes
+    assert tail_share(scheme_weights(d, "sqrt")) < tail_share(linear)
+
+
+def test_every_family_is_reachable_from_the_sweep_list():
+    from gate_pilot import FAMILIES, scheme_weights
+
+    for family in FAMILIES:
+        assert len(scheme_weights([0.1, 0.4], family)) == 2
