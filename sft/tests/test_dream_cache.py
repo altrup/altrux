@@ -334,3 +334,22 @@ def test_the_set_sidecar_carries_the_prefix_the_spectra_and_both_rank_rules(tmp_
     assert "per-layer spectra" in text
     assert "ratio-gap=" in text and "median=" in text
     assert "dreams bound per fact" in text
+
+
+def test_the_set_builder_passes_cue_splicing_through_to_generation():
+    """A dream SET built with --cue-every must splice cues, exactly as the
+    single-dream cache does. The set path once accepted the cue flags and
+    dropped them on the floor: argparse took them, generation never saw them,
+    and the build came out free-running with the coverage to match.
+    """
+    import inspect
+
+    from dream_sleep import build_dream_set
+
+    source = inspect.getsource(build_dream_set)
+    call = source[source.index("teacher_dream(") :]
+    call = call[: call.index(")\n")]
+
+    assert "cues=cues" in call
+    assert "cue_every=args.cue_every" in call
+    assert "cue_greedy=args.cue_greedy" in call

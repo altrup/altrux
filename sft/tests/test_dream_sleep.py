@@ -1609,7 +1609,8 @@ def _builder_args(**over):
 
     return SimpleNamespace(**{"dreams": 2, "seed": 1234, "dream_prompt": "", "dream_tokens": 6,
                               "dream_temp": 1.0, "gate_threshold": 0.0, "rank_rule": "ratio-gap",
-                              "bind_min_dreams": 2, "pilot_capture": False, **over})
+                              "bind_min_dreams": 2, "pilot_capture": False,
+                              "cue_every": 0, "cue_greedy": 0, **over})
 
 
 def _build_set(tmp_path, decoded: str, battery=None, **over):

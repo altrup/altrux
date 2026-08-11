@@ -2307,8 +2307,11 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
     seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt))
     prefix_len = seed_ids.shape[1]
     needles = [f.entity for f in facts] + [f.code for f in facts]
+    cues = build_cues([(1, f) for f in facts], encode, user_open, asst_open) if args.cue_every else []
     print(f"[{ts()}] steer prefix {args.dream_prompt!r} -> {prefix_len} tokens, excluded from every "
           f"arm's scored positions; gate threshold {args.gate_threshold} nats, rank rule {args.rank_rule}")
+    print(f"[{ts()}] cue splicing: " + (f"every {args.cue_every} tokens, {args.cue_greedy} greedy "
+                                        f"({len(cues)} cues)" if cues else "off (free-running dreams)"))
 
     model.eval()
     dreams: list[CachedDream] = []
@@ -2322,6 +2325,7 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
             print(f"\n[{ts()}] --- dream {i + 1}/{args.dreams} (generation seed {gen_seed}) ---")
             dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
                                   drain=False, decode_token=lambda i: decode([i]), needles=needles,
+                                  cues=cues, cue_every=args.cue_every, cue_greedy=args.cue_greedy,
                                   frozen=adapter_sha is None, stop_id=stop_id,
                                   turn_id=tokenizer.eos_token_id)
             if not dream_is_degenerate("".join(dream.token_texts)):
