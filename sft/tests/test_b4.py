@@ -216,3 +216,41 @@ def test_variant_basis_deflates_cpu_rows_against_a_gpu_state():
     basis = variant_basis(v_full, 3, "deflated", state)
     assert basis.device.type == "cpu"
     assert torch.allclose(basis @ basis.T, torch.eye(len(basis)), atol=1e-5)
+
+
+def test_sigma_scaled_erase_is_partial_and_ordered_by_singular_value():
+    """DISCUSSION sec 5 rejected sigma-scaling on theory (partial cuts leave
+    re-amplifiable residue, and (1-gamma)^N compounds across re-applications).
+    Both objections are about REPEATED application; in single-sleep the eraser
+    fires once per dream, so the question is empirical. This is the operator:
+    each direction is removed in proportion to its own singular value, the
+    strongest fully and the weakest barely.
+    """
+    import torch
+
+    from b4 import erase_subspace, erase_subspace_scaled
+
+    torch.manual_seed(0)
+    basis = torch.linalg.qr(torch.randn(8, 2))[0].T.contiguous()
+    state = torch.randn(1, 2, 3, 8)
+
+    full = erase_subspace(state, basis)
+    scaled = erase_subspace_scaled(state, basis, [1.0, 0.0])
+    none = erase_subspace_scaled(state, basis, [0.0, 0.0])
+
+    # gamma all-zero removes nothing; gamma all-one is the full projection
+    assert torch.allclose(none, state, atol=1e-5)
+    assert torch.allclose(erase_subspace_scaled(state, basis, [1.0, 1.0]), full, atol=1e-5)
+    # a partial cut sits strictly between
+    assert not torch.allclose(scaled, state, atol=1e-4)
+    assert not torch.allclose(scaled, full, atol=1e-4)
+    assert (scaled - state).norm() < (full - state).norm()
+
+
+def test_sigma_gammas_come_from_the_spectrum_normalised_to_its_top():
+    from b4 import sigma_gammas
+
+    assert sigma_gammas([4.0, 2.0, 1.0], rank=3) == pytest.approx([1.0, 0.5, 0.25])
+    assert sigma_gammas([4.0, 2.0, 1.0], rank=2) == pytest.approx([1.0, 0.5])
+    assert sigma_gammas([], rank=2) == []
+    assert sigma_gammas([0.0, 0.0], rank=2) == [0.0, 0.0]

@@ -693,6 +693,9 @@ def test_arm_carry_matches_the_registered_sequences():
         "b4-raw": "intact",
         "b4-deflated": "intact",
         "b4-qcm": "intact",
+        # the sigma arm erases the raw subspace partially, so it too hands the
+        # next wake an intact-shaped state
+        "b4-sigma": "intact",
         "replay": "none",
         "ce-on-dream": "none",
         "drain": "drained",

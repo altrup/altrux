@@ -229,6 +229,12 @@ DISTRACTOR_SALT = 0x5EED
 # arm name carries the variant, since the variant IS the operator being
 # compared -- there is no --erase-op axis crossing it.
 B4_ARMS = {f"b4-{variant}": variant for variant in VARIANTS}
+# The sigma arm reuses the raw basis but removes each direction in proportion
+# to its own singular value instead of all-or-nothing (sec 5's rejected
+# sigma-scaling, tested empirically because both objections concern REPEATED
+# application and single-sleep erases once per dream).
+SIGMA_ARM = "b4-sigma"
+B4_ARMS[SIGMA_ARM] = "raw"
 
 # What each arm hands to the next wake, per the sec 3 sequences.
 ARM_CARRY = {
@@ -1191,6 +1197,22 @@ def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp
     return tokens
 
 
+def erased_start_scaled(wake_state, bases: Sequence[torch.Tensor],
+                        spectra: Sequence[Sequence[float]]):
+    """`erased_start` with per-direction partial cuts from each layer's own
+    spectrum -- the sigma arm."""
+    from b4 import erase_subspace_scaled, sigma_gammas
+
+    state = copy_state(wake_state)
+    for layer, basis in enumerate(bases):
+        if basis.numel() == 0:
+            continue
+        gammas = sigma_gammas(spectra[layer], basis.shape[0])
+        state.ssm_states[layer] = erase_subspace_scaled(
+            state.ssm_states[layer], basis, gammas)
+    return state
+
+
 def erased_start(wake_state, bases: Sequence[torch.Tensor]):
     """A fresh copy of the wake state with one dream's eraser applied ONCE.
 
@@ -1219,7 +1241,8 @@ def dream_from_cached(cached: CachedDream, device) -> Dream:
 
 
 def distill_dream_set(model, opt, dreams: Sequence[CachedDream], wake_state, variant: str | None,
-                      epochs: int, kl_temp: float, on_step, on_boundary) -> int:
+                      epochs: int, kl_temp: float, on_step, on_boundary,
+                      sigma_scaled: bool = False) -> int:
     """Sec 2.10.4's carry matrix over the whole dream set.
 
     Student WEIGHTS carry across the set -- one optimizer trajectory, since
@@ -1241,7 +1264,12 @@ def distill_dream_set(model, opt, dreams: Sequence[CachedDream], wake_state, var
     for epoch in range(epochs):
         for i, cached in enumerate(dreams):
             dream = dream_from_cached(cached, wake_state.ssm_states[0].device)
-            start = None if variant is None else erased_start(wake_state, cached.bases[variant])
+            if variant is None:
+                start = None
+            elif sigma_scaled:
+                start = erased_start_scaled(wake_state, cached.bases[variant], cached.spectra)
+            else:
+                start = erased_start(wake_state, cached.bases[variant])
             tokens += distill_replay(
                 model, opt, dream, steps=1, chunk_len=dream.tokens.shape[1], kl_temp=kl_temp,
                 on_step=lambda s, loss, base=step: on_step(base + s, loss),
@@ -2661,7 +2689,8 @@ def run_dream_set_sleep(mode, model, opt, args, wave, wake_state, seen, cache: D
         probe_seconds += time.time() - at
 
     tokens = distill_dream_set(model, opt, cache.dreams, wake_state, variant, args.dream_epochs,
-                               args.kl_temp, on_step, on_boundary)
+                               args.kl_temp, on_step, on_boundary,
+                               sigma_scaled=(mode == SIGMA_ARM))
     train_seconds = time.time() - train_started - probe_seconds
     # Sec 2.10.5: the boundary probe round is a primary deliverable, but it is
     # rate-checked rather than assumed cheap.

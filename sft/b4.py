@@ -166,6 +166,38 @@ def erase_subspace(ssm_state: torch.Tensor, basis: torch.Tensor) -> torch.Tensor
     return (s - torch.einsum("bhpr,rn->bhpn", coeffs, v)).to(ssm_state.dtype)
 
 
+def sigma_gammas(spectrum: Sequence[float], rank: int) -> list[float]:
+    """Per-direction erase strengths from the layer's own spectrum, normalised
+    to its top singular value: the strongest direction is removed fully, the
+    rest in proportion. Scale-free, and no constant beyond the rank already
+    chosen."""
+    head = list(spectrum)[:rank]
+    top = max(head) if head else 0.0
+    if top <= 0:
+        return [0.0] * len(head)
+    return [float(s) / float(top) for s in head]
+
+
+def erase_subspace_scaled(ssm_state: torch.Tensor, basis: torch.Tensor,
+                          gammas: Sequence[float]) -> torch.Tensor:
+    """S(I - V^T diag(gamma) V): each direction removed in proportion to its
+    own gamma rather than all-or-nothing.
+
+    DISCUSSION sec 5 rejected this on two grounds, both about REPEATED
+    application -- partial cuts leave re-amplifiable residue, and (1-gamma)^N
+    compounds across re-applications. Single-sleep applies the eraser once per
+    dream, so the objections do not bite and the question is empirical.
+    """
+    import torch
+
+    if basis.numel() == 0 or not len(gammas):
+        return ssm_state
+    s, v = ssm_state.float(), basis.float().to(ssm_state.device)
+    g = torch.tensor(list(gammas)[: v.shape[0]], dtype=s.dtype, device=s.device)
+    coeffs = torch.einsum("bhpn,rn->bhpr", s, v) * g
+    return (s - torch.einsum("bhpr,rn->bhpn", coeffs, v)).to(ssm_state.dtype)
+
+
 def erase_state_subspace(state, bases: Sequence[torch.Tensor]) -> None:
     """Apply each layer's own basis to `state` in place."""
     for i, basis in enumerate(bases):
