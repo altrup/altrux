@@ -772,6 +772,7 @@ class DreamSetCache:
     dreams: list[CachedDream]
     distractors: dict[str, str]
     facts: list[tuple[str, str, str]]  # entity, category, code
+    dream_seed_offset: int = 0
     dream_prompt: str = ""
     gate_threshold: float = GATE_THRESHOLD
     rank_rule: str = RANK_RULE
@@ -843,7 +844,7 @@ def merge_dream_sets(caches: Sequence["DreamSetCache"]) -> "DreamSetCache":
     if not caches:
         raise SystemExit("merge_dream_sets: nothing to merge")
     first = caches[0]
-    seen: dict[str, int] = {}
+    seen: dict[int, int] = {}
     dreams: list[CachedDream] = []
     for i, cache in enumerate(caches):
         if cache.transcript_ids != first.transcript_ids:
@@ -855,14 +856,13 @@ def merge_dream_sets(caches: Sequence["DreamSetCache"]) -> "DreamSetCache":
             raise SystemExit(
                 f"merge_dream_sets: cache {i} has generator {cache.generator[:12]}, "
                 f"first has {first.generator[:12]} -- a different teacher wrote those dreams.")
-        for dream in cache.dreams:
-            if dream.dream_sha in seen:
-                raise SystemExit(
-                    f"merge_dream_sets: cache {i} repeats a dream already in cache "
-                    f"{seen[dream.dream_sha]} (sha {dream.dream_sha[:12]}) -- identical dreams "
-                    f"mean two builds shared a --dream-seed-offset.")
-            seen[dream.dream_sha] = i
-            dreams.append(dream)
+        offset = getattr(cache, "dream_seed_offset", 0)
+        if offset in seen:
+            raise SystemExit(
+                f"merge_dream_sets: cache {i} and cache {seen[offset]} were both built at "
+                f"--dream-seed-offset {offset}, so they generated the same dreams.")
+        seen[offset] = i
+        dreams.extend(cache.dreams)
     merged = copy.copy(first)
     merged.dreams = dreams
     merged.set_sha = dream_set_sha(dreams)
@@ -2534,6 +2534,7 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
         dreams=dreams,
         distractors=build_distractors(facts, args.seed),
         facts=[(f.entity, f.category, f.code) for f in facts],
+        dream_seed_offset=getattr(args, "dream_seed_offset", 0),
         dream_prompt=args.dream_prompt,
         gate_threshold=args.gate_threshold,
         rank_rule=args.rank_rule,

@@ -446,8 +446,8 @@ def test_merging_sets_concatenates_dreams_and_rehashes():
     checks that sharing against."""
     from dream_sleep import merge_dream_sets
 
-    a = _set_cache(1234, [1, 2, 3], [_dream([10, 11]), _dream([12, 13])])
-    b = _set_cache(1234, [1, 2, 3], [_dream([14, 15])])
+    a = _set_cache(1234, [1, 2, 3], [_dream([10, 11]), _dream([12, 13])], dream_seed_offset=0)
+    b = _set_cache(1234, [1, 2, 3], [_dream([14, 15])], dream_seed_offset=20)
 
     merged = merge_dream_sets([a, b])
 
@@ -479,13 +479,19 @@ def test_merging_refuses_sets_from_different_generators():
         merge_dream_sets([a, b])
 
 
-def test_merging_refuses_duplicate_dreams():
-    """Two processes given the same offset produce byte-identical dreams;
-    merging them would double-count a dream as coverage."""
+def test_merging_refuses_overlapping_offsets_not_coincidental_short_dreams():
+    """Two builds sharing --dream-seed-offset is the failure worth refusing.
+    Two dreams that both terminated instantly are byte-identical for an
+    innocent reason -- a 3-token '[ASSISTANT] <eoc>' has no room to differ --
+    and must not block a merge."""
     from dream_sleep import merge_dream_sets
 
-    a = _set_cache(1234, [1, 2, 3], [_dream([10, 11])])
-    b = _set_cache(1234, [1, 2, 3], [_dream([10, 11])])
+    empty = _dream([1, 2, 3])
+    a = _set_cache(1234, [1, 2, 3], [empty, _dream([10, 11])], dream_seed_offset=0)
+    b = _set_cache(1234, [1, 2, 3], [_dream([12, 13]), _dream([14, 15])], dream_seed_offset=20)
+    merged = merge_dream_sets([a, b])
+    assert len(merged.dreams) == 4
 
-    with pytest.raises(SystemExit, match="identical"):
-        merge_dream_sets([a, b])
+    clash = _set_cache(1234, [1, 2, 3], [_dream([16, 17])], dream_seed_offset=0)
+    with pytest.raises(SystemExit, match="offset"):
+        merge_dream_sets([a, clash])
