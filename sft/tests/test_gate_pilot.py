@@ -226,3 +226,42 @@ def test_a_capture_with_no_fact_reads_anywhere_fails_the_scheme():
     row = score_scheme(capture, "hard@q50", 0.5, "hard", "raw", "ratio-gap")
 
     assert not row["ok"] and "no fact read" in row["why"]
+
+
+def test_readout_removals_batches_queries_without_changing_the_math():
+    """The scoring path runs two einsums over the full ssm_state per query;
+    at 64 layers that dominated the sweep's runtime. Batching over queries has
+    to be arithmetically identical to the per-query loop it replaces."""
+    import torch
+
+    from b4 import erase_subspace
+    from gate_pilot import readout_removals
+
+    torch.manual_seed(0)
+    state = torch.randn(1, 3, 4, 8)
+    basis = torch.linalg.qr(torch.randn(8, 2))[0].T.contiguous()
+    queries = [torch.randn(1, 8) for _ in range(5)]
+
+    reference = []
+    erased = erase_subspace(state.float(), basis)
+    for c in queries:
+        c = c.reshape(1, -1).float()
+        before = torch.einsum("bhpn,bn->bhp", state.float(), c).norm()
+        after = torch.einsum("bhpn,bn->bhp", erased, c).norm()
+        if float(before) > 1e-9:
+            reference.append(max(0.0, 1.0 - float(after / before)))
+
+    got = readout_removals(state, basis, queries)
+
+    assert len(got) == len(reference)
+    for a, b in zip(got, reference, strict=True):
+        assert abs(a - b) < 1e-5
+
+
+def test_readout_removals_handles_an_empty_query_list():
+    import torch
+
+    from gate_pilot import readout_removals
+
+    basis = torch.linalg.qr(torch.randn(8, 2))[0].T.contiguous()
+    assert readout_removals(torch.randn(1, 3, 4, 8), basis, []) == []

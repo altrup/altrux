@@ -173,15 +173,19 @@ def readout_removals(ssm_state, basis, queries: Sequence[torch.Tensor]) -> list[
 
     from b4 import erase_subspace
 
-    erased = erase_subspace(ssm_state.float(), basis)
-    out = []
-    for c in queries:
-        c = c.reshape(1, -1).float()
-        before = torch.einsum("bhpn,bn->bhp", ssm_state.float(), c).norm()
-        after = torch.einsum("bhpn,bn->bhp", erased, c).norm()
-        if float(before) > 1e-9:
-            out.append(max(0.0, 1.0 - float(after / before)))
-    return out
+    if not queries:
+        return []
+    # One batched pass over all queries, on the accelerator when there is one:
+    # the per-query loop ran two einsums over the whole state each time, which
+    # at 64 layers is most of a sweep's runtime.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    state = ssm_state.float().to(device)
+    erased = erase_subspace(state, basis.to(device))
+    rows = torch.stack([c.reshape(-1).float() for c in queries]).to(device)
+    before = torch.einsum("bhpn,qn->qbhp", state, rows).flatten(1).norm(dim=1)
+    after = torch.einsum("bhpn,qn->qbhp", erased, rows).flatten(1).norm(dim=1)
+    kept = before > 1e-9
+    return (1.0 - after[kept] / before[kept]).clamp(min=0.0).cpu().tolist()
 
 
 def _mean(values: Sequence[float]) -> float | None:

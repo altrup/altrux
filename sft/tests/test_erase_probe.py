@@ -208,3 +208,41 @@ def test_a_colliding_distractor_stops_the_build():
     with pytest.raises(SystemExit):
         assert_no_collisions([bad], FACTS, BATTERY)
     assert_no_collisions([], FACTS, BATTERY)
+
+
+def test_state_top_dirs_is_memoised_per_state_and_recomputed_after_mutation(monkeypatch):
+    """The wake state is fixed across a whole gate sweep, but its top
+    directions were re-derived per dream per scheme row -- a (h*p, n) SVD per
+    layer, which was most of the sweep's runtime. The cache must still notice
+    an in-place edit, or a multi-sleep caller would silently reuse the previous
+    sleep's directions."""
+    import torch
+
+    import erase_probe
+    from erase_probe import state_top_dirs
+
+    calls = []
+    real_svd = torch.linalg.svd
+
+    def counting_svd(*args, **kwargs):
+        calls.append(1)
+        return real_svd(*args, **kwargs)
+
+    monkeypatch.setattr(torch.linalg, "svd", counting_svd)
+    erase_probe.clear_state_top_dirs_cache()
+
+    torch.manual_seed(0)
+    state = torch.randn(1, 4, 3, 8)
+
+    first = state_top_dirs(state, 1)
+    assert len(calls) == 1
+    again = state_top_dirs(state, 1)
+    assert len(calls) == 1  # served from the cache
+    assert torch.equal(first, again)
+
+    with torch.no_grad():
+        state[0, 0, 0, :] = torch.tensor([5.0, 0, 0, 0, 0, 0, 0, 0])
+    after = state_top_dirs(state, 1)
+
+    assert len(calls) == 2  # an in-place edit invalidates
+    assert not torch.equal(first, after)

@@ -43,6 +43,8 @@ import json
 import random
 import re
 import sys
+import weakref
+from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -355,17 +357,52 @@ def deflate(c: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
     return c - torch.einsum("bk,bkn->bn", coeffs, basis).to(c.dtype)
 
 
+_TOP_DIRS_CACHE: "OrderedDict[tuple, tuple[weakref.ref, torch.Tensor]]" = OrderedDict()
+# One entry per (state, k) in flight; a gate sweep touches n_layers of them.
+_TOP_DIRS_CACHE_MAX = 512
+
+
+def clear_state_top_dirs_cache() -> None:
+    _TOP_DIRS_CACHE.clear()
+
+
 def state_top_dirs(ssm_state: torch.Tensor, k: int) -> torch.Tensor:
     """Top-k right-singular directions of the state's address space -- the
     directions the stored keys share (the interference cone), computed from
     the state alone. Heads stacked so the result is per layer, one basis per
     batch element (the fused arms ablate a whole batch of token-positions at
-    once). Returns (b, k, n)."""
+    once). Returns (b, k, n).
+
+    Memoised on the state tensor: a gate sweep re-derives these for the SAME
+    wake state once per dream per scheme row, and at (h*p, n) = (5120, 128) per
+    layer that dominated its runtime. The key carries `_version`, so an
+    in-place edit (a sleep boundary moving the state) recomputes rather than
+    serving the previous sleep's directions.
+    """
     import torch
+
+    key = (id(ssm_state), ssm_state._version, k)
+    entry = _TOP_DIRS_CACHE.get(key)
+    if entry is not None:
+        ref, hit = entry
+        # A dead referent means this id was recycled by a NEW tensor: the key
+        # is not evidence of identity on its own.
+        if ref() is ssm_state:
+            _TOP_DIRS_CACHE.move_to_end(key)
+            return hit
+        del _TOP_DIRS_CACHE[key]
 
     m = ssm_state.detach().float().reshape(ssm_state.shape[0], -1, ssm_state.shape[-1])  # (b, h*p, n)
     _, _, vh = torch.linalg.svd(m, full_matrices=False)
-    return vh[:, :k]
+    out = vh[:, :k]
+
+    try:
+        _TOP_DIRS_CACHE[key] = (weakref.ref(ssm_state), out)
+    except TypeError:  # a tensor that cannot be weak-referenced is simply not cached
+        return out
+    if len(_TOP_DIRS_CACHE) > _TOP_DIRS_CACHE_MAX:
+        _TOP_DIRS_CACHE.popitem(last=False)
+    return out
 
 
 def main() -> None:
