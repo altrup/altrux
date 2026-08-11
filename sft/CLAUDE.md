@@ -58,6 +58,15 @@ be created; a fresh box has no such artifact.
   concurrent processes hold their solo step rate (2.2 step/s replay vs
   2.0 solo) at 99% utilisation — ~2.8x aggregate. Run grids concurrently
   on a GH200 (per-token arms still saturate ~2.5 aggregate step/s —
-  launch-latency-bound, not fixable by more processes).
+  launch-latency-bound; see the batching rule below).
+- **Batching is mandatory for box code (standing direction, altrup
+  2026-08-11).** Anything that iterates per-token or per-item on a GPU must
+  take a batch dimension — single-stream decode of a 2.7B model on a GH200
+  measured 13–14 tok/s, launch-latency-bound, and `nvidia-smi`'s 97%
+  "utilization" is misleading there (busy launching kernels, not computing).
+  Independent work (e.g. the N dreams of a set) batches at ~N×; co-scheduling
+  more processes does not substitute for latency-bound loops. Implementation
+  blockers for batched dream generation are enumerated in
+  `notes/EXPERIMENT_NOTES-20260810-231500.md`.
 - **`pkill -f <script>.py` kills your own shell**, because the tool's command
   string contains the pattern. Kill the tmux window instead.
