@@ -2760,8 +2760,10 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
     # A dream set's budget is one pass per dream (sec 2.10.2), and B1-live's is
     # the dream itself -- neither is --distill-steps.
     dream_set = isinstance(cache, DreamSetCache) and mode not in ("sft-ref", "no-sleep")
+    sft_steps = (transcript.shape[1] - 2 + chunk_len) // chunk_len
     total = (len(cache.dreams) * args.dream_epochs if dream_set else
-             args.dream_tokens if mode == "drain-live" else args.distill_steps)
+             args.dream_tokens if mode == "drain-live" else
+             sft_steps if mode == "sft-ref" else args.distill_steps)
 
     def on_step(step: int, loss: float) -> None:
         emit({"phase": "kl", "wave": wave, "arm": mode, "step": step, "loss": loss,
@@ -2802,9 +2804,9 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
 
     model.train()
     if mode == "sft-ref":
-        token_gradients = distill_sft(model, opt, transcript, args.distill_steps, chunk_len, on_step)
+        token_gradients = distill_sft(model, opt, transcript, sft_steps, chunk_len, on_step)
         print()
-        emit({"phase": "sleep", "wave": wave, "arm": mode, "steps": args.distill_steps,
+        emit({"phase": "sleep", "wave": wave, "arm": mode, "steps": sft_steps,
               "token_gradients": token_gradients, "seconds": time.time() - started})
         model.eval()
         return None

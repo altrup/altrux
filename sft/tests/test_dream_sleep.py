@@ -1332,6 +1332,20 @@ def test_sequential_sft_ref_trains_only_on_the_current_wave_s_facts(tmp_path, mo
     assert trained == [[7, 8, 9]]
 
 
+def test_sequential_sft_ref_uses_one_complete_transcript_pass(tmp_path, monkeypatch):
+    import dream_sleep
+
+    calls: list[int] = []
+    monkeypatch.setattr(
+        dream_sleep, "distill_sft",
+        lambda model, opt, ids, steps, *args: calls.append(steps) or 0,
+    )
+
+    _wave_sleep(tmp_path, "sft-ref", wave=2, transcript=torch.tensor([[7, 8, 9, 1, 2, 3, 4]]))
+
+    assert calls == [2]
+
+
 def test_distractors_never_reuse_a_code_another_wave_already_holds(tmp_path):
     """Multi-sleep probes every wave's facts, so every wave needs foils -- and a
     foil that is some other wave's real code would score that fact as forgotten."""
