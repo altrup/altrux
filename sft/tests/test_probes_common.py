@@ -8,14 +8,20 @@ import torch
 
 from consolidation_null import target_logprob
 from probes_common import (
+    BATTERY_CANDIDATES,
+    CalibrationError,
     battery_hit,
     battery_summary,
     build_battery,
+    candidate_bank_hash,
+    calibrate_battery,
     code_margin,
     load_or_build_battery,
     logprob_sum,
     nll_from_logits,
     score_battery,
+    score_battery_batched,
+    validate_battery_candidates,
 )
 
 
@@ -68,6 +74,50 @@ def test_score_battery_reports_flips_and_logprob_drops():
     assert summary["items"] == 2 and summary["lost"] == 1
     assert summary["retained_rate"] == 0.5
     assert summary["mean_logprob_delta"] == -1.2
+
+
+def test_candidate_bank_has_the_registered_size_and_short_answers():
+    assert len(BATTERY_CANDIDATES) >= 200
+    assert all(1 <= len(answer.split()) <= 3 for _, answer in BATTERY_CANDIDATES)
+
+
+def test_calibration_artifact_is_keyed_to_the_checkpoint_and_candidate_bank(tmp_path):
+    path = tmp_path / "battery.json"
+    artifact = calibrate_battery(
+        path, [("a", "yes")], lambda prompt: ("yes", -0.5), checkpoint_sha="warm-start"
+    )
+
+    assert artifact["checkpoint_sha256"] == "warm-start"
+    assert artifact["candidate_bank_sha256"] == candidate_bank_hash([("a", "yes")])
+    assert artifact["items"][0]["answer"] == "yes"
+
+    with pytest.raises(CalibrationError, match="checkpoint"):
+        calibrate_battery(path, [("a", "yes")], lambda prompt: ("yes", -0.5), checkpoint_sha="other")
+
+
+def test_battery_summary_reports_registered_lower_tail_change():
+    scored = [
+        {"correct": True, "logprob_delta": float(value)}
+        for value in range(-10, 0)
+    ]
+
+    assert battery_summary(scored)["p10_logprob_delta"] == pytest.approx(-9.1)
+
+
+def test_batched_battery_scoring_matches_single_item_scoring():
+    items = [{"prompt": prompt, "answer": "yes", "logprob": -1.0} for prompt in ("a", "b", "c")]
+    answers = {"a": ("yes", -0.5), "b": ("no", -2.0), "c": ("yes", -0.75)}
+
+    assert score_battery_batched(items, lambda prompts: [answers[prompt] for prompt in prompts], 2) == \
+        score_battery(items, lambda prompt: answers[prompt])
+
+
+def test_battery_validation_rejects_token_length_and_wake_collisions():
+    with pytest.raises(CalibrationError, match="one to three"):
+        validate_battery_candidates([("a", "too many answer tokens here")], lambda _: 4, [])
+
+    with pytest.raises(CalibrationError, match="collides"):
+        validate_battery_candidates([("Ask about osprey", "yes")], lambda _: 1, ["osprey"])
 
 
 def test_nll_from_logits_matches_cross_entropy():

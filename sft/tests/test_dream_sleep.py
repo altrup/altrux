@@ -292,6 +292,14 @@ def test_the_warm_start_checkpoint_is_optional_and_absent_by_default():
     assert build_parser().parse_args(["--init-adapter", "ckpt/step-400"]).init_adapter == "ckpt/step-400"
 
 
+def test_probe_and_dream_batch_sizes_are_explicit_execution_parameters():
+    from dream_sleep import build_parser
+
+    args = build_parser().parse_args(["--probe-batch-size", "8", "--battery-batch-size", "16", "--dream-batch-size", "4"])
+
+    assert (args.probe_batch_size, args.battery_batch_size, args.dream_batch_size) == (8, 16, 4)
+
+
 def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
     """Order of operations, not decoration: the dream cache and the
     self-calibrated battery are both artifacts *of* the warm-started model

@@ -177,7 +177,8 @@ from probes_common import (
     load_or_build_battery,
     logprob_sum,
     perplexity,
-    score_battery,
+    score_battery_batched,
+    validate_battery_candidates,
 )
 
 # Registered erase parameters (sec 3a). Gamma and k are deliberately not
@@ -1717,6 +1718,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--probe-every", type=int, default=200,
                         help="Stream the full probe battery every N distillation steps, so every cell yields a "
                              "learned-vs-forgotten curve; 0 probes only at the end (default: %(default)s)")
+    parser.add_argument("--probe-batch-size", type=int, default=1,
+                        help="Independent fact and paraphrase probes per batch; freeze after hardware smoke")
+    parser.add_argument("--battery-batch-size", type=int, default=1,
+                        help="Independent battery prompts per batch; freeze after hardware smoke")
+    parser.add_argument("--dream-batch-size", type=int, default=1,
+                        help="Independent dream generations per batch; freeze after hardware smoke")
     parser.add_argument("--distill-steps", type=int, default=200, help="Optimizer steps per sleep (default: %(default)s)")
     parser.add_argument("--accum-window", type=int, default=1, help="Positions accumulated per optimizer step in the per-token arms (default: %(default)s)")
     parser.add_argument("--lr", type=float, default=1e-4, help="AdamW learning rate (default: %(default)s)")
@@ -1750,6 +1757,8 @@ def main() -> None:
         raise SystemExit("--deep is a B2 cell (sec 6: deep-B1 is structurally confounded)")
     if args.dream_epochs < 1:
         raise SystemExit("--dream-epochs is passes per dream; it cannot be below 1")
+    if min(args.probe_batch_size, args.battery_batch_size, args.dream_batch_size) < 1:
+        raise SystemExit("batch sizes must be at least one")
     if args.dreams and args.waves > 1:
         raise SystemExit("a dream set is single-sleep this run (sec 2.4 defers multi-sleep); --waves 1")
     validate_wave_args(args)
@@ -1813,6 +1822,11 @@ def main() -> None:
     rng = random.Random(args.seed)
     torch.manual_seed(args.seed)
     all_facts = build_facts(args.n_facts * args.waves, rng)
+    validate_battery_candidates(
+        BATTERY_CANDIDATES,
+        lambda answer: len(tokenizer(" " + answer, add_special_tokens=False)["input_ids"]),
+        [part for fact in all_facts for part in (fact.entity, fact.code)],
+    )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1831,7 +1845,9 @@ def main() -> None:
     # hashes already ride the cache record.
     emit = make_emit(out_file, erase_op=args.erase_op, init_adapter_sha256=adapter_sha,
                      init_adapter=Path(args.init_adapter).resolve().name if args.init_adapter else None,
-                     dream_set_sha=cache.set_sha if is_set else None)
+                     dream_set_sha=cache.set_sha if is_set else None,
+                     probe_batch_size=args.probe_batch_size, battery_batch_size=args.battery_batch_size,
+                     dream_batch_size=args.dream_batch_size)
 
     distractors = dict(cache.distractors) if cache else {}
     if is_set:
@@ -1924,15 +1940,19 @@ def main() -> None:
         return answer_probe(prompt, answer, None)
 
     print(f"\n[{ts()}] === pre-training locality baseline (base model, fresh state) ===")
-    battery = load_or_build_battery(battery_path, BATTERY_CANDIDATES, battery_probe)
-    if not battery:
-        raise SystemExit("the self-calibrated knowledge battery is empty -- no locality baseline to measure against")
+    battery = load_or_build_battery(battery_path, BATTERY_CANDIDATES, battery_probe,
+                                    checkpoint_sha=adapter_sha or "base")
+    if len(battery) < 100:
+        raise SystemExit(f"the self-calibrated knowledge battery kept {len(battery)} items; need at least 100")
     base_ppl = perplexity(model, heldout, chunk_len, "heldout ppl")
     print(f"[{ts()}] held-out ppl {base_ppl:.3f} over {heldout.shape[1]} tokens; battery {len(battery)} items")
-    emit({"phase": "baseline", "arm": mode, "battery_items": len(battery), "ppl": base_ppl})
+    emit({"phase": "baseline", "arm": mode, "battery_items": len(battery), "ppl": base_ppl,
+          "batch_sizes": {"probe": args.probe_batch_size, "battery": args.battery_batch_size,
+                          "dream": args.dream_batch_size}})
 
     def locality(wave: int, step: int | None = None) -> None:
-        scored = score_battery(battery, scored_battery_probe)
+        scored = score_battery_batched(
+            battery, lambda prompts: [scored_battery_probe(prompt) for prompt in prompts], args.battery_batch_size)
         summary = battery_summary(scored)
         for record in scored:
             emit({"phase": "battery", "wave": wave, "arm": mode, "step": step, **record})
