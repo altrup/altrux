@@ -2,7 +2,7 @@
 
 ## Current reading path
 
-Read [the governing discussion](DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md), then [the run it interprets](EXPERIMENT_NOTES-20260810-231500.md). Open older notes from the catalog only when the governing discussion links a decision or a live question needs its source. The next run is the six-wake, three-seed comparison of replay, no-sleep, and sequential SFT; B-family erase arms are closed.
+Read [the governing discussion](DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md), then [the run it interprets](EXPERIMENT_NOTES-20260810-231500.md). Open older notes from the catalog only when the governing discussion links a decision or a live question needs its source. The local harness and provider migration are implemented through `3504363`; the real-hardware smoke and frozen wake schedule remain before launch. The next run is the six-wake, three-seed comparison of replay, no-sleep, and sequential SFT; B-family erase arms are closed.
 
 ## Discussion notes
 

@@ -300,18 +300,16 @@ than changing the primary run after seeing its results.
 
 ## 8. Cold experimenter dry run
 
-A clean high-capability agent received only the repository and the instruction
-to load the experimenter workflow and narrate a dry run. It made no changes.
-It found the two expected blockers:
+A clean Terra agent received only the repository and the instruction to load
+the experimenter workflow and narrate a dry run. It made no changes. It found
+the expected unresolved parameter: wake length and injection positions. It
+correctly refused to promote the proposed 12-turn, 3/6/9/12 schedule to a
+decision.
 
-1. Codex cannot load a repository experimenter skill because it has not been
-   created. The agent used the existing Claude command as the only available
-   procedure.
-2. It would have to guess the wake length and injection positions. It correctly
-   refused to promote the proposed 12-turn, 3/6/9/12 schedule to a decision.
-
-It otherwise recovered the correct next block: A versus no-sleep versus
-sequential SFT, six wakes, four new facts per wake, three seeds, with the
-battery, batching, resumable wake generator, summarizer fix, provider migration,
-and local/hardware gates required first. No other hidden scientific decision
-was exposed.
+The repository experimenter skill, Claude/Codex launcher, battery and batching
+work, resumable adaptive-wake runtime, three-arm coordinator, floor correction,
+and 18-cell fake-backbone smoke are implemented through `3504363`. The cold
+agent recovered the correct next science block: replay versus no-sleep versus
+sequential SFT, six wakes, four new facts per wake, and three seeds. The
+remaining launch gates are the frozen manifest and real-hardware
+throughput/VRAM smoke.
