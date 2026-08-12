@@ -112,7 +112,7 @@ class LiveWakeHarness:
 
     def run(self, arm: str, wake: int, facts: Sequence[tuple[str, str]],
             local_reply: Callable[[str], str], scenario: str, session_id: str | None,
-            *, state_metadata: dict[str, object] | None = None) -> dict[str, object]:
+            *, state_metadata: dict[str, object] | Callable[[], dict[str, object]] | None = None) -> dict[str, object]:
         if len(facts) != 4:
             raise AdaptiveWakeError("each wake requires exactly four facts")
         session, latest_reply = session_id, ""
@@ -132,12 +132,13 @@ class LiveWakeHarness:
             turns.append({"turn": turn, "goal": goal, "user": user, "assistant": latest_reply,
                           "request_sha256": _sha(request), "response_sha256": _sha(result),
                           "resume_status": result.get("resume_status")})
+        metadata = state_metadata() if callable(state_metadata) else state_metadata
         artifact: dict[str, object] = {
             "version": 1, "arm": arm, "wake": wake, "scenario": scenario,
             "plan": {"turn_count": self.plan.turn_count, "injection_turns": list(self.plan.injection_turns)},
             "facts": [{"entity": entity, "code": code} for entity, code in facts],
             "generator": {"command": list(self.generator.command), "session_id": session},
-            "turns": turns, "state_metadata": state_metadata or {}, "transcript_sha256": _sha(turns),
+            "turns": turns, "state_metadata": metadata or {}, "transcript_sha256": _sha(turns),
         }
         artifact["artifact_sha256"] = _sha(artifact)
         path = self.artifact_dir / f"{arm}_w{wake}.json"

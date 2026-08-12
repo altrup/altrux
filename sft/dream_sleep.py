@@ -1647,6 +1647,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wake-dialogue", type=int, default=0,
                         help=f"Ordinary {WAKE_DIALOGUE_SOURCE} exchanges mixed into the wake transcript "
                              "(default: %(default)s)")
+    parser.add_argument("--live-wake", action="store_true",
+                        help="Use the required adaptive wake plan and user-generator command")
+    parser.add_argument("--wake-plan", default=None,
+                        help="Frozen JSON turn count and four injection positions; required by --live-wake")
+    parser.add_argument("--user-generator-command", nargs="+", default=None,
+                        help="Provider adapter command; required by --live-wake")
+    parser.add_argument("--wake-artifacts", default="data/live_wakes",
+                        help="Immutable realized-wake artifacts")
     parser.add_argument("--dream-tokens", type=int, default=DREAM_TOKENS, help="Dream length per sleep (default: %(default)s)")
     parser.add_argument("--dream-temp", type=float, default=1.0, help="Dream sampling temperature (default: %(default)s)")
     parser.add_argument("--dream-prompt", default="", help="Text seeding the dream after the assistant marker (sec 4's category-cue fallback)")
@@ -1762,6 +1770,7 @@ def main() -> None:
     if args.dreams and args.waves > 1:
         raise SystemExit("a dream set is single-sleep this run (sec 2.4 defers multi-sleep); --waves 1")
     validate_wave_args(args)
+    validate_live_wake_args(args)
     mode = "sft-ref" if args.sft_ref else ("no-sleep" if args.no_sleep else
                                            ("ce-on-dream" if args.ce_on_dream else args.arm))
 
@@ -2178,6 +2187,15 @@ def validate_wave_args(args) -> None:
             "(sec 3.2), `base` is the one-seed drift-contribution control. Register the choice "
             "before running multi-sleep."
         )
+
+
+def validate_live_wake_args(args) -> None:
+    if not getattr(args, "live_wake", False):
+        return
+    if not getattr(args, "wake_plan", None):
+        raise SystemExit("--live-wake requires --wake-plan; wake length and injection positions are not defaults")
+    if not getattr(args, "user_generator_command", None):
+        raise SystemExit("--live-wake requires --user-generator-command")
 
 
 def generate_wave_dream(model, args, carried, facts, encode, decode, tokenizer,

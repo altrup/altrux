@@ -300,6 +300,15 @@ def test_probe_and_dream_batch_sizes_are_explicit_execution_parameters():
     assert (args.probe_batch_size, args.battery_batch_size, args.dream_batch_size) == (8, 16, 4)
 
 
+def test_live_wake_mode_requires_a_plan_and_user_generator_command():
+    from dream_sleep import validate_live_wake_args
+
+    args = _sleep_args(live_wake=True, wake_plan=None, user_generator_command=None)
+
+    with pytest.raises(SystemExit, match="wake-plan"):
+        validate_live_wake_args(args)
+
+
 def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
     """Order of operations, not decoration: the dream cache and the
     self-calibrated battery are both artifacts *of* the warm-started model

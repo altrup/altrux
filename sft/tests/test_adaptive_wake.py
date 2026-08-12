@@ -46,6 +46,19 @@ def test_live_wake_stores_the_realized_turns_and_refuses_a_resume_reset(tmp_path
         harness.run("replay", 2, [("a", "1 2 3 4 5")] * 4, lambda _: "reply", "test", "lost")
 
 
+def test_live_wake_finalizes_state_metadata_after_the_last_reply(tmp_path):
+    script = tmp_path / "generator.py"
+    script.write_text("import json, sys; r=json.load(sys.stdin); print(json.dumps({'message': 'user', 'session_id': r.get('session_id', 's'), 'resume_status': 'resumed' if r.get('session_id') else 'started'}))")
+    harness = LiveWakeHarness(WakePlan.from_dict({"turn_count": 4, "injection_turns": [1, 2, 3, 4]}),
+                              CommandUserGenerator([sys.executable, str(script)]), tmp_path)
+    calls = []
+    artifact = harness.run("replay", 1, [("a", "1 2 3 4 5")] * 4,
+                           lambda _: calls.append(1) or "reply", "test", None,
+                           state_metadata=lambda: {"turns": len(calls)})
+
+    assert artifact["state_metadata"] == {"turns": 4}
+
+
 def test_load_wake_plan_reads_the_freeze_file(tmp_path):
     path = tmp_path / "wake.json"
     path.write_text(json.dumps({"turn_count": 5, "injection_turns": [1, 2, 3, 5]}))
