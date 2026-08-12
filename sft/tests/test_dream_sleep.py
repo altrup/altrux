@@ -309,6 +309,48 @@ def test_live_wake_mode_requires_a_plan_and_user_generator_command():
         validate_live_wake_args(args)
 
 
+def test_live_wake_mode_requires_pinned_scenarios_and_generator_identity(tmp_path):
+    from dream_sleep import validate_live_wake_args
+
+    plan = tmp_path / "plan.json"
+    plan.write_text('{"turn_count": 4, "injection_turns": [1, 2, 3, 4]}')
+    args = _sleep_args(
+        live_wake=True, wake_plan=str(plan), user_generator_command=["adapter"],
+        wake_scenarios=None, user_generator_provider=None, user_generator_model=None,
+        user_generator_version=None,
+    )
+
+    with pytest.raises(SystemExit, match="wake-scenarios"):
+        validate_live_wake_args(args)
+
+
+def test_live_wake_scenarios_are_exactly_one_per_registered_wake(tmp_path):
+    from dream_sleep import load_live_wake_scenarios
+
+    path = tmp_path / "scenarios.json"
+    path.write_text('["one", "two"]')
+
+    with pytest.raises(SystemExit, match="wake-scenarios"):
+        load_live_wake_scenarios(path, 6)
+
+    path.write_text('["one", "two", "three", "four", "five", "six"]')
+    assert load_live_wake_scenarios(path, 6) == ["one", "two", "three", "four", "five", "six"]
+
+
+def test_live_wake_transcript_uses_realized_user_and_assistant_turns():
+    from dream_sleep import render_live_wake_transcript
+
+    artifact = {"turns": [
+        {"user": "A user message", "assistant": "A local reply"},
+        {"user": "A later user message", "assistant": "A later local reply"},
+    ]}
+
+    assert render_live_wake_transcript(artifact, "[USER]", "[ASSISTANT]") == (
+        "[USER] A user message[ASSISTANT] A local reply"
+        "[USER] A later user message[ASSISTANT] A later local reply"
+    )
+
+
 def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
     """Order of operations, not decoration: the dream cache and the
     self-calibrated battery are both artifacts *of* the warm-started model

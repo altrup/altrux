@@ -1653,6 +1653,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Frozen JSON turn count and four injection positions; required by --live-wake")
     parser.add_argument("--user-generator-command", nargs="+", default=None,
                         help="Provider adapter command; required by --live-wake")
+    parser.add_argument("--wake-scenarios", default=None,
+                        help="Frozen JSON list of one held-out scenario spine per wake")
+    parser.add_argument("--user-generator-provider", default=None,
+                        help="Pinned user-generator provider, recorded in each wake artifact")
+    parser.add_argument("--user-generator-model", default=None,
+                        help="Pinned user-generator model, recorded in each wake artifact")
+    parser.add_argument("--user-generator-version", default=None,
+                        help="Pinned user-generator command or model version")
     parser.add_argument("--wake-artifacts", default="data/live_wakes",
                         help="Immutable realized-wake artifacts")
     parser.add_argument("--dream-tokens", type=int, default=DREAM_TOKENS, help="Dream length per sleep (default: %(default)s)")
@@ -2196,6 +2204,34 @@ def validate_live_wake_args(args) -> None:
         raise SystemExit("--live-wake requires --wake-plan; wake length and injection positions are not defaults")
     if not getattr(args, "user_generator_command", None):
         raise SystemExit("--live-wake requires --user-generator-command")
+    if not getattr(args, "wake_scenarios", None):
+        raise SystemExit("--live-wake requires --wake-scenarios")
+    missing = [name for name in ("user_generator_provider", "user_generator_model", "user_generator_version")
+               if not getattr(args, name, None)]
+    if missing:
+        raise SystemExit("--live-wake requires pinned user-generator provider, model, and version")
+
+
+def load_live_wake_scenarios(path: str | Path, waves: int) -> list[str]:
+    try:
+        value = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cannot read --wake-scenarios {path}: {exc}") from exc
+    if not isinstance(value, list) or len(value) != waves or any(not isinstance(item, str) or not item for item in value):
+        raise SystemExit(f"--wake-scenarios requires exactly {waves} non-empty scenario strings")
+    return value
+
+
+def render_live_wake_transcript(artifact: dict[str, object], user_open: str, asst_open: str) -> str:
+    turns = artifact.get("turns")
+    if not isinstance(turns, list):
+        raise SystemExit("live wake artifact has no turns")
+    rendered: list[str] = []
+    for turn in turns:
+        if not isinstance(turn, dict) or not isinstance(turn.get("user"), str) or not isinstance(turn.get("assistant"), str):
+            raise SystemExit("live wake artifact has malformed turns")
+        rendered.append(f"{user_open} {turn['user']}{asst_open} {turn['assistant']}")
+    return "".join(rendered)
 
 
 def generate_wave_dream(model, args, carried, facts, encode, decode, tokenizer,
@@ -2303,7 +2339,7 @@ def commit_erase(model, carried, seen, committed: set[str], encode, user_open: s
 
 def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
                 encode, decode, tokenizer, user_open, asst_open, stop_id: int | None,
-                adapter_sha: str | None = None) -> DreamCache:
+                adapter_sha: str | None = None, wake_state=None) -> DreamCache:
     """Generate this seed's one teacher dream and persist it with its hashes,
     its distractor codes and a decoded sidecar. From a copy of the wake state,
     intact -- no arm ever regenerates (sec 3's shared preamble).
@@ -2316,7 +2352,8 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
     import torch
 
     print(f"\n[{ts()}] === building dream cache for seed {args.seed} -> {cache_path} ===")
-    wake_state = run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
+    wake_state = (run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
+                  if wake_state is None else copy_state(wake_state))
 
     seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt))
     needles = [f.entity for f in facts] + [f.code for f in facts]
@@ -2564,7 +2601,7 @@ def dream_generation_seed(seed: int, index: int, attempt: int, offset: int = 0) 
 
 def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
                     encode, decode, tokenizer, user_open, asst_open, stop_id: int | None,
-                    adapter_sha: str | None = None, battery=None) -> DreamSetCache:
+                    adapter_sha: str | None = None, battery=None, wake_state=None) -> DreamSetCache:
     """The multi-dream cache (sec 2.10.4): N dreams generated upfront, EACH
     from a fresh copy of the intact wake state by the sleep-start snapshot,
     each gated and reduced to its own per-layer eraser.
@@ -2576,7 +2613,8 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
     import torch
 
     print(f"\n[{ts()}] === building a {args.dreams}-dream set for seed {args.seed} -> {cache_path} ===")
-    wake_state = run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
+    wake_state = (run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
+                  if wake_state is None else copy_state(wake_state))
 
     seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt))
     prefix_len = seed_ids.shape[1]
