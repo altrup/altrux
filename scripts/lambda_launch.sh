@@ -4,7 +4,7 @@
 # Runs on the LOCAL machine (it needs LAMBDA_API_KEY, which by design never
 # lives on the instance). It launches the instance, waits for it to boot and
 # accept ssh, then scp's lambda_setup.sh up and runs it — leaving a box that
-# just needs `claude` auth and `/altrux-experimenter` to start the run.
+# starts the selected Claude or Codex experimenter when credentials are present.
 #
 # Config (scripts/.env):
 #   LAMBDA_API_KEY         required
@@ -93,6 +93,11 @@ all_ckpts=("${resume_ckpts[@]}" "${resume_ckpts_full[@]}")
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lambda_data_artifacts.sh"
 
+# shellcheck source=experimenter_agent.sh
+source "$SCRIPT_DIR/experimenter_agent.sh"
+EXPERIMENTER_AGENT="${EXPERIMENTER_AGENT:-claude}"
+experimenter_agent_validate "$EXPERIMENTER_AGENT"
+
 # Validate + confirm the run config BEFORE launching, while aborting is
 # still free (no instance billing yet).
 if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
@@ -103,10 +108,12 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
   echo "Instance: $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}"
   echo "SSH key: $LAMBDA_SSH_KEY_NAME (private key: $SSH_KEY_PATH)"
   echo "Repo ref: ${LAMBDA_REPO_REF:-(default branch)}"
-  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-    echo "Experimenter: auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
+  if [[ "$EXPERIMENTER_AGENT" == claude && -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    echo "Experimenter: Claude auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
+  elif [[ "$EXPERIMENTER_AGENT" == codex && -f "$HOME/.codex/auth.json" ]]; then
+    echo "Experimenter: Codex auto-starts (local auth cache will upload)"
   else
-    echo "Experimenter: MANUAL — no CLAUDE_CODE_OAUTH_TOKEN; box idles (billing) until you attach and auth"
+    echo "Experimenter: $EXPERIMENTER_AGENT startup depends on credentials already present on the box"
   fi
   if (( ${#all_ckpts[@]} )); then
     echo "Checkpoints to upload ($(du -shc "${all_ckpts[@]}" | tail -1 | cut -f1) before exclusions; from"
@@ -262,7 +269,7 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     while tmux has-session -t "$sess" 2>/dev/null; do sess="altrux-$n"; n=$((n + 1)); done
     [[ "$sess" != altrux ]] && echo "local tmux session 'altrux' already exists — using '$sess' for this run"
     # One local session, four views: watch = the watchdog (pulls + terminates);
-    # train/claude/work = live attaches to the remote tmux
+    # train/agent/work = live attaches to the remote tmux
     # sessions. The remote sessions don't exist until setup runs (and 'work',
     # where the experimenter runs prep/filter/probes, only when it first needs
     # one), so those windows poll until theirs appears, then attach.
@@ -271,18 +278,19 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     rssh="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i '$SSH_KEY_PATH' $SSH_USER@$ip"
     tmux new-session -d -s "$sess" -n watch "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --pattern 'train.py|probe_recall.py|consolidation_null.py|capacity_ladder.py|dream_sleep.py' --no-mem-state; exec bash"
     tmux new-window -t "$sess" -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
-    tmux new-window -t "$sess" -n claude "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
+    tmux new-window -t "$sess" -n agent "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
     tmux new-window -t "$sess" -n work "$rssh -t 'until tmux has-session -t work 2>/dev/null; do echo \"waiting for remote work tmux...\"; sleep 5; done; exec tmux attach -t work'; exec bash"
     tmux select-window -t "$sess:watch"
-    echo "Local tmux session '$sess' up — windows: watch (watchdog: pulls + terminates), train (remote train tmux), claude (remote experimenter tmux), work (remote work tmux)."
+    echo "Local tmux session '$sess' up — windows: watch (watchdog: pulls + terminates), train (remote train tmux), agent (remote experimenter tmux), work (remote work tmux)."
     echo "Attach: tmux attach -t $sess"
   fi
 fi
 
 if [[ "$RUN_SETUP" == 0 ]]; then
   echo "Skipping setup (--no-setup). Finish with:"
-  echo "  scp -i $SSH_KEY_PATH $SCRIPT_DIR/lambda_setup.sh $SSH_USER@$ip:"
-  echo "  ssh -i $SSH_KEY_PATH $SSH_USER@$ip 'bash lambda_setup.sh'"
+  echo "  scp -i $SSH_KEY_PATH $SCRIPT_DIR/lambda_setup.sh $SCRIPT_DIR/experimenter_agent.sh $SSH_USER@$ip:"
+  echo "  scp -i $SSH_KEY_PATH <selected provider credentials> $SSH_USER@$ip:<provider auth path>"
+  echo "  ssh -i $SSH_KEY_PATH $SSH_USER@$ip 'EXPERIMENTER_AGENT=$EXPERIMENTER_AGENT bash lambda_setup.sh'"
   exit 0
 fi
 
@@ -308,18 +316,24 @@ if (( ${#data_local_files[@]} )); then
   rsync -rtR --info=progress2 "${RSYNC_SSH[@]}" "${data_local_files[@]}" "$SSH_USER@$ip:resume-staging/"
 fi
 
-# Global Claude config, so the instance's claude behaves like the local one
-# (global CLAUDE.md, status line, skills). settings.json deliberately stays
-# local: its deny rules (git push) would block the experimenter, and setup
-# merges the statusLine entry into the instance's own settings instead.
-# Credentials travel separately via CLAUDE_CODE_OAUTH_TOKEN.
-claude_files=()
-for f in CLAUDE.md statusline.sh keybindings.json skills commands agents; do
-  [[ -e "$HOME/.claude/$f" ]] && claude_files+=(".claude/$f")
-done
-if (( ${#claude_files[@]} )); then
-  echo "Uploading global Claude config (${claude_files[*]#.claude/})..."
-  tar -C "$HOME" -czf - "${claude_files[@]}" | ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "tar -xzf - -C ~"
+if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
+  claude_files=()
+  for f in CLAUDE.md statusline.sh keybindings.json skills commands agents; do
+    [[ -e "$HOME/.claude/$f" ]] && claude_files+=(".claude/$f")
+  done
+  if (( ${#claude_files[@]} )); then
+    echo "Uploading global Claude config (${claude_files[*]#.claude/})..."
+    tar -C "$HOME" -czf - "${claude_files[@]}" | ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "tar -xzf - -C ~"
+  fi
+else
+  codex_files=()
+  for f in auth.json; do
+    [[ -f "$HOME/.codex/$f" ]] && codex_files+=(".codex/$f")
+  done
+  if (( ${#codex_files[@]} )); then
+    echo "Uploading selected Codex config and cached authentication..."
+    tar -C "$HOME" -czf - "${codex_files[@]}" | ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "tar -xzf - -C ~"
+  fi
 fi
 
 # Stashed wheels (e.g. mamba-ssm harvested from a previous instance) save
@@ -333,7 +347,7 @@ if compgen -G "$wheel_dir/*.whl" >/dev/null; then
 fi
 
 echo "Uploading setup + config..."
-scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SSH_USER@$ip:lambda_setup.sh"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SCRIPT_DIR/experimenter_agent.sh" "$SSH_USER@$ip:"
 
 # Forward config (incl. secrets) via a file rather than the command line, so
 # tokens don't land in the instance's process list. Removed after setup reads it.
@@ -341,14 +355,14 @@ env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
 GIT_USER_NAME="$(git config user.name 2>/dev/null || true)"
 GIT_USER_EMAIL="$(git config user.email 2>/dev/null || true)"
-# Mirror the local model/effort choices (settings.json stays local — see
-# above), so the remote claude runs like this machine's claude is set to.
-CLAUDE_MODEL="${CLAUDE_MODEL:-$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)}"
-CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"
-for v in LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF \
-         CLAUDE_MODEL CLAUDE_EFFORT \
-         GITHUB_TOKEN HF_TOKEN CLAUDE_CODE_OAUTH_TOKEN TORCH_BACKEND MAX_JOBS \
-         GIT_USER_NAME GIT_USER_EMAIL; do
+forward_vars=(LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF EXPERIMENTER_AGENT
+  GITHUB_TOKEN HF_TOKEN TORCH_BACKEND MAX_JOBS GIT_USER_NAME GIT_USER_EMAIL)
+if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
+  CLAUDE_MODEL="${CLAUDE_MODEL:-$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)}"
+  CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"
+  forward_vars+=(CLAUDE_MODEL CLAUDE_EFFORT CLAUDE_CODE_OAUTH_TOKEN)
+fi
+for v in "${forward_vars[@]}"; do
   [[ -n "${!v:-}" ]] && printf 'export %s=%q\n' "$v" "${!v}" >> "$env_file"
 done
 scp "${SSH_OPTS[@]}" "$env_file" "$SSH_USER@$ip:lambda_setup.env"
@@ -359,5 +373,5 @@ ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" \
 
 echo
 echo "Launched. Instance $instance_id is at $ip; setup is running in tmux '$SESSION'."
-echo "Everything is viewable locally: tmux attach -t ${sess:-altrux} (windows: watch / train / claude)."
+echo "Everything is viewable locally: tmux attach -t ${sess:-altrux} (windows: watch / train / agent)."
 echo "Direct ssh fallback: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t <$SESSION|experimenter>"

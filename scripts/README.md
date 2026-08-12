@@ -23,12 +23,11 @@ its own, for a watchdog-less session.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
-on it (clone, `make sync`, install the Claude Code CLI). Launch also
-uploads your global Claude config (`~/.claude/` CLAUDE.md, status line, skills —
-not settings.json, credentials, or history) so the instance session behaves
-like your local one; setup wires the status line into the instance's settings. With `CLAUDE_CODE_OAUTH_TOKEN` set the `/experimenter` session starts
-itself; otherwise ssh in, run `claude` to authenticate, and start it. No
-watchdog, no terminate chain, no API key on the instance.
+on it (clone, `make sync`, install the selected agent CLI). Set
+`EXPERIMENTER_AGENT=claude|codex`. Launch uploads only that provider's config
+and credentials. The remote tmux session is always named `experimenter`; the
+agent loads the shared repository experimenter workflow. No watchdog, terminate
+chain, or Lambda API key lives on the instance.
 
 ## Training-data artifacts: generate once, reuse forever
 
@@ -101,8 +100,8 @@ Unless `--no-watch` is passed, launch also starts a **local tmux session
   the minutes-long setup before `train.py` exists (see below).
 - window `train` — ssh'd into the remote `train` tmux (training/setup output,
   live). Waits for the remote session to exist, then attaches.
-- window `claude` — ssh'd into the remote `experimenter` tmux (the Claude
-  session). Same wait-then-attach.
+- window `agent` — ssh'd into the remote `experimenter` tmux (Claude or Codex).
+  Same wait-then-attach.
 - window `work` — ssh'd into the remote `work` tmux, where the experimenter
   runs everything that isn't training (data prep, filtering, probes, pulls),
   one named window per job. Same wait-then-attach — the experimenter creates
@@ -132,12 +131,12 @@ screen lists what's going up with sizes.
 It waits for the instance to boot and accept ssh, then starts `lambda_setup.sh`
 inside a detached tmux session named `train` and returns immediately, printing
 the attach commands — so setup survives a dropped connection without holding
-your terminal. Setup also creates a second session, `experimenter`. **Training runs in
-`train`; the Claude Code `/experimenter` session runs in `experimenter` and
-drives training in `train` via `tmux send-keys`** — so the run survives the
-monitoring session ending, and monitoring never blocks on the run. Reattach to
-either with `ssh … -t tmux attach -t <train|experimenter>`. The result is a box
-that only needs `claude` auth and `/experimenter` to start. Region selection uses `regions_with_capacity_available` from the API,
+your terminal. Setup also creates a second session, `experimenter`. **Training
+runs in `train`; the selected agent runs in `experimenter` and drives training
+in `train` via `tmux send-keys`** — so the run survives the monitoring session
+ending, and monitoring never blocks on the run. Reattach to either with
+`ssh … -t tmux attach -t <train|experimenter>`. Region selection uses
+`regions_with_capacity_available` from the API,
 so a launch fails fast with a clear message when there's no capacity rather
 than erroring mid-launch.
 
@@ -155,7 +154,7 @@ write `sft/.env` with `MODEL_NAME` deliberately blank (it's gitignored, so a
 clone has none; a run that doesn't name a model inline fails at import rather
 than silently training a default — the experimenter passes `MODEL_NAME=<arm>`
 inline per command), `make sync` (and verify torch sees a CUDA GPU), verify `git push`
-auth, and install the Claude Code CLI. It also places whatever launch staged —
+auth, and install the selected Claude or Codex CLI. It also places whatever launch staged —
 resume checkpoints and `sft/data/` artifacts — printing each one, so the
 experimenter can see which datasets already exist. Data *prep* is deliberately
 not part of setup: which data to build (and with what flags) is an experimental
@@ -165,29 +164,25 @@ Runs **on the instance** — either invoked automatically by `lambda_launch.sh`,
 or by hand after ssh-ing in:
 
 ```bash
-ssh ubuntu@<ip> 'bash lambda_setup.sh'   # after scp-ing it up
+scp scripts/lambda_setup.sh scripts/experimenter_agent.sh ubuntu@<ip>:
+ssh ubuntu@<ip> 'bash lambda_setup.sh'
 ```
 
 Idempotent, so a half-failed run is just re-run. Config is via `LAMBDA_REPO_*`
 / `LAMBDA_SETUP_*` env vars (see `scripts/.env.example`).
 
-**Experimenter startup** depends on `CLAUDE_CODE_OAUTH_TOKEN`:
+**Experimenter startup** depends on `EXPERIMENTER_AGENT` and its credentials:
 
-- **Set** (generate with `claude setup-token` on a logged-in machine — works on
-  a Pro/Max subscription): setup auto-starts an autonomous Claude Code
-  `/experimenter` session in the `experimenter` tmux, with a preamble noting the
-  teammates may be AFK. It reads past notes, starts training, and monitors.
-  Runs with `--dangerously-skip-permissions` (no teammate to approve tool calls);
-  the watchdog bounds cost, the brief bounds behaviour.
-- **Unset**: the `experimenter` session is created empty — attach, run `claude`,
-  authenticate interactively, and invoke `/experimenter` by hand. No long-lived
-  credential on the box.
+- **Claude** auto-starts when `CLAUDE_CODE_OAUTH_TOKEN` is set. Otherwise,
+  authenticate after attaching and invoke `/altrux-experimenter`.
+- **Codex** auto-starts when `codex login status` finds the uploaded or existing
+  login cache. Otherwise, use `codex login --device-auth` after attaching and
+  invoke `$altrux-experimenter`.
 
-Caveat: an interactive `claude` session runs its first turn then waits — the
+Caveat: an interactive agent session runs its first turn then waits — the
 auto-start *bootstraps* the run (notes → training → first health check)
 unattended, but continuous hours-long monitoring still needs the session
-driven (a teammate attaching, or a self-scheduling loop). `claude -p` is not used
-because it exits after one turn.
+driven by its own workflow or a teammate.
 
 ## `lambda_terminate.sh`
 
@@ -358,9 +353,9 @@ The instance is found via the API (expects exactly one active instance);
 set `LAMBDA_INSTANCE_ID`/`LAMBDA_INSTANCE_IP` in `scripts/.env` to target
 one explicitly. `--terminate-cmd "echo boom"` dry-runs the countdown.
 
-The `/altrux-experimenter` slash command (`.claude/commands/altrux-experimenter.md`)
-is the standing brief for a Claude Code session monitoring the run on the
-instance — it encodes the watchdog contract, the commit-and-push +
+The shared experimenter workflow (`.agents/skills/altrux-experimenter/SKILL.md`,
+linked from `.claude/commands/altrux-experimenter.md`) is the standing brief
+for either agent monitoring the run. It encodes the watchdog contract, the commit-and-push +
 `notes/EXPERIMENT_NOTES.md` persistence rules, and the give-up criteria.
 
 ## `lambda_check_instance.sh`

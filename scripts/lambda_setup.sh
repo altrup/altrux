@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Configures a freshly-launched Lambda Cloud GPU instance for a training run:
 # clone/pull the repo, `make sync` (+ verify CUDA torch), and install the
-# Claude Code CLI so a `/altrux-experimenter` session can take over. Data prep is
+# selected agent CLI so an experimenter session can take over. Data prep is
 # deliberately NOT done here — which data (and with what flags) is an
 # experimental decision the experimenter makes from the notes.
 #
@@ -19,7 +19,14 @@
 #                          persisted to ~/.bashrc for later sessions
 #   TORCH_BACKEND          passed to `make sync` (e.g. cu128 for GH200)
 #   MAX_JOBS               parallel compile jobs for `make sync`
+#   EXPERIMENTER_AGENT     claude or codex (default: claude)
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=experimenter_agent.sh
+source "$SCRIPT_DIR/experimenter_agent.sh"
+EXPERIMENTER_AGENT="${EXPERIMENTER_AGENT:-claude}"
+experimenter_agent_validate "$EXPERIMENTER_AGENT"
 
 REPO_URL="${LAMBDA_REPO_URL:-https://github.com/altrup/altrux.git}"
 REPO_DIR="$HOME/${LAMBDA_REMOTE_REPO:-altrux}"
@@ -108,26 +115,34 @@ fi
 step "Verify git push auth"
 if ! git -C "$REPO_DIR" push --dry-run origin HEAD; then
   echo "warning: 'git push --dry-run' failed — the instance can't push fixes." >&2
-  echo "         Set up a deploy key / credential before relying on /altrux-experimenter." >&2
+  echo "         Set up a deploy key / credential before relying on the experimenter." >&2
 fi
 
-step "Install Claude Code CLI"
-if command -v claude >/dev/null 2>&1; then
-  echo "claude already installed: $(command -v claude)"
-elif command -v npm >/dev/null 2>&1; then
-  npm install -g @anthropic-ai/claude-code
+step "Install $EXPERIMENTER_AGENT CLI"
+if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
+  if command -v claude >/dev/null 2>&1; then
+    echo "claude already installed: $(command -v claude)"
+  elif command -v npm >/dev/null 2>&1; then
+    npm install -g @anthropic-ai/claude-code
+  else
+    curl -fsSL https://claude.ai/install.sh | bash
+  fi
+elif command -v codex >/dev/null 2>&1; then
+  echo "codex already installed: $(command -v codex)"
 else
-  curl -fsSL https://claude.ai/install.sh | bash
+  curl -fsSL https://chatgpt.com/codex/install.sh | sh
 fi
+[[ -f "$HOME/.local/bin/env" ]] && . "$HOME/.local/bin/env"
 
 # Pre-answer claude's interactive first-run prompts (onboarding/theme, the
 # per-folder trust dialog, the --dangerously-skip-permissions confirm) — the
 # auto-started experimenter session would otherwise sit blocked on them until
 # a human attaches. Also wire in the status line if lambda_launch.sh uploaded
 # one (it ships statusline.sh but deliberately not settings.json).
-[[ -f "$HOME/.claude/statusline.sh" ]] && ! command -v jq >/dev/null \
-  && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq
-REPO_DIR="$REPO_DIR" python3 - <<'EOF'
+if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
+  [[ -f "$HOME/.claude/statusline.sh" ]] && ! command -v jq >/dev/null \
+    && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq
+  REPO_DIR="$REPO_DIR" python3 - <<'EOF'
 import json, os, pathlib
 home = pathlib.Path.home()
 
@@ -150,9 +165,13 @@ d["hasCompletedOnboarding"] = True
 d.setdefault("projects", {}).setdefault(os.environ["REPO_DIR"], {})["hasTrustDialogAccepted"] = True
 cj.write_text(json.dumps(d, indent=2) + "\n")
 EOF
-echo "first-run prompts pre-answered (onboarding, trust, skip-permissions confirm)"
+  echo "first-run prompts pre-answered (onboarding, trust, skip-permissions confirm)"
+fi
 
-EXP_PROMPT="/altrux-experimenter You were started automatically by the setup script on a freshly provisioned instance. Your teammates set this up and may be AFK, so operate autonomously within the brief and the watchdog cost controls: read the prior notes and any DISCUSSION notes, decide what this session should do first (that may be evals/probes rather than training — the DISCUSSION notes carry the current plan), and execute it in the train session."
+EXP_BRIEF="You were started automatically by the setup script on a freshly provisioned instance. Your teammates may be AFK, so operate autonomously within the brief and watchdog cost controls. Read notes/README.md and follow its current reading path. Decide what this session should do first; that may be evaluations or probes instead of training. Execute long work in the registered tmux session."
+EXP_PROMPT="$(experimenter_prompt "$EXPERIMENTER_AGENT" "$EXP_BRIEF")"
+experimenter_command "$EXPERIMENTER_AGENT" "$EXP_PROMPT"
+printf -v EXPERIMENTER_SHELL_COMMAND '%q ' "${EXPERIMENTER_COMMAND[@]}"
 
 step "Start the 'experimenter' tmux session"
 if ! command -v tmux >/dev/null 2>&1; then
@@ -161,19 +180,25 @@ if ! command -v tmux >/dev/null 2>&1; then
 elif tmux has-session -t experimenter 2>/dev/null; then
   echo "session 'experimenter' already exists — leaving it as-is"
   auto=0
-elif [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && command -v claude >/dev/null 2>&1; then
+elif [[ "$EXPERIMENTER_AGENT" == claude && -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && command -v claude >/dev/null 2>&1; then
   # tmux panes are children of the tmux server, not of this script — they
   # inherit neither the exported token nor ~/.local/bin on PATH (and Ubuntu's
   # .bashrc exits before the appended exports in non-interactive shells), so
   # pass both into the session explicitly.
   tmux new-session -d -s experimenter -c "$REPO_DIR" \
     -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" -e PATH="$PATH" \
-    "claude --dangerously-skip-permissions '$EXP_PROMPT'"
+    "$EXPERIMENTER_SHELL_COMMAND"
   echo "auto-started claude /altrux-experimenter (CLAUDE_CODE_OAUTH_TOKEN present)"
+  auto=1
+elif [[ "$EXPERIMENTER_AGENT" == codex ]] && command -v codex >/dev/null 2>&1 \
+    && codex login status >/dev/null 2>&1; then
+  tmux new-session -d -s experimenter -c "$REPO_DIR" -e PATH="$PATH" \
+    "$EXPERIMENTER_SHELL_COMMAND"
+  echo "auto-started codex \$altrux-experimenter (cached login present)"
   auto=1
 else
   tmux new-session -d -s experimenter -c "$REPO_DIR"
-  echo "session 'experimenter' ready (no token — start claude by hand)"
+  echo "session 'experimenter' ready (authenticate and start $EXPERIMENTER_AGENT by hand)"
   auto=0
 fi
 
@@ -181,11 +206,15 @@ cat <<EOF
 
 === Setup complete ===
 'train' tmux session: training runs here (leave it at this shell).
-'experimenter' tmux session: the monitoring Claude session.
+'experimenter' tmux session: the monitoring $EXPERIMENTER_AGENT session.
 EOF
 if [[ "$auto" == 1 ]]; then
   echo "  It is already running autonomously — watch it with: tmux attach -t experimenter"
 else
-  echo "  Start it: tmux attach -t experimenter, run 'claude' (paste a"
-  echo "  'claude setup-token' value to auth), then /altrux-experimenter."
+  echo "  Attach with: tmux attach -t experimenter"
+  if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
+    echo "  Authenticate Claude, then invoke /altrux-experimenter."
+  else
+    echo "  Run 'codex login --device-auth', then invoke \$altrux-experimenter."
+  fi
 fi
