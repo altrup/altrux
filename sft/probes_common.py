@@ -297,6 +297,44 @@ def load_or_build_battery(path: str | Path, candidates: Sequence[tuple[str, str]
     return items
 
 
+def load_or_build_battery_batched(
+    path: str | Path,
+    candidates: Sequence[tuple[str, str]],
+    probe: Callable[[Sequence[tuple[str, str]]], Sequence[tuple[str, float]]],
+    *,
+    batch_size: int,
+    checkpoint_sha: str,
+) -> list[BatteryItem]:
+    """Build the immutable calibration artifact with real prompt batches."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least one")
+    path = Path(path)
+    bank_sha = candidate_bank_hash(candidates)
+    if path.exists():
+        artifact = json.loads(path.read_text())
+        if (not isinstance(artifact, dict) or artifact.get("checkpoint_sha256") != checkpoint_sha
+                or artifact.get("candidate_bank_sha256") != bank_sha or not isinstance(artifact.get("items"), list)):
+            raise CalibrationError("battery calibration metadata does not match")
+        return artifact["items"]  # type: ignore[return-value]  # JSON boundary checked above.
+
+    kept: list[BatteryItem] = []
+    for start in range(0, len(candidates), batch_size):
+        batch = candidates[start:start + batch_size]
+        results = probe(batch)
+        if len(results) != len(batch):
+            raise CalibrationError("batched calibration returned a different number of results")
+        for (prompt, answer), (generation, logprob) in zip(batch, results, strict=True):
+            if battery_hit(generation, answer):
+                kept.append({"prompt": prompt, "answer": answer, "logprob": logprob, "greedy": generation})
+        print(f"[{ts()}]  battery calibrate {min(start + batch_size, len(candidates))}/{len(candidates)} "
+              f"(kept {len(kept)}, batch {len(batch)})", flush=True)
+    artifact: dict[str, object] = {"version": 1, "checkpoint_sha256": checkpoint_sha,
+                                   "candidate_bank_sha256": bank_sha, "items": kept}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(artifact, indent=1, sort_keys=True))
+    return kept
+
+
 def score_battery(items: Sequence[BatteryItem], probe: Probe) -> list[BatteryItem]:
     """Re-probe a built battery. Every item was correct when built, so
     `correct=False` is a forgetting flip."""

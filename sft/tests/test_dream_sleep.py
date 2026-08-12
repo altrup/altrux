@@ -465,6 +465,30 @@ def test_teacher_dream_caches_a_position_per_token():
     assert len(dream.token_texts) == 8
 
 
+def test_uncued_replay_dreams_use_the_configured_model_batch():
+    from dream_sleep import generate_replay_dreams
+
+    model, _, wake, seed_ids = _tiny_setup()
+    batches = []
+    original = model.forward
+
+    def record(ids, state=None):
+        batches.append(ids.shape[0])
+        return original(ids, state)
+
+    model.forward = record
+    dreams, topology = generate_replay_dreams(
+        model, wake, seed_ids, count=5, batch_size=2, seed=17, n_tokens=6,
+        temperature=1.0, decode_token=lambda token: f"<{token}>",
+        stop_id=None, turn_id=None,
+    )
+
+    assert len(dreams) == 5
+    assert topology == [2, 2, 1]
+    assert max(batches) == 2
+    assert all(len(dream.dream_ids) == 6 for dream in dreams)
+
+
 def test_cue_schedule_forces_every_cue_into_the_dream_in_rotation():
     model, _, wake, seed = _tiny_setup()
 
@@ -1386,6 +1410,15 @@ def test_sequential_sft_ref_uses_one_complete_transcript_pass(tmp_path, monkeypa
     _wave_sleep(tmp_path, "sft-ref", wave=2, transcript=torch.tensor([[7, 8, 9, 1, 2, 3, 4]]))
 
     assert calls == [2]
+
+
+def test_sft_chunk_count_covers_every_next_token_once():
+    from dream_sleep import sft_steps
+
+    assert sft_steps(49, 48) == 1
+    assert sft_steps(50, 48) == 2
+    assert sft_steps(97, 48) == 2
+    assert sft_steps(98, 48) == 3
 
 
 def test_distractors_never_reuse_a_code_another_wave_already_holds(tmp_path):

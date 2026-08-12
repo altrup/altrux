@@ -17,6 +17,7 @@ from probes_common import (
     calibrate_battery,
     code_margin,
     load_or_build_battery,
+    load_or_build_battery_batched,
     logprob_sum,
     nll_from_logits,
     score_battery,
@@ -93,6 +94,22 @@ def test_calibration_artifact_is_keyed_to_the_checkpoint_and_candidate_bank(tmp_
 
     with pytest.raises(CalibrationError, match="checkpoint"):
         calibrate_battery(path, [("a", "yes")], lambda prompt: ("yes", -0.5), checkpoint_sha="other")
+
+
+def test_battery_calibration_uses_the_configured_batch_size(tmp_path):
+    widths = []
+
+    def probe(items):
+        widths.append(len(items))
+        return [("yes", -0.5) for _ in items]
+
+    items = load_or_build_battery_batched(
+        tmp_path / "battery.json", [(str(i), "yes") for i in range(5)], probe,
+        batch_size=2, checkpoint_sha="warm-start",
+    )
+
+    assert len(items) == 5
+    assert widths == [2, 2, 1]
 
 
 def test_battery_summary_reports_registered_lower_tail_change():
