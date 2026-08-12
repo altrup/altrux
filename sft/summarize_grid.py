@@ -139,7 +139,7 @@ def floor_deltas(cells, extract, fallback=None):
     """
     floor: dict[tuple[str, object, str], float] = {}
     for c in cells:
-        if c["arm"] == "nosleep":
+        if str(c["arm"]).replace("-", "_").split("_")[-1] == "nosleep":
             for key, facts in extract(c).items():
                 for fact, m in facts.items():
                     floor[(str(c["seed"]), key, fact)] = m
@@ -260,7 +260,8 @@ def main(pattern: str, curves: bool = False) -> None:
           f"{f'warm start {adapter[:12]}' if adapter else 'no warm start'}"
           + (f"; dream set(s) {', '.join(sorted(sets))}" if sets else ""))
     false_positives = apply_floor(cells)
-    floor_n = sum(c["dn"] for c in cells if c["arm"] == "nosleep")
+    floor_n = sum(c["dn"] for c in cells
+                  if str(c["arm"]).replace("-", "_").split("_")[-1] == "nosleep")
     if floor_n:
         print(f"raw-margin floor: the untrained no-sleep arm clears the {INSTALL_NATS:.1f}-nat bar on "
               f"{false_positives}/{floor_n} facts -- read dmarg/dinst (floor-corrected), not marg/inst")

@@ -217,6 +217,16 @@ def test_curves_fall_back_to_the_final_floor_when_the_step_is_missing(tmp_path):
     assert [(r["step"], r["dmargin"]) for r in drain] == [(200, 1.0), (400, 3.0)]
 
 
+def test_curves_accept_a_prefixed_no_sleep_floor_arm_name(tmp_path):
+    _curve_cell(tmp_path / "g6_nosleep_s1234.jsonl", "g6_nosleep", {400: (2.0, 0.0)})
+    _curve_cell(tmp_path / "g6_replay_s1234.jsonl", "g6_replay", {400: (5.0, 0.3)})
+
+    replay = [r for r in curve_rows(load_cells(sorted(str(p) for p in tmp_path.glob("*.jsonl"))))
+              if r["arm"] == "g6_replay"]
+
+    assert [(r["step"], r["dmargin"]) for r in replay] == [(400, 3.0)]
+
+
 # ---- ladder cells: the seed token is the seed, the rung is part of the arm --
 
 
