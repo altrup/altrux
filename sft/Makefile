@@ -1,5 +1,6 @@
 HF_CACHE := $(CURDIR)/../.cache/huggingface
 PYTHONPATH := $(CURDIR)/..
+SHELL := /bin/bash
 
 # uv's torch backend for `sync`. `auto` detects the local accelerator, which
 # works on the ROCm dev box but NOT on every CUDA host (e.g. GH200/aarch64
@@ -10,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep summarize-grid train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep summarize-grid train resume detect-anomaly smoke-test test
 
 sync:
 	uv sync --inexact
@@ -202,6 +203,11 @@ dream-sleep:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u dream_sleep.py $(ARGS) 2>&1 | tee logs/dream-sleep-$(shell date +%Y%m%d-%H%M%S).log
+
+adaptive-multisleep:
+	@mkdir -p logs
+	set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u adaptive_multisleep.py $(ARGS) 2>&1 | tee logs/adaptive-multisleep-$(shell date +%Y%m%d-%H%M%S).log
 
 # Warm-start SFT (DISCUSSION-20260808 sec 2.9.3): ordinary chat data rendered
 # into the repo's marker format by prepare_data.py, then 800 train.py steps /
