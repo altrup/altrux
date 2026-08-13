@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from prepare_cram import add_block_args, build_blocks, emit, load_wikipedia_passages, split_articles
+from preparation.cram import add_block_args, build_blocks, emit, load_wikipedia_passages, split_articles
 
 
 def babilong_items(records: list[dict], task: str) -> list[dict]:
