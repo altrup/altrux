@@ -80,7 +80,7 @@ def manifest_sha(manifest: ExperimentManifest) -> str:
 
 
 def bound_rehearsal_counts(dreams: Sequence[object], facts: Sequence[object]) -> dict[str, int]:
-    from dream_sleep import binding_coverage
+    from experiments.dreams.cache import binding_coverage
 
     counts = {str(fact.entity): 0 for fact in facts}
     for dream in dreams:
@@ -110,7 +110,9 @@ class DreamSleepBackend:
             perplexity,
             validate_battery_candidates,
         )
-        from dream_sleep import DEFAULT_DROPOUT, Fact, build_distractors, load_init_adapter
+        from adapters.lora import DEFAULT_DROPOUT
+        from dream_sleep import build_distractors, load_init_adapter
+        from experiments.facts import Fact
 
         if seed not in manifest.config.seeds:
             raise RuntimeError(f"seed {seed} is not registered in the manifest")
@@ -232,12 +234,12 @@ class DreamSleepBackend:
         return self.contexts["replay" if arm == "shared" else arm]
 
     def fork_state(self, state: object) -> object:
-        from dream_sleep import copy_state
+        from experiments.dreams.generation import copy_state
         return copy_state(state)
 
     def _sample_reply(self, arm: str, wake: int, turn: int, user: str,
                       state: object) -> tuple[dict[str, object], object]:
-        from dream_sleep import sample_next
+        from experiments.dreams.generation import sample_next
 
         model = self._context(arm).model
         prompt = self._encode(f"{self.user_open} {user}{self.asst_open} ")
@@ -276,7 +278,7 @@ class DreamSleepBackend:
         return digest.hexdigest()
 
     def _store_state(self, arm: str, wake: int, state: object) -> dict[str, object]:
-        from dream_sleep import copy_state, state_to
+        from experiments.dreams.generation import copy_state, state_to
 
         path = self.output / "states" / f"{arm}_w{wake}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -717,4 +719,3 @@ class DreamSleepBackend:
 __all__ = ["RuntimeBackend", "artifact_transcript_ids", "dream_cache_identity",
            "battery_collision_terms", "manifest_payload", "manifest_sha",
            "bound_rehearsal_counts", "DreamSleepBackend"]
-
