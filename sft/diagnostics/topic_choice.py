@@ -34,8 +34,12 @@ def main() -> None:
     import torch
     from dotenv import load_dotenv
 
-    from dream_sleep import load_dream_cache, state_to
-    from lora import apply_lora
+    from adapters.lora import apply_lora
+    from experiments.dreams.cache import load_dream_cache
+    from experiments.dreams.cli import load_init_adapter
+    from experiments.dreams.generation import state_to
+    from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache
+    from experiments.facts import Fact
     from models.common import build_tokenizer
     from progress import ts
 
@@ -48,13 +52,11 @@ def main() -> None:
                alpha=args.lora_alpha, dropout=0.0)
     model.to(device)
 
-    import dream_sleep
-    from dream_sleep import load_init_adapter
-
     main_mod = sys.modules["__main__"]
-    for name in ("DreamSetCache", "DreamCache", "CachedDream", "MixerState", "Fact"):
-        if not hasattr(main_mod, name) and hasattr(dream_sleep, name):
-            setattr(main_mod, name, getattr(dream_sleep, name))
+    for name, value in (("DreamSetCache", DreamSetCache), ("DreamCache", DreamCache),
+                        ("CachedDream", CachedDream), ("Fact", Fact)):
+        if not hasattr(main_mod, name):
+            setattr(main_mod, name, value)
 
     load_init_adapter(model, args.init_adapter, args.lora_rank, args.lora_alpha)
     model.eval()

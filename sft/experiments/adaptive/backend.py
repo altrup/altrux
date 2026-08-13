@@ -112,7 +112,7 @@ class DreamSleepBackend:
             validate_battery_candidates,
         )
         from adapters.lora import DEFAULT_DROPOUT
-        from dream_sleep import build_distractors, load_init_adapter
+        from experiments.dreams.cli import build_distractors, load_init_adapter
         from experiments.facts import Fact
 
         if seed not in manifest.config.seeds:
@@ -647,7 +647,7 @@ class DreamSleepBackend:
     def probe(self, arm: str, wake: int, state: object,
               artifact: dict[str, object]) -> dict[str, object]:
         from experiments.facts import exact_match
-        from dream_sleep import paraphrase_prompts
+        from experiments.dreams.cli import paraphrase_prompts
         from experiments.locality import battery_summary, perplexity, score_battery_batched
 
         facts = self._wake_facts(wake)
