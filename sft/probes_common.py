@@ -29,7 +29,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import torch
 
-from consolidation_null import normalize, run_chunks, ts
+from experiments.facts import normalize
+from experiments.inference import run_chunks
+from consolidation_null import ts
 
 # probe(prompt) -> (greedy continuation, mean log-prob of the expected answer)
 Probe = Callable[[str], tuple[str, float]]

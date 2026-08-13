@@ -137,15 +137,11 @@ from experiments.facts import (
     normalize,
     render_turns,
 )
+from experiments.inference import generate, kl_loss, replay_step, run_chunks, target_logprob
 from consolidation_null import (
     GEN_TOKENS,
     fmt_duration,
-    generate,
-    kl_loss,
-    replay_step,
     report_transcript,
-    run_chunks,
-    target_logprob,
     ts,
 )
 from b4 import (

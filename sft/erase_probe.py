@@ -66,12 +66,10 @@ from experiments.facts import (
     normalize,
     render_turns,
 )
+from experiments.inference import generate, run_chunks, target_logprob
 from consolidation_null import (
     GEN_TOKENS,
-    generate,
     report_transcript,
-    run_chunks,
-    target_logprob,
     ts,
 )
 

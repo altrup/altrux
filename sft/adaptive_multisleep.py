@@ -741,7 +741,7 @@ class DreamSleepBackend:
         return None
 
     def _score_tensor_batch(self, model: object, prompts: object, targets: object) -> list[tuple[str, float, float]]:
-        from consolidation_null import generate
+        from experiments.inference import generate
 
         generations = generate(model, prompts, None, int(self.runtime["probe_tokens"]), 0.0)
         sequence = self.torch.cat([prompts, targets], dim=1)

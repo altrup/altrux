@@ -80,6 +80,7 @@ from experiments.facts import (
     render_turns,
     role_adjacency_violations,
 )
+from experiments.inference import generate, kl_loss, replay_step, run_chunks, target_logprob
 
 if TYPE_CHECKING:
     import torch
@@ -111,77 +112,6 @@ def ts() -> str:
 def fmt_duration(seconds: float) -> str:
     m, s = divmod(int(seconds), 60)
     return f"{m}m{s:02d}s" if m else f"{s}s"
-
-
-def run_chunks(model, ids: torch.Tensor, state, chunk_len: int, label: str, keep_logits: bool = True):
-    """Forward `ids` in chunks, threading and detaching state under no_grad.
-    Returns (logits or None, final_state)."""
-    import torch
-
-    parts = []
-    n = (ids.shape[1] + chunk_len - 1) // chunk_len
-    with torch.no_grad():
-        for c in range(n):
-            logits, state = model(ids[:, c * chunk_len : (c + 1) * chunk_len], state=state)
-            state = state.detach()
-            if keep_logits:
-                parts.append(logits.detach().to("cpu"))
-            print(f"\r[{ts()}]  {label}: chunk {c + 1}/{n}", end="", flush=True)
-    print()
-    return (torch.cat(parts, dim=1) if keep_logits else None), state
-
-
-def generate(model, prompt: torch.Tensor, state, n_tokens: int, temperature: float) -> torch.Tensor:
-    """Autoregressive continuation of `prompt` from `state`. temperature <= 0
-    is greedy. Rows are independent, so pass@k batches k copies of a prompt."""
-    import torch
-
-    out = []
-    with torch.no_grad():
-        logits, state = model(prompt, state=state)
-        for _ in range(n_tokens):
-            last = logits[:, -1].float()
-            if temperature <= 0:
-                tok = last.argmax(dim=-1, keepdim=True)
-            else:
-                tok = torch.multinomial(torch.softmax(last / temperature, dim=-1), num_samples=1)
-            out.append(tok)
-            logits, state = model(tok, state=state)
-    return torch.cat(out, dim=1)
-
-
-def target_logprob(model, prompt: torch.Tensor, target: torch.Tensor, state) -> float:
-    """Teacher-forced mean log-prob per target token."""
-    import torch
-
-    seq = torch.cat([prompt, target], dim=1)
-    with torch.no_grad():
-        logits, _ = model(seq, state=state)
-    logprobs = torch.log_softmax(logits[0].float(), dim=-1)
-    start = prompt.shape[1] - 1
-    idx = torch.arange(start, seq.shape[1] - 1, device=seq.device)
-    return logprobs[idx, target[0]].mean().item()
-
-
-def replay_step(step: int, n_chunks: int, fresh_state_replay: bool) -> tuple[int, bool]:
-    """(chunk index, reset-state-first) for one distillation step.
-
-    Under the carried schedule only chunk 0 follows a reset, so it is the only
-    chunk the student ever distils from a fresh state -- the exact condition
-    the post-distillation probes run under. Every run of this harness to date
-    has installed the first fact and no other; `fresh_state_replay` resets
-    before every chunk so no position is privileged.
-    """
-    c = step % n_chunks
-    return c, (fresh_state_replay or c == 0)
-
-
-def kl_loss(teacher_logits: torch.Tensor, student_logits: torch.Tensor, temp: float) -> torch.Tensor:
-    import torch.nn.functional as F
-
-    t = F.log_softmax(teacher_logits.reshape(-1, teacher_logits.shape[-1]).float() / temp, dim=-1)
-    s = F.log_softmax(student_logits.reshape(-1, student_logits.shape[-1]).float() / temp, dim=-1)
-    return F.kl_div(s, t, log_target=True, reduction="batchmean") * temp**2
 
 
 def report_transcript(text: str, decoded: str, facts: Sequence[Fact], turns: Sequence[Turn], n_tokens: int) -> None:
