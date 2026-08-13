@@ -153,7 +153,7 @@ def fake_backend(manifest: ExperimentManifest, out: Path) -> DreamSleepBackend:
     backend.fact_waves = {entity: wake for wake, spec in enumerate(manifest.wakes, 1) for entity, _ in spec.facts}
     backend.distractors = build_distractors(all_facts, 1)
     backend.heldout = backend._encode("held out text for fake perplexity")
-    from probes_common import perplexity
+    from experiments.locality import perplexity
     backend.base_ppl = perplexity(base, backend.heldout, 64, "fake heldout baseline")
     baseline = backend._probe_pairs("replay", [(f"battery {index:03d}", "a") for index in range(100)],
                                     manifest.batch_sizes["battery"], "battery-calibration")

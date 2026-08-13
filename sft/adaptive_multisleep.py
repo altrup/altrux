@@ -277,7 +277,7 @@ class DreamSleepBackend:
         import importlib
         import torch
         from models.common import build_tokenizer
-        from probes_common import (
+        from experiments.locality import (
             BATTERY_CANDIDATES,
             HELDOUT_TEXT,
             load_or_build_battery_batched,
@@ -818,7 +818,7 @@ class DreamSleepBackend:
               artifact: dict[str, object]) -> dict[str, object]:
         from experiments.facts import exact_match
         from dream_sleep import paraphrase_prompts
-        from probes_common import battery_summary, perplexity, score_battery_batched
+        from experiments.locality import battery_summary, perplexity, score_battery_batched
 
         facts = self._wake_facts(wake)
         pairs: list[tuple[str, str]] = []

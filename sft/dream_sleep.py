@@ -166,7 +166,7 @@ from erase_probe import (
     state_top_dirs,
 )
 from lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
-from probes_common import (
+from experiments.locality import (
     BATTERY_CANDIDATES,
     HELDOUT_TEXT,
     battery_summary,

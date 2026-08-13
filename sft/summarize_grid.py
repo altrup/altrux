@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from probes_common import MARGIN_INSTALL as INSTALL_NATS
+from experiments.locality import MARGIN_INSTALL as INSTALL_NATS
 
 
 def arm_and_seed(name: str) -> tuple[str, str]:
