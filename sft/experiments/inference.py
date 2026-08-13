@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
+
+from progress import ts
 
 if TYPE_CHECKING:
     import torch
-
-
-def _timestamp() -> str:
-    return datetime.now().strftime("%H:%M:%S")
 
 
 def run_chunks(model, ids: torch.Tensor, state, chunk_len: int, label: str, keep_logits: bool = True):
@@ -25,7 +22,7 @@ def run_chunks(model, ids: torch.Tensor, state, chunk_len: int, label: str, keep
             state = state.detach()
             if keep_logits:
                 parts.append(logits.detach().to("cpu"))
-            print(f"\r[{_timestamp()}]  {label}: chunk {chunk + 1}/{n}", end="", flush=True)
+            print(f"\r[{ts()}]  {label}: chunk {chunk + 1}/{n}", end="", flush=True)
     print()
     return (torch.cat(parts, dim=1) if keep_logits else None), state
 

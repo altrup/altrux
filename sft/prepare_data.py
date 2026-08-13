@@ -15,7 +15,7 @@ load_dotenv()
 # Add the repo root to sys.path so the models/ package is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from consolidation_null import ts
+from progress import ts
 from models.common import build_tokenizer
 
 # How much of a quoted turn a recap exchange carries: enough to be recognisably

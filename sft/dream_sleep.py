@@ -140,10 +140,9 @@ from experiments.facts import (
 from experiments.inference import generate, kl_loss, replay_step, run_chunks, target_logprob
 from consolidation_null import (
     GEN_TOKENS,
-    fmt_duration,
     report_transcript,
-    ts,
 )
+from progress import fmt_duration, ts
 from b4 import (
     RANK_RULES,
     VARIANTS,

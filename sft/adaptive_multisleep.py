@@ -372,7 +372,7 @@ class DreamSleepBackend:
 
     @staticmethod
     def _ts() -> str:
-        from consolidation_null import ts
+        from progress import ts
         return ts()
 
     def _model_hash(self, model: object) -> str:

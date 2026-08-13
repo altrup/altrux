@@ -4,13 +4,13 @@ import gc
 import math
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol
 
 import torch
 import torch.nn.functional as F
 
+from progress import ts as timestamp
 from training import checkpoints
 from training.datasets import (
     DataSpec,
@@ -259,7 +259,7 @@ def _show_batch_progress(
         return prev_n_lines
 
     avg_loss = loss_sum.item() / weight_sum.item()
-    ts = datetime.now().strftime("%H:%M:%S")
+    ts = timestamp()
 
     per_slot_strs: list[str | None] | None = None
     if chunk_extra_log_fn is not None:
@@ -370,7 +370,7 @@ def run_segment(
         }
 
     if len(groups) > 1:
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = timestamp()
         print(
             f"[{ts}]  segment: {', '.join(s.path for s in group)}  "
             f"chunk_len {chunk_len}  batch {batch_size}  "
@@ -690,7 +690,7 @@ def run_segment(
             avg_loss = window_loss_sum / window_tokens
             accum_count = 0
             window_loss_sum = window_tokens = 0.0
-            ts = datetime.now().strftime("%H:%M:%S")
+            ts = timestamp()
 
             if on_step_fn is not None:
                 on_step_fn(model, global_step)
@@ -720,7 +720,7 @@ def run_segment(
                 last_ckpt_tokens = total_tokens
                 checkpoints.rotate_checkpoints(ckpt_dir, args.keep_ckpts, epoch)
                 checkpoints.rotate_full_state(ckpt_dir, args.keep_full_state)
-                ts = datetime.now().strftime("%H:%M:%S")
+                ts = timestamp()
                 print(f"[{ts}]  saved {path}")
 
     if chunk_extra_log_fn is not None:
@@ -979,5 +979,5 @@ def run_training(
     )
     checkpoints.rotate_checkpoints(ckpt_dir, args.keep_ckpts, final_save["epoch"])
     checkpoints.rotate_full_state(ckpt_dir, args.keep_full_state)
-    ts = datetime.now().strftime("%H:%M:%S")
+    ts = timestamp()
     print(f"[{ts}]  done. final checkpoint: {path}")

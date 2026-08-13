@@ -44,7 +44,7 @@ from experiments.facts import (  # noqa: E402
     role_adjacency_violations,
 )
 from experiments.inference import generate, run_chunks  # noqa: E402
-from consolidation_null import ts  # noqa: E402
+from progress import ts  # noqa: E402
 
 # The consolidation null's own gate: below this the transcript is not held
 # losslessly and any consolidation verdict measures the wrong thing.

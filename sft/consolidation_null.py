@@ -56,7 +56,6 @@ import random
 import sys
 import time
 from collections.abc import Sequence
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,6 +80,7 @@ from experiments.facts import (
     role_adjacency_violations,
 )
 from experiments.inference import generate, kl_loss, replay_step, run_chunks, target_logprob
+from progress import fmt_duration, ts
 
 if TYPE_CHECKING:
     import torch
@@ -103,15 +103,6 @@ def verdict(match_rate: float, mean_delta_nats: float) -> str:
     if mean_delta_nats >= UNDERPOWERED_DELTA_NATS:
         return "FAIL-UNDERPOWERED"
     return "FAIL-DEAD"
-
-
-def ts() -> str:
-    return datetime.now().strftime("%H:%M:%S")
-
-
-def fmt_duration(seconds: float) -> str:
-    m, s = divmod(int(seconds), 60)
-    return f"{m}m{s:02d}s" if m else f"{s}s"
 
 
 def report_transcript(text: str, decoded: str, facts: Sequence[Fact], turns: Sequence[Turn], n_tokens: int) -> None:

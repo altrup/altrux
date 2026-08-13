@@ -125,7 +125,7 @@ def oracle_positions(dream: PilotDream, facts) -> tuple[dict[str, list[int]], li
 def separability(capture: PilotCapture) -> dict[str, object]:
     """Sec 2.10.7 test 1: does D_t tell a fact read from everything else?"""
     from experiments.facts import Fact
-    from consolidation_null import ts
+    from progress import ts
 
     facts = [Fact(*f) for f in capture.facts]
     per_dream, pooled_pos, pooled_neg = [], [], []
@@ -345,7 +345,7 @@ def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
          families: Sequence[str] = FAMILIES) -> None:
     import torch
 
-    from consolidation_null import ts
+    from progress import ts
 
     path = Path(capture_path)
     # The capture holds a MixerState, not just tensors -- this repo's own

@@ -56,7 +56,7 @@ def main() -> None:
     import torch
     from dotenv import load_dotenv
 
-    from consolidation_null import ts
+    from progress import ts
     from lora import apply_lora
     from models.common import build_tokenizer
 
