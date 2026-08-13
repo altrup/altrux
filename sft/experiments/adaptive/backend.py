@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -386,20 +387,21 @@ class DreamSleepBackend:
         return [self.facts[entity] for spec in self.manifest.wakes[:wake] for entity, _ in spec.facts]
 
     def sleep(self, arm: str, wake: int, state: object, artifact: dict[str, object]) -> object:
-        from dream_sleep import (
-            DreamSetCache,
-            distill_dream_set,
-            distill_sft,
-            generate_replay_dreams,
-            load_dream_cache,
-            save_dream_cache,
-            sft_steps,
-            state_to,
+        from experiments.dreams.cache import load_dream_cache, save_dream_cache
+        from experiments.dreams.distillation import distill_dream_set, distill_sft, sft_steps
+        from experiments.dreams.generation import (
             copy_state,
-            token_sha,
-            dream_is_degenerate,
             dream_generation_seed,
+            generate_replay_dreams,
+            state_to,
         )
+        from experiments.dreams.probes import dream_is_degenerate
+        from experiments.dreams.types import DreamSetCache, token_sha
+        legacy = sys.modules.get("dream_sleep")
+        if legacy is not None:
+            patched = getattr(legacy, "distill_sft", None)
+            if getattr(patched, "__module__", "dream_sleep") != "dream_sleep":
+                distill_sft = patched
 
         context = self.contexts[arm]
         if arm == "nosleep":
