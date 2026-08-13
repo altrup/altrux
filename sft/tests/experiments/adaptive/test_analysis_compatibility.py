@@ -1,7 +1,12 @@
 import importlib
 
 
-PUBLIC = ("rehearsal_retention_analysis", "aggregate_seed_results")
+PUBLIC = (
+    "floor_correct_records",
+    "retention_summary",
+    "rehearsal_retention_analysis",
+    "aggregate_seed_results",
+)
 
 
 def test_adaptive_multisleep_reexports_analysis_helpers():
