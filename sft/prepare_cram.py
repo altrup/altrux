@@ -49,6 +49,8 @@ from pathlib import Path
 
 import torch
 
+from preparation.cram import find_subsequence
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # CoNLL-03 groups from the default NER model. MISC (nationalities, events,
@@ -434,13 +436,7 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
 
 
 def _find(ids: torch.Tensor, pat: torch.Tensor) -> list[int]:
-    n, m = len(ids), len(pat)
-    if m == 0 or n < m:
-        return []
-    hit = torch.ones(n - m + 1, dtype=torch.bool)
-    for j in range(m):
-        hit &= ids[j:n - m + 1 + j] == pat[j]
-    return hit.nonzero().flatten().tolist()
+    return find_subsequence(ids, pat)
 
 
 def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
