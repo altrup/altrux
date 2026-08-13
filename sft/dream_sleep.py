@@ -159,10 +159,12 @@ from gate_pilot import PilotCapture, PilotDream
 from erase_probe import (
     build_mixed_turns,
     build_wake_items,
-    deflate,
     group_by_layer,
-    rank1_erase,
     report_distractors,
+)
+from experiments.erasure.operators import (
+    deflate,
+    rank1_erase,
     state_top_dirs,
 )
 from lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK

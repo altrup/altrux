@@ -193,7 +193,7 @@ def readout_removals(ssm_state, basis, queries: Sequence[torch.Tensor]) -> list[
     -- sec 2.10.6's proxy, measured on the actual wake state."""
     import torch
 
-    from b4 import erase_subspace
+    from experiments.erasure.operators import erase_subspace
 
     if not queries:
         return []
