@@ -163,7 +163,7 @@ def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], 
 
 def rebase_dream_set(cache: DreamSetCache, family: str, rank_rule: str) -> DreamSetCache:
     """Recompute cached erasers for a different gating family."""
-    from gate_pilot import scheme_weights
+    from experiments.erasure.pilot import scheme_weights
 
     for dream in cache.dreams:
         gate = dream.gate_positions
