@@ -64,7 +64,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from prepare_interference import FACT_KINDS, LABEL_POOL, LABEL_SKIP
+from preparation.interference import FACT_KINDS, LABEL_POOL, LABEL_SKIP
 from probe_recall import single_token_labels
 
 
