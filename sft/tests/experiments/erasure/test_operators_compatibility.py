@@ -58,3 +58,11 @@ def test_erase_probe_reexports_the_shared_wake_item_primitives():
         "build_mixed_turns",
     ):
         assert getattr(erase_probe, name) is getattr(wake_items, name)
+
+
+def test_erase_probe_delegates_probe_orchestration():
+    import erase_probe
+    from experiments.erasure import probe
+
+    for name in ("UNBOUND_LOGPROB", "FILLER_SPAN", "build_sweep", "group_by_layer", "main"):
+        assert getattr(erase_probe, name) is getattr(probe, name)
