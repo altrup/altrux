@@ -137,3 +137,9 @@ def erase_subspace_scaled(ssm_state: torch.Tensor, basis: torch.Tensor,
     g = torch.tensor(list(gammas)[: v.shape[0]], dtype=s.dtype, device=s.device)
     coeffs = torch.einsum("bhpn,rn->bhpr", s, v) * g
     return (s - torch.einsum("bhpr,rn->bhpn", coeffs, v)).to(ssm_state.dtype)
+
+
+def erase_state_subspace(state, bases: Sequence[torch.Tensor]) -> None:
+    """Apply each layer's basis to the corresponding state tensor."""
+    for index, basis in enumerate(bases):
+        state.ssm_states[index] = erase_subspace(state.ssm_states[index], basis)

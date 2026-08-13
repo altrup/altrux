@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 from experiments.erasure.operators import (
     deflate,
+    erase_state_subspace,
     erase_subspace,
     erase_subspace_scaled,
     sigma_gammas,
@@ -59,7 +60,10 @@ from experiments.erasure.gating import (
 )
 
 
-def erase_state_subspace(state, bases: Sequence[torch.Tensor]) -> None:
-    """Apply each layer's own basis to `state` in place."""
-    for i, basis in enumerate(bases):
-        state.ssm_states[i] = erase_subspace(state.ssm_states[i], basis)
+__all__ = [
+    "ADDRESS_BUDGET_FRACTION", "DEFLATE_K", "MEDIAN_C", "RANK_RULES", "VARIANTS",
+    "address_budget", "aggregate_basis", "deflate", "erase_state_subspace",
+    "erase_subspace", "erase_subspace_scaled", "gated_positions", "orthonormalize",
+    "rank_median", "rank_ratio_gap", "sigma_gammas", "state_divergence",
+    "state_top_dirs", "variant_basis",
+]

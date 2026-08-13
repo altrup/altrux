@@ -42,6 +42,13 @@ def test_b4_reexports_the_shared_gating_and_basis_primitives():
         assert getattr(b4, name) is getattr(gating, name)
 
 
+def test_b4_reexports_state_subspace_erasure():
+    import b4
+    from experiments.erasure import operators
+
+    assert b4.erase_state_subspace is operators.erase_state_subspace
+
+
 def test_erase_probe_reexports_the_shared_wake_item_primitives():
     import erase_probe
     from experiments.erasure import wake_items
