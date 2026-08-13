@@ -143,12 +143,12 @@ from consolidation_null import (
     report_transcript,
 )
 from progress import fmt_duration, ts
-from b4 import (
+from b4 import erase_state_subspace
+from experiments.erasure.gating import (
     RANK_RULES,
     VARIANTS,
     address_budget,
     aggregate_basis,
-    erase_state_subspace,
     gated_positions,
     rank_median,
     rank_ratio_gap,

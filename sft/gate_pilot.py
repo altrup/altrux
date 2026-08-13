@@ -8,8 +8,8 @@ capture this module reads. What is stored, and why:
     since the point of the pilot is that a threshold sweep needs the positions
     a given threshold would have dropped.
   * **D_t at every position**, float -- the state-dependency divergence
-    (`b4.state_divergence`), computed on the box from the with-state and
-    blank-state logits.
+    (`experiments.erasure.gating.state_divergence`), computed on the box from
+    the with-state and blank-state logits.
   * the wake state, the facts, the dream texts, and the battery items' read
     queries (a forward pass, so it happens on the box).
 
@@ -29,10 +29,11 @@ Scoring (`python gate_pilot.py <capture>`) runs sec 2.10.7's two tests:
   * **test 2, the bake-off** -- {hard@tau, divergence-weighted, sqrt-capped,
     clip-capped} x a tau grid taken from the capture's own D_t quantiles. Each
     scheme builds every dream's per-layer V through the SAME primitives prod
-    uses (`b4.py` + `dream_sleep.dream_bases`), and is scored on sec 2.10.6's
-    DECISION METRIC: target removal (readout removed along oracle fact-read
-    queries) against collateral removal (along context reads and battery-item
-    queries), measured by applying V to the actual wake state.
+    uses (`experiments.erasure.gating` + `dream_sleep.dream_bases`), and is
+    scored on sec 2.10.6's DECISION METRIC: target removal (readout removed
+    along oracle fact-read queries) against collateral removal (along context
+    reads and battery-item queries), measured by applying V to the actual wake
+    state.
 
 Label precision/recall and the oracle-subspace overlap are printed as
 diagnostics only -- sec 2.10.6 names label accuracy a NON-goal, and mini-training
@@ -220,7 +221,7 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
     scheme, through the same primitives prod uses, and score the plane."""
     import torch
 
-    from b4 import RANK_RULES, gated_positions
+    from experiments.erasure.gating import RANK_RULES, gated_positions
     from experiments.facts import Fact
     from dream_sleep import basis_overlap, dream_bases, gate_agreement
 
@@ -413,7 +414,7 @@ def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
 
 
 if __name__ == "__main__":
-    from b4 import RANK_RULES, VARIANTS
+    from experiments.erasure.gating import RANK_RULES, VARIANTS
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("capture", help="a --pilot-capture artifact (data/dream_set_s<seed>.pilot.pt)")
