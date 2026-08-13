@@ -117,7 +117,6 @@ import re
 import sys
 import time
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -138,6 +137,14 @@ from experiments.facts import (
     render_turns,
 )
 from experiments.inference import generate, kl_loss, replay_step, run_chunks, target_logprob
+from experiments.dreams.types import (
+    CachedDream,
+    Dream,
+    DreamCache,
+    DreamSetCache,
+    dream_set_sha,
+    token_sha,
+)
 from consolidation_null import (
     GEN_TOKENS,
     report_transcript,
@@ -157,15 +164,17 @@ from experiments.erasure.gating import (
 )
 from gate_pilot import PilotCapture, PilotDream
 from erase_probe import (
-    build_mixed_turns,
-    build_wake_items,
     group_by_layer,
-    report_distractors,
 )
 from experiments.erasure.operators import (
     deflate,
     rank1_erase,
     state_top_dirs,
+)
+from experiments.erasure.wake_items import (
+    build_mixed_turns,
+    build_wake_items,
+    report_distractors,
 )
 from lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
 from experiments.locality import (
@@ -420,13 +429,6 @@ def load_init_adapter(model, ckpt: str | Path, rank: int, alpha: float) -> str:
     return file_sha(ckpt / "trainable.pt")
 
 
-def token_sha(ids: Sequence[int]) -> str:
-    """SHA-256 over a token sequence. A registered invariant ships with its
-    machine check (sec 2): every result file records these and the summarizer
-    refuses to pool cells whose dream or transcript disagree."""
-    return hashlib.sha256(",".join(str(int(i)) for i in ids).encode()).hexdigest()
-
-
 def build_distractors(facts: Sequence[Fact], seed: int, taken: Sequence[str] = ()) -> dict[str, str]:
     """One fixed foil code per fact, drawn from its own RNG stream so the wake
     transcript's draws are unchanged. The margin metric (sec 4) scores the
@@ -662,142 +664,6 @@ def rehearsal_fraction(token_texts: Sequence[str], needles: Sequence[str]) -> tu
                     covered[i] = True
             at = text.find(low, at + 1)
     return (sum(covered) / len(token_texts) if token_texts else 0.0), counts
-
-
-@dataclass
-class Dream:
-    """A cached teacher pass: the dream tokens, the teacher's logits at every
-    position, and the read query every layer issued there (what the erase and
-    the counterfactual ablation are addressed with)."""
-
-    tokens: torch.Tensor  # (1, T)
-    logits: torch.Tensor  # (T, V), cpu float32
-    queries: list[list[torch.Tensor]]  # T x n_layers, cpu
-    final_state: object
-    token_texts: list[str]
-    skipped_cone: int
-    cue_flags: list[bool] = field(default_factory=list)  # True where the token was spliced in as a cue
-    stop_reason: str = "max-tokens"  # one of STOP_REASONS
-    prefix_len: int = 0  # steer-prefix tokens, never scored (sec 2.10.8)
-
-
-@dataclass
-class DreamCache:
-    """The one teacher dream per seed that every arm distils (sec 3's shared
-    preamble). Generated once by `--build-dream-cache`, loaded by every arm --
-    no arm generates, so a cross-arm comparison is a comparison of arms.
-
-    `transcript_sha`/`dream_sha` are recomputed on load and on every result
-    file, which is what makes "byte-identical across arms" an assertion rather
-    than a sentence in a design doc."""
-
-    seed: int
-    transcript_ids: list[int]
-    dream_ids: list[int]
-    wake_state: object
-    teacher_logits: torch.Tensor  # (T, V), cpu float32
-    queries: list[list[torch.Tensor]]
-    token_texts: list[str]
-    cue_flags: list[bool]
-    distractors: dict[str, str]
-    facts: list[tuple[str, str, str]]  # entity, category, code
-    stop_reason: str = "max-tokens"
-    # The steer prefix (sec 2.10.8), as text and as its token count: prefix
-    # tokens condition the dream through state only and are excluded from every
-    # arm's scored positions.
-    dream_prompt: str = ""
-    prefix_len: int = 0
-    transcript_sha: str = ""
-    dream_sha: str = ""
-    # Which weights emitted this dream: "base" or the --init-adapter SHA-256.
-    generator: str = "base"
-
-    def __post_init__(self) -> None:
-        self.transcript_sha = self.transcript_sha or token_sha(self.transcript_ids)
-        self.dream_sha = self.dream_sha or token_sha(self.dream_ids)
-
-    @property
-    def fact_list(self) -> list[Fact]:
-        return [Fact(*f) for f in self.facts]
-
-    @property
-    def free_tokens(self) -> int:
-        """Tokens the model actually generated, as opposed to spliced cue text
-        -- the trainable free-dream budget (sec 4's cue accounting)."""
-        return sum(not flag for flag in self.cue_flags)
-
-
-@dataclass
-class CachedDream:
-    """One dream of a multi-dream cache (sec 2.10.4).
-
-    Carries everything a B4 cell needs and nothing it has to recompute: the
-    tokens, the frozen teacher's logits, the state-dependency gate's decision
-    (its per-position divergence and the positions it kept), the raw queries at
-    those positions, each layer's spectrum with both rank rules' answers, and
-    the eraser itself -- one orthonormal basis per layer per variant, all three
-    from the same shared SVD.
-    """
-
-    dream_ids: list[int]
-    token_texts: list[str]
-    teacher_logits: torch.Tensor  # (T, V), cpu float32
-    cue_flags: list[bool]
-    prefix_len: int
-    stop_reason: str
-    divergence: list[float]  # D_t at every position
-    gate_positions: list[int]
-    queries: list[list[torch.Tensor]]  # gated positions x n_layers
-    spectra: list[list[float]]  # per layer
-    ranks: dict[str, list[int]]  # rank rule -> per-layer r
-    bases: dict[str, list[torch.Tensor]]  # variant -> per-layer (r, n), rows orthonormal
-    dream_sha: str = ""
-
-    def __post_init__(self) -> None:
-        self.dream_sha = self.dream_sha or token_sha(self.dream_ids)
-
-    @property
-    def free_tokens(self) -> int:
-        return sum(not flag for flag in self.cue_flags)
-
-
-def dream_set_sha(dreams: Sequence[CachedDream]) -> str:
-    """The set hash asserted into every result jsonl (sec 3): over the dreams'
-    own hashes in order, so a reordered or substituted set is a different set."""
-    return hashlib.sha256("\n".join(d.dream_sha for d in dreams).encode()).hexdigest()
-
-
-@dataclass
-class DreamSetCache:
-    """The N-dream cache the literature-shaped regime distils (sec 2.10.4).
-
-    Every dream is generated upfront, each from a fresh copy of the INTACT wake
-    state, by the sleep-start snapshot; the whole set is shared by every arm,
-    which is what makes an A-vs-B4 pairing a comparison of arms.
-    """
-
-    seed: int
-    transcript_ids: list[int]
-    wake_state: object
-    dreams: list[CachedDream]
-    distractors: dict[str, str]
-    facts: list[tuple[str, str, str]]  # entity, category, code
-    dream_seed_offset: int = 0
-    gate_family: str = "hard"
-    dream_prompt: str = ""
-    gate_threshold: float = GATE_THRESHOLD
-    rank_rule: str = RANK_RULE
-    generator: str = "base"
-    transcript_sha: str = ""
-    set_sha: str = ""
-
-    def __post_init__(self) -> None:
-        self.transcript_sha = self.transcript_sha or token_sha(self.transcript_ids)
-        self.set_sha = self.set_sha or dream_set_sha(self.dreams)
-
-    @property
-    def fact_list(self) -> list[Fact]:
-        return [Fact(*f) for f in self.facts]
 
 
 def aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact]) -> dict[str, int]:
