@@ -65,6 +65,14 @@ def copy_state(state):
     return new
 
 
+def state_to(state, device):
+    """Move mixer state tensors to the requested device."""
+    for attr in ("conv_states", "ssm_states"):
+        if hasattr(state, attr):
+            setattr(state, attr, [tensor.to(device) for tensor in getattr(state, attr)])
+    return state
+
+
 def dream_seed_text(asst_open: str, prompt: str) -> str:
     """Return the assistant marker and the trained literal-space separator."""
     return f"{asst_open} {prompt}" if prompt else f"{asst_open} "
@@ -301,5 +309,6 @@ __all__ = [
     "generate_replay_dreams",
     "rehearsal_fraction",
     "sample_next",
+    "state_to",
     "teacher_dream",
 ]
