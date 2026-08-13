@@ -3,8 +3,10 @@
 import gc
 import math
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable, Protocol
 
 import torch
 import torch.nn.functional as F
@@ -19,6 +21,116 @@ from training.datasets import (
     recall_weight_at,
     resolve_share,
 )
+
+
+DatasetFingerprint = dict[str, str | int] | list[dict[str, str | int]]
+
+
+class SegmentArgs(Protocol):
+    accum_tokens: float
+    ckpt_every_tokens: float
+    eos_weight: float
+    grad_ckpt_block: int | None
+    head_tokens: int
+    head_weight: float
+    keep_ckpts: int
+    keep_full_state: int
+    lora_alpha: float
+    lora_rank: int
+
+
+class SegmentHooks(Protocol):
+    def chunk_loss(
+        self,
+        model: torch.nn.Module,
+        input_ids: torch.Tensor,
+        target_ids: torch.Tensor,
+        mask_slice: torch.Tensor,
+        state: object,
+        eos_weight: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, object]: ...
+
+
+@dataclass
+class SegmentExecution:
+    """Model and optimizer inputs for one segment."""
+
+    hooks: SegmentHooks
+    model: torch.nn.Module
+    optimizer: torch.optim.Optimizer
+    trainable_params: list[torch.nn.Parameter]
+    device: torch.device | str
+    args: SegmentArgs
+
+
+@dataclass
+class SegmentData:
+    """Immutable examples and their checkpoint identity."""
+
+    train_ids: list[torch.Tensor]
+    train_masks: list[torch.Tensor | None]
+    train_recall: list[torch.Tensor | None]
+    train_sleeps: list[torch.Tensor | list[int] | None]
+    data_fp: DatasetFingerprint
+
+
+@dataclass
+class SegmentCallbacks:
+    """Model-specific operations used by the generic segment loop."""
+
+    extra_log_fn: Callable[[torch.nn.Module], str | list[str] | None] | None
+    chunk_extra_log_fn: Callable[[torch.nn.Module], str | list[str] | None] | None
+    on_step_fn: Callable[[torch.nn.Module, int], None] | None
+    reset_slot_fn: Callable[[torch.nn.Module, object, int], None] | None
+    sleep_slot_fn: Callable[[torch.nn.Module, object, int], None] | None
+    init_state_fn: Callable[[torch.nn.Module, int, torch.device | str], object] | None
+    set_grad_ckpt_fn: Callable[[torch.nn.Module, bool, int | None], None] | None
+    set_lr: Callable[[int], None]
+
+
+@dataclass
+class SegmentCheckpointPolicy:
+    """Checkpoint and stopping controls shared by all segments."""
+
+    ckpt_dir: Path
+    memory_window: int | None
+    max_steps: float
+
+
+@dataclass
+class SegmentLossPolicy:
+    """Recall-loss ramp values fixed for the training run."""
+
+    recall_start: float
+    recall_end: float
+    recall_ramp_steps: int
+    recall_ramp_shape: str
+
+
+@dataclass
+class SegmentSchedule:
+    """The group order and resume position for one segment."""
+
+    groups: list[list[DataSpec]]
+    orders: list[list[int]]
+    ptrs: list[int]
+    group_tokens: list[float]
+    final_save: dict
+    group_idx: int
+    epoch: int
+    budget: float
+    resume_slot_states: list | None
+    resume_full_state: Path | None
+
+
+@dataclass
+class SegmentProgress:
+    """The counters that survive from one segment to the next."""
+
+    global_step: int
+    total_tokens: float
+    last_ckpt_tokens: float
+    trained_any: bool
 
 
 class _Slot:
@@ -172,6 +284,470 @@ def _show_batch_progress(
     return _print_live(lines, prev_n_lines)
 
 
+def run_segment(
+    execution: SegmentExecution,
+    data: SegmentData,
+    callbacks: SegmentCallbacks,
+    checkpoint_policy: SegmentCheckpointPolicy,
+    loss_policy: SegmentLossPolicy,
+    schedule: SegmentSchedule,
+    progress: SegmentProgress,
+) -> SegmentProgress:
+    """Trains one config group for up to `budget` tokens, continuing
+    that group's example order from ptrs[gi]."""
+    ckpt_dir = checkpoint_policy.ckpt_dir
+    hooks = execution.hooks
+    model = execution.model
+    optimizer = execution.optimizer
+    trainable_params = execution.trainable_params
+    train_ids = data.train_ids
+    train_masks = data.train_masks
+    train_recall = data.train_recall
+    train_sleeps = data.train_sleeps
+    device = execution.device
+    args = execution.args
+    data_fp = data.data_fp
+    memory_window = checkpoint_policy.memory_window
+    recall_start = loss_policy.recall_start
+    recall_end = loss_policy.recall_end
+    recall_ramp_steps = loss_policy.recall_ramp_steps
+    recall_ramp_shape = loss_policy.recall_ramp_shape
+    extra_log_fn = callbacks.extra_log_fn
+    chunk_extra_log_fn = callbacks.chunk_extra_log_fn
+    on_step_fn = callbacks.on_step_fn
+    reset_slot_fn = callbacks.reset_slot_fn
+    sleep_slot_fn = callbacks.sleep_slot_fn
+    init_state_fn = callbacks.init_state_fn
+    set_grad_ckpt_fn = callbacks.set_grad_ckpt_fn
+    set_lr = callbacks.set_lr
+    max_steps = checkpoint_policy.max_steps
+    groups = schedule.groups
+    orders = schedule.orders
+    ptrs = schedule.ptrs
+    group_tokens = schedule.group_tokens
+    final_save = schedule.final_save
+    gi = schedule.group_idx
+    epoch = schedule.epoch
+    budget = schedule.budget
+    resume_slot_states = schedule.resume_slot_states
+    resume_full_state = schedule.resume_full_state
+    global_step = progress.global_step
+    total_tokens = progress.total_tokens
+    last_ckpt_tokens = progress.last_ckpt_tokens
+    trained_any = progress.trained_any
+    group = groups[gi]
+    cfg = group[0]
+    chunk_len = cfg.chunk_len
+    batch_size = cfg.batch_size
+    # accum_steps (how many chunks to accumulate before an optimizer
+    # step) is derived from accum_tokens (how many real tokens per slot
+    # that should represent), not taken directly from the CLI -- a raw
+    # step count would silently mean a different amount of real training
+    # every time chunk_len changes (same reasoning as
+    # --ckpt-every-tokens being token-based rather than step-based: see
+    # this module's docstring), which now includes changing between
+    # slices. Total tokens per optimizer step end up ~accum_tokens *
+    # batch_size (each slot contributes accum_tokens, not accum_tokens /
+    # batch_size).
+    accum_steps = max(1, round(args.accum_tokens / chunk_len))
+    if set_grad_ckpt_fn is not None:
+        set_grad_ckpt_fn(model, cfg.grad_checkpoint, args.grad_ckpt_block)
+
+    order = orders[gi]
+    n_valid = len(order)
+    next_ptr = ptrs[gi]
+    segment_tokens = 0.0
+    base_tokens = group_tokens[gi]
+
+    def group_state() -> dict:
+        if len(groups) == 1:
+            return {}
+        return {
+            "group_idx": gi,
+            "group_ptrs": [next_ptr if i == gi else p for i, p in enumerate(ptrs)],
+            "group_tokens": [base_tokens + segment_tokens if i == gi else t
+                             for i, t in enumerate(group_tokens)],
+        }
+
+    if len(groups) > 1:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(
+            f"[{ts}]  segment: {', '.join(s.path for s in group)}  "
+            f"chunk_len {chunk_len}  batch {batch_size}  "
+            f"grad_ckpt {'on' if cfg.grad_checkpoint else 'off'}  "
+            f"examples {next_ptr}/{n_valid}  budget {budget:,.0f} tok"
+        )
+
+    # Assign initial examples to slots.
+    slots: list[_Slot | None] = []
+    for b in range(batch_size):
+        if next_ptr < n_valid:
+            idx = order[next_ptr]
+            next_ptr += 1
+            ids = train_ids[idx].to(device)
+            mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
+            recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
+            slots.append(_Slot(b, idx, ids, mask, recall, train_sleeps[idx]))
+        else:
+            slots.append(None)
+
+    if all(s is None for s in slots):
+        ptrs[gi] = next_ptr
+        return progress
+
+    # Whether this segment will resume from an exactly-saved internal
+    # state (mem_state.pt) -- if so, initializing a fresh batched state
+    # below would just be immediately discarded in favor of it, and for
+    # a model with a sizeable per-layer/per-slot state (e.g.
+    # mamba2_2_7b_memory's neural memory weights) that fresh allocation
+    # briefly coexists with the just-loaded saved state right when VRAM
+    # is already tightest (model + optimizer + mem_state.pt have all
+    # just landed on the GPU) -- exactly the moment this project's dev
+    # GPU has been observed to OOM. Skip it entirely on this path.
+    use_full_state = resume_slot_states is not None and resume_full_state is not None
+
+    # Initialize batched model state (batch_size slots).
+    if use_full_state:
+        # Loaded here (not by main(), see run_training's docstring) so
+        # the only reference to it is this local variable, which we
+        # drop immediately below -- from then on the only thing
+        # holding it alive is batched_state itself, exactly like a
+        # freshly-initialized state, so it's collected the same way
+        # once the first chunk's detach() replaces it.
+        batched_state = torch.load(resume_full_state, map_location=device, weights_only=False)
+        del resume_full_state
+    elif init_state_fn is not None:
+        batched_state = init_state_fn(model, batch_size, device)
+    else:
+        batched_state = None  # model initializes it on first chunk_loss call
+
+    # On resume: restore each slot's example/position from the checkpoint
+    # first -- needed regardless of how (or whether) internal state is
+    # recovered below.
+    if resume_slot_states is not None:
+        for b, saved in enumerate(resume_slot_states):
+            if saved is None or b >= len(slots) or slots[b] is None:
+                continue
+            example_idx, pos = saved
+            if example_idx not in order:
+                continue  # example was filtered out -- start slot fresh
+            ids = train_ids[example_idx].to(device)
+            mask = train_masks[example_idx].to(device) if train_masks[example_idx] is not None else None
+            recall = train_recall[example_idx].to(device) if train_recall[example_idx] is not None else None
+            slots[b] = _Slot(b, example_idx, ids, mask, recall, train_sleeps[example_idx])
+            slots[b].seek(pos)
+
+        if use_full_state:
+            # Exact resume: the checkpoint saved the full batched
+            # internal state (see rotate_full_state) -- use it as-is,
+            # continuing each slot from its saved position.
+            print("loaded saved internal state for resume")
+        else:
+            # No exact state available for this checkpoint (older
+            # checkpoint, pruned past --keep-full-state, or a
+            # batch-size mismatch -- see main()). Reconstructing it by
+            # replaying the prefix would use the model's *current*
+            # (already further-trained) weights, not the weights that
+            # were actually live token-by-token when that prefix was
+            # first trained -- an approximation, not the real state --
+            # and doing so batched alongside slots that need no replay
+            # means feeding some rows dummy zero-token padding, which
+            # is degenerate input the model has never been asked to
+            # process and has been observed to produce non-finite
+            # state. Simpler and more robust to just restart each such
+            # slot's example from the beginning: a bounded amount of
+            # duplicated training, not an approximation or a stability
+            # risk.
+            n_restarted = sum(1 for slot in slots if slot is not None and slot.pos > 0)
+            for slot in slots:
+                if slot is not None:
+                    slot.seek(0)
+            if n_restarted:
+                print(f"no saved internal state for resume -- restarting {n_restarted} slot(s) from the beginning of their example")
+
+    accum_count = 0
+    window_loss_sum = 0.0
+    window_tokens = 0.0
+    prev_n_lines = 0
+
+    while any(s is not None for s in slots) and global_step < max_steps:
+        recall_w = recall_weight_at(global_step, recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
+
+        # Build the batched chunk: gather next chunk_len tokens from each slot.
+        batch_inputs: list[torch.Tensor] = []
+        batch_targets: list[torch.Tensor] = []
+        batch_weights: list[torch.Tensor] = []
+        chunk_actual_lens: list[int] = []
+
+        for slot in slots:
+            if slot is None:
+                # Idle slot: pad with zeros, zero weight.
+                batch_inputs.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
+                batch_targets.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
+                batch_weights.append(torch.zeros(chunk_len, dtype=torch.float32, device=device))
+                chunk_actual_lens.append(0)
+            else:
+                # Fire any sleep whose offset this slot has reached: wipe
+                # its backbone state (persistent memory carries on) before
+                # the next chunk. See _Slot's docstring for the
+                # chunk-boundary snapping.
+                if sleep_slot_fn is not None and batched_state is not None:
+                    while slot.sleep_i < len(slot.sleeps) and slot.pos >= slot.sleeps[slot.sleep_i]:
+                        sleep_slot_fn(model, batched_state, slot.slot_idx)
+                        slot.last_reset = slot.pos
+                        slot.sleep_i += 1
+                        print(
+                            f"  [sleep] slot {slot.slot_idx}: backbone wiped at token "
+                            f"{slot.pos}/{slot.seqlen} (example {slot.example_idx}, "
+                            f"sleep {slot.sleep_i}/{len(slot.sleeps)}; memory persists)"
+                        )
+                end = min(slot.pos + chunk_len, slot.seqlen - 1)
+                actual = end - slot.pos
+                inp = slot.ids[slot.pos:end]
+                tgt = slot.ids[slot.pos + 1:end + 1]
+                wt = torch.ones(chunk_len, dtype=torch.float32, device=device)
+                if actual < chunk_len:
+                    pad = chunk_len - actual
+                    inp = F.pad(inp, (0, pad))
+                    tgt = F.pad(tgt, (0, pad))
+                    wt[actual:] = 0.0
+                if args.head_weight != 1.0:
+                    # Weights index target tokens: position i predicts the
+                    # token at absolute position slot.pos + 1 + i. The ramp
+                    # is measured from the last backbone reset (example
+                    # start or a fired sleep), so every empty-state regime
+                    # gets the boost, not just the example's first tokens.
+                    tpos = torch.arange(
+                        slot.pos + 1 - slot.last_reset,
+                        slot.pos + 1 - slot.last_reset + chunk_len,
+                        device=device, dtype=torch.float32,
+                    )
+                    wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(min=0.0)
+                if slot.recall is not None and recall_w != 1.0:
+                    rm = slot.recall[slot.pos + 1:end + 1]
+                    if actual < chunk_len:
+                        rm = F.pad(rm, (0, chunk_len - actual))
+                    wt = torch.where(rm, wt * recall_w, wt)
+                batch_inputs.append(inp)
+                batch_targets.append(tgt)
+                batch_weights.append(wt)
+                chunk_actual_lens.append(actual)
+
+        input_ids = torch.stack(batch_inputs)   # (B, chunk_len)
+        target_ids = torch.stack(batch_targets)  # (B, chunk_len)
+        weight_mask = torch.stack(batch_weights)  # (B, chunk_len) float: 0 = padding, may carry >1 boosts
+
+        loss_sum, weight_sum, batched_state = hooks.chunk_loss(
+            model, input_ids, target_ids, weight_mask, batched_state, args.eos_weight
+        )
+
+        chunk_was_non_finite = not torch.isfinite(loss_sum)
+        if chunk_was_non_finite:
+            # Skip only this chunk's contribution -- no backward() was
+            # called, so there's nothing of this chunk's to undo. Leave
+            # any gradients already accumulated from other chunks earlier
+            # in this window alone rather than discarding them too.
+            print(f"  warning: non-finite loss, skipping chunk")
+            del loss_sum
+        elif weight_sum > 0:
+            # torch.autograd.grad (not loss.backward()) so this chunk's
+            # gradient comes back as its own tensor instead of being
+            # summed straight into .grad -- lets us check finiteness
+            # BEFORE merging it into the window's running accumulation,
+            # so a single bad chunk only costs that chunk, not the
+            # whole window's worth of already-accumulated good chunks
+            # (loss_sum being finite, checked above, does NOT guarantee
+            # a finite gradient -- an op can have a perfectly finite
+            # forward value but a non-finite local derivative, e.g. near
+            # a sqrt/div singularity; confirmed in practice, see git
+            # history for the real run this was caught from).
+            chunk_grads = torch.autograd.grad(
+                loss_sum / weight_sum, trainable_params, allow_unused=True
+            )
+            grad_is_finite = all(g is None or torch.isfinite(g).all() for g in chunk_grads)
+            if not grad_is_finite:
+                if chunk_extra_log_fn is not None:
+                    _clear_live(prev_n_lines)
+                    prev_n_lines = 0
+                print(f"  warning: non-finite gradient, discarding chunk")
+                del chunk_grads
+            else:
+                for p, g in zip(trainable_params, chunk_grads):
+                    if g is None:
+                        continue
+                    p.grad = g if p.grad is None else p.grad + g
+                del chunk_grads
+                window_loss_sum += loss_sum.item()
+                window_tokens += weight_sum.item()
+                # Real token count, not weight_sum: eos/recall/head boosts
+                # inflate weight_sum, and checkpoint cadence should track
+                # actual tokens trained.
+                total_tokens += sum(chunk_actual_lens)
+                accum_count += 1
+                trained_any = True
+                prev_n_lines = _show_batch_progress(
+                    model, chunk_extra_log_fn, slots, chunk_actual_lens, loss_sum, weight_sum, prev_n_lines
+                )
+
+        # The segment/mix budget counts tokens fed, finite or not -- it
+        # schedules work rather than accounting for training, and a
+        # segment whose chunks all came back non-finite still has to end.
+        segment_tokens += sum(chunk_actual_lens)
+
+        batched_state = batched_state.detach() if batched_state is not None else None
+
+        if chunk_was_non_finite:
+            # The forward graph for a skipped chunk is never walked by
+            # backward(), so it's never freed the way a normal chunk's
+            # graph is. Some models' hooks (e.g. mamba2_2_7b_memory's
+            # _NeuralMemory.write, which calls torch.autograd.grad(...,
+            # create_graph=True) every token) build graphs that contain
+            # genuine Python-level reference cycles for that reason --
+            # ordinary CPython refcounting can't reclaim a cycle at all,
+            # only the generational cyclic collector can, and that runs
+            # on its own schedule rather than immediately when the last
+            # external reference (loss_sum, the pre-detach state above)
+            # is dropped. Left alone, a run of consecutive non-finite
+            # chunks can pile up several uncollected graphs before the
+            # collector catches up. Both locals' external references are
+            # already dropped by this point, so an explicit collection
+            # here reclaims the cycle right away instead of leaving it
+            # for whenever gc's thresholds next trigger.
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # A chunk with non-finite loss can leave the carried recurrent
+        # state (batched_state) itself non-finite too -- if so, don't let
+        # it keep propagating into that slot's future chunks (or a later
+        # example that inherits the slot). Force the slot to look
+        # "finished" so the assign-next-example logic below runs, which
+        # already resets that slot's state via reset_slot_fn. Only
+        # possible for models that expose per-slot state repair.
+        if reset_slot_fn is not None and batched_state is not None:
+            bad_slots = [
+                b for b, slot in enumerate(slots)
+                if slot is not None and not _slot_state_finite(batched_state, b)
+            ]
+            if bad_slots:
+                # Unlike the per-chunk "non-finite loss, skipping chunk"
+                # warning above (fine to be transient -- it's routine
+                # and would otherwise spam the scrollback every chunk),
+                # an abandoned example is rarer and worth keeping
+                # visible: clear the live block first so this doesn't
+                # just get silently overwritten by the next chunk's
+                # live update (prev_n_lines' cursor math has no idea an
+                # extra line was printed in between, so without this it
+                # clobbers the warning instead of the intended live
+                # line), then reset prev_n_lines so the live block
+                # resumes fresh below it instead of trying to overwrite
+                # up into it.
+                if chunk_extra_log_fn is not None:
+                    _clear_live(prev_n_lines)
+                    prev_n_lines = 0
+                for b in bad_slots:
+                    print(f"  warning: non-finite internal state in slot {b}, abandoning example and resetting state")
+                    slots[b].pos = slots[b].seqlen
+
+        # Advance slot positions; assign next example to any that finished.
+        # A slot goes idle instead once the segment is over budget, so
+        # the group hands over after a drain rather than mid-example.
+        for b, slot in enumerate(slots):
+            if slot is None:
+                continue
+            slot.pos += chunk_actual_lens[b]
+            if slot.is_done():
+                if next_ptr < n_valid and segment_tokens < budget:
+                    idx = order[next_ptr]
+                    next_ptr += 1
+                    ids = train_ids[idx].to(device)
+                    mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
+                    recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
+                    slots[b] = _Slot(b, idx, ids, mask, recall, train_sleeps[idx])
+                    if reset_slot_fn is not None and batched_state is not None:
+                        reset_slot_fn(model, batched_state, b)
+                else:
+                    slots[b] = None
+                    if reset_slot_fn is not None and batched_state is not None:
+                        reset_slot_fn(model, batched_state, b)
+
+        # Gradient accumulation step.
+        if accum_count >= accum_steps:
+            if chunk_extra_log_fn is not None:
+                _clear_live(prev_n_lines)
+                prev_n_lines = 0
+
+            for p in trainable_params:
+                if p.grad is not None:
+                    p.grad /= accum_count
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, 1.0).item()
+            used_lr = optimizer.param_groups[0]["lr"]
+            optimizer.step()
+            optimizer.zero_grad()
+            global_step += 1
+            set_lr(global_step)
+            avg_loss = window_loss_sum / window_tokens
+            accum_count = 0
+            window_loss_sum = window_tokens = 0.0
+            ts = datetime.now().strftime("%H:%M:%S")
+
+            if on_step_fn is not None:
+                on_step_fn(model, global_step)
+
+            ramping = f"  recall_w {recall_w:.2f}" if recall_w != recall_end else ""
+            print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}{ramping}")
+            if extra_log_fn is not None:
+                line = extra_log_fn(model)
+                if line is not None:
+                    print(f"    {line}")
+
+            bad = [name for name, p in model.named_parameters() if p.requires_grad and not torch.isfinite(p).all()]
+            if bad:
+                print(f"FATAL: non-finite weights after step {global_step}: {bad[:5]}")
+                print("Checkpoints NOT saved. Exiting.")
+                raise SystemExit(1)
+
+            if total_tokens - last_ckpt_tokens >= args.ckpt_every_tokens:
+                path = checkpoints.save_checkpoint(
+                    ckpt_dir, model, optimizer, global_step, epoch, slots, next_ptr,
+                    total_tokens, args.lora_rank, args.lora_alpha,
+                    batched_state=batched_state if args.keep_full_state > 0 else None,
+                    dataset_fingerprint=data_fp,
+                    memory_window=memory_window,
+                    **group_state(),
+                )
+                last_ckpt_tokens = total_tokens
+                checkpoints.rotate_checkpoints(ckpt_dir, args.keep_ckpts, epoch)
+                checkpoints.rotate_full_state(ckpt_dir, args.keep_full_state)
+                ts = datetime.now().strftime("%H:%M:%S")
+                print(f"[{ts}]  saved {path}")
+
+    if chunk_extra_log_fn is not None:
+        _clear_live(prev_n_lines)
+
+    # Step on any remaining accumulated gradient before handing the
+    # batch over to the next segment, whose slots and chunk length are
+    # different ones.
+    if accum_count > 0:
+        for p in trainable_params:
+            if p.grad is not None:
+                p.grad /= accum_count
+        torch.nn.utils.clip_grad_norm_(trainable_params, 1.0)
+        optimizer.step()
+        optimizer.zero_grad()
+        global_step += 1
+        set_lr(global_step)
+        if on_step_fn is not None:
+            on_step_fn(model, global_step)
+
+    ptrs[gi] = next_ptr
+    group_tokens[gi] = base_tokens + segment_tokens
+    final_save.update(epoch=epoch, slots=slots, next_ptr=next_ptr,
+                      batched_state=batched_state, group_state=group_state())
+    return SegmentProgress(global_step, total_tokens, last_ckpt_tokens, trained_any)
+
+
 def run_training(
     ckpt_dir: Path,
     model_name: str,
@@ -322,6 +898,15 @@ def run_training(
     ptrs: list[int] = []
     group_tokens: list[float] = []
     final_save: dict = {}
+    execution = SegmentExecution(hooks, model, optimizer, trainable_params, device, args)
+    data = SegmentData(train_ids, train_masks, train_recall, train_sleeps, data_fp)
+    callbacks = SegmentCallbacks(
+        extra_log_fn, chunk_extra_log_fn, on_step_fn, reset_slot_fn,
+        sleep_slot_fn, init_state_fn, set_grad_ckpt_fn, set_lr,
+    )
+    checkpoint_policy = SegmentCheckpointPolicy(ckpt_dir, memory_window, max_steps)
+    loss_policy = SegmentLossPolicy(recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
+    progress = SegmentProgress(global_step, total_tokens, last_ckpt_tokens, trained_any)
 
     def keep(idx: int) -> bool:
         """Examples too short, too long, or fully masked are dropped."""
@@ -330,422 +915,6 @@ def run_training(
             and train_ids[idx].numel() <= args.max_len
             and (train_masks[idx] is None or train_masks[idx].any())
         )
-
-    def run_segment(gi: int, epoch: int, budget: float, resume_slot_states, resume_full_state) -> None:
-        """Trains one config group for up to `budget` tokens, continuing
-        that group's example order from ptrs[gi]."""
-        nonlocal global_step, total_tokens, last_ckpt_tokens, trained_any
-
-        group = groups[gi]
-        cfg = group[0]
-        chunk_len = cfg.chunk_len
-        batch_size = cfg.batch_size
-        # accum_steps (how many chunks to accumulate before an optimizer
-        # step) is derived from accum_tokens (how many real tokens per slot
-        # that should represent), not taken directly from the CLI -- a raw
-        # step count would silently mean a different amount of real training
-        # every time chunk_len changes (same reasoning as
-        # --ckpt-every-tokens being token-based rather than step-based: see
-        # this module's docstring), which now includes changing between
-        # slices. Total tokens per optimizer step end up ~accum_tokens *
-        # batch_size (each slot contributes accum_tokens, not accum_tokens /
-        # batch_size).
-        accum_steps = max(1, round(args.accum_tokens / chunk_len))
-        if set_grad_ckpt_fn is not None:
-            set_grad_ckpt_fn(model, cfg.grad_checkpoint, args.grad_ckpt_block)
-
-        order = orders[gi]
-        n_valid = len(order)
-        next_ptr = ptrs[gi]
-        segment_tokens = 0.0
-        base_tokens = group_tokens[gi]
-
-        def group_state() -> dict:
-            if len(groups) == 1:
-                return {}
-            return {
-                "group_idx": gi,
-                "group_ptrs": [next_ptr if i == gi else p for i, p in enumerate(ptrs)],
-                "group_tokens": [base_tokens + segment_tokens if i == gi else t
-                                 for i, t in enumerate(group_tokens)],
-            }
-
-        if len(groups) > 1:
-            ts = datetime.now().strftime("%H:%M:%S")
-            print(
-                f"[{ts}]  segment: {', '.join(s.path for s in group)}  "
-                f"chunk_len {chunk_len}  batch {batch_size}  "
-                f"grad_ckpt {'on' if cfg.grad_checkpoint else 'off'}  "
-                f"examples {next_ptr}/{n_valid}  budget {budget:,.0f} tok"
-            )
-
-        # Assign initial examples to slots.
-        slots: list[_Slot | None] = []
-        for b in range(batch_size):
-            if next_ptr < n_valid:
-                idx = order[next_ptr]
-                next_ptr += 1
-                ids = train_ids[idx].to(device)
-                mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
-                recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
-                slots.append(_Slot(b, idx, ids, mask, recall, train_sleeps[idx]))
-            else:
-                slots.append(None)
-
-        if all(s is None for s in slots):
-            ptrs[gi] = next_ptr
-            return
-
-        # Whether this segment will resume from an exactly-saved internal
-        # state (mem_state.pt) -- if so, initializing a fresh batched state
-        # below would just be immediately discarded in favor of it, and for
-        # a model with a sizeable per-layer/per-slot state (e.g.
-        # mamba2_2_7b_memory's neural memory weights) that fresh allocation
-        # briefly coexists with the just-loaded saved state right when VRAM
-        # is already tightest (model + optimizer + mem_state.pt have all
-        # just landed on the GPU) -- exactly the moment this project's dev
-        # GPU has been observed to OOM. Skip it entirely on this path.
-        use_full_state = resume_slot_states is not None and resume_full_state is not None
-
-        # Initialize batched model state (batch_size slots).
-        if use_full_state:
-            # Loaded here (not by main(), see run_training's docstring) so
-            # the only reference to it is this local variable, which we
-            # drop immediately below -- from then on the only thing
-            # holding it alive is batched_state itself, exactly like a
-            # freshly-initialized state, so it's collected the same way
-            # once the first chunk's detach() replaces it.
-            batched_state = torch.load(resume_full_state, map_location=device, weights_only=False)
-            del resume_full_state
-        elif init_state_fn is not None:
-            batched_state = init_state_fn(model, batch_size, device)
-        else:
-            batched_state = None  # model initializes it on first chunk_loss call
-
-        # On resume: restore each slot's example/position from the checkpoint
-        # first -- needed regardless of how (or whether) internal state is
-        # recovered below.
-        if resume_slot_states is not None:
-            for b, saved in enumerate(resume_slot_states):
-                if saved is None or b >= len(slots) or slots[b] is None:
-                    continue
-                example_idx, pos = saved
-                if example_idx not in order:
-                    continue  # example was filtered out -- start slot fresh
-                ids = train_ids[example_idx].to(device)
-                mask = train_masks[example_idx].to(device) if train_masks[example_idx] is not None else None
-                recall = train_recall[example_idx].to(device) if train_recall[example_idx] is not None else None
-                slots[b] = _Slot(b, example_idx, ids, mask, recall, train_sleeps[example_idx])
-                slots[b].seek(pos)
-
-            if use_full_state:
-                # Exact resume: the checkpoint saved the full batched
-                # internal state (see rotate_full_state) -- use it as-is,
-                # continuing each slot from its saved position.
-                print("loaded saved internal state for resume")
-            else:
-                # No exact state available for this checkpoint (older
-                # checkpoint, pruned past --keep-full-state, or a
-                # batch-size mismatch -- see main()). Reconstructing it by
-                # replaying the prefix would use the model's *current*
-                # (already further-trained) weights, not the weights that
-                # were actually live token-by-token when that prefix was
-                # first trained -- an approximation, not the real state --
-                # and doing so batched alongside slots that need no replay
-                # means feeding some rows dummy zero-token padding, which
-                # is degenerate input the model has never been asked to
-                # process and has been observed to produce non-finite
-                # state. Simpler and more robust to just restart each such
-                # slot's example from the beginning: a bounded amount of
-                # duplicated training, not an approximation or a stability
-                # risk.
-                n_restarted = sum(1 for slot in slots if slot is not None and slot.pos > 0)
-                for slot in slots:
-                    if slot is not None:
-                        slot.seek(0)
-                if n_restarted:
-                    print(f"no saved internal state for resume -- restarting {n_restarted} slot(s) from the beginning of their example")
-
-        accum_count = 0
-        window_loss_sum = 0.0
-        window_tokens = 0.0
-        prev_n_lines = 0
-
-        while any(s is not None for s in slots) and not budget_spent():
-            recall_w = recall_weight_at(global_step, recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
-
-            # Build the batched chunk: gather next chunk_len tokens from each slot.
-            batch_inputs: list[torch.Tensor] = []
-            batch_targets: list[torch.Tensor] = []
-            batch_weights: list[torch.Tensor] = []
-            chunk_actual_lens: list[int] = []
-
-            for slot in slots:
-                if slot is None:
-                    # Idle slot: pad with zeros, zero weight.
-                    batch_inputs.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
-                    batch_targets.append(torch.zeros(chunk_len, dtype=torch.long, device=device))
-                    batch_weights.append(torch.zeros(chunk_len, dtype=torch.float32, device=device))
-                    chunk_actual_lens.append(0)
-                else:
-                    # Fire any sleep whose offset this slot has reached: wipe
-                    # its backbone state (persistent memory carries on) before
-                    # the next chunk. See _Slot's docstring for the
-                    # chunk-boundary snapping.
-                    if sleep_slot_fn is not None and batched_state is not None:
-                        while slot.sleep_i < len(slot.sleeps) and slot.pos >= slot.sleeps[slot.sleep_i]:
-                            sleep_slot_fn(model, batched_state, slot.slot_idx)
-                            slot.last_reset = slot.pos
-                            slot.sleep_i += 1
-                            print(
-                                f"  [sleep] slot {slot.slot_idx}: backbone wiped at token "
-                                f"{slot.pos}/{slot.seqlen} (example {slot.example_idx}, "
-                                f"sleep {slot.sleep_i}/{len(slot.sleeps)}; memory persists)"
-                            )
-                    end = min(slot.pos + chunk_len, slot.seqlen - 1)
-                    actual = end - slot.pos
-                    inp = slot.ids[slot.pos:end]
-                    tgt = slot.ids[slot.pos + 1:end + 1]
-                    wt = torch.ones(chunk_len, dtype=torch.float32, device=device)
-                    if actual < chunk_len:
-                        pad = chunk_len - actual
-                        inp = F.pad(inp, (0, pad))
-                        tgt = F.pad(tgt, (0, pad))
-                        wt[actual:] = 0.0
-                    if args.head_weight != 1.0:
-                        # Weights index target tokens: position i predicts the
-                        # token at absolute position slot.pos + 1 + i. The ramp
-                        # is measured from the last backbone reset (example
-                        # start or a fired sleep), so every empty-state regime
-                        # gets the boost, not just the example's first tokens.
-                        tpos = torch.arange(
-                            slot.pos + 1 - slot.last_reset,
-                            slot.pos + 1 - slot.last_reset + chunk_len,
-                            device=device, dtype=torch.float32,
-                        )
-                        wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(min=0.0)
-                    if slot.recall is not None and recall_w != 1.0:
-                        rm = slot.recall[slot.pos + 1:end + 1]
-                        if actual < chunk_len:
-                            rm = F.pad(rm, (0, chunk_len - actual))
-                        wt = torch.where(rm, wt * recall_w, wt)
-                    batch_inputs.append(inp)
-                    batch_targets.append(tgt)
-                    batch_weights.append(wt)
-                    chunk_actual_lens.append(actual)
-
-            input_ids = torch.stack(batch_inputs)   # (B, chunk_len)
-            target_ids = torch.stack(batch_targets)  # (B, chunk_len)
-            weight_mask = torch.stack(batch_weights)  # (B, chunk_len) float: 0 = padding, may carry >1 boosts
-
-            loss_sum, weight_sum, batched_state = hooks.chunk_loss(
-                model, input_ids, target_ids, weight_mask, batched_state, args.eos_weight
-            )
-
-            chunk_was_non_finite = not torch.isfinite(loss_sum)
-            if chunk_was_non_finite:
-                # Skip only this chunk's contribution -- no backward() was
-                # called, so there's nothing of this chunk's to undo. Leave
-                # any gradients already accumulated from other chunks earlier
-                # in this window alone rather than discarding them too.
-                print(f"  warning: non-finite loss, skipping chunk")
-                del loss_sum
-            elif weight_sum > 0:
-                # torch.autograd.grad (not loss.backward()) so this chunk's
-                # gradient comes back as its own tensor instead of being
-                # summed straight into .grad -- lets us check finiteness
-                # BEFORE merging it into the window's running accumulation,
-                # so a single bad chunk only costs that chunk, not the
-                # whole window's worth of already-accumulated good chunks
-                # (loss_sum being finite, checked above, does NOT guarantee
-                # a finite gradient -- an op can have a perfectly finite
-                # forward value but a non-finite local derivative, e.g. near
-                # a sqrt/div singularity; confirmed in practice, see git
-                # history for the real run this was caught from).
-                chunk_grads = torch.autograd.grad(
-                    loss_sum / weight_sum, trainable_params, allow_unused=True
-                )
-                grad_is_finite = all(g is None or torch.isfinite(g).all() for g in chunk_grads)
-                if not grad_is_finite:
-                    if chunk_extra_log_fn is not None:
-                        _clear_live(prev_n_lines)
-                        prev_n_lines = 0
-                    print(f"  warning: non-finite gradient, discarding chunk")
-                    del chunk_grads
-                else:
-                    for p, g in zip(trainable_params, chunk_grads):
-                        if g is None:
-                            continue
-                        p.grad = g if p.grad is None else p.grad + g
-                    del chunk_grads
-                    window_loss_sum += loss_sum.item()
-                    window_tokens += weight_sum.item()
-                    # Real token count, not weight_sum: eos/recall/head boosts
-                    # inflate weight_sum, and checkpoint cadence should track
-                    # actual tokens trained.
-                    total_tokens += sum(chunk_actual_lens)
-                    accum_count += 1
-                    trained_any = True
-                    prev_n_lines = _show_batch_progress(
-                        model, chunk_extra_log_fn, slots, chunk_actual_lens, loss_sum, weight_sum, prev_n_lines
-                    )
-
-            # The segment/mix budget counts tokens fed, finite or not -- it
-            # schedules work rather than accounting for training, and a
-            # segment whose chunks all came back non-finite still has to end.
-            segment_tokens += sum(chunk_actual_lens)
-
-            batched_state = batched_state.detach() if batched_state is not None else None
-
-            if chunk_was_non_finite:
-                # The forward graph for a skipped chunk is never walked by
-                # backward(), so it's never freed the way a normal chunk's
-                # graph is. Some models' hooks (e.g. mamba2_2_7b_memory's
-                # _NeuralMemory.write, which calls torch.autograd.grad(...,
-                # create_graph=True) every token) build graphs that contain
-                # genuine Python-level reference cycles for that reason --
-                # ordinary CPython refcounting can't reclaim a cycle at all,
-                # only the generational cyclic collector can, and that runs
-                # on its own schedule rather than immediately when the last
-                # external reference (loss_sum, the pre-detach state above)
-                # is dropped. Left alone, a run of consecutive non-finite
-                # chunks can pile up several uncollected graphs before the
-                # collector catches up. Both locals' external references are
-                # already dropped by this point, so an explicit collection
-                # here reclaims the cycle right away instead of leaving it
-                # for whenever gc's thresholds next trigger.
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-            # A chunk with non-finite loss can leave the carried recurrent
-            # state (batched_state) itself non-finite too -- if so, don't let
-            # it keep propagating into that slot's future chunks (or a later
-            # example that inherits the slot). Force the slot to look
-            # "finished" so the assign-next-example logic below runs, which
-            # already resets that slot's state via reset_slot_fn. Only
-            # possible for models that expose per-slot state repair.
-            if reset_slot_fn is not None and batched_state is not None:
-                bad_slots = [
-                    b for b, slot in enumerate(slots)
-                    if slot is not None and not _slot_state_finite(batched_state, b)
-                ]
-                if bad_slots:
-                    # Unlike the per-chunk "non-finite loss, skipping chunk"
-                    # warning above (fine to be transient -- it's routine
-                    # and would otherwise spam the scrollback every chunk),
-                    # an abandoned example is rarer and worth keeping
-                    # visible: clear the live block first so this doesn't
-                    # just get silently overwritten by the next chunk's
-                    # live update (prev_n_lines' cursor math has no idea an
-                    # extra line was printed in between, so without this it
-                    # clobbers the warning instead of the intended live
-                    # line), then reset prev_n_lines so the live block
-                    # resumes fresh below it instead of trying to overwrite
-                    # up into it.
-                    if chunk_extra_log_fn is not None:
-                        _clear_live(prev_n_lines)
-                        prev_n_lines = 0
-                    for b in bad_slots:
-                        print(f"  warning: non-finite internal state in slot {b}, abandoning example and resetting state")
-                        slots[b].pos = slots[b].seqlen
-
-            # Advance slot positions; assign next example to any that finished.
-            # A slot goes idle instead once the segment is over budget, so
-            # the group hands over after a drain rather than mid-example.
-            for b, slot in enumerate(slots):
-                if slot is None:
-                    continue
-                slot.pos += chunk_actual_lens[b]
-                if slot.is_done():
-                    if next_ptr < n_valid and segment_tokens < budget:
-                        idx = order[next_ptr]
-                        next_ptr += 1
-                        ids = train_ids[idx].to(device)
-                        mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
-                        recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
-                        slots[b] = _Slot(b, idx, ids, mask, recall, train_sleeps[idx])
-                        if reset_slot_fn is not None and batched_state is not None:
-                            reset_slot_fn(model, batched_state, b)
-                    else:
-                        slots[b] = None
-                        if reset_slot_fn is not None and batched_state is not None:
-                            reset_slot_fn(model, batched_state, b)
-
-            # Gradient accumulation step.
-            if accum_count >= accum_steps:
-                if chunk_extra_log_fn is not None:
-                    _clear_live(prev_n_lines)
-                    prev_n_lines = 0
-
-                for p in trainable_params:
-                    if p.grad is not None:
-                        p.grad /= accum_count
-
-                grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, 1.0).item()
-                used_lr = optimizer.param_groups[0]["lr"]
-                optimizer.step()
-                optimizer.zero_grad()
-                global_step += 1
-                set_lr(global_step)
-                avg_loss = window_loss_sum / window_tokens
-                accum_count = 0
-                window_loss_sum = window_tokens = 0.0
-                ts = datetime.now().strftime("%H:%M:%S")
-
-                if on_step_fn is not None:
-                    on_step_fn(model, global_step)
-
-                ramping = f"  recall_w {recall_w:.2f}" if recall_w != recall_end else ""
-                print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}{ramping}")
-                if extra_log_fn is not None:
-                    line = extra_log_fn(model)
-                    if line is not None:
-                        print(f"    {line}")
-
-                bad = [name for name, p in model.named_parameters() if p.requires_grad and not torch.isfinite(p).all()]
-                if bad:
-                    print(f"FATAL: non-finite weights after step {global_step}: {bad[:5]}")
-                    print("Checkpoints NOT saved. Exiting.")
-                    raise SystemExit(1)
-
-                if total_tokens - last_ckpt_tokens >= args.ckpt_every_tokens:
-                    path = checkpoints.save_checkpoint(
-                        ckpt_dir, model, optimizer, global_step, epoch, slots, next_ptr,
-                        total_tokens, args.lora_rank, args.lora_alpha,
-                        batched_state=batched_state if args.keep_full_state > 0 else None,
-                        dataset_fingerprint=data_fp,
-                        memory_window=memory_window,
-                        **group_state(),
-                    )
-                    last_ckpt_tokens = total_tokens
-                    checkpoints.rotate_checkpoints(ckpt_dir, args.keep_ckpts, epoch)
-                    checkpoints.rotate_full_state(ckpt_dir, args.keep_full_state)
-                    ts = datetime.now().strftime("%H:%M:%S")
-                    print(f"[{ts}]  saved {path}")
-
-        if chunk_extra_log_fn is not None:
-            _clear_live(prev_n_lines)
-
-        # Step on any remaining accumulated gradient before handing the
-        # batch over to the next segment, whose slots and chunk length are
-        # different ones.
-        if accum_count > 0:
-            for p in trainable_params:
-                if p.grad is not None:
-                    p.grad /= accum_count
-            torch.nn.utils.clip_grad_norm_(trainable_params, 1.0)
-            optimizer.step()
-            optimizer.zero_grad()
-            global_step += 1
-            set_lr(global_step)
-            if on_step_fn is not None:
-                on_step_fn(model, global_step)
-
-        ptrs[gi] = next_ptr
-        group_tokens[gi] = base_tokens + segment_tokens
-        final_save.update(epoch=epoch, slots=slots, next_ptr=next_ptr,
-                          batched_state=batched_state, group_state=group_state())
 
     for epoch in range(start_epoch, args.epochs):
         if budget_spent():
@@ -778,7 +947,22 @@ def run_training(
                 # The resumed group is already finished, so its saved slot
                 # positions have nothing to restore into.
                 gi, resume_slot_states, resume_full_state = pick_deficit(group_tokens, shares, available), None, None
-            run_segment(gi, epoch, segment_budget, resume_slot_states, resume_full_state)
+            progress = run_segment(
+                execution,
+                data,
+                callbacks,
+                checkpoint_policy,
+                loss_policy,
+                SegmentSchedule(
+                    groups, orders, ptrs, group_tokens, final_save, gi, epoch,
+                    segment_budget, resume_slot_states, resume_full_state,
+                ),
+                progress,
+            )
+            global_step = progress.global_step
+            total_tokens = progress.total_tokens
+            last_ckpt_tokens = progress.last_ckpt_tokens
+            trained_any = progress.trained_any
             resume_slot_states = resume_full_state = resume_group = None
 
     if not trained_any:

@@ -15,3 +15,7 @@ def test_train_reexports_training_loop_primitives():
 
 def test_train_keeps_a_run_training_compatibility_wrapper():
     assert train.run_training is not loop.run_training
+
+
+def test_run_segment_is_a_top_level_loop_implementation():
+    assert callable(loop.run_segment)
