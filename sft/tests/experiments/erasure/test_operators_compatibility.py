@@ -40,3 +40,21 @@ def test_b4_reexports_the_shared_gating_and_basis_primitives():
         "variant_basis",
     ):
         assert getattr(b4, name) is getattr(gating, name)
+
+
+def test_erase_probe_reexports_the_shared_wake_item_primitives():
+    import erase_probe
+    from experiments.erasure import wake_items
+
+    for name in (
+        "Bystander",
+        "collisions",
+        "assert_no_collisions",
+        "build_dialogue",
+        "build_wake_items",
+        "report_distractors",
+        "build_nearcone",
+        "build_bystanders",
+        "build_mixed_turns",
+    ):
+        assert getattr(erase_probe, name) is getattr(wake_items, name)
