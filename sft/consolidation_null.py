@@ -51,17 +51,35 @@ from __future__ import annotations
 
 import argparse
 import copy
-import itertools
 import json
 import random
-import re
 import sys
 import time
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
+
+from experiments.facts import (
+    CODE_DIGITS,
+    ENTITY_POOL,
+    FILLER_SENTENCES,
+    Fact,
+    Turn,
+    build_facts,
+    build_turns,
+    contains_code,
+    cue_rungs,
+    digits,
+    exact_match,
+    extract_answer,
+    fact_turns,
+    first_success,
+    normalize,
+    pass_at_k,
+    render_turns,
+    role_adjacency_violations,
+)
 
 if TYPE_CHECKING:
     import torch
@@ -75,141 +93,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 PASS_MATCH_RATE = 0.30
 UNDERPOWERED_DELTA_NATS = 1.0
 
-CODE_DIGITS = 5
 GEN_TOKENS = 16
-
-# Entity pool, grouped by the category used for the cue ladder's second rung.
-ENTITY_POOL: dict[str, list[str]] = {
-    "bird": ["heron", "magpie", "falcon", "sparrow", "kestrel", "pelican", "curlew", "osprey", "plover", "warbler"],
-    "tree": ["maple", "cedar", "birch", "willow", "aspen", "juniper", "hemlock", "poplar", "alder", "hazel"],
-    "mineral": ["quartz", "basalt", "gypsum", "feldspar", "calcite", "olivine", "pyrite", "garnet", "topaz", "jasper"],
-    "instrument": ["cello", "oboe", "banjo", "marimba", "clarinet", "bassoon", "trombone", "zither", "dulcimer", "viola"],
-    "spice": ["cumin", "saffron", "cardamom", "paprika", "turmeric", "coriander", "fennel", "nutmeg", "anise", "clove"],
-    "vessel": ["schooner", "frigate", "trawler", "galleon", "sloop", "ketch", "barque", "corvette", "dinghy", "cutter"],
-}
-
-# Digit-free by construction: a digit anywhere in the filler would give the
-# fresh-state probes a way to score a code token it never learned.
-FILLER_SENTENCES = [
-    "The weather in the valley stayed mild for most of the season.",
-    "A good soup starts with onions cooked slowly until they turn golden.",
-    "The train from the coast arrives twice a day, once at dawn and once at dusk.",
-    "Most of the library's east wing is dedicated to maritime history.",
-    "She repainted the fence a pale shade of green last spring.",
-    "Migrating flocks tend to follow the river south this time of year.",
-    "The old mill has been converted into a small museum of local crafts.",
-    "He prefers cycling to work when the mornings are dry.",
-    "Fresh basil loses its aroma quickly once the leaves are bruised.",
-    "The lighthouse keeper kept meticulous logs of every passing storm.",
-    "Their garden produces more zucchini than the whole street can eat.",
-    "A thin layer of fog settled over the harbor before sunrise.",
-    "The concert hall's acoustics favor the string section.",
-    "The bakery on the corner sells out of rye bread before noon.",
-]
-
-T = TypeVar("T")
-Turn = tuple[str, str]
-
-
-@dataclass(frozen=True)
-class Fact:
-    entity: str
-    category: str
-    code: str
-
-
-def build_facts(n: int, rng: random.Random) -> list[Fact]:
-    """n facts on distinct entities, each bound to a fresh random digit code."""
-    pool = [(name, cat) for cat, names in ENTITY_POOL.items() for name in names]
-    if n > len(pool):
-        raise ValueError(f"only {len(pool)} entities available, asked for {n}")
-    return [
-        Fact(name, cat, " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS)))
-        for name, cat in rng.sample(pool, n)
-    ]
-
-
-def fact_turns(fact: Fact) -> list[Turn]:
-    """The two turns that state one fact. The assistant turn is verbatim the
-    string the post-distillation probe asks the model to produce, so the
-    distillation target and the probe are the same sentence."""
-    return [
-        ("user", f"What is the code for the {fact.entity}?"),
-        ("assistant", f"The code for the {fact.entity} is {fact.code}."),
-    ]
-
-
-def build_turns(
-    facts: Sequence[Fact],
-    filler_tokens: int,
-    token_len: Callable[[str], int],
-    rng: random.Random,
-) -> list[Turn]:
-    """The wake transcript as (role, text) turns: each fact's two turns,
-    separated by at least `filler_tokens` of digit-free filler. Filler is
-    emitted in user/assistant pairs so roles strictly alternate."""
-    turns: list[Turn] = []
-    for i, fact in enumerate(facts):
-        if i:
-            used = 0
-            while used < filler_tokens:
-                for role in ("user", "assistant"):
-                    sentence = rng.choice(FILLER_SENTENCES)
-                    turns.append((role, sentence))
-                    used += token_len(sentence)
-        turns.extend(fact_turns(fact))
-    return turns
-
-
-def render_turns(turns: Iterable[Turn], user_open: str, asst_open: str) -> str:
-    """Chat-format text. The role marker is its own special token, so the
-    separator is the single literal space the training format uses."""
-    return "".join(f"{user_open if role == 'user' else asst_open} {text}" for role, text in turns)
-
-
-def role_adjacency_violations(turns: Sequence[Turn]) -> int:
-    return sum(1 for a, b in itertools.pairwise(turns) if a[0] == b[0])
-
-
-def normalize(text: str) -> str:
-    return " ".join(text.split()).strip(" .,;:!?\"'")
-
-
-def digits(text: str) -> str:
-    return re.sub(r"\D", "", text)
-
-
-def extract_answer(text: str, stops: Sequence[str] = (".", "\n")) -> str:
-    cut = len(text)
-    for stop in stops:
-        i = text.find(stop)
-        if i != -1:
-            cut = min(cut, i)
-    return normalize(text[:cut])
-
-
-def exact_match(text: str, code: str, stops: Sequence[str] = (".", "\n")) -> bool:
-    answer = extract_answer(text, stops)
-    return bool(answer) and digits(answer) == digits(code)
-
-
-def contains_code(text: str, code: str) -> bool:
-    return digits(code) in digits(text)
-
-
-def pass_at_k(samples: Sequence[str], code: str) -> float:
-    if not samples:
-        return 0.0
-    return sum(contains_code(s, code) for s in samples) / len(samples)
-
-
-def first_success(rungs: Sequence[T], probe: Callable[[T], bool]) -> int:
-    """1-based index of the first rung the probe succeeds on, 0 if none.
-    Later rungs are never probed once one succeeds."""
-    for i, rung in enumerate(rungs, 1):
-        if probe(rung):
-            return i
-    return 0
 
 
 def verdict(match_rate: float, mean_delta_nats: float) -> str:
@@ -218,17 +102,6 @@ def verdict(match_rate: float, mean_delta_nats: float) -> str:
     if mean_delta_nats >= UNDERPOWERED_DELTA_NATS:
         return "FAIL-UNDERPOWERED"
     return "FAIL-DEAD"
-
-
-def cue_rungs(fact: Fact, user_open: str, asst_open: str) -> list[tuple[str, str]]:
-    """(prompt, leaked prefix) per ladder rung: free recall, category hint,
-    first-digit hint. The leaked prefix is prepended to the generation before
-    grading, so a rung-3 hit still requires the remaining digits."""
-    stem = f"{asst_open} The code for the {fact.entity} is"
-    free = f"{user_open} What is the code for the {fact.entity}?{stem}"
-    hinted = f"{user_open} What is the code for the {fact.entity}, the {fact.category}?{stem}"
-    first = fact.code.split()[0]
-    return [(free, ""), (hinted, ""), (f"{free} {first}", f" {first}")]
 
 
 def ts() -> str:

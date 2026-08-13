@@ -126,20 +126,22 @@ if TYPE_CHECKING:
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from consolidation_null import (
+from experiments.facts import (
     CODE_DIGITS,
-    GEN_TOKENS,
     Fact,
     build_facts,
     build_turns,
     cue_rungs,
     exact_match,
     extract_answer,
+    normalize,
+    render_turns,
+)
+from consolidation_null import (
+    GEN_TOKENS,
     fmt_duration,
     generate,
     kl_loss,
-    normalize,
-    render_turns,
     replay_step,
     report_transcript,
     run_chunks,

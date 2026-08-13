@@ -124,7 +124,8 @@ def oracle_positions(dream: PilotDream, facts) -> tuple[dict[str, list[int]], li
 
 def separability(capture: PilotCapture) -> dict[str, object]:
     """Sec 2.10.7 test 1: does D_t tell a fact read from everything else?"""
-    from consolidation_null import Fact, ts
+    from experiments.facts import Fact
+    from consolidation_null import ts
 
     facts = [Fact(*f) for f in capture.facts]
     per_dream, pooled_pos, pooled_neg = [], [], []
@@ -220,7 +221,7 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
     import torch
 
     from b4 import RANK_RULES, gated_positions
-    from consolidation_null import Fact
+    from experiments.facts import Fact
     from dream_sleep import basis_overlap, dream_bases, gate_agreement
 
     facts = [Fact(*f) for f in capture.facts]

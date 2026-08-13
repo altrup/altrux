@@ -816,7 +816,7 @@ class DreamSleepBackend:
 
     def probe(self, arm: str, wake: int, state: object,
               artifact: dict[str, object]) -> dict[str, object]:
-        from consolidation_null import exact_match
+        from experiments.facts import exact_match
         from dream_sleep import paraphrase_prompts
         from probes_common import battery_summary, perplexity, score_battery_batched
 

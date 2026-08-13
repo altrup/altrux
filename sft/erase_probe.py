@@ -54,9 +54,8 @@ if TYPE_CHECKING:
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from consolidation_null import (
+from experiments.facts import (
     FILLER_SENTENCES,
-    GEN_TOKENS,
     Fact,
     build_facts,
     build_turns,
@@ -64,9 +63,12 @@ from consolidation_null import (
     digits,
     exact_match,
     extract_answer,
-    generate,
     normalize,
     render_turns,
+)
+from consolidation_null import (
+    GEN_TOKENS,
+    generate,
     report_transcript,
     run_chunks,
     target_logprob,

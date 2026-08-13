@@ -35,14 +35,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from consolidation_null import (  # noqa: E402
+from experiments.facts import (  # noqa: E402
     build_facts,
     build_turns,
     cue_rungs,
     exact_match,
-    generate,
     render_turns,
     role_adjacency_violations,
+)
+from consolidation_null import (  # noqa: E402
+    generate,
     run_chunks,
     ts,
 )
