@@ -181,7 +181,7 @@ def main() -> None:
             rank, alpha = cfg["rank"], cfg["alpha"]
     model, trainable = train_hooks.setup_training(device, rank, alpha, 0.0)
     if args.checkpoint:
-        from train import load_checkpoint
+        from training.checkpoints import load_checkpoint
 
         load_checkpoint(model, Path(args.checkpoint))
     model.eval()

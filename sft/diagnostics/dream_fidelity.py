@@ -71,7 +71,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
 
-    import probe_recall as pr
+    from diagnostics import recall as pr
 
     model_name = os.getenv("MODEL_NAME", "mamba2_2_7b_memory")
     train_hooks = importlib.import_module(f"models.{model_name}.train_hooks")

@@ -62,7 +62,7 @@ def main() -> None:
 
     from dotenv import load_dotenv
 
-    from dream_sleep import load_dream_cache
+    from experiments.dreams.cache import load_dream_cache
     from models.common import build_tokenizer
     from progress import ts
 

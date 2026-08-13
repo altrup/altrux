@@ -55,7 +55,7 @@ SCENARIOS = [
 
 
 def build_prefix(tokenizer, markers: tuple[str, str], corrected: str, wrong: str, device, filler: bool = True) -> torch.Tensor:
-    import probe_recall as pr
+    from diagnostics import recall as pr
     from preparation.conversations import format_conversation
 
     messages = [
@@ -88,7 +88,7 @@ def build_query(tokenizer, markers: tuple[str, str], device) -> torch.Tensor:
 
 
 def main() -> None:
-    import probe_recall as pr
+    from diagnostics import recall as pr
     from models.common import build_tokenizer
     from training.checkpoints import latest_checkpoint, load_checkpoint
 

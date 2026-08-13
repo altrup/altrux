@@ -137,7 +137,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
 
-    from probe_recall import single_token_labels
+    from diagnostics.recall import single_token_labels
     import models.mamba2_2_7b_memory as model_mod
     from models.common import build_tokenizer
 
