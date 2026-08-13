@@ -15,7 +15,7 @@ from experiments.dreams.cache import (
 )
 from experiments.dreams.generation import copy_state, frozen_teacher, state_to
 from experiments.dreams.types import DreamCache, DreamSetCache
-from experiments.erasure.gating import RANK_RULES, VARIANTS
+from experiments.erasure.gating import VARIANTS
 from experiments.facts import extract_answer, normalize
 from experiments.inference import run_chunks
 from experiments.erasure.probe import group_by_layer
