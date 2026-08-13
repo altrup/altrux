@@ -10,10 +10,9 @@ from pathlib import Path
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import train
-from tests.test_train import FakeHooks, FakeStatefulModel, _ids, _make_args
+from tests.training.test_train import FakeHooks, FakeStatefulModel, _ids, _make_args
 
 
 # ---------------------------------------------------------------------------

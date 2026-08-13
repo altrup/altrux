@@ -12,8 +12,6 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from models.common import build_tokenizer
 from prepare_data import format_conversation, format_pack, pack_records, recap_messages

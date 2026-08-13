@@ -5,7 +5,6 @@ prepare_cram's and is covered by test_prepare_cram.py.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from prepare_needles import babilong_items
 

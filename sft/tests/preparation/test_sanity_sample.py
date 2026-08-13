@@ -5,7 +5,6 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sanity_sample import pick_windows
 

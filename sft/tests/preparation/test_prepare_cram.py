@@ -14,7 +14,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from prepare_cram import add_block_args, build_blocks, make_items, split_articles, split_sentences, validate_blocks
 

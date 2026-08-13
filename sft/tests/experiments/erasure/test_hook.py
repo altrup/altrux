@@ -15,8 +15,6 @@ from pathlib import Path
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import models  # noqa: F401  (installs the selective_scan_cuda stub)
 from mamba_ssm.models.config_mamba import MambaConfig
