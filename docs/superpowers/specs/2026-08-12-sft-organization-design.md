@@ -29,8 +29,8 @@ preparation has a few small dependency clusters.
 1. Organize all maintained `sft` Python code by domain.
 2. Give each implementation module one clear responsibility.
 3. Split large orchestration functions at existing behavioral seams.
-4. Preserve every current top-level command, Make target, documented option,
-   and repository-used import.
+4. Make Make targets the supported command surface while preserving their
+   documented options and behavior.
 5. Keep every B-family and erasure experiment runnable and tested.
 6. Permit migration in small, independently tested commits.
 
@@ -51,8 +51,8 @@ The project directory is already the useful namespace. Do not add a redundant
 
 ```text
 sft/
-├── <existing top-level commands>.py
 ├── progress.py
+├── scripts/
 ├── adapters/
 │   └── lora.py
 ├── training/
@@ -120,50 +120,37 @@ sft/
 │   ├── diagnostics/
 │   ├── providers/
 │   ├── reporting/
-│   └── test_compatibility.py
+│   └── test_commands.py
 └── data/                       # Existing generated artifacts, not Python code
 ```
 
 Every new code directory is a normal Python package. `sft/` itself remains the
-project root and does not need an `__init__.py`.
+project root and does not need an `__init__.py`. The root contains only project
+configuration and documentation plus `progress.py`, the deliberate
+cross-domain leaf.
 
 The listed modules are the intended final set, not scaffolding. A module is
 created only when its current code moves. Empty packages and forwarding
 modules inside the implementation tree are not allowed.
 
-## Compatibility entry points
+## Command surface
 
-Every current top-level Python file remains at its current path. After its
-implementation moves, the file becomes a small compatibility entry point that:
+Make targets are the only supported user-facing command paths. They run domain
+CLI modules through the shared uv project environment, for example:
 
-1. explicitly imports and re-exports its supported names;
-2. imports the domain `main` function; and
-3. calls that function only under `if __name__ == "__main__"`.
-
-Do not use wildcard imports. Each wrapper gets an explicit `__all__` so the
-compatibility surface is visible. The initial surface includes every
-non-private name imported by another repository file or test, plus every name
-documented for direct use. Existing cross-module use of a private name, such
-as `filter_items` importing `prepare_cram._find`, must move to a named domain
-function; the old private name remains re-exported while the compatibility
-wrapper exists.
-
-These forms must continue to work:
-
-```bash
-python train.py --help
-python dream_sleep.py --help
-python adaptive_multisleep.py --help
+```make
+uv run --no-sync python -m training.cli
+uv run --no-sync python -m experiments.dreams.cli
+uv run --no-sync python -m experiments.adaptive.cli
 ```
 
-```python
-from train import load_checkpoint
-from dream_sleep import DreamCache
-from adaptive_wake import WakePlan
-```
+Every CLI module calls `main()` only under `if __name__ == "__main__"`.
+Top-level Python command wrappers are removed. Repository imports use domain
+modules directly. Old direct Python commands, import paths, and pickle globals
+are not compatibility requirements.
 
-The wrappers are permanent compatibility surfaces. Removing one is a separate
-user-visible change and is outside this refactor.
+Shell drivers and installation helpers live under `scripts/`; Make targets and
+scripts may call domain modules but do not restore top-level Python wrappers.
 
 ## Current-file mapping
 
@@ -330,7 +317,7 @@ or training code.
 The permitted dependency flow is:
 
 ```text
-top-level wrappers
+Make targets
         ↓
 domain cli / runner / diagnostic
         ↓
@@ -352,8 +339,8 @@ More specifically:
 - diagnostics can depend on any stable domain API.
 - reporting and providers remain leaf-independent from model execution.
 
-No implementation module imports a top-level compatibility wrapper. This rule
-is what prevents circular imports during and after migration.
+No implementation module imports a removed top-level command module. This rule
+prevents circular imports during and after migration.
 
 Do not add `common.py`, `core.py`, `utils.py`, or a catch-all context object.
 If code has no clear domain owner, leave it with its current caller until a
@@ -379,70 +366,66 @@ Helpers are extracted when they name a real phase, invariant, or reusable
 operation. Helpers that only rename two lines or forward all arguments are not
 an improvement.
 
-## Artifact compatibility
+## Artifact behavior
 
-The refactor must preserve:
+The refactor must preserve current domain-owned artifacts and behavior:
 
 - checkpoint fields and resume behavior;
 - prepared-data schemas;
-- dream-cache fields, identity hashes, and the ability to load existing cache
-  files whose pickle globals point at `dream_sleep`;
+- dream-cache fields and identity hashes;
 - wake, manifest, stream, seed-result, and aggregate schemas;
 - deterministic seed derivation and random draw order;
 - decoded sidecar structure and invariant checks; and
 - existing default paths.
 
-Compatibility wrappers must expose old pickle globals before any cache classes
-move. A fixture made by the current code must load after the extraction. New
-caches must round-trip through both the domain loader and the top-level
-compatibility loader. A serialized-format migration is separate work.
+Artifacts serialized through removed top-level module names are not supported.
+Current domain-owned caches must round-trip through the domain loader.
 
 ## Test organization
 
 Tests move with their implementation domain, but movement alone does not
 justify rewriting assertions. The final test tree mirrors the source domains.
 
-`test_compatibility.py` covers the stable boundary:
+Command-contract tests cover the stable boundary:
 
-- every former top-level module imports;
-- documented and repository-used symbols remain available;
-- each top-level CLI delegates to the same parser and `main` path;
-- existing dream caches load through the compatibility module; and
-- Make targets still resolve the same commands.
+- every supported Make target resolves a domain module;
+- each domain CLI is executable with `python -m`;
+- repository imports use domain modules; and
+- current dream caches load through the domain module.
 
 Behavior tests stay focused on calls, state, artifacts, seeds, and invariants.
 They do not assert complete help text or log wording.
 
 Before moving a large orchestration path, add a characterization test only for
 behavior not already protected. Do not create duplicate old-path and new-path
-test suites. The compatibility test proves the old path; domain tests prove
-the behavior once.
+test suites. Domain tests prove the behavior once.
 
 ## Migration sequence
 
-Every phase leaves the repository green and keeps top-level commands usable.
+Every phase leaves the repository green and keeps Make targets usable.
 Each bullet is a commit-sized sub-feature unless its tests show it must be
 smaller.
 
-1. **Compatibility inventory.** Add the import/CLI/cache compatibility test
-   before moving definitions.
+1. **Boundary inventory.** Add domain API, CLI, and cache tests before moving
+   definitions.
 2. **Training.** Extract datasets and checkpoints, then the segment loop, then
    the training CLI.
 3. **Preparation.** Move the conversation/cram/needle/interference/chain
    clusters, then the independent preparation and inspection commands.
 4. **Experiment primitives.** Extract facts, inference, and locality from
-   `consolidation_null.py` and `probes_common.py`; leave their wrappers green.
+   `consolidation_null.py` and `probes_common.py`.
 5. **Erasure.** Extract tensor operators, gating, wake items, pilot, and probe.
    Confirm all B-family tests before proceeding.
-6. **Dreams.** Move types and cache compatibility first, then generation and
+6. **Dreams.** Move types and cache behavior first, then generation and
    probes, then distillation and runner orchestration, and finally the CLI.
 7. **Adaptive.** Move manifest/wake/coordinator, analysis, backend, runner, and
    CLI in that order.
 8. **Diagnostics, providers, and reporting.** Move the remaining small command
-   implementations behind their existing wrappers.
-9. **Test layout and cleanup.** Move tests into matching domain directories,
-   remove temporary forwarding imports inside implementation packages, update
-   `sft/README.md`, and run the complete available suite.
+   implementations into their domains.
+9. **Command and test cleanup.** Point Make at executable domain modules, move
+   shell drivers under `scripts/`, remove top-level Python commands, move tests
+   into matching domain directories, update `sft/README.md`, and run the
+   complete available suite.
 
 Do not combine file movement with behavior changes. If extraction exposes a
 bug, first finish or revert the pure move; fix the bug in its own TDD slice.
@@ -451,16 +434,14 @@ bug, first finish or revert the pure move; fix the bug in its own TDD slice.
 
 The reorganization is complete when:
 
-- every maintained top-level script is a compatibility wrapper or a deliberate
-  small command whose full implementation is already one responsibility;
-- `dream_sleep.py`, `train.py`, and `adaptive_multisleep.py` contain no runtime
-  orchestration beyond compatibility and CLI delegation;
-- no implementation imports a top-level wrapper;
+- the root contains only project files and `progress.py`;
+- every supported Make target runs an executable domain module;
+- no implementation imports a removed top-level command module;
 - the dependency directions above have no cycle;
-- all current Make targets, CLI paths, and supported imports work;
+- all current Make targets and domain CLI paths work;
 - B-family tests and commands remain present;
-- existing checkpoints, prepared data, dream caches, and adaptive artifacts
-  remain readable;
+- current checkpoints, prepared data, dream caches, and adaptive artifacts
+  remain readable through domain modules;
 - deterministic tests prove unchanged seeds and artifact identities;
 - the focused CPU-safe suite passes locally; and
 - the full suite and real command smokes pass on the required GPU environment.
