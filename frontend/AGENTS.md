@@ -1,4 +1,4 @@
-# Claude Guidelines — frontend
+# Frontend instructions
 
 ## Quality checks (run in this order)
 

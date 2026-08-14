@@ -1,4 +1,4 @@
-# Claude Guidelines — altrux
+# Altrux repository instructions
 
 ## Cache policy
 
@@ -29,12 +29,12 @@ This machine's GPU (AMD Radeon RX 7700S, `gfx1102`) isn't an officially-supporte
 
 - `bitsandbytes`' 4-bit quantization (`models/common.py:quantize_lora_targets`, used for QLoRA) segfaults on it outright unless `HSA_OVERRIDE_GFX_VERSION=11.0.0` is set (spoofs it as the supported `gfx1100`). Confirmed working end-to-end with that var set; confirmed segfaulting without it. Not baked into the Makefiles since it's specific to this unsupported-gfx-arch hardware, not a general requirement — set it in your shell environment if you hit unexplained segfaults in GPU code on this machine.
 - `causal-conv1d` and `mamba_ssm`'s own Triton SSD-scan kernel are both broken here too — `causal-conv1d`'s compiled kernel segfaults (both the multi-token and single-token code paths) and the Triton scan kernel hangs. Confirmed independent of model size, package version, and a from-source rebuild — not something the `HSA_OVERRIDE_GFX_VERSION` spoof fixes. Re-confirmed 2026-07-02 via a direct `mamba_ssm.modules.mamba2.Mamba2` forward call (not just synthetic `causal_conv1d_fn` calls) — still segfaults (exit 139) with `causal-conv1d==1.6.2.post1`. Every model in `models/` therefore drives Mamba2's mixer manually in plain PyTorch (see `models/mamba2_780m/model.py`'s `_mixer_step` and `models/mamba2_2_7b_memory/model.py`'s README for the investigation) instead of calling `Mamba2.forward()`/`.step()`. `causal-conv1d` is consequently not installed at all on this box (removed from both Makefiles' `sync` targets) — it would just be unused dead weight (and a multi-minute compile) if it were. **This is specific to this box's unsupported ROCm gfx arch, not Mamba2/causal-conv1d in general** — `causal-conv1d` and the native fused/chunked kernel path work fine on a proper CUDA target (e.g. a rented H100), so training run there should use the real fused path instead of the manual loop; don't assume the ROCm workaround needs to travel with the code to every environment.
-- `import mamba_ssm` needs a *working* GPU even for CPU-only work: its Triton layer-norm module queries CUDA device properties at import time, unguarded, and `HIP_VISIBLE_DEVICES=""` doesn't help (the query still raises). So when this box's GPU falls off the bus (`amdgpu ... device lost from bus`, GPU recovery failed — has happened mid-session; reboot to recover), the whole `make test` suite fails at *collection* through the model import chain, looking like a code breakage when it's the GPU. Check `journalctl -k` for amdgpu resets before debugging test errors that trace into `mamba_ssm/ops/triton/layer_norm.py`. Tests that don't import the models package (e.g. `sft/tests/test_prepare_chains.py`) still run.
+- `import mamba_ssm` needs a *working* GPU even for CPU-only work: its Triton layer-norm module queries CUDA device properties at import time, unguarded, and `HIP_VISIBLE_DEVICES=""` doesn't help (the query still raises). So when this box's GPU falls off the bus (`amdgpu ... device lost from bus`, GPU recovery failed — has happened mid-session; reboot to recover), the whole `make test` suite fails at *collection* through the model import chain, looking like a code breakage when it's the GPU. Check `journalctl -k` for amdgpu resets before debugging test errors that trace into `mamba_ssm/ops/triton/layer_norm.py`. Tests that don't import the models package (e.g. `sft/tests/preparation/test_prepare_chains.py`) still run.
 - Uninstalling `causal-conv1d` exposed a separate, unrelated breakage: `mamba_ssm/__init__.py` unconditionally imports legacy Mamba-1 ops (`selective_scan_fn`/`mamba_inner_fn`, which nothing in this repo calls — every model here only uses Mamba2), and the compiled `selective_scan_cuda` extension those need fails to import on this machine (a ROCm runtime library naming/ABI mismatch unrelated to anything in this repo). `models/__init__.py` stubs `selective_scan_cuda` into `sys.modules` before `mamba_ssm` is ever imported, so Python's import system skips the real (broken, unused) import entirely. Don't remove that stub thinking it's dead code — it's load-bearing for every model's `import mamba_ssm` to succeed at all on this machine.
 
 ## Models
 
-Each model is a folder in `models/` at the repo root containing `model.py` (implementation), a thin `__init__.py` that re-exports the interface below, a `train_hooks.py` (training-specific interface — see `models/CLAUDE.md`), and a `README.md` documenting the model (see `models/CLAUDE.md` for the README checklist). A model must export:
+Each model is a folder in `models/` at the repo root containing `model.py` (implementation), a thin `__init__.py` that re-exports the interface below, a `train_hooks.py` (training-specific interface — see `models/AGENTS.md`), and a `README.md` documenting the model (see `models/AGENTS.md` for the README checklist). A model must export:
 
 | Name | Type | Description |
 |------|------|-------------|
@@ -67,11 +67,11 @@ Whenever you add, rename, or remove a backend environment variable, also update 
 Whenever you add, rename, or remove a frontend environment variable, also update `frontend/.env.example`.
 Whenever you add, rename, or remove an sft environment variable, also update `sft/.env.example`.
 
-## Keep CLAUDE.md files current
+## Keep AGENTS.md files current
 
-There's a `CLAUDE.md` at the root and in some subdirectories (e.g. `models/CLAUDE.md`, `sft/CLAUDE.md`). Update the relevant one in the same change whenever you introduce or discover something a future session would otherwise have to rediscover the hard way — a non-obvious gotcha, a workaround for broken tooling, a convention that isn't visible just from reading the code, or a rule you had to be told twice. Don't record anything derivable by reading the code itself (that belongs in comments or a README, not here).
+There's an `AGENTS.md` at the root and in some subdirectories (e.g. `models/AGENTS.md`, `sft/AGENTS.md`). Update the relevant one in the same change whenever you introduce or discover something a future session would otherwise have to rediscover the hard way — a non-obvious gotcha, a workaround for broken tooling, a convention that isn't visible just from reading the code, or a rule you had to be told twice. Don't record anything derivable by reading the code itself (that belongs in comments or a README, not here). Each `CLAUDE.md` imports its sibling `AGENTS.md`; don't duplicate instructions there.
 
-When editing a `CLAUDE.md`, also check whether the entry you're touching (or a neighboring one) has gone stale — e.g. describes a workaround for a bug that's since been fixed elsewhere — and trim or update it rather than only appending. Keeps the file a live reference instead of an append-only log.
+When editing an `AGENTS.md`, also check whether the entry you're touching (or a neighboring one) has gone stale — e.g. describes a workaround for a bug that's since been fixed elsewhere — and trim or update it rather than only appending. Keeps the file a live reference instead of an append-only log.
 
 ## Live progress logs — and live *results*
 
@@ -79,13 +79,13 @@ Any operation that takes more than a few seconds must print live progress so it'
 
 Progress counters alone are not enough: **results must stream as they are produced, never be held for an end-of-run report.** A long run has to be informative if read — or killed — at any point: decoded samples print the moment they're collected, running composition/verdict counters ride the progress line, and anything wall-clock-sensitive reports its rate and ETA. If the only way to learn what a script found is to let it finish, that's a bug. (A filter run once sat at "0 kept" for 100 blocks over an hour while the explanation — the per-test fail composition — existed internally but printed only at exit; the fix was ~5 lines.)
 
-**Every log line carries a timestamp** (`[HH:MM:SS]` prefix, train.py's existing idiom — including the periodic/`\r` status line). Rates, stalls, and durations must be reconstructable from the log alone; inferring a run's speed from file mtimes because the lines are undated is the failure mode this prevents.
+**Every log line carries a timestamp** (`[HH:MM:SS]` prefix, `sft/training/loop.py`'s existing idiom — including the periodic/`\r` status line). Rates, stalls, and durations must be reconstructable from the log alone; inferring a run's speed from file mtimes because the lines are undated is the failure mode this prevents.
 
 ## Sanity-check the artifact, not just the counts
 
 Every data generator must print **structural invariants and a decoded sample**, not only quantities, and no dataset goes to a training run until someone has read that sample.
 
-This is not a style preference. `prepare_chains.py` shipped episode splices that left `[USER]` turns with no answer and `[ASSISTANT]` turns answering a question 32k tokens back — 9% of all role transitions malformed — through several runs. Every count in every regen log was correct and reproducible the whole time (`2753 chains, 230.9M tokens, 15857 sleeps, 5498 split-tails`), because counts confirm the generator did what it was told, never that what it was told was right. Only decoding the tokens at a join exposed it.
+This is not a style preference. `sft/preparation/chains.py` shipped episode splices that left `[USER]` turns with no answer and `[ASSISTANT]` turns answering a question 32k tokens back — 9% of all role transitions malformed — through several runs. Every count in every regen log was correct and reproducible the whole time (`2753 chains, 230.9M tokens, 15857 sleeps, 5498 split-tails`), because counts confirm the generator did what it was told, never that what it was told was right. Only decoding the tokens at a join exposed it.
 
 So a generator's log needs:
 
