@@ -118,6 +118,11 @@ compute-depth lever. This synergy is a further reason token-mix is the right
 integration bet; state-injection has no clean per-iteration semantics under
 loops.
 
+Open idea, not a decision: let the internal-thinking loop continue until the
+next-token distribution reaches a confidence threshold, such as one token at
+80% probability. The training method, confidence calibration, and termination
+rule remain unresolved.
+
 ## Next steps, prioritized
 
 ### Local (this box, before the next rental)
