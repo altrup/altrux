@@ -84,3 +84,7 @@ def main() -> None:
             for lo, hi, kind in pick_windows(len(ids), recall, sleeps, 1, args.width, args.seed + si):
                 text = tokenizer.decode(ids[lo:hi].tolist())
                 print(f"{_ts()}  [example {ei}, tokens {lo}:{hi}, around {kind}]\n    {text!r}")
+
+
+if __name__ == "__main__":
+    main()

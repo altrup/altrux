@@ -396,3 +396,7 @@ __all__ = [
     "report_transcript",
     "main",
 ]
+
+
+if __name__ == "__main__":
+    main()

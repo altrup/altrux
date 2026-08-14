@@ -364,3 +364,7 @@ __all__ = [
     "report_packing",
     "main",
 ]
+
+
+if __name__ == "__main__":
+    main()

@@ -746,3 +746,7 @@ __all__ = [
     "_find",
     "main",
 ]
+
+
+if __name__ == "__main__":
+    main()

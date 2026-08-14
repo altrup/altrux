@@ -34,7 +34,7 @@ test:
 # no-cap intent is visible rather than riding on prepare_data.py's default.
 data:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python prepare_data.py \
+	uv run --no-sync python -m preparation.conversations \
 		--hf-dataset HuggingFaceH4/ultrachat_200k \
 		--max-examples 20000 \
 		--max-len 100000
@@ -54,29 +54,29 @@ data:
 # built for this -- see models/mamba2_2_7b_memory/README.md), not here.
 data-memory:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python prepare_babilong.py \
+	uv run --no-sync python -m preparation.babilong \
 		--configs 4k 8k \
 		--max-per-split 100 \
 		--output data/babilong_raw.jsonl
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python prepare_data.py \
+	uv run --no-sync python -m preparation.conversations \
 		--hf-dataset THUDM/LongAlign-10k \
 		--hf-split train \
 		--max-len 100000 \
 		--output data/train_memory_longalign.pt
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python prepare_data.py \
+	uv run --no-sync python -m preparation.conversations \
 		--input data/babilong_raw.jsonl \
 		--max-len 100000 \
 		--output data/train_memory_babilong.pt
 	PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python merge_data.py \
+	uv run --no-sync python -m preparation.merge \
 		data/train_memory_longalign.pt data/train_memory_babilong.pt \
 		--output data/train_memory.pt
 
 prepare:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python prepare_data.py $(ARGS)
+	uv run --no-sync python -m preparation.conversations $(ARGS)
 
 train:
 	@mkdir -p logs
@@ -86,7 +86,7 @@ train:
 resume:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u train.py --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m training.cli --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
 # Dedicated diagnostic run for localizing a non-finite-gradient crash:
 # --detect-anomaly makes the run stop immediately, with a full traceback to
@@ -104,7 +104,7 @@ resume:
 detect-anomaly:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u train.py --detect-anomaly --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m training.cli --detect-anomaly --resume $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
 # Splice interference-recall structure (labeled random codes + delayed
 # query/answer turns) into a fraction of an already-tokenized dataset --
@@ -112,7 +112,7 @@ detect-anomaly:
 # exists for. Token-level splice; runs in minutes on CPU.
 prepare-interference:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u prepare_interference.py $(ARGS)
+	uv run --no-sync python -u -m preparation.interference $(ARGS)
 
 # Episodic-chain training data (data/train.pt + data/train_memory.pt ->
 # data/train_chains.pt): concatenated episodes with sleep_positions,
@@ -120,14 +120,14 @@ prepare-interference:
 # docs/superpowers/specs/2026-07-17-episodic-chains-design.md.
 prepare-chains:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u prepare_chains.py $(ARGS)
+	uv run --no-sync python -u -m preparation.chains $(ARGS)
 
 # Ten-second cross-slice read before training: decoded windows + headline
 # counts per artifact. Hand the output to a reviewer (cheap subagent on the
 # box) asking "does each slice look like what it claims to be?"
 sanity-sample:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u sanity_sample.py $(ARGS)
+	uv run --no-sync python -u -m preparation.inspection $(ARGS)
 
 # Wikipedia IMR cram blocks -> data/train_cram.pt (+ data/eval_cram.pt from
 # held-out articles): alternating turns of fresh passages and one earlier
@@ -137,14 +137,14 @@ sanity-sample:
 # this one takes a while -- see sft/README.md's data-generation section.
 prepare-cram:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u prepare_cram.py $(ARGS)
+	uv run --no-sync python -u -m preparation.cram $(ARGS)
 
 # babilong-style needle blocks -> data/train_needles.pt (+ data/eval_needles.pt):
 # one bAbI story per block, Wikipedia passages as the interference in the gap,
 # same curriculum and recall weighting as the cram slice.
 prepare-needles:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u prepare_needles.py $(ARGS)
+	uv run --no-sync python -u -m preparation.needles $(ARGS)
 
 # Three-test solvability filter over a cram/needle artifact: recall credit
 # survives only on items the plain backbone answers from their source, fails
@@ -154,7 +154,7 @@ prepare-needles:
 filter-items:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u filter_items.py $(ARGS) 2>&1 | tee logs/filter-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m preparation.filtering $(ARGS) 2>&1 | tee logs/filter-$(shell date +%Y%m%d-%H%M%S).log
 
 # Long-gap recall probe against the latest checkpoint: states a random code,
 # runs thousands of filler tokens, queries it back, and compares the code's
@@ -164,17 +164,17 @@ filter-items:
 probe-recall:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u probe_recall.py $(ARGS) 2>&1 | tee logs/probe-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m diagnostics.recall $(ARGS) 2>&1 | tee logs/probe-$(shell date +%Y%m%d-%H%M%S).log
 
 probe-correction:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u probe_correction.py $(ARGS) 2>&1 | tee logs/probe-correction-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m diagnostics.correction $(ARGS) 2>&1 | tee logs/probe-correction-$(shell date +%Y%m%d-%H%M%S).log
 
 read-diagnostic:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u read_diagnostic.py $(ARGS) 2>&1 | tee logs/read-diag-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m diagnostics.reads $(ARGS) 2>&1 | tee logs/read-diag-$(shell date +%Y%m%d-%H%M%S).log
 
 # Transcript-consolidation null: state N facts in a wake transcript, distil
 # the in-context teacher into LoRA, then probe generation from a fresh state
@@ -183,7 +183,7 @@ read-diagnostic:
 consolidation-null:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u consolidation_null.py $(ARGS) 2>&1 | tee logs/consolidation-null-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m experiments.consolidation.null $(ARGS) 2>&1 | tee logs/consolidation-null-$(shell date +%Y%m%d-%H%M%S).log
 
 # Erase-efficacy probe: does the rank-1 state erase S(I - g c c^T) make the
 # primed SSM forget the targeted fact, and only it? Pure inference; the
@@ -191,7 +191,7 @@ consolidation-null:
 erase-probe:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u erase_probe.py $(ARGS) 2>&1 | tee logs/erase-probe-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m experiments.erasure.probe $(ARGS) 2>&1 | tee logs/erase-probe-$(shell date +%Y%m%d-%H%M%S).log
 
 # Dream-distillation sleep, the CL A/B: wake on N facts, sleep with one of the
 # registered arms (--arm replay|drain|counterfactual, --ce-on-dream, or
@@ -223,11 +223,11 @@ adaptive-multisleep:
 warm-start:
 	@mkdir -p logs
 	@{ HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	   uv run --no-sync python -u prepare_data.py \
+	   uv run --no-sync python -u -m preparation.conversations \
 		--hf-dataset HuggingFaceH4/ultrachat_200k \
 		--max-examples 1000 --max-len 4096 --pack --output data/warm_start.pt && \
 	   HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	   uv run --no-sync python -u train.py --data data/warm_start.pt \
+	   uv run --no-sync python -u -m training.cli --data data/warm_start.pt \
 		--max-steps 800 --epochs 2 --lr 1e-4 --chunk-len 512 \
 		--lora-rank 16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1 $(ARGS); \
 	 } 2>&1 | tee logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log
@@ -237,18 +237,18 @@ warm-start:
 capacity-ladder:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u capacity_ladder.py $(ARGS) 2>&1 | tee logs/capacity-ladder-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m experiments.consolidation.capacity $(ARGS) 2>&1 | tee logs/capacity-ladder-$(shell date +%Y%m%d-%H%M%S).log
 
 # Score the corrected single-sleep grid (logs/g2_*_s*.jsonl). Refuses to pool
 # cells of a seed whose wave-1 dream or transcript hashes disagree.
 summarize-grid:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python summarize_grid.py $(ARGS)
+	uv run --no-sync python -m reporting.grid $(ARGS)
 
 dream-fidelity:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u dream_fidelity.py $(ARGS) 2>&1 | tee logs/dream-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m diagnostics.dream_fidelity $(ARGS) 2>&1 | tee logs/dream-$(shell date +%Y%m%d-%H%M%S).log
 
 # Gradient-wiring check on a synthetic dataset, driven through train.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults
@@ -262,7 +262,7 @@ dream-fidelity:
 # --length to override.
 smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u smoke_test.py $(ARGS)
+	uv run --no-sync python -u -m diagnostics.training_smoke $(ARGS)
 
 # --data is repeatable, and each slice can carry its own token share and its
 # own chunk-len/batch-size/gradient-checkpointing. Quote each slice so the

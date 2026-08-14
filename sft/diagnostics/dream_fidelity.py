@@ -145,3 +145,7 @@ def main() -> None:
 
 
 __all__ = ["generate", "load_trainable", "main", "overlap_with_prime"]
+
+
+if __name__ == "__main__":
+    main()

@@ -184,3 +184,7 @@ def main() -> None:
 
 
 __all__ = ["MODEL_NAME", "load_trainable", "main", "percentiles"]
+
+
+if __name__ == "__main__":
+    main()

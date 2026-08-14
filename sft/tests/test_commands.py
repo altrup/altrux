@@ -49,3 +49,49 @@ def test_primary_make_targets_run_domain_modules(target: str, module: str) -> No
     )
     assert result.returncode == 0, result.stderr
     assert f"python -u -m {module}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "module",
+    (
+        "preparation.conversations",
+        "preparation.babilong",
+        "preparation.merge",
+        "preparation.interference",
+        "preparation.chains",
+        "preparation.inspection",
+        "preparation.cram",
+        "preparation.needles",
+        "preparation.filtering",
+        "diagnostics.recall",
+        "diagnostics.correction",
+        "diagnostics.reads",
+        "diagnostics.dream_fidelity",
+        "diagnostics.training_smoke",
+        "experiments.consolidation.null",
+        "experiments.consolidation.capacity",
+        "experiments.erasure.probe",
+        "reporting.grid",
+    ),
+)
+def test_make_domain_commands_have_help(module: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", module, "--help"],
+        cwd=SFT,
+        env={**os.environ, "PYTHONPATH": str(ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
+
+
+def test_make_does_not_run_top_level_python_files() -> None:
+    makefile = (SFT / "Makefile").read_text()
+    assert not any(
+        word.endswith(".py")
+        for line in makefile.splitlines()
+        if "uv run" in line
+        for word in line.split()
+    )

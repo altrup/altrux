@@ -415,3 +415,7 @@ def main() -> None:
 
 __all__ = ["VERDICTS", "Row", "interference_stream", "aliases", "leaks", "length_batches",
            "pad_rows", "score_rows", "verdict", "filter_dataset", "rescore_dataset", "BackboneScorer", "main"]
+
+
+if __name__ == "__main__":
+    main()

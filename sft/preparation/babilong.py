@@ -62,3 +62,7 @@ def main() -> None:
                     written += 1
 
     print(f"Wrote {written} examples to {out}")
+
+
+if __name__ == "__main__":
+    main()

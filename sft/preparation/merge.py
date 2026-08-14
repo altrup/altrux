@@ -30,3 +30,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"ids": all_ids, "masks": all_masks, "question_offsets": all_qoffs}, out)
     print(f"Merged {len(all_ids)} examples total into {out}")
+
+
+if __name__ == "__main__":
+    main()
