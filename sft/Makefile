@@ -81,7 +81,7 @@ prepare:
 train:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u train.py $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m training.cli $(ARGS) 2>&1 | tee logs/train-$(shell date +%Y%m%d-%H%M%S).log
 
 resume:
 	@mkdir -p logs
@@ -202,12 +202,12 @@ erase-probe:
 dream-sleep:
 	@mkdir -p logs
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u dream_sleep.py $(ARGS) 2>&1 | tee logs/dream-sleep-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m experiments.dreams.cli $(ARGS) 2>&1 | tee logs/dream-sleep-$(shell date +%Y%m%d-%H%M%S).log
 
 adaptive-multisleep:
 	@mkdir -p logs
 	set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u adaptive_multisleep.py $(ARGS) 2>&1 | tee logs/adaptive-multisleep-$(shell date +%Y%m%d-%H%M%S).log
+	uv run --no-sync python -u -m experiments.adaptive.cli $(ARGS) 2>&1 | tee logs/adaptive-multisleep-$(shell date +%Y%m%d-%H%M%S).log
 
 # Warm-start SFT (DISCUSSION-20260808 sec 2.9.3): ordinary chat data rendered
 # into the repo's marker format by prepare_data.py, then 800 train.py steps /

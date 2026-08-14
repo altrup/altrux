@@ -792,3 +792,7 @@ def main() -> None:
 
 
 __all__ = ["build_parser", "main", "teacher_dream", "paraphrase_prompts", "make_emit", "file_sha", "load_init_adapter", "build_distractors", "target_keep_mask", "scored_keep", "load_dialogue_records", "run_rebase", "run_merge", "dream_from_cache"]
+
+
+if __name__ == "__main__":
+    main()

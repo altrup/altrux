@@ -47,12 +47,9 @@ def load_model_runtime(model_name: str) -> ModelRuntime:
 
 
 def main(ckpt_dir: Path, model_name: str) -> None:
-    runtime = load_model_runtime(model_name)
-    model_id = runtime.model_id
-    hooks = runtime.hooks
     parser = argparse.ArgumentParser(description=f"SFT for {model_name}")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
-    parser.add_argument("--model", default=model_id, help="Model ID (informational; actual ID comes from models/ file)")
+    parser.add_argument("--model", default=None, help="Model ID (informational; actual ID comes from models/ file)")
     parser.add_argument("--data", action="append", default=None, help="Tokenized dataset from prepare_data.py (default: data/train.pt). Repeat to train on several slices at once; each may carry comma-separated per-slice overrides, e.g. --data 'data/train_cram.pt,share=35,chunk-len=512,batch-size=6,grad-checkpoint=1,shuffle=0'. share= is that slice's requested fraction of trained tokens (any units -- shares are normalised; give it for every slice or none, in which case each slice's own token count is used); chunk-len/batch-size/grad-checkpoint override --chunk-len/--batch-size/off for this slice only; shuffle=0 consumes the artifact in the order it was written, which is how a generator-side curriculum survives training.")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
@@ -82,6 +79,10 @@ def main(ckpt_dir: Path, model_name: str) -> None:
     parser.add_argument("--seed", type=int, default=42, help="Random seed for everything not covered by the per-epoch data-shuffle seed (see run_training) -- LoRA init/dropout, and for models with per-sequence random state (e.g. mamba2_2_7b_memory's neural-memory init/reset) -- fixed by default so a run (or a crash) is reproducible; pass a different value to sample a different random init.")
     parser.add_argument("--detect-anomaly", action="store_true", help="Enable torch.autograd.set_detect_anomaly -- when a chunk's gradient comes back non-finite (the run's existing per-chunk check, see run_training), instead of just discarding it and continuing, autograd raises immediately with a traceback pointing at the exact forward op responsible, and the run stops there. Diagnostic only: real, not-small overhead (extra bookkeeping on every op during forward), and turns the normally-recoverable non-finite-gradient path into a hard stop -- use a dedicated short run to localize a real crash, not the long unattended one. See `make detect-anomaly`.")
     args = parser.parse_args()
+    runtime = load_model_runtime(model_name)
+    model_id = runtime.model_id
+    hooks = runtime.hooks
+    args.model = args.model or model_id
     args.max_len = args.max_len if args.max_len is not None else math.inf
     args.data = args.data or ["data/train.pt"]
     if args.recall_ramp_shape == "geometric" and args.recall_ramp_start <= 0:
@@ -259,3 +260,8 @@ def main(ckpt_dir: Path, model_name: str) -> None:
         start_full_state, specs=specs, start_group_idx=start_group_idx,
         start_group_ptrs=start_group_ptrs, start_group_tokens=start_group_tokens,
     )
+
+
+if __name__ == "__main__":
+    selected_model = default_model_name()
+    main(Path(__file__).parents[2] / "models" / selected_model / "checkpoints", selected_model)
