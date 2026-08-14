@@ -86,3 +86,7 @@ def main() -> None:
 
 
 __all__ = ["Dream", "MARKER_SHARE_MAX", "PLAIN_BRACKET_ID", "acceptance", "main"]
+
+
+if __name__ == "__main__":
+    main()

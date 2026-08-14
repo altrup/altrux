@@ -11,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep summarize-grid train resume detect-anomaly smoke-test test
+.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator
 
 sync:
 	uv sync --inexact
@@ -263,6 +263,33 @@ dream-fidelity:
 smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m diagnostics.training_smoke $(ARGS)
+
+acceptance-check:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m diagnostics.acceptance $(ARGS)
+
+eligibility-check:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m preparation.eligibility $(ARGS)
+
+measure-knobs:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m diagnostics.knobs $(ARGS)
+
+topic-choice:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m diagnostics.topic_choice $(ARGS)
+
+gate-pilot:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.erasure.pilot $(ARGS)
+
+adaptive-wake-smoke:
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.adaptive.runner $(ARGS)
+
+user-generator:
+	PYTHONPATH=$(PYTHONPATH) uv run --no-sync python -u -m providers.user_generator $(ARGS)
 
 # --data is repeatable, and each slice can carry its own token share and its
 # own chunk-len/batch-size/gradient-checkpointing. Quote each slice so the

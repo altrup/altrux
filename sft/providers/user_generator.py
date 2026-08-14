@@ -84,3 +84,7 @@ def main() -> None:
                       "resume_status": "resumed" if prior is not None else "started",
                       "provider": args.provider, "model": args.model, "version": version,
                       "token_usage": usage, "work_dir": str(cwd)}))
+
+
+if __name__ == "__main__":
+    main()

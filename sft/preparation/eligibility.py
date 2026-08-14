@@ -56,3 +56,7 @@ def main() -> None:
     print(header)
     for p in prefixes:
         print(f"{p:>11} " + " ".join(f"{counts[(p, c)]:>6}" for c in conts))
+
+
+if __name__ == "__main__":
+    main()

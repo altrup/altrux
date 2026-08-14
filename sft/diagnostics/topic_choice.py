@@ -103,3 +103,7 @@ def main() -> None:
 
 
 __all__ = ["OPENERS", "main"]
+
+
+if __name__ == "__main__":
+    main()

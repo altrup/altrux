@@ -72,6 +72,13 @@ def test_primary_make_targets_run_domain_modules(target: str, module: str) -> No
         "experiments.consolidation.capacity",
         "experiments.erasure.probe",
         "reporting.grid",
+        "diagnostics.acceptance",
+        "diagnostics.knobs",
+        "diagnostics.topic_choice",
+        "preparation.eligibility",
+        "experiments.adaptive.runner",
+        "experiments.erasure.pilot",
+        "providers.user_generator",
     ),
 )
 def test_make_domain_commands_have_help(module: str) -> None:
@@ -95,3 +102,27 @@ def test_make_does_not_run_top_level_python_files() -> None:
         if "uv run" in line
         for word in line.split()
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "module"),
+    (
+        ("acceptance-check", "diagnostics.acceptance"),
+        ("eligibility-check", "preparation.eligibility"),
+        ("measure-knobs", "diagnostics.knobs"),
+        ("topic-choice", "diagnostics.topic_choice"),
+        ("gate-pilot", "experiments.erasure.pilot"),
+        ("adaptive-wake-smoke", "experiments.adaptive.runner"),
+        ("user-generator", "providers.user_generator"),
+    ),
+)
+def test_remaining_make_targets_run_domain_modules(target: str, module: str) -> None:
+    result = subprocess.run(
+        ["make", "-n", target],
+        cwd=SFT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"-m {module}" in result.stdout

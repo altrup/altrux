@@ -253,9 +253,8 @@ def smoke_main() -> None:
                "dream_count": 300, "dream_tokens": 12, "dream_temperature": 1.0,
                "reply_tokens": 2, "reply_temperature": 0.0, "probe_tokens": 1,
                "kl_temperature": 1.0, "battery": str(out / "battery.json")}
-    smoke_script = Path(__file__).resolve().parents[2] / "adaptive_wake_smoke.py"
     manifest = ExperimentManifest(
-        config, wakes, {"command": [sys.executable, str(smoke_script), "--generator"],
+        config, wakes, {"command": [sys.executable, "-m", "experiments.adaptive.runner", "--generator"],
                         "provider": "fake", "model": "fake", "version": "1"},
         str(out), {"dream": 50, "probe": 32, "battery": 32}, runtime,
     )
@@ -263,3 +262,7 @@ def smoke_main() -> None:
 
 
 main = smoke_main
+
+
+if __name__ == "__main__":
+    smoke_main()
