@@ -2,7 +2,7 @@
 battery and a fixed held-out perplexity slice.
 
 Both measure catastrophic forgetting rather than installation (see
-notes/DISCUSSION-20260805-dream-distillation-cl-ab.md sec 4). The battery is
+notes/discussion/DISCUSSION-20260805-dream-distillation-cl-ab.md sec 4). The battery is
 built by self-calibration -- candidate completions are run through the base
 model greedy and only its own consistent hits are kept, so a lost item is the
 model forgetting something it demonstrably knew, not a question it never could
@@ -38,7 +38,8 @@ Probe = Callable[[str], tuple[str, float]]
 
 # A fact counts as installed at this much margin over its distractor code --
 # the correct code roughly 2.7x likelier over the whole code
-# (notes/DISCUSSION-20260806 sec 4). Chosen before the data, not after.
+# (notes/discussion/DISCUSSION-20260806-dream-distillation-ab-postmortem.md sec 4).
+# Chosen before the data, not after.
 MARGIN_INSTALL = 1.0
 
 BatteryItem = dict[str, str | float | bool]

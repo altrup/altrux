@@ -21,7 +21,7 @@ class DataSpec:
 
     chunk_len/batch_size/grad_checkpoint are per-slice because the plan's
     cram/needle slices need a chunk long enough for recall loss to reach the
-    writes that produced it (notes/DISCUSSION-20260724-next-run-plan.md 2.1)
+    writes that produced it (notes/discussion/DISCUSSION-20260724-next-run-plan.md 2.1)
     while chains/ballast keep the cheaper locked constants. shuffle=False
     consumes the artifact in the order it was written, which is how a
     generator-side curriculum (the cram slices' growing gap ceiling) is
@@ -187,7 +187,7 @@ def recall_weight_at(step: int, start: float, end: float, ramp_steps: int, shape
     rather than constant so the retention pressure doesn't peak while the
     beta anneal is opening -- that window is where the gradient decides
     whether the memory path is useful or gets suppressed
-    (notes/DISCUSSION-20260724-next-run-plan.md 2.2)."""
+    (notes/discussion/DISCUSSION-20260724-next-run-plan.md 2.2)."""
     if ramp_steps <= 0 or step >= ramp_steps:
         return end
     frac = step / ramp_steps

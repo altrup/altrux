@@ -1,5 +1,5 @@
 """Wikipedia IMR cram blocks: the 35% retention slice of the next run
-(notes/DISCUSSION-20260724-next-run-plan.md 1.3).
+(notes/discussion/DISCUSSION-20260724-next-run-plan.md 1.3).
 
 A cram block is one long training example of alternating turns:
 
@@ -612,7 +612,7 @@ def add_block_args(parser) -> None:
     parser.add_argument("--gap-min", type=int, default=192,
                         help="Floor on the per-item gap (tokens between a source passage and its cue). "
                              "192 is where dense interference kills plain-backbone recall "
-                             "(notes/RESEARCH-20260724-local-diagnostics.md 1)")
+                             "(notes/research/RESEARCH-20260724-local-diagnostics.md 1)")
     parser.add_argument("--ceiling-start", type=int, default=448,
                         help="Gap ceiling for the first block -- inside the 512-token BPTT window, so early "
                              "recall loss can credit the write end to end")

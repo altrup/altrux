@@ -4,8 +4,8 @@ model generates them later from a fresh state with no context at all?
 
 This is the field-default consolidation baseline (SEAL / Cartridges /
 2605.26099 all source their fine-tuning data from context, not from a memory
-module -- see notes/DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md
-sec 4 and notes/DISCUSSION-20260730-ssm-consume-on-read-and-m-necessity.md
+module -- see notes/discussion/DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md
+sec 4 and notes/discussion/DISCUSSION-20260730-ssm-consume-on-read-and-m-necessity.md
 sec 4). It gates everything downstream: if lossless-transcript distillation
 cannot install recallable facts, neither M-replay nor SSM-replay can, and
 CL-by-consolidation needs a rethink before any training budget is spent. If

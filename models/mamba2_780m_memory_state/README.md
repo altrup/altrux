@@ -1,7 +1,7 @@
 # mamba2_780m_memory_state
 
 The **state-injection arm** of the stage-2 780M screening A/B
-(`notes/DISCUSSION-20260723-780m-integration-screen.md`): the
+(`notes/discussion/DISCUSSION-20260723-780m-integration-screen.md`): the
 `mamba2_2_7b_memory` design on the 780M backbone, layer indices scaled to
 the same fractional depths. One folder per integration arm (the token-mix
 arm is `models/mamba2_780m_memory_mix/`), so `MODEL_NAME` selects the arm

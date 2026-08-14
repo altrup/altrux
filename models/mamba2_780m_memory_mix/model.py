@@ -10,7 +10,7 @@ read/mix boundary is FIXED at 16, no override: this arm's thesis is early
 entry (the whole upper stack computes over the read), a 2/3 variant would
 never ship, and a fixed boundary means a checkpoint's geometry can never
 contradict its folder name. This is BX1 of the screening A/B (see
-notes/DISCUSSION-20260723-780m-integration-screen.md).
+notes/discussion/DISCUSSION-20260723-780m-integration-screen.md).
 """
 
 import torch

@@ -1,7 +1,7 @@
 # mamba2_780m_memory_mix
 
 The **token-mix arm** of the stage-2 780M screening A/B
-(`notes/DISCUSSION-20260723-780m-integration-screen.md`, BX1 — the bet).
+(`notes/discussion/DISCUSSION-20260723-780m-integration-screen.md`, BX1 — the bet).
 One folder per integration arm (the state-injection arm is
 `models/mamba2_780m_memory_state/`), so `MODEL_NAME` selects the arm and
 each arm's checkpoints live under its own `checkpoints/`. **Never compare

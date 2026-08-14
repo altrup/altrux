@@ -1,5 +1,5 @@
 """babilong-style needle blocks: the 15% retention slice of the next run
-(notes/DISCUSSION-20260724-next-run-plan.md 1.3).
+(notes/discussion/DISCUSSION-20260724-next-run-plan.md 1.3).
 
 The RMT-proven needle form under the *identical* curriculum, block assembly
 and recall weighting as the Wikipedia cram slice -- everything structural

@@ -19,7 +19,7 @@ act on.
    branch, get the teammate's explicit permission in this conversation before
    running `git pull --rebase` or another branch-changing command. Then check
    for uncommitted pulled artifacts —
-   `notes/EXPERIMENT_NOTES-*.md` and anything else the rsync pull left — and
+   `notes/experiments/EXPERIMENT_NOTES-*.md` and anything else the rsync pull left — and
    commit the notes first, before any discussion. The run's record is
    preserved before it's interpreted.
 
@@ -56,7 +56,7 @@ act on.
    nobody put the sequence in front of the teammate).
 
 4. **Write the DISCUSSION file as you converge** —
-   `notes/DISCUSSION-YYYYMMDD-<topic>.md` (see the existing ones for the
+   `notes/discussion/DISCUSSION-YYYYMMDD-<topic>.md` (see the existing ones for the
    format): reinterpretation of the run's conclusions, prioritized standing
    direction with explicit decision rules, an "explicitly considered and
    rejected" section (so the next session doesn't re-derive dead ends), and

@@ -70,7 +70,7 @@ a topic, artifact, rejected option, or unresolved question that needs its
 source. Where a discussion note conflicts with an older run note, the
 discussion note wins. Then open a fresh notes
 file for THIS run, named with the current UTC time —
-`notes/EXPERIMENT_NOTES-$(date -u +%Y%m%d-%H%M%S).md` — and write to it as you
+`notes/experiments/EXPERIMENT_NOTES-$(date -u +%Y%m%d-%H%M%S).md` — and write to it as you
 go (see PERSISTENCE). One file per run; never append to a past run's file.
 
 A FRESH INSTANCE HAS NO PREPARED DATA — setup deliberately doesn't build any.
@@ -299,7 +299,7 @@ something. Read it; don't assume. Therefore:
 - Any code change: commit AND push promptly. Never leave fixes only in the
   working tree.
 - Write observations (health checks, anomalies, fixes, open questions) to
-  this run's notes file (`notes/EXPERIMENT_NOTES-<timestamp>.md`, created
+  this run's notes file (`notes/experiments/EXPERIMENT_NOTES-<timestamp>.md`, created
   above) as you go, not at the end. Never commit notes/ from the instance on
   main — the rsync pull carries it to your teammate's machine, where it gets
   committed after the run; an instance-side commit would race that flow. The

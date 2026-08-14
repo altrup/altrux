@@ -2,7 +2,7 @@
 actually make a primed Mamba2 SSM forget the targeted fact -- and only it?
 
 This is the physics check for the dream-distillation sleep protocol
-(notes/DISCUSSION-20260805-dream-distillation-cl-ab.md sec 3, step 2): the
+(notes/discussion/DISCUSSION-20260805-dream-distillation-cl-ab.md sec 3, step 2): the
 protocol assumes that erasing the state along a fact's own read queries
 degrades that binding while leaving the others intact. The algebra says so
 for cleanly separable keys; a real state after a real transcript is where

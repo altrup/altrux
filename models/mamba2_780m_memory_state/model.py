@@ -6,7 +6,7 @@ One folder per integration arm (this vs models/mamba2_780m_memory_mix), so
 MODEL_NAME selects the arm and each arm's checkpoints live under its own
 checkpoints/ -- a checkpoint's folder tells you its architecture. This is
 the stage-2 SCREENING platform's BX0 baseline (see
-notes/DISCUSSION-20260723-780m-integration-screen.md); never compare delta
+notes/discussion/DISCUSSION-20260723-780m-integration-screen.md); never compare delta
 magnitudes across scales. The whole implementation lives in
 models/mamba2_2_7b_memory/model.py, whose Model derives its memory geometry
 from the backbone; this module only binds the 780M layer indices.

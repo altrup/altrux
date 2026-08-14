@@ -1,5 +1,5 @@
 """Three-test solvability filter for the cram/needle slices
-(notes/DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md 6-7).
+(notes/discussion/DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md 6-7).
 
 Every recall item is scored teacher-forced on its credited span with the
 plain backbone -- which *is* the M-ablated model -- under three contexts:

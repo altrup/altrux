@@ -30,7 +30,7 @@ test:
 
 # --max-len far above any real conversation: ultrachat trains UNCAPPED (the
 # old 1024 cap only ever lived in a stale train.pt artifact; see
-# notes/DISCUSSION-20260724-next-run-plan.md 1.3) -- explicit here so the
+# notes/discussion/DISCUSSION-20260724-next-run-plan.md 1.3) -- explicit here so the
 # no-cap intent is visible rather than riding on prepare_data.py's default.
 data:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \

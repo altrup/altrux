@@ -38,7 +38,7 @@ token budget, with three things layered in:
 Only a `--sleep-chain-rate` fraction of chains carries any of that
 apparatus; the rest are plain multi-episode concatenations with silent
 joins. Chains are the deployment shape -- retention pressure belongs to the
-cram slices (notes/DISCUSSION-20260724-next-run-plan.md §1.3).
+cram slices (notes/discussion/DISCUSSION-20260724-next-run-plan.md §1.3).
 
 Everything operates on token ids -- carrier conversations are never
 re-tokenized, only the short injected turns are (one batched call).

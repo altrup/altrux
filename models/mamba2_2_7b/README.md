@@ -1,7 +1,7 @@
 # mamba2_2_7b
 
 The **plain** Mamba2-2.7B substrate registered by
-`notes/DISCUSSION-20260808-headline-collapse-deep-block-and-regime-bridge.md`
+`notes/discussion/DISCUSSION-20260808-headline-collapse-deep-block-and-regime-bridge.md`
 §2.10.14, which switched the run's substrate from 780M to 2.7B: the §4 pilot
 showed generator quality was the binding constraint on the un-spliced dream
 regime, and scale attacks exactly that. Every run command reads
