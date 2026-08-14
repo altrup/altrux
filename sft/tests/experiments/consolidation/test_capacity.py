@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-from capacity_ladder import parse_grid
+from experiments.consolidation.capacity import parse_grid
 
 
 def test_parse_grid():

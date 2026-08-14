@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 
-from acceptance_check import MARKER_SHARE_MAX, acceptance
+from diagnostics.acceptance import MARKER_SHARE_MAX, acceptance
 
 
 class _Dream:

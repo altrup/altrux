@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 from collections.abc import Sequence
@@ -28,10 +27,19 @@ from experiments.dreams.distillation import (
     dream_from_cached,
     erased_start,
     erased_start_scaled,
+    erase_state,
+    scored_keep,
     spine_states,
     sft_steps,
 )
-from experiments.dreams.generation import copy_state, dream_seed_text, rehearsal_fraction, teacher_dream
+from experiments.dreams.generation import (
+    copy_state,
+    dream_generation_seed,
+    dream_seed_text,
+    rehearsal_fraction,
+    state_to,
+    teacher_dream,
+)
 from experiments.dreams.probes import (
     battery_read_queries,
     blank_state_logits,
@@ -39,27 +47,24 @@ from experiments.dreams.probes import (
     report_dream,
     report_dream_set,
 )
-from experiments.dreams.types import CachedDream, Dream, DreamCache, DreamSetCache
-from experiments.erasure.gating import gated_positions, state_divergence
+from experiments.dreams.types import CachedDream, Dream, DreamCache, DreamSetCache, token_sha
+from experiments.erasure.gating import VARIANTS, gated_positions, state_divergence
 from experiments.erasure.pilot import PilotCapture, PilotDream, scheme_weights
 from experiments.erasure.probe import group_by_layer
-from experiments.facts import Fact
+from experiments.facts import Fact, build_distractors
+from experiments.inference import run_chunks
 from progress import fmt_duration, ts
 
 
-def _legacy(name: str, fallback=None):
-    module = sys.modules.get("dream_sleep")
-    return getattr(module, name, fallback) if module is not None else fallback
-
-
-def _const(name: str, fallback):
-    value = _legacy(name, fallback)
-    return fallback if value is None else value
+USER_CUE = "{user} What is the code for the {entity}?"
+DREAM_RETRIES = 2
+B4_ARMS = {f"b4-{variant}": variant for variant in VARIANTS}
+B4_ARMS["b4-sigma"] = "raw"
+FUSED_ARMS = ("b2-fused-detached", "b2-fused-deep", "b3-fused")
 
 
 def build_cues(seen, encode, user_open: str, asst_open: str) -> list[list[int]]:
-    template = _const("USER_CUE", "{user} What is the code for the {entity}?")
-    return [encode(f"{template.format(user=user_open, entity=f.entity)}"
+    return [encode(f"{USER_CUE.format(user=user_open, entity=f.entity)}"
                    f"{asst_open} The code for the {f.entity} is")[0].tolist()
             for _, f in seen]
 
@@ -157,7 +162,6 @@ def commit_erase(model, carried, seen, committed: set[str], encode, user_open: s
     import torch
 
     fired: list[str] = []
-    erase_state = _legacy("erase_state")
     for _, fact in seen:
         if fact.entity in committed:
             continue
@@ -165,8 +169,7 @@ def commit_erase(model, carried, seen, committed: set[str], encode, user_open: s
         record = {"phase": "commit", "wave": wave, "fact": fact.entity, "margin": margin,
                   "committed": bool(installed)}
         if installed:
-            template = _const("USER_CUE", "{user} What is the code for the {entity}?")
-            prompt = encode(f"{template.format(user=user_open, entity=fact.entity)}"
+            prompt = encode(f"{USER_CUE.format(user=user_open, entity=fact.entity)}"
                             f"{asst_open} The code for the {fact.entity} is")
             model.c_capture = []
             with torch.no_grad():
@@ -187,21 +190,19 @@ def build_cache(model, args, cache_path: Path, transcript, facts, chunk_len,
                 adapter_sha: str | None = None, wake_state=None) -> DreamCache:
     import torch
 
-    run_chunks = _legacy("run_chunks")
     wake_state = (run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
                   if wake_state is None else copy_state(wake_state))
     seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt))
     needles = [f.entity for f in facts] + [f.code for f in facts]
     cues = build_cues([(1, f) for f in facts], encode, user_open, asst_open) if args.cue_every else []
     model.eval()
-    dream = _legacy("teacher_dream", teacher_dream)(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
+    dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
                           drain=False, decode_token=lambda i: decode([i]), needles=needles,
                           cues=cues, cue_every=args.cue_every, cue_greedy=args.cue_greedy,
                           frozen=adapter_sha is None, stop_id=stop_id, turn_id=tokenizer.eos_token_id)
-    build_distractors = _legacy("build_distractors")
     cache = DreamCache(
         seed=args.seed, transcript_ids=[int(i) for i in transcript[0].tolist()],
-        dream_ids=[int(i) for i in dream.tokens[0].tolist()], wake_state=_legacy("state_to")(wake_state, torch.device("cpu")),
+        dream_ids=[int(i) for i in dream.tokens[0].tolist()], wake_state=state_to(wake_state, torch.device("cpu")),
         teacher_logits=dream.logits.cpu(), queries=[[c.cpu() for c in per_layer] for per_layer in dream.queries],
         token_texts=dream.token_texts, cue_flags=dream.cue_flags,
         distractors=build_distractors(facts, args.seed),
@@ -221,22 +222,21 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
                     adapter_sha: str | None = None, battery=None, wake_state=None) -> DreamSetCache:
     import torch
 
-    run_chunks = _legacy("run_chunks")
     wake_state = (run_chunks(model, transcript, None, chunk_len, "wake", keep_logits=False)[1]
                   if wake_state is None else copy_state(wake_state))
     seed_ids = encode(dream_seed_text(asst_open, args.dream_prompt)); prefix_len = seed_ids.shape[1]
     needles = [f.entity for f in facts] + [f.code for f in facts]
     cues = build_cues([(1, f) for f in facts], encode, user_open, asst_open) if args.cue_every else []
     model.eval(); dreams: list[CachedDream] = []; pilot = []; started = time.time(); regenerated = 0
-    retries = _const("DREAM_RETRIES", 2)
+    retries = DREAM_RETRIES
     for i in range(args.dreams):
         for attempt in range(retries + 1):
-            gen_seed = _legacy("dream_generation_seed")(args.seed, i, attempt,
+            gen_seed = dream_generation_seed(args.seed, i, attempt,
                                                          getattr(args, "dream_seed_offset", 0))
             torch.manual_seed(gen_seed)
             print(f"\n[{ts()}] --- dream {i + 1}/{args.dreams} (generation seed {gen_seed}) ---")
             # teacher_dream(
-            dream = _legacy("teacher_dream", teacher_dream)(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
+            dream = teacher_dream(model, wake_state, seed_ids, args.dream_tokens, args.dream_temp,
                                   drain=False, decode_token=lambda j: decode([j]), needles=needles,
                                   cues=cues, cue_every=args.cue_every, cue_greedy=args.cue_greedy,
                                   frozen=adapter_sha is None, stop_id=stop_id, turn_id=tokenizer.eos_token_id)
@@ -264,8 +264,6 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
         elapsed = time.time() - started
         print(f"[{ts()}]  dream {i + 1} cached; {fmt_duration(elapsed)} elapsed, ETA "
               f"{fmt_duration(elapsed / (i + 1) * (args.dreams - i - 1))}", flush=True)
-    build_distractors = _legacy("build_distractors")
-    state_to = _legacy("state_to")
     cache = DreamSetCache(seed=args.seed, transcript_ids=[int(t) for t in transcript[0].tolist()],
                           wake_state=state_to(wake_state, torch.device("cpu")), dreams=dreams,
                           distractors=build_distractors(facts, args.seed),
@@ -289,8 +287,7 @@ def build_dream_set(model, args, cache_path: Path, transcript, facts, chunk_len,
 
 def run_dream_set_sleep(mode, model, opt, args, wave, wake_state, seen, cache: DreamSetCache,
                         emit, periodic_probe, on_step, started: float) -> object:
-    variants = _const("B4_ARMS", {})
-    variant = variants.get(mode)
+    variant = B4_ARMS.get(mode)
     facts = [f for _, f in seen]
     probe_seconds = 0.0
     train_started = time.time()
@@ -310,7 +307,7 @@ def run_dream_set_sleep(mode, model, opt, args, wave, wake_state, seen, cache: D
         print(); at = time.time(); periodic_probe(step); probe_seconds += time.time() - at
 
     tokens = distill_dream_set(model, opt, cache.dreams, wake_state, variant, args.dream_epochs,
-                               args.kl_temp, on_step, on_boundary, sigma_scaled=(mode == _const("SIGMA_ARM", "b4-sigma")))
+                               args.kl_temp, on_step, on_boundary, sigma_scaled=(mode == "b4-sigma"))
     train_seconds = time.time() - train_started - probe_seconds
     print(f"\n[{ts()}] boundary probes {fmt_duration(probe_seconds)} against {fmt_duration(train_seconds)} of training")
     emit({"phase": "sleep", "wave": wave, "arm": mode, "dreams": len(cache.dreams),
@@ -350,19 +347,19 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
     dream = None
     if mode not in ("sft-ref", "drain-live"):
         if wave == 1:
-            dream = dream_from_cached(cache, wake_state.ssm_states[0].device) if isinstance(cache, DreamSetCache) else _legacy("dream_from_cache")(cache, wake_state.ssm_states[0].device)
+            dream = dream_from_cached(cache, wake_state.ssm_states[0].device)
         else:
             dream = generate_wave_dream(model, args, wake_state, wave_facts, encode, decode, tokenizer,
                                         user_open, asst_open, teacher=args.wave_teacher, stop_id=stop_id)
             emit({"phase": "cache", "wave": wave, "arm": mode, "seed": args.seed,
-                  "dream_sha": _legacy("token_sha")(dream.tokens[0].tolist()),
+                  "dream_sha": token_sha(dream.tokens[0].tolist()),
                   "dream_tokens": dream.tokens.shape[1], "free_tokens": sum(not f for f in dream.cue_flags),
                   "cues_cover": [f.entity for f in wave_facts],
                   "dream_generator": "base" if args.wave_teacher == "base" else "student"})
 
     model.train()
     if mode == "sft-ref":
-        token_gradients = _legacy("distill_sft", distill_sft)(model, opt, transcript, sft_step_count, chunk_len, on_step)
+        token_gradients = distill_sft(model, opt, transcript, sft_step_count, chunk_len, on_step)
         print(); emit({"phase": "sleep", "wave": wave, "arm": mode, "steps": sft_step_count,
                         "token_gradients": token_gradients, "seconds": time.time() - started})
         model.eval(); return None
@@ -373,8 +370,8 @@ def run_sleep(mode, model, opt, args, wave, wake_state, transcript, seen, chunk_
                                       on_step, erase_op=args.erase_op)
         token_gradients = args.dream_tokens; print()
     else:
-        keep = _legacy("scored_keep")(dream.cue_flags, dream.prefix_len) if dream.cue_flags else None
-        fused_arms = _const("FUSED_ARMS", ())
+        keep = scored_keep(dream.cue_flags, dream.prefix_len) if dream.cue_flags else None
+        fused_arms = FUSED_ARMS
         if mode in ("replay", "ce-on-dream"):
             replay_chunk = args.chunk_len or dream.tokens.shape[1]
             token_gradients = distill_replay(model, opt, dream, args.distill_steps, replay_chunk, args.kl_temp,

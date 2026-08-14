@@ -9,27 +9,23 @@ across arms" invariant the 08-06 grid lost in the harness->driver composition.
 import pytest
 import torch
 
-from consolidation_null import Fact
-from dream_sleep import (
-    CachedDream,
-    DreamCache,
-    DreamSetCache,
+from experiments.facts import Fact
+from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache, token_sha
+from experiments.dreams.cache import (
     aggregate_binding,
     assert_aggregate_binding,
     dream_bases,
-    report_dream_set,
     binding_coverage,
-    build_distractors,
-    dream_seed_text,
     dream_sidecar_text,
     load_dream_cache,
     save_dream_cache,
-    scored_keep,
     write_dream_set_sidecar,
     sidecar_path,
-    target_keep_mask,
-    token_sha,
 )
+from experiments.dreams.distillation import scored_keep, target_keep_mask
+from experiments.facts import build_distractors
+from experiments.dreams.generation import dream_seed_text
+from experiments.dreams.probes import report_dream_set
 
 FACTS = [Fact("osprey", "bird", "5 9 7 9 7"), Fact("heron", "bird", "1 2 3 4 5")]
 
@@ -344,7 +340,7 @@ def test_the_set_builder_passes_cue_splicing_through_to_generation():
     """
     import inspect
 
-    from dream_sleep import build_dream_set
+    from experiments.dreams.runner import build_dream_set
 
     source = inspect.getsource(build_dream_set)
     call = source[source.index("teacher_dream(") :]
@@ -360,7 +356,7 @@ def test_copy_fraction_separates_a_quoting_dream_from_an_original_one():
     the wake transcript verbatim instead of dreaming about it. Rehearsal
     counting cannot see that -- a verbatim copy scores perfect coverage -- so
     copying needs its own number."""
-    from dream_sleep import copy_fraction
+    from experiments.dreams.cache import copy_fraction
 
     transcript = ("the lighthouse keeper kept meticulous logs of every passing storm "
                   "the bakery on the corner sells out of rye bread before noon").split()
@@ -372,7 +368,7 @@ def test_copy_fraction_separates_a_quoting_dream_from_an_original_one():
 
 
 def test_copy_fraction_counts_only_runs_at_least_n_long():
-    from dream_sleep import copy_fraction
+    from experiments.dreams.cache import copy_fraction
 
     transcript = "alpha beta gamma delta epsilon zeta eta theta".split()
     # A 3-gram overlap is ordinary language reuse, not regurgitation.
@@ -383,7 +379,7 @@ def test_copy_fraction_counts_only_runs_at_least_n_long():
 
 
 def test_copy_fraction_is_zero_for_an_empty_dream():
-    from dream_sleep import copy_fraction
+    from experiments.dreams.cache import copy_fraction
 
     assert copy_fraction([], "a b c".split(), n=3) == 0.0
 
@@ -393,7 +389,7 @@ def test_copy_fraction_ignores_spliced_cue_tokens():
     tokens match the transcript BY CONSTRUCTION. Counting them as copying
     inflates a cued set's score for a reason that has nothing to do with what
     the model generated."""
-    from dream_sleep import copy_fraction
+    from experiments.dreams.cache import copy_fraction
 
     transcript = "what is the code for the clove the code for the clove is one two".split()
     dream = "what is the code for the clove the code for the clove is one two".split()
@@ -409,7 +405,8 @@ def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
     FRACTION while never reproducing more than a line; a dream that replays
     the transcript wholesale is a different object. The run length is what
     distinguishes them."""
-    from dream_sleep import copy_fraction, longest_verbatim_run
+    from experiments.dreams.cache import copy_fraction
+    from experiments.dreams.probes import longest_verbatim_run
 
     transcript = [i for i in range(200)]
     wholesale = transcript[10:150]                       # one long replay
@@ -423,7 +420,7 @@ def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
 
 
 def _set_cache(seed, transcript, dreams, **over):
-    from dream_sleep import DreamSetCache
+    from experiments.dreams.types import DreamSetCache
 
     fields = dict(seed=seed, transcript_ids=transcript, wake_state=None, dreams=dreams,
                   distractors={"clove": "9 9 9"}, facts=[("clove", "spice", "1 2 3")],
@@ -444,7 +441,7 @@ def test_merging_sets_concatenates_dreams_and_rehashes():
     disjoint --dream-seed-offset. Training needs them as ONE set: the arms
     share a dream set by registration, and a set's hash is what the summarizer
     checks that sharing against."""
-    from dream_sleep import merge_dream_sets
+    from experiments.dreams.cache import merge_dream_sets
 
     a = _set_cache(1234, [1, 2, 3], [_dream([10, 11]), _dream([12, 13])], dream_seed_offset=0)
     b = _set_cache(1234, [1, 2, 3], [_dream([14, 15])], dream_seed_offset=20)
@@ -460,7 +457,7 @@ def test_merging_sets_concatenates_dreams_and_rehashes():
 def test_merging_refuses_sets_from_different_wake_states():
     """Dreams from a different transcript were generated from a different
     state: pooling them would silently mix two experiments."""
-    from dream_sleep import merge_dream_sets
+    from experiments.dreams.cache import merge_dream_sets
 
     a = _set_cache(1234, [1, 2, 3], [_dream([10, 11])])
     b = _set_cache(1234, [9, 9, 9], [_dream([12, 13])])
@@ -470,7 +467,7 @@ def test_merging_refuses_sets_from_different_wake_states():
 
 
 def test_merging_refuses_sets_from_different_generators():
-    from dream_sleep import merge_dream_sets
+    from experiments.dreams.cache import merge_dream_sets
 
     a = _set_cache(1234, [1, 2, 3], [_dream([10, 11])])
     b = _set_cache(1234, [1, 2, 3], [_dream([12, 13])], generator="different")
@@ -484,7 +481,7 @@ def test_merging_refuses_overlapping_offsets_not_coincidental_short_dreams():
     Two dreams that both terminated instantly are byte-identical for an
     innocent reason -- a 3-token '[ASSISTANT] <eoc>' has no room to differ --
     and must not block a merge."""
-    from dream_sleep import merge_dream_sets
+    from experiments.dreams.cache import merge_dream_sets
 
     empty = _dream([1, 2, 3])
     real = _dream(list(range(100, 130)))
@@ -508,8 +505,8 @@ def test_weighted_gating_changes_the_basis_and_is_recorded():
     could not execute."""
     import torch
 
-    from dream_sleep import dream_bases
-    from gate_pilot import scheme_weights
+    from experiments.dreams.cache import dream_bases
+    from experiments.erasure.pilot import scheme_weights
 
     torch.manual_seed(0)
     state = FakeState([torch.randn(1, 2, 2, 16) for _ in range(2)])
@@ -532,7 +529,7 @@ def test_rebasing_recomputes_erasers_without_touching_the_dreams():
     eraser."""
     import torch
 
-    from dream_sleep import rebase_dream_set
+    from experiments.dreams.cache import rebase_dream_set
 
     torch.manual_seed(0)
     dreams = []

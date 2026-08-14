@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 
-from consolidation_null import (
+from experiments.consolidation.null import (
     FILLER_SENTENCES,
     PASS_MATCH_RATE,
     UNDERPOWERED_DELTA_NATS,

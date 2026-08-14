@@ -1,8 +1,4 @@
-"""Dream CLI implementation.
-
-The top-level dream_sleep module re-exports this module so old imports and
-pickle globals remain stable.
-"""
+"""Dream CLI implementation."""
 
 from __future__ import annotations
 
@@ -11,7 +7,6 @@ import copy
 import hashlib
 import json
 import random
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,8 +15,8 @@ if TYPE_CHECKING:
     import torch
 
 from experiments.facts import (
-    CODE_DIGITS,
     Fact,
+    build_distractors,
     build_facts,
     build_turns,
     cue_rungs,
@@ -29,7 +24,7 @@ from experiments.facts import (
     render_turns,
 )
 from experiments.inference import generate, run_chunks, target_logprob
-from experiments.dreams.types import Dream, DreamCache, DreamSetCache, token_sha
+from experiments.dreams.types import Dream, DreamSetCache, token_sha
 from experiments.dreams.cache import (
     default_cache_path,
     load_dream_cache,
@@ -41,7 +36,7 @@ from experiments.dreams.cache import (
 )
 from experiments.dreams.generation import state_to, teacher_dream as _teacher_dream
 from experiments.dreams.probes import probe_leakage, report_dream_set
-from experiments.dreams.distillation import erase_state
+from experiments.dreams.distillation import erase_state, scored_keep, target_keep_mask
 from experiments.dreams.runner import (
     build_cache,
     build_dream_set,
@@ -107,7 +102,6 @@ DREAM_SET_ARMS = ("replay", *B4_ARMS)
 GATE_THRESHOLD = 1.0
 RANK_RULE = "ratio-gap"
 BIND_MIN_DREAMS = 2
-DISTRACTOR_SALT = 0x5EED
 PARAPHRASE_TEMPLATES = [
     "{u} Remind me, which code was assigned to the {entity}?",
     "{u} I need the {entity}'s code.",
@@ -115,10 +109,6 @@ PARAPHRASE_TEMPLATES = [
     "{u} Could you tell me the code that goes with the {entity}?",
 ]
 
-
-def _legacy(name: str, fallback):
-    module = sys.modules.get("dream_sleep")
-    return getattr(module, name, fallback) if module is not None else fallback
 
 def paraphrase_prompts(fact: Fact, user_open: str, asst_open: str) -> list[str]:
     """One prompt per paraphrase template, each ending in the same answer stem
@@ -188,44 +178,6 @@ def load_init_adapter(model, ckpt: str | Path, rank: int, alpha: float) -> str:
     return file_sha(ckpt / "trainable.pt")
 
 
-def build_distractors(facts: Sequence[Fact], seed: int, taken: Sequence[str] = ()) -> dict[str, str]:
-    """One fixed foil code per fact, drawn from its own RNG stream so the wake
-    transcript's draws are unchanged. The margin metric (sec 4) scores the
-    correct code against these, which is immune to the format prior and to the
-    digit-counting attractor that broke greedy exact match.
-
-    `taken` is every code already spoken for by an earlier wave (its facts and
-    its foils): multi-sleep draws a wave's foils from the same stream, and a
-    foil that is another wave's real code would score that fact as forgotten."""
-    rng = random.Random(seed ^ DISTRACTOR_SALT)
-    taken = {f.code for f in facts} | set(taken)
-    distractors: dict[str, str] = {}
-    for fact in facts:
-        code = " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS))
-        while code in taken:
-            code = " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS))
-        taken.add(code)
-        distractors[fact.entity] = code
-    return distractors
-
-
-def target_keep_mask(cue_flags: Sequence[bool]) -> list[bool]:
-    """Which positions contribute to the KL/CE sum: cue tokens are masked as
-    TARGETS only (sec 4). The cue stays in context and the last cue position is
-    kept -- it predicts the first answer digit, which is the thing being
-    learned."""
-    n = len(cue_flags)
-    return [t + 1 >= n or not cue_flags[t + 1] for t in range(n)]
-
-
-def scored_keep(cue_flags: Sequence[bool], prefix_len: int) -> list[bool]:
-    """`target_keep_mask` over the steer prefix as well as the cue spans
-    (sec 4): prefix tokens condition the dream through state only, in every
-    arm, so they are masked as TARGETS exactly the way cue text is -- and
-    position prefix_len-1 is kept, because it predicts the first free token."""
-    return target_keep_mask([cue or t < prefix_len for t, cue in enumerate(cue_flags)])
-
-
 def load_dialogue_records(n: int = WAKE_DIALOGUE_POOL) -> list[dict]:
     """Candidate conversations for the wake transcript's dialogue slice."""
     from datasets import load_dataset
@@ -255,22 +207,6 @@ def run_merge(args, cache_path: Path) -> None:
     print(f"[{ts()}] merged {len(args.merge_dream_sets)} caches -> {cache_path}: "
           f"{len(merged.dreams)} dreams, set_sha {merged.set_sha[:12]}")
     report_dream_set(merged, args.bind_min_dreams, args.rank_rule)
-
-
-def dream_from_cache(cache: DreamCache, device) -> Dream:
-    import torch
-
-    return Dream(
-        tokens=torch.tensor([cache.dream_ids], dtype=torch.long, device=device),
-        logits=cache.teacher_logits,
-        queries=cache.queries,
-        final_state=None,
-        token_texts=cache.token_texts,
-        skipped_cone=0,
-        cue_flags=cache.cue_flags,
-        prefix_len=cache.prefix_len,
-    )
-
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -411,16 +347,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
-    validate_wave = _legacy("validate_wave_args", validate_wave_args)
-    validate_live_wake = _legacy("validate_live_wake_args", validate_live_wake_args)
-    merge_runner = _legacy("run_merge", run_merge)
-    rebase_runner = _legacy("run_rebase", run_rebase)
-    cache_builder = _legacy("build_cache", build_cache)
-    set_builder = _legacy("build_dream_set", build_dream_set)
-    sleep_runner = _legacy("run_sleep", run_sleep)
-    row_runner = _legacy("r_matrix_row", r_matrix_row)
-    rows_runner = _legacy("r_matrix_rows", r_matrix_rows)
-    summary_runner = _legacy("cl_summary", cl_summary)
+    validate_wave = validate_wave_args
+    validate_live_wake = validate_live_wake_args
+    merge_runner = run_merge
+    rebase_runner = run_rebase
+    cache_builder = build_cache
+    set_builder = build_dream_set
+    sleep_runner = run_sleep
+    row_runner = r_matrix_row
+    rows_runner = r_matrix_rows
+    summary_runner = cl_summary
 
     if args.sft_ref and args.no_sleep:
         raise SystemExit("--sft-ref and --no-sleep are different arms; pass one")
@@ -791,7 +727,7 @@ def main() -> None:
     print(f"\n[{ts()}] done -> {out_path}")
 
 
-__all__ = ["build_parser", "main", "teacher_dream", "paraphrase_prompts", "make_emit", "file_sha", "load_init_adapter", "build_distractors", "target_keep_mask", "scored_keep", "load_dialogue_records", "run_rebase", "run_merge", "dream_from_cache"]
+__all__ = ["build_parser", "main", "teacher_dream", "paraphrase_prompts", "make_emit", "file_sha", "load_init_adapter", "load_dialogue_records", "run_rebase", "run_merge"]
 
 
 if __name__ == "__main__":

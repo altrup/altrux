@@ -11,8 +11,8 @@ plane sec 2.10.6 decides on.
 import pytest
 import torch
 
-from consolidation_null import Fact
-from gate_pilot import (
+from experiments.facts import Fact
+from experiments.erasure.pilot import (
     MIN_AUC,
     PilotCapture,
     PilotDream,
@@ -234,8 +234,8 @@ def test_readout_removals_batches_queries_without_changing_the_math():
     to be arithmetically identical to the per-query loop it replaces."""
     import torch
 
-    from b4 import erase_subspace
-    from gate_pilot import readout_removals
+    from experiments.erasure.operators import erase_subspace
+    from experiments.erasure.pilot import readout_removals
 
     torch.manual_seed(0)
     state = torch.randn(1, 3, 4, 8)
@@ -261,7 +261,7 @@ def test_readout_removals_batches_queries_without_changing_the_math():
 def test_readout_removals_handles_an_empty_query_list():
     import torch
 
-    from gate_pilot import readout_removals
+    from experiments.erasure.pilot import readout_removals
 
     basis = torch.linalg.qr(torch.randn(8, 2))[0].T.contiguous()
     assert readout_removals(torch.randn(1, 3, 4, 8), basis, []) == []
@@ -272,7 +272,7 @@ def test_super_linear_families_sharpen_the_divergence_distinction():
     i.e. proportional or actively flattening. Fact reads live in the tail of
     the divergence distribution, so a super-linear curve concentrates the
     basis on them -- precision weighting without a binary cut."""
-    from gate_pilot import scheme_weights
+    from experiments.erasure.pilot import scheme_weights
 
     d = [0.02, 0.05, 6.0]  # the measured shape: a long bulk and a small tail
 
@@ -290,7 +290,7 @@ def test_super_linear_families_sharpen_the_divergence_distinction():
 
 
 def test_every_family_is_reachable_from_the_sweep_list():
-    from gate_pilot import FAMILIES, scheme_weights
+    from experiments.erasure.pilot import FAMILIES, scheme_weights
 
     for family in FAMILIES:
         assert len(scheme_weights([0.1, 0.4], family)) == 2
@@ -301,7 +301,7 @@ def test_expmed_is_scale_invariant_where_a_bare_exponential_is_not():
     rescaling the divergences changes the weighting's character. Dividing by
     the capture's own median makes the exponent dimensionless, which is the
     scale-invariance sec 5 requires of any threshold rule."""
-    from gate_pilot import scheme_weights
+    from experiments.erasure.pilot import scheme_weights
 
     d = [0.02, 0.05, 0.4, 6.0]
     scaled = [10 * x for x in d]
@@ -318,7 +318,7 @@ def test_expmed_is_scale_invariant_where_a_bare_exponential_is_not():
 
 
 def test_expmed_sits_between_the_power_families_in_steepness():
-    from gate_pilot import scheme_weights
+    from experiments.erasure.pilot import scheme_weights
 
     d = [0.02, 0.05, 6.0]
 
@@ -333,7 +333,7 @@ def test_expmed_does_not_overflow_on_a_heavy_tailed_capture():
     reaches ~750 and a naive exp() is beyond float range. Subtracting the max
     is a global factor -- it rescales every weight equally and leaves the SVD's
     subspace untouched -- so it costs nothing and keeps the family usable."""
-    from gate_pilot import scheme_weights
+    from experiments.erasure.pilot import scheme_weights
 
     d = [0.02] * 50 + [0.05, 0.4, 15.0]
     w = scheme_weights(d, "expmed")

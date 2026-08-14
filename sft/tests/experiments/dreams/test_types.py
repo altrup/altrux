@@ -1,22 +1,11 @@
 import pickle
-import sys
-from pathlib import Path
 
 import torch
 
-
-sys.path.insert(0, str(Path(__file__).parents[3]))
-
-import dream_sleep
 from experiments.dreams import types
 
 
-def test_dream_sleep_reexports_cache_types():
-    for name in ("Dream", "DreamCache", "CachedDream", "DreamSetCache", "dream_set_sha", "token_sha"):
-        assert getattr(dream_sleep, name) is getattr(types, name)
-
-
-def test_cache_type_pickle_round_trip_keeps_the_new_global():
+def test_cache_type_pickle_round_trip_keeps_the_domain_global() -> None:
     cache = types.DreamCache(
         seed=1,
         transcript_ids=[1, 2],

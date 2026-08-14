@@ -10,7 +10,7 @@ import pytest
 import torch
 
 
-from filter_items import (
+from preparation.filtering import (
     BackboneScorer,
     filter_dataset,
     interference_stream,

@@ -9,6 +9,7 @@ from typing import TypeVar
 
 
 CODE_DIGITS = 5
+DISTRACTOR_SALT = 0x5EED
 
 ENTITY_POOL: dict[str, list[str]] = {
     "bird": ["heron", "magpie", "falcon", "sparrow", "kestrel", "pelican", "curlew", "osprey", "plover", "warbler"],
@@ -56,6 +57,21 @@ def build_facts(n: int, rng: random.Random) -> list[Fact]:
         Fact(name, category, " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS)))
         for name, category in rng.sample(pool, n)
     ]
+
+
+def build_distractors(
+    facts: Sequence[Fact], seed: int, taken: Sequence[str] = ()
+) -> dict[str, str]:
+    rng = random.Random(seed ^ DISTRACTOR_SALT)
+    used = {fact.code for fact in facts} | set(taken)
+    distractors: dict[str, str] = {}
+    for fact in facts:
+        code = " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS))
+        while code in used:
+            code = " ".join(str(rng.randrange(10)) for _ in range(CODE_DIGITS))
+        used.add(code)
+        distractors[fact.entity] = code
+    return distractors
 
 
 def fact_turns(fact: Fact) -> list[Turn]:

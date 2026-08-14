@@ -20,7 +20,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "sft"))
 
-from lora import apply_lora
+from adapters.lora import apply_lora
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 

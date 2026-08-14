@@ -12,7 +12,7 @@ import pytest
 import torch
 
 
-from prepare_chains import build_chains, validate
+from preparation.chains import build_chains, validate
 
 USER, ASST = "[U]", "[A]"
 USER_ID, ASST_ID = 1, 2

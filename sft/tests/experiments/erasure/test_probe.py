@@ -3,7 +3,8 @@ capture bookkeeping."""
 
 import torch
 
-from erase_probe import deflate, group_by_layer, rank1_erase, state_top_dirs
+from experiments.erasure.operators import deflate, rank1_erase, state_top_dirs
+from experiments.erasure.probe import group_by_layer
 
 
 def read(ssm_state: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
@@ -129,8 +130,8 @@ import random
 
 import pytest
 
-from consolidation_null import Fact
-from erase_probe import (
+from experiments.facts import Fact
+from experiments.erasure.wake_items import (
     build_bystanders,
     build_dialogue,
     build_mixed_turns,
@@ -202,7 +203,7 @@ def test_wake_items_carry_facts_and_distractors_and_never_collide():
 
 
 def test_a_colliding_distractor_stops_the_build():
-    from erase_probe import Bystander, assert_no_collisions
+    from experiments.erasure.wake_items import Bystander, assert_no_collisions
 
     bad = Bystander("x", "Where is it?", "The parcel left Paris.", "p", " Paris")
     with pytest.raises(SystemExit):
@@ -218,8 +219,8 @@ def test_state_top_dirs_is_memoised_per_state_and_recomputed_after_mutation(monk
     sleep's directions."""
     import torch
 
-    import erase_probe
-    from erase_probe import state_top_dirs
+    from experiments.erasure import operators
+    from experiments.erasure.operators import state_top_dirs
 
     calls = []
     real_svd = torch.linalg.svd
@@ -229,7 +230,7 @@ def test_state_top_dirs_is_memoised_per_state_and_recomputed_after_mutation(monk
         return real_svd(*args, **kwargs)
 
     monkeypatch.setattr(torch.linalg, "svd", counting_svd)
-    erase_probe.clear_state_top_dirs_cache()
+    operators.clear_state_top_dirs_cache()
 
     torch.manual_seed(0)
     state = torch.randn(1, 4, 3, 8)

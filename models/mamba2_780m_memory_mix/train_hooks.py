@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "sft"))
-from lora import apply_lora
+from adapters.lora import apply_lora
 
 from ..mamba2_2_7b_memory.train_hooks import (  # noqa: F401  (re-exported hooks)
     EOS_ID,

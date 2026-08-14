@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "sft"))
-from lora import apply_lora
+from adapters.lora import apply_lora
 
 from . import model as _model_mod
 

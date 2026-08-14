@@ -41,7 +41,7 @@ def _fake_cli(tmp_path):
 def test_cli_adapter_starts_and_resumes_native_sessions(tmp_path, provider, message, session):
     fake = _fake_cli(tmp_path)
     work_dir = tmp_path / "stable-work"
-    command = [sys.executable, "user_generator_cli.py", "--provider", provider,
+    command = [sys.executable, "-m", "providers.user_generator", "--provider", provider,
                "--model", "fake-model", "--executable", str(fake), "--work-dir", str(work_dir)]
 
     started = subprocess.run(command, input=json.dumps({"scenario": "s", "goal": "g", "turn": 1,
@@ -67,7 +67,7 @@ def test_cli_adapter_propagates_native_failure(tmp_path):
     os.chmod(path, 0o755)
 
     completed = subprocess.run(
-        [sys.executable, "user_generator_cli.py", "--provider", "claude", "--model", "m",
+        [sys.executable, "-m", "providers.user_generator", "--provider", "claude", "--model", "m",
          "--executable", str(path)],
         input=json.dumps({"scenario": "s", "goal": "g", "turn": 1, "latest_assistant_reply": ""}),
         text=True, capture_output=True, check=False,

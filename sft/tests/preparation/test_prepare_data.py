@@ -14,7 +14,7 @@ import pytest
 
 
 from models.common import build_tokenizer
-from prepare_data import format_conversation, format_pack, pack_records, recap_messages
+from preparation.conversations import format_conversation, format_pack, pack_records, recap_messages
 
 USER_OPEN = "[USER]"
 ASST_OPEN = "[ASSISTANT]"
@@ -230,7 +230,7 @@ def test_a_recap_can_target_an_earlier_conversation_not_only_the_last():
 def test_an_enumerating_recap_quotes_several_pairs_and_invents_nothing():
     import random
 
-    from prepare_data import recap_messages
+    from preparation.conversations import recap_messages
 
     # Six pairs, so the quotable head half still holds several: enumeration is
     # capped by what survives truncation, never by inventing filler.
@@ -264,7 +264,7 @@ def test_a_recap_quotes_from_the_head_of_its_source_conversation():
     quoted turn on the right side of any truncation."""
     import random
 
-    from prepare_data import recap_messages
+    from preparation.conversations import recap_messages
 
     messages = []
     for i in range(8):

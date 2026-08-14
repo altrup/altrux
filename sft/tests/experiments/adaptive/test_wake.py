@@ -3,14 +3,13 @@ import sys
 
 import pytest
 
-from adaptive_wake import (
+from experiments.adaptive.manifest import (
     AdaptiveWakeError,
-    CommandUserGenerator,
     ExperimentConfig,
-    LiveWakeHarness,
     WakePlan,
     load_wake_plan,
 )
+from experiments.adaptive.wake import CommandUserGenerator, LiveWakeHarness
 
 GOALS = ["advance one", "advance two", "advance three", "close the scene"]
 
@@ -157,9 +156,8 @@ def test_live_wake_preserves_consumed_token_ids_including_assistant_eos(tmp_path
 def test_sleep_transcript_uses_stored_ids_without_decoding_or_retokenizing(monkeypatch):
     import torch
     from types import SimpleNamespace
-    from adaptive_multisleep import artifact_transcript_ids
-    from adaptive_multisleep import DreamSleepBackend
-    import dream_sleep
+    from experiments.adaptive.backend import artifact_transcript_ids, DreamSleepBackend
+    from experiments.dreams import distillation
 
     artifact = {"transcript_token_ids": [7, 99, 2],
                 "transcript_token_sha256": "260cb17b37d3296338f7e5cd227694dccd87bf66b838a94ade6cd61a38fa36c8"}
@@ -175,7 +173,7 @@ def test_sleep_transcript_uses_stored_ids_without_decoding_or_retokenizing(monke
         def eval(self):
             return None
 
-    monkeypatch.setattr(dream_sleep, "distill_sft",
+    monkeypatch.setattr(distillation, "distill_sft",
                         lambda model, optimizer, ids, steps, chunk, on_step: consumed.extend(ids[0].tolist()) or 2)
     backend = DreamSleepBackend.__new__(DreamSleepBackend)
     backend.torch, backend.device = torch, torch.device("cpu")
@@ -190,7 +188,7 @@ def test_sleep_transcript_uses_stored_ids_without_decoding_or_retokenizing(monke
 def test_local_wake_reply_refuses_an_in_wake_eoc():
     import torch
     from types import SimpleNamespace
-    from adaptive_multisleep import DreamSleepBackend
+    from experiments.adaptive.backend import DreamSleepBackend
 
     class State:
         def detach(self):
@@ -222,7 +220,7 @@ def test_local_wake_reply_refuses_an_in_wake_eoc():
 def test_local_wake_reply_refuses_max_token_truncation():
     import torch
     from types import SimpleNamespace
-    from adaptive_multisleep import DreamSleepBackend
+    from experiments.adaptive.backend import DreamSleepBackend
 
     class State:
         def detach(self):
@@ -254,7 +252,7 @@ def test_local_wake_reply_refuses_max_token_truncation():
 def test_reply_sampling_is_turn_scoped_across_interruption_resume():
     import torch
     from types import SimpleNamespace
-    from adaptive_multisleep import DreamSleepBackend
+    from experiments.adaptive.backend import DreamSleepBackend
 
     class State:
         def detach(self):
@@ -357,7 +355,7 @@ def test_registered_experiment_shape_is_three_arms_six_wakes_three_seeds():
 
 
 def test_fact_positions_rotate_across_seeds_and_wakes():
-    from adaptive_wake import counterbalanced_facts
+    from experiments.adaptive.manifest import counterbalanced_facts
 
     facts = [(str(index), str(index)) for index in range(4)]
 
@@ -367,7 +365,7 @@ def test_fact_positions_rotate_across_seeds_and_wakes():
 
 
 def test_manifest_requires_all_frozen_live_wake_inputs(tmp_path):
-    from adaptive_wake import load_experiment_manifest
+    from experiments.adaptive.manifest import load_experiment_manifest
 
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({"arms": ["replay", "nosleep", "sft-ref"], "wakes": 6, "seeds": [1, 2, 3]}))
@@ -407,7 +405,7 @@ def test_fake_backbone_smoke_runs_all_registered_arms_and_wakes(tmp_path):
     import subprocess
 
     completed = subprocess.run(
-        [sys.executable, "adaptive_wake_smoke.py", "--out", str(tmp_path)],
+        [sys.executable, "-m", "experiments.adaptive.runner", "--out", str(tmp_path)],
         capture_output=True, text=True, check=False,
     )
 
@@ -435,7 +433,7 @@ def test_fake_backbone_smoke_runs_all_registered_arms_and_wakes(tmp_path):
 
 
 def test_multisleep_coordinator_sleeps_before_each_arm_specific_later_wake(tmp_path):
-    from adaptive_wake import MultiSleepCoordinator
+    from experiments.adaptive.coordinator import MultiSleepCoordinator
 
     script = tmp_path / "generator.py"
     script.write_text(
@@ -472,7 +470,8 @@ def test_multisleep_coordinator_sleeps_before_each_arm_specific_later_wake(tmp_p
 
 
 def test_manifest_runtime_records_every_arm_wake_and_batch_topology(tmp_path):
-    from adaptive_wake import ExperimentRuntime, load_experiment_manifest
+    from experiments.adaptive.coordinator import ExperimentRuntime
+    from experiments.adaptive.manifest import load_experiment_manifest
 
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps({
@@ -502,7 +501,7 @@ def test_manifest_runtime_records_every_arm_wake_and_batch_topology(tmp_path):
 
 
 def test_registered_runtime_configuration_has_no_scientific_defaults(tmp_path):
-    from adaptive_wake import load_experiment_manifest
+    from experiments.adaptive.manifest import load_experiment_manifest
 
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({
@@ -519,7 +518,7 @@ def test_registered_runtime_configuration_has_no_scientific_defaults(tmp_path):
 
 
 def test_floor_correction_uses_the_matched_nosleep_cell():
-    from adaptive_wake import floor_correct_records, retention_summary
+    from experiments.adaptive.analysis import floor_correct_records, retention_summary
 
     records = [
         {"seed": 7, "arm": arm, "wake": wake, "facts": {
@@ -541,7 +540,7 @@ def test_floor_correction_uses_the_matched_nosleep_cell():
 
 
 def test_floor_correction_fails_closed_without_each_matched_nosleep_fact():
-    from adaptive_wake import floor_correct_records
+    from experiments.adaptive.analysis import floor_correct_records
 
     with pytest.raises(AdaptiveWakeError, match="no-sleep floor"):
         floor_correct_records([
@@ -552,8 +551,8 @@ def test_floor_correction_fails_closed_without_each_matched_nosleep_fact():
 
 
 def test_production_entrypoint_runs_backend_and_writes_corrected_seed_output(tmp_path):
-    from adaptive_multisleep import run_registered_experiment
-    from adaptive_wake import load_experiment_manifest
+    from experiments.adaptive.runner import run_registered_experiment
+    from experiments.adaptive.manifest import load_experiment_manifest
 
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps({
@@ -608,8 +607,8 @@ def test_production_entrypoint_runs_backend_and_writes_corrected_seed_output(tmp
 
 @pytest.mark.parametrize("failure", ["wake", "sleep"])
 def test_interrupted_seed_restarts_from_base_and_preserves_numbered_logs(tmp_path, failure):
-    from adaptive_multisleep import run_registered_experiment
-    from adaptive_wake import ExperimentConfig, ExperimentManifest, WakeSpec
+    from experiments.adaptive.runner import run_registered_experiment
+    from experiments.adaptive.manifest import ExperimentConfig, ExperimentManifest, WakeSpec
 
     config = ExperimentConfig.from_dict({"arms": ["replay", "nosleep", "sft-ref"],
                                          "wakes": 6, "seeds": [1, 2, 3]})
@@ -671,7 +670,7 @@ def test_interrupted_seed_restarts_from_base_and_preserves_numbered_logs(tmp_pat
 
 
 def test_seed_aggregate_keeps_per_seed_values_and_reports_uncertainty():
-    from adaptive_multisleep import aggregate_seed_results
+    from experiments.adaptive.analysis import aggregate_seed_results
 
     results = [{
         "seed": seed,
@@ -689,7 +688,7 @@ def test_seed_aggregate_keeps_per_seed_values_and_reports_uncertainty():
 
 
 def test_seed_aggregate_reports_all_registered_metric_families():
-    from adaptive_multisleep import aggregate_seed_results
+    from experiments.adaptive.analysis import aggregate_seed_results
 
     results = [{"seed": seed, "retention": {"replay": {
         "floor_corrected_r_matrix": [[margin]], "cumulative_installed": [1],
@@ -711,7 +710,7 @@ def test_seed_aggregate_reports_all_registered_metric_families():
 
 
 def test_rehearsal_retention_joins_earlier_fact_at_later_sleep():
-    from adaptive_multisleep import aggregate_seed_results
+    from experiments.adaptive.analysis import aggregate_seed_results
 
     results = [{"seed": seed, "records": [
         {"arm": "replay", "wake": 1, "facts": {"old": {"fact_wave": 1, "floor_corrected_margin": 1.0}},
@@ -734,7 +733,7 @@ def test_rehearsal_retention_joins_earlier_fact_at_later_sleep():
 
 
 def test_rehearsal_retention_uses_one_mean_per_seed_and_count():
-    from adaptive_multisleep import rehearsal_retention_analysis
+    from experiments.adaptive.analysis import rehearsal_retention_analysis
 
     results = [
         {"seed": 1, "records": [{"arm": "replay", "wake": 2,
@@ -754,7 +753,7 @@ def test_rehearsal_retention_uses_one_mean_per_seed_and_count():
 
 
 def test_dream_cache_identity_binds_current_teacher_tokens_state_facts_and_settings():
-    from adaptive_multisleep import dream_cache_identity
+    from experiments.adaptive.backend import dream_cache_identity
 
     base = dream_cache_identity("teacher-1", "tokens", "state", [("e", "12345")],
                                 {"dream_count": 300, "dream_tokens": 64}, 7, 2)
@@ -766,8 +765,8 @@ def test_dream_cache_identity_binds_current_teacher_tokens_state_facts_and_setti
 
 
 def test_battery_collision_terms_cover_registered_wake_inputs(tmp_path):
-    from adaptive_multisleep import battery_collision_terms
-    from adaptive_wake import load_experiment_manifest
+    from experiments.adaptive.backend import battery_collision_terms
+    from experiments.adaptive.manifest import load_experiment_manifest
 
     value = {
         "arms": ["replay", "nosleep", "sft-ref"], "seeds": [1, 2, 3],
@@ -796,7 +795,7 @@ def test_battery_collision_terms_cover_registered_wake_inputs(tmp_path):
 
 def test_teacher_hash_tracks_only_current_trainable_weights():
     import torch
-    from adaptive_multisleep import DreamSleepBackend
+    from experiments.adaptive.backend import DreamSleepBackend
 
     model = torch.nn.Sequential(torch.nn.Linear(2, 2), torch.nn.Linear(2, 2))
     model[1].weight.requires_grad_(False)
@@ -817,8 +816,8 @@ def test_teacher_hash_tracks_only_current_trainable_weights():
 
 def test_later_dream_rehearsal_counts_include_earlier_facts():
     from types import SimpleNamespace
-    from adaptive_multisleep import bound_rehearsal_counts
-    from dream_sleep import Fact
+    from experiments.adaptive.backend import bound_rehearsal_counts
+    from experiments.facts import Fact
 
     facts = [Fact("older", "entity", "1 2 3 4 5"), Fact("newer", "entity", "5 4 3 2 1")]
     dreams = [SimpleNamespace(token_texts=["The older has code 1 2 3 4 5."]),

@@ -126,3 +126,7 @@ def test_remaining_make_targets_run_domain_modules(target: str, module: str) -> 
     )
     assert result.returncode == 0, result.stderr
     assert f"-m {module}" in result.stdout
+
+
+def test_sft_root_has_only_the_shared_progress_module() -> None:
+    assert {path.name for path in SFT.glob("*.py")} == {"progress.py"}

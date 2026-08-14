@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -397,12 +396,6 @@ class DreamSleepBackend:
         )
         from experiments.dreams.probes import dream_is_degenerate
         from experiments.dreams.types import DreamSetCache, token_sha
-        legacy = sys.modules.get("dream_sleep")
-        if legacy is not None:
-            patched = getattr(legacy, "distill_sft", None)
-            if getattr(patched, "__module__", "dream_sleep") != "dream_sleep":
-                distill_sft = patched
-
         context = self.contexts[arm]
         if arm == "nosleep":
             print(f"[{self._ts()}] {arm} wake {wake}: no generation and no training", flush=True)

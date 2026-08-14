@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 
 
-import train
+from training import checkpoints, datasets, loop
 
 
 VOCAB = 8
@@ -70,19 +70,18 @@ def _ids(n, seed=0):
 def test_dataset_fingerprint_differs_for_different_paths_or_sizes(tmp_path):
     a = tmp_path / "a.pt"
     b = tmp_path / "b.pt"
-    assert train.dataset_fingerprint(str(a), 10) != train.dataset_fingerprint(str(b), 10)
-    assert train.dataset_fingerprint(str(a), 10) != train.dataset_fingerprint(str(a), 11)
-    assert train.dataset_fingerprint(str(a), 10) == train.dataset_fingerprint(str(a), 10)
+    assert datasets.dataset_fingerprint(str(a), 10) != datasets.dataset_fingerprint(str(b), 10)
+    assert datasets.dataset_fingerprint(str(a), 10) != datasets.dataset_fingerprint(str(a), 11)
+    assert datasets.dataset_fingerprint(str(a), 10) == datasets.dataset_fingerprint(str(a), 10)
 
 
 def test_save_checkpoint_stores_given_dataset_fingerprint(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 0, _ids(5), None)]
-    fp = train.dataset_fingerprint("some/train.pt", 42)
+    slots = [loop._Slot(0, 0, _ids(5), None)]
+    fp = datasets.dataset_fingerprint("some/train.pt", 42)
 
-    path = train.save_checkpoint(
+    path = checkpoints.save_checkpoint(tmp_path,
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
         total_tokens=1.0, lora_rank=4, lora_alpha=8.0,
         dataset_fingerprint=fp,
@@ -97,13 +96,12 @@ def test_save_checkpoint_stores_given_dataset_fingerprint(monkeypatch, tmp_path)
 # ---------------------------------------------------------------------------
 
 def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 12, _ids(5), None)]
+    slots = [loop._Slot(0, 12, _ids(5), None)]
     slots[0].pos = 8
 
-    path = train.save_checkpoint(
+    path = checkpoints.save_checkpoint(tmp_path,
         model, optimizer, step=5, epoch=0, slots=slots, next_ptr=13,
         total_tokens=123.0, lora_rank=4, lora_alpha=8.0,
     )
@@ -125,13 +123,12 @@ def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch
 # ---------------------------------------------------------------------------
 
 def test_save_checkpoint_writes_mem_state_when_batched_state_given(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 3, _ids(5), None)]
+    slots = [loop._Slot(0, 3, _ids(5), None)]
     slots[0].pos = 2
 
-    path = train.save_checkpoint(
+    path = checkpoints.save_checkpoint(tmp_path,
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
         total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
         batched_state=torch.tensor([1.0, 2.0]),
@@ -143,12 +140,11 @@ def test_save_checkpoint_writes_mem_state_when_batched_state_given(monkeypatch, 
 
 
 def test_save_checkpoint_omits_mem_state_when_batched_state_is_none(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 3, _ids(5), None)]
+    slots = [loop._Slot(0, 3, _ids(5), None)]
 
-    path = train.save_checkpoint(
+    path = checkpoints.save_checkpoint(tmp_path,
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
         total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
     )
@@ -159,11 +155,10 @@ def test_save_checkpoint_omits_mem_state_when_batched_state_is_none(monkeypatch,
 
 
 def test_save_checkpoint_crashing_mid_save_leaves_previous_checkpoint_newest(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 3, _ids(5), None)]
-    good = train.save_checkpoint(
+    slots = [loop._Slot(0, 3, _ids(5), None)]
+    good = checkpoints.save_checkpoint(tmp_path,
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
         total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
     )
@@ -175,25 +170,24 @@ def test_save_checkpoint_crashing_mid_save_leaves_previous_checkpoint_newest(mon
             raise RuntimeError("simulated crash mid-save")
         return real_save(obj, f, *args, **kwargs)
 
-    monkeypatch.setattr(train.torch, "save", fail_writing_state)
+    monkeypatch.setattr(checkpoints.torch, "save", fail_writing_state)
 
     with pytest.raises(RuntimeError):
-        train.save_checkpoint(
+        checkpoints.save_checkpoint(tmp_path,
             model, optimizer, step=2, epoch=0, slots=slots, next_ptr=1,
             total_tokens=20.0, lora_rank=4, lora_alpha=8.0,
         )
 
-    assert [s for s, _ in train.iter_checkpoints()] == [1]
-    assert train.latest_checkpoint() == good
+    assert [s for s, _ in checkpoints.iter_checkpoints(tmp_path)] == [1]
+    assert checkpoints.latest_checkpoint(tmp_path) == good
 
 
 def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 0, _ids(5), None)]
+    slots = [loop._Slot(0, 0, _ids(5), None)]
     paths = [
-        train.save_checkpoint(
+        checkpoints.save_checkpoint(tmp_path,
             model, optimizer, step=step, epoch=0, slots=slots, next_ptr=1,
             total_tokens=float(step), lora_rank=4, lora_alpha=8.0,
             batched_state=torch.tensor([1.0]),
@@ -201,7 +195,7 @@ def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_pat
         for step in (1, 2, 3)
     ]
 
-    train.rotate_full_state(keep=2)
+    checkpoints.rotate_full_state(tmp_path, keep=2)
 
     assert not (paths[0] / "mem_state.pt").exists()
     assert (paths[1] / "mem_state.pt").exists()
@@ -211,17 +205,16 @@ def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_pat
 
 
 def test_rotate_full_state_zero_removes_all(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    slots = [train._Slot(0, 0, _ids(5), None)]
-    path = train.save_checkpoint(
+    slots = [loop._Slot(0, 0, _ids(5), None)]
+    path = checkpoints.save_checkpoint(tmp_path,
         model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
         total_tokens=1.0, lora_rank=4, lora_alpha=8.0,
         batched_state=torch.tensor([1.0]),
     )
 
-    train.rotate_full_state(keep=0)
+    checkpoints.rotate_full_state(tmp_path, keep=0)
 
     assert not (path / "mem_state.pt").exists()
 
@@ -249,7 +242,6 @@ def _make_args(**overrides):
 
 
 def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -261,13 +253,13 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     train_masks = [None]
     args = _make_args(ckpt_every_tokens=8)  # 8 tokens = 2 chunks in
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
 
-    ckpts = sorted(train.iter_checkpoints())
+    ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
     assert len(ckpts) > 0
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
@@ -277,7 +269,6 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
 
 
 def test_run_training_resume_from_mid_example_checkpoint_continues_without_crashing(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -287,20 +278,20 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     train_masks = [None]
     args = _make_args(ckpt_every_tokens=8)
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
-    ckpt = train.latest_checkpoint()
+    ckpt = checkpoints.latest_checkpoint(tmp_path)
     saved_state = torch.load(ckpt / "state.pt", weights_only=True)
 
     # Fresh model/optimizer, as a real resume would start with.
     model2 = FakeStatefulModel()
-    train.load_checkpoint(model2, ckpt)
+    checkpoints.load_checkpoint(model2, ckpt)
     optimizer2 = torch.optim.AdamW(model2.parameters(), lr=1e-3)
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=saved_state["epoch"], start_slot_states=saved_state["slot_states"],
         start_next_ptr=saved_state["next_ptr"], start_step=0,
@@ -308,7 +299,7 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
         start_last_ckpt_tokens=saved_state["last_ckpt_tokens"],
     )
 
-    final_ckpt = train.latest_checkpoint()
+    final_ckpt = checkpoints.latest_checkpoint(tmp_path)
     final_state = torch.load(final_ckpt / "state.pt", weights_only=True)
     assert final_state["total_tokens"] >= 27  # whole 28-token example (27 targets) eventually trained on
 
@@ -319,7 +310,6 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     from position 0 rather than continuing from its saved position --
     reconstructing the carried state by replaying the prefix was tried and
     dropped (see run_training's resume comment)."""
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
@@ -330,13 +320,13 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     # one before we can inspect it.
     args = _make_args(ckpt_every_tokens=4, keep_ckpts=99)
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=[(0, 12)], start_next_ptr=0, start_step=0,
         start_total_tokens=12.0, start_last_ckpt_tokens=12.0,
     )
 
-    ckpts = sorted(train.iter_checkpoints())
+    ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
     example_idx, pos = state["slot_states"][0]
@@ -345,7 +335,6 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
 
 
 def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
@@ -358,13 +347,13 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
     # the slot back to None, which isn't the boundary this test is about.
     args = _make_args(ckpt_every_tokens=12)
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
 
-    ckpts = sorted(train.iter_checkpoints())
+    ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
     assert len(ckpts) > 0
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
@@ -389,7 +378,6 @@ class _RecordingHooks(FakeHooks):
 
 
 def _run_with_weights(tmp_path, monkeypatch, recall, args):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -398,7 +386,7 @@ def _run_with_weights(tmp_path, monkeypatch, recall, args):
     class Hooks(_RecordingHooks):
         recorded = []
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [recall], [None], "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
@@ -443,7 +431,6 @@ class _SleepRecordingHooks(_RecordingHooks):
 
 
 def _run_with_sleeps(tmp_path, monkeypatch, sleeps, args, n_tokens=13):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -453,7 +440,7 @@ def _run_with_sleeps(tmp_path, monkeypatch, sleeps, args, n_tokens=13):
         recorded = []
         fired = []
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None], [sleeps], "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
@@ -481,7 +468,6 @@ def test_head_weight_ramp_restarts_at_fired_sleep(monkeypatch, tmp_path):
 
 
 def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -493,7 +479,7 @@ def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypa
         recorded = []
         fired = []
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None],
         [torch.tensor([6])], "cpu", _make_args(),
         start_epoch=0, start_slot_states=[(0, 8)], start_next_ptr=1, start_step=0,
@@ -507,7 +493,6 @@ def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypa
 # ---------------------------------------------------------------------------
 
 def _run_to_max_steps(monkeypatch, tmp_path, max_steps, start_step=0):
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -515,13 +500,13 @@ def _run_to_max_steps(monkeypatch, tmp_path, max_steps, start_step=0):
     train_ids = [_ids(41, seed=i) for i in range(10)]
     args = _make_args(max_steps=max_steps, ckpt_every_tokens=10**9)
 
-    train.run_training(
+    loop.run_training(tmp_path, "test",
         FakeHooks, model, optimizer, list(model.parameters()), train_ids, [None] * 10,
         [None] * 10, [None] * 10, "cpu", args,
         start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=start_step,
         start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
     )
-    return max(step for step, _ in train.iter_checkpoints())
+    return max(step for step, _ in checkpoints.iter_checkpoints(tmp_path))
 
 
 def test_max_steps_stops_the_run_at_that_many_optimizer_steps(monkeypatch, tmp_path):
@@ -557,7 +542,7 @@ def test_load_checkpoint_pads_marker_delta_grown_by_a_new_special_token(tmp_path
     torch.save(old.state_dict(), tmp_path / "trainable.pt")
 
     new = _MarkerModel(rows=3)
-    train.load_checkpoint(new, tmp_path)
+    checkpoints.load_checkpoint(new, tmp_path)
 
     assert torch.equal(new.marker_delta.delta[:2], old.marker_delta.delta)
     assert torch.equal(new.marker_delta.delta[2], torch.zeros(4))
@@ -569,4 +554,4 @@ def test_load_checkpoint_still_rejects_a_shrunk_marker_delta(tmp_path):
     torch.save(old.state_dict(), tmp_path / "trainable.pt")
 
     with pytest.raises(RuntimeError):
-        train.load_checkpoint(_MarkerModel(rows=2), tmp_path)
+        checkpoints.load_checkpoint(_MarkerModel(rows=2), tmp_path)

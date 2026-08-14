@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 
 
-from sanity_sample import pick_windows
+from preparation.inspection import pick_windows
 
 
 def test_prefers_windows_around_recall_credit():

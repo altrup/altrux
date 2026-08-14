@@ -6,10 +6,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from consolidation_null import Fact
-from dream_sleep import (
-    ARM_CARRY,
-    CachedDream,
+from experiments.facts import Fact
+from experiments.dreams.types import CachedDream
+from experiments.dreams.cli import ARM_CARRY, paraphrase_prompts, teacher_dream
+from experiments.dreams.distillation import (
     distill_dream_set,
     distill_counterfactual,
     distill_live,
@@ -17,20 +17,12 @@ from dream_sleep import (
     distill_sft,
     erase_ssm,
     erased_start,
-    fact_read_positions,
-    gate_agreement,
-    load_dream_cache,
-    pilot_path,
-    sidecar_path,
     erase_state,
-    frozen_teacher,
-    paraphrase_prompts,
-    rehearsal_fraction,
-    sample_next,
-    teacher_dream,
 )
-from erase_probe import deflate, state_top_dirs
-from lora import LoRALinear
+from experiments.dreams.cache import fact_read_positions, gate_agreement, load_dream_cache, pilot_path, sidecar_path
+from experiments.dreams.generation import frozen_teacher, rehearsal_fraction, sample_next
+from experiments.erasure.operators import deflate, state_top_dirs
+from adapters.lora import LoRALinear
 
 USER, ASST = "[USER]", "[ASSISTANT]"
 
@@ -172,7 +164,7 @@ def test_every_result_record_carries_the_erase_operator():
     import io
     import json
 
-    from dream_sleep import make_emit
+    from experiments.dreams.cli import make_emit
 
     buf = io.StringIO()
     make_emit(buf, erase_op="raw")({"phase": "sleep", "arm": "drain"})
@@ -182,14 +174,14 @@ def test_every_result_record_carries_the_erase_operator():
 
 
 def test_the_erase_operator_defaults_to_the_registered_deflated_form():
-    from dream_sleep import build_parser
+    from experiments.dreams.cli import build_parser
 
     assert build_parser().parse_args([]).erase_op == "deflated"
     assert build_parser().parse_args(["--erase-op", "raw"]).erase_op == "raw"
 
 
 def _adapter_model(rank: int = 2, alpha: float = 4.0) -> nn.Module:
-    from lora import apply_lora
+    from adapters.lora import apply_lora
 
     model = nn.Sequential(nn.Linear(4, 4))
     model.marker_delta = nn.Module()
@@ -200,12 +192,11 @@ def _adapter_model(rank: int = 2, alpha: float = 4.0) -> nn.Module:
 def _write_checkpoint(monkeypatch, tmp_path, model, rank: int, alpha: float):
     """A real train.py checkpoint directory (trainable.pt + lora_config.json),
     which is what --init-adapter takes."""
-    import train
+    from training.checkpoints import save_checkpoint
 
-    monkeypatch.setattr(train, "CKPT_DIR", tmp_path)
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-3)
-    return train.save_checkpoint(
-        model, optimizer, step=1, epoch=0, slots=[None], next_ptr=0,
+    return save_checkpoint(
+        tmp_path, model, optimizer, step=1, epoch=0, slots=[None], next_ptr=0,
         total_tokens=1.0, lora_rank=rank, lora_alpha=alpha,
     )
 
@@ -215,7 +206,7 @@ def _trainable(model) -> dict[str, torch.Tensor]:
 
 
 def test_a_train_checkpoint_round_trips_into_a_freshly_initialised_model(monkeypatch, tmp_path):
-    from dream_sleep import load_init_adapter
+    from experiments.dreams.cli import load_init_adapter
 
     torch.manual_seed(0)
     trained = _adapter_model()
@@ -233,13 +224,13 @@ def test_a_train_checkpoint_round_trips_into_a_freshly_initialised_model(monkeyp
 
     for name, tensor in _trainable(fresh).items():
         torch.testing.assert_close(tensor, expected[name])
-    from dream_sleep import file_sha
+    from experiments.dreams.cli import file_sha
     assert sha == file_sha(ckpt / "trainable.pt")
 
 
 @pytest.mark.parametrize("rank,alpha", [(4, 4.0), (2, 8.0)])
 def test_an_adapter_from_a_different_lora_config_refuses_to_load(monkeypatch, tmp_path, rank, alpha):
-    from dream_sleep import load_init_adapter
+    from experiments.dreams.cli import load_init_adapter
 
     ckpt = _write_checkpoint(monkeypatch, tmp_path, _adapter_model(rank=rank, alpha=alpha), rank, alpha)
 
@@ -248,7 +239,7 @@ def test_an_adapter_from_a_different_lora_config_refuses_to_load(monkeypatch, tm
 
 
 def test_a_checkpoint_of_an_unrelated_model_refuses_to_load(monkeypatch, tmp_path):
-    from dream_sleep import load_init_adapter
+    from experiments.dreams.cli import load_init_adapter
 
     other = nn.Sequential(nn.Linear(4, 4))
     other[0].weight.requires_grad_(True)
@@ -262,7 +253,7 @@ def test_every_result_record_carries_the_warm_start_hash():
     import io
     import json
 
-    from dream_sleep import make_emit
+    from experiments.dreams.cli import make_emit
 
     buf = io.StringIO()
     emit = make_emit(buf, init_adapter_sha256="deadbeef", init_adapter="warm_start.pt")
@@ -276,7 +267,7 @@ def test_no_warm_start_is_a_null_hash_on_every_record():
     import io
     import json
 
-    from dream_sleep import make_emit
+    from experiments.dreams.cli import make_emit
 
     buf = io.StringIO()
     make_emit(buf, init_adapter_sha256=None, init_adapter=None)({"phase": "sleep"})
@@ -286,14 +277,14 @@ def test_no_warm_start_is_a_null_hash_on_every_record():
 
 
 def test_the_warm_start_checkpoint_is_optional_and_absent_by_default():
-    from dream_sleep import build_parser
+    from experiments.dreams.cli import build_parser
 
     assert build_parser().parse_args([]).init_adapter is None
     assert build_parser().parse_args(["--init-adapter", "ckpt/step-400"]).init_adapter == "ckpt/step-400"
 
 
 def test_probe_and_dream_batch_sizes_are_explicit_execution_parameters():
-    from dream_sleep import build_parser
+    from experiments.dreams.cli import build_parser
 
     args = build_parser().parse_args(["--probe-batch-size", "8", "--battery-batch-size", "16", "--dream-batch-size", "4"])
 
@@ -301,7 +292,7 @@ def test_probe_and_dream_batch_sizes_are_explicit_execution_parameters():
 
 
 def test_live_wake_mode_requires_a_plan_and_user_generator_command():
-    from dream_sleep import validate_live_wake_args
+    from experiments.dreams.runner import validate_live_wake_args
 
     args = _sleep_args(live_wake=True, wake_plan=None, user_generator_command=None)
 
@@ -310,7 +301,7 @@ def test_live_wake_mode_requires_a_plan_and_user_generator_command():
 
 
 def test_live_wake_mode_requires_pinned_scenarios_and_generator_identity(tmp_path):
-    from dream_sleep import validate_live_wake_args
+    from experiments.dreams.runner import validate_live_wake_args
 
     plan = tmp_path / "plan.json"
     plan.write_text('{"turn_count": 4, "injection_turns": [1, 2, 3, 4]}')
@@ -325,7 +316,7 @@ def test_live_wake_mode_requires_pinned_scenarios_and_generator_identity(tmp_pat
 
 
 def test_live_wake_scenarios_are_exactly_one_per_registered_wake(tmp_path):
-    from dream_sleep import load_live_wake_scenarios
+    from experiments.dreams.runner import load_live_wake_scenarios
 
     path = tmp_path / "scenarios.json"
     path.write_text('["one", "two"]')
@@ -338,7 +329,7 @@ def test_live_wake_scenarios_are_exactly_one_per_registered_wake(tmp_path):
 
 
 def test_live_wake_transcript_uses_realized_user_and_assistant_turns():
-    from dream_sleep import render_live_wake_transcript
+    from experiments.dreams.runner import render_live_wake_transcript
 
     artifact = {"turns": [
         {"user": "A user message", "assistant": "A local reply"},
@@ -358,9 +349,9 @@ def test_the_warm_start_loads_before_the_cache_build_and_the_battery():
     every use of the model."""
     import inspect
 
-    import dream_sleep
+    from experiments.dreams import cli
 
-    source = inspect.getsource(dream_sleep.main)
+    source = inspect.getsource(cli.main)
     load = source.index("load_init_adapter(")
     assert load < source.index("load_or_build_battery(")
     assert load < source.index("build_dream_set if args.dreams else build_cache")
@@ -466,7 +457,7 @@ def test_teacher_dream_caches_a_position_per_token():
 
 
 def test_uncued_replay_dreams_use_the_configured_model_batch():
-    from dream_sleep import generate_replay_dreams
+    from experiments.dreams.generation import generate_replay_dreams
 
     model, _, wake, seed_ids = _tiny_setup()
     batches = []
@@ -818,7 +809,7 @@ def _sleep_args(**overrides):
 
 
 def _built_cache(tmp_path, args):
-    from dream_sleep import build_cache
+    from experiments.dreams.runner import build_cache
 
     model, opt, wake, seed = _tiny_setup()
     encode, decode = _fake_io()
@@ -830,7 +821,7 @@ def _built_cache(tmp_path, args):
 
 
 def test_build_cache_writes_a_loadable_cache_and_its_sidecar(tmp_path):
-    from dream_sleep import load_dream_cache
+    from experiments.dreams.cache import load_dream_cache
 
     args = _sleep_args()
     _, _, _, cache, facts, transcript, _, _ = _built_cache(tmp_path, args)
@@ -848,7 +839,7 @@ def _warm_started_cache(tmp_path, args, adapter_sha):
     """A cache built by a model whose head carries a non-zero adapter, so
     "generated at the base" and "generated warm-started" are distinguishable in
     the dream tokens themselves."""
-    from dream_sleep import build_cache
+    from experiments.dreams.runner import build_cache
 
     model, _, _, _ = _tiny_setup()
     model.head = LoRALinear(model.head, rank=2, alpha=4.0, dropout=0.0)
@@ -887,7 +878,7 @@ def test_a_warm_started_cache_is_generated_with_the_loaded_adapter_active(tmp_pa
 
 
 def test_the_cache_records_which_weights_generated_it(tmp_path):
-    from dream_sleep import load_dream_cache
+    from experiments.dreams.cache import load_dream_cache
 
     args = _sleep_args()
     base, _ = _warm_started_cache(tmp_path, args, None)
@@ -900,7 +891,7 @@ def test_the_cache_records_which_weights_generated_it(tmp_path):
 
 @pytest.mark.parametrize("arm", ["replay", "ce-on-dream", "drain", "counterfactual", "sft-ref"])
 def test_run_sleep_trains_every_arm_from_the_cached_dream(tmp_path, arm):
-    from dream_sleep import run_sleep
+    from experiments.dreams.runner import run_sleep
 
     args = _sleep_args(ce_on_dream=(arm == "ce-on-dream"))
     model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
@@ -921,7 +912,7 @@ def test_run_sleep_trains_every_arm_from_the_cached_dream(tmp_path, arm):
 
 
 def test_run_sleep_cuts_along_the_operator_the_cell_was_launched_with(tmp_path):
-    from dream_sleep import run_sleep
+    from experiments.dreams.runner import run_sleep
 
     trained = {}
     for op in ("raw", "deflated"):
@@ -935,7 +926,7 @@ def test_run_sleep_cuts_along_the_operator_the_cell_was_launched_with(tmp_path):
 
 
 def test_run_sleep_streams_the_probe_battery_on_the_registered_cadence(tmp_path):
-    from dream_sleep import run_sleep
+    from experiments.dreams.runner import run_sleep
 
     args = _sleep_args(distill_steps=6, probe_every=2)
     model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
@@ -951,7 +942,7 @@ def test_a_later_wave_generates_its_own_dream_from_the_carried_state(tmp_path):
     """A wave-2 sleep that reuses the cached wave-1 dream never rehearses the
     new facts. The dream a later wave distils comes from that wave's own
     carried state, so its tokens differ from the cached one's."""
-    from dream_sleep import generate_wave_dream
+    from experiments.dreams.runner import generate_wave_dream
 
     args = _sleep_args()
     model, _, _, cache, _, _, encode, decode = _built_cache(tmp_path, args)
@@ -979,7 +970,7 @@ def test_a_later_wave_generates_its_own_dream_from_the_carried_state(tmp_path):
 def test_the_base_teacher_generates_with_the_adapters_bypassed(tmp_path):
     """`--wave-teacher base` keeps the wave-1 contract (frozen base, adapters
     off); `current` distils the student the run has already trained."""
-    from dream_sleep import generate_wave_dream
+    from experiments.dreams.runner import generate_wave_dream
 
     args = _sleep_args()
     model, _, _, _, _, _, encode, decode = _built_cache(tmp_path, args)
@@ -1007,7 +998,7 @@ def test_the_base_teacher_generates_with_the_adapters_bypassed(tmp_path):
 def test_multi_wave_requires_an_explicit_wave_teacher():
     """Who teaches wave 2 -- the frozen base or the already-trained student --
     is a protocol choice the harness must not make silently."""
-    from dream_sleep import validate_wave_args
+    from experiments.dreams.runner import validate_wave_args
 
     with pytest.raises(SystemExit):
         validate_wave_args(_sleep_args(waves=2, wave_teacher=None))
@@ -1021,7 +1012,7 @@ def test_multi_wave_requires_an_explicit_wave_teacher():
 def _serial_spine(model, tokens, wake):
     """Ground truth for spine_states: the state carried into each token by a
     plain one-token-at-a-time run."""
-    from dream_sleep import copy_state
+    from experiments.dreams.generation import copy_state
 
     state = copy_state(wake)
     per_token = []
@@ -1036,7 +1027,7 @@ def _serial_spine(model, tokens, wake):
 def test_spine_states_match_a_plain_per_token_run(block):
     """The block/batch decomposition is an optimization, not a different
     trajectory: token t's carried state must be what a serial run would hold."""
-    from dream_sleep import spine_states
+    from experiments.dreams.distillation import spine_states
 
     model, _, wake, seed = _tiny_setup()
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
@@ -1052,7 +1043,7 @@ def test_spine_states_match_a_plain_per_token_run(block):
 
 
 def _fused_run(arm, steps=1, rows=1, **kwargs):
-    from dream_sleep import distill_fused
+    from experiments.dreams.distillation import distill_fused
 
     model, opt, wake, seed = _tiny_setup(rows)
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
@@ -1069,7 +1060,7 @@ def _fused_run(arm, steps=1, rows=1, **kwargs):
 def test_b3_fused_equals_b2_fused_detached_at_pass_one():
     """Sec 3.5: at pass 1 the student's weights are the generator snapshot, so
     B3's cached spine and B2-detached's freshly recomputed one coincide."""
-    from dream_sleep import distill_fused, spine_states
+    from experiments.dreams.distillation import distill_fused, spine_states
 
     model, opt, wake, seed = _tiny_setup()
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
@@ -1090,7 +1081,7 @@ def test_b3_fused_equals_b2_fused_detached_at_pass_one():
 def test_b3_fused_leaves_the_generator_spine_usable_after_the_equivalence_check():
     """The check builds a second full spine, so the generator's is parked on the
     host while it runs -- every later pass still distils on it, unchanged."""
-    from dream_sleep import distill_fused, spine_states
+    from experiments.dreams.distillation import distill_fused, spine_states
 
     model, opt, wake, seed = _tiny_setup()
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
@@ -1112,7 +1103,7 @@ def test_b3_fused_leaves_the_generator_spine_usable_after_the_equivalence_check(
 
 def test_b3_fused_reports_a_failed_equivalence_when_the_spine_is_not_the_generator_s():
     """The check has to be able to fail, or it is decoration."""
-    from dream_sleep import distill_fused, spine_states
+    from experiments.dreams.distillation import distill_fused, spine_states
 
     model, opt, wake, seed = _tiny_setup()
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
@@ -1155,17 +1146,17 @@ def test_the_fused_and_per_token_b2_arms_both_train_on_the_same_dream():
 
 @pytest.mark.parametrize("op", ["raw", "deflated"])
 def test_the_deep_fused_spine_carries_gradient_and_the_detached_one_does_not(op, monkeypatch):
-    import dream_sleep
+    from experiments.dreams import distillation
 
     seen: list[bool] = []
-    original = dream_sleep.spine_states
+    original = distillation.spine_states
 
     def spy(*a, **k):
         spine = original(*a, **k)
         seen.append(any(t.requires_grad for t in spine["ssm_states"]))
         return spine
 
-    monkeypatch.setattr(dream_sleep, "spine_states", spy)
+    monkeypatch.setattr(distillation, "spine_states", spy)
     # h*p = 4, not the default rank-1 state: with rank 1 the state's only top
     # singular direction IS its own row, so deflating the query against it
     # leaves a direction exactly orthogonal to the state, the erase is the
@@ -1191,11 +1182,11 @@ def test_the_deep_fused_spine_carries_gradient_and_the_detached_one_does_not(op,
 def test_the_fused_arms_never_differentiate_the_protected_subspace(op, arm, monkeypatch):
     """v is computed under no-grad at its source; the deep arm's live spine
     must not open a path to it (sec 3.4)."""
-    import dream_sleep
+    from experiments.dreams import distillation
 
     grads: list[bool] = []
-    original = dream_sleep.state_top_dirs
-    monkeypatch.setattr(dream_sleep, "state_top_dirs",
+    original = distillation.state_top_dirs
+    monkeypatch.setattr(distillation, "state_top_dirs",
                         lambda s, k: (lambda v: (grads.append(v.requires_grad), v)[1])(original(s, k)))
 
     _fused_run(arm, erase_op=op)
@@ -1204,7 +1195,7 @@ def test_the_fused_arms_never_differentiate_the_protected_subspace(op, arm, monk
 
 
 def test_micro_batched_counterfactuals_match_the_unbatched_pass():
-    from dream_sleep import fused_pass, spine_states
+    from experiments.dreams.distillation import fused_pass, spine_states
 
     model, _, wake, seed = _tiny_setup()
     dream = _fixed_dream(model, wake, seed, n_tokens=6)
@@ -1221,17 +1212,17 @@ def test_micro_batched_counterfactuals_match_the_unbatched_pass():
 def test_the_raw_erase_zeroes_the_ablated_readout_through_the_fused_path(monkeypatch):
     """Sec 3.4's identity, asserted where the arm actually applies it: after a
     raw own-query cut the state's read along that query is identically zero."""
-    import dream_sleep
+    from experiments.dreams import distillation
 
     seen: list[tuple[torch.Tensor, torch.Tensor]] = []
-    original = dream_sleep.erase_ssm
+    original = distillation.erase_ssm
 
     def spy(ssm_state, c, *a, **k):
         erased, skipped = original(ssm_state, c, *a, **k)
         seen.append((erased, c))
         return erased, skipped
 
-    monkeypatch.setattr(dream_sleep, "erase_ssm", spy)
+    monkeypatch.setattr(distillation, "erase_ssm", spy)
     _fused_run("b2-fused-detached", erase_op="raw")
 
     assert seen
@@ -1267,7 +1258,8 @@ def test_run_sleep_stamps_the_fused_arm_and_the_warm_start_on_every_record(tmp_p
     import io
     import json
 
-    from dream_sleep import ARM_CARRY, make_emit, run_sleep
+    from experiments.dreams.cli import ARM_CARRY, make_emit
+    from experiments.dreams.runner import run_sleep
 
     args = _sleep_args(distill_steps=2)
     model, opt, wake, cache, facts, transcript, encode, decode = _built_cache(tmp_path, args)
@@ -1296,7 +1288,7 @@ def test_run_sleep_stamps_the_fused_arm_and_the_warm_start_on_every_record(tmp_p
 def _wave_sleep(tmp_path, arm, wave, teacher="current", wake=None, model=None, records=None,
                 seen=None, transcript=None, verify=None, committed=None, **overrides):
     """One sleep of a multi-sleep run, driven at the given wave."""
-    from dream_sleep import run_sleep
+    from experiments.dreams.runner import run_sleep
 
     args = _sleep_args(waves=4, wave_teacher=teacher, **overrides)
     built = _built_cache(tmp_path, args)
@@ -1343,7 +1335,7 @@ def test_a_later_sleep_distils_a_dream_it_generated_itself(tmp_path):
 def test_each_sleep_s_dream_comes_from_its_own_carried_state(tmp_path):
     """The generator is the student as of that sleep's start, generating from
     the state it carried in -- a different carry teaches a different dream."""
-    from dream_sleep import generate_wave_dream
+    from experiments.dreams.runner import generate_wave_dream
 
     args = _sleep_args(waves=4, wave_teacher="current")
     model, _, _, _, _, _, encode, decode = _built_cache(tmp_path, args)
@@ -1387,10 +1379,10 @@ def test_the_frozen_base_control_never_generates_from_the_trained_student(tmp_pa
 def test_sequential_sft_ref_trains_only_on_the_current_wave_s_facts(tmp_path, monkeypatch):
     """The standard CL baseline: wave by wave, each sleep seeing only its own
     wake transcript -- which is where backward interference should appear."""
-    import dream_sleep
+    from experiments.dreams import runner
 
     trained: list[list[int]] = []
-    monkeypatch.setattr(dream_sleep, "distill_sft",
+    monkeypatch.setattr(runner, "distill_sft",
                         lambda model, opt, ids, *a, **k: trained.append(ids[0].tolist()) or 0)
 
     _wave_sleep(tmp_path, "sft-ref", wave=3, transcript=torch.tensor([[7, 8, 9]]))
@@ -1399,11 +1391,11 @@ def test_sequential_sft_ref_trains_only_on_the_current_wave_s_facts(tmp_path, mo
 
 
 def test_sequential_sft_ref_uses_one_complete_transcript_pass(tmp_path, monkeypatch):
-    import dream_sleep
+    from experiments.dreams import runner
 
     calls: list[int] = []
     monkeypatch.setattr(
-        dream_sleep, "distill_sft",
+        runner, "distill_sft",
         lambda model, opt, ids, steps, *args: calls.append(steps) or 0,
     )
 
@@ -1413,7 +1405,7 @@ def test_sequential_sft_ref_uses_one_complete_transcript_pass(tmp_path, monkeypa
 
 
 def test_sft_chunk_count_covers_every_next_token_once():
-    from dream_sleep import sft_steps
+    from experiments.dreams.distillation import sft_steps
 
     assert sft_steps(49, 48) == 1
     assert sft_steps(50, 48) == 2
@@ -1424,7 +1416,7 @@ def test_sft_chunk_count_covers_every_next_token_once():
 def test_distractors_never_reuse_a_code_another_wave_already_holds(tmp_path):
     """Multi-sleep probes every wave's facts, so every wave needs foils -- and a
     foil that is some other wave's real code would score that fact as forgotten."""
-    from dream_sleep import build_distractors
+    from experiments.facts import build_distractors
 
     wave1 = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]
     first = build_distractors(wave1, 1234)
@@ -1448,7 +1440,7 @@ def test_the_commit_step_erases_only_the_facts_that_verify():
     fresh-state margin check, and only where it passes does one real erase land
     on the carried state. The erase is a verified memory-policy step, never a
     training signal."""
-    from dream_sleep import commit_erase
+    from experiments.dreams.runner import commit_erase
 
     model, carried, seen = _commit_setup()
     before = [s.clone() for s in carried.ssm_states]
@@ -1466,7 +1458,7 @@ def test_a_fact_is_committed_once_and_never_re_erased():
     """The commit is a policy step per fact, not a per-sleep tax on every fact
     that ever installed -- re-cutting along the same query every sleep would
     charge the bystanders again for nothing."""
-    from dream_sleep import commit_erase
+    from experiments.dreams.runner import commit_erase
 
     model, carried, seen = _commit_setup()
     committed: set[str] = set()
@@ -1500,7 +1492,7 @@ def test_the_commit_arm_is_registered_as_carrying_a_committed_state():
 def test_the_r_matrix_row_averages_each_wave_s_facts_separately():
     """R[i][j] is wave i's facts after sleep j (sec 3.7), so one probe sweep
     over all facts so far is one column, split by the wave that taught them."""
-    from dream_sleep import r_matrix_row
+    from experiments.dreams.runner import r_matrix_row
 
     row = r_matrix_row({
         "osprey": {"fact_wave": 1, "margin": 2.0, "install": True},
@@ -1513,7 +1505,7 @@ def test_the_r_matrix_row_averages_each_wave_s_facts_separately():
 
 
 def test_a_fact_with_no_foil_is_not_averaged_into_its_wave():
-    from dream_sleep import r_matrix_row
+    from experiments.dreams.runner import r_matrix_row
 
     assert r_matrix_row({"osprey": {"fact_wave": 1, "margin": None, "install": False}}) == {}
 
@@ -1525,7 +1517,7 @@ def _triangle():
 
 
 def test_backward_transfer_is_the_mean_move_from_each_wave_s_own_sleep_to_the_last():
-    from dream_sleep import cl_summary
+    from experiments.dreams.runner import cl_summary
 
     summary = cl_summary(_triangle(), waves=2)
 
@@ -1535,7 +1527,7 @@ def test_backward_transfer_is_the_mean_move_from_each_wave_s_own_sleep_to_the_la
 
 
 def test_backward_transfer_is_undefined_for_a_single_sleep():
-    from dream_sleep import cl_summary
+    from experiments.dreams.runner import cl_summary
 
     assert cl_summary({(1, 1): {"mean_margin": 4.0, "installs": 2, "facts": 2}}, waves=1)["bwt"] is None
 
@@ -1543,7 +1535,7 @@ def test_backward_transfer_is_undefined_for_a_single_sleep():
 def test_the_r_matrix_is_lower_triangular_over_the_run_s_sleeps():
     """A wave's facts do not exist before their own wake, so the upper triangle
     is empty by construction and must not be counted as a loss."""
-    from dream_sleep import cl_summary, r_matrix_rows
+    from experiments.dreams.runner import cl_summary, r_matrix_rows
 
     r = {(i, j): {"mean_margin": float(j - i), "installs": 1, "facts": 1}
          for j in range(1, 5) for i in range(1, j + 1)}
@@ -1570,14 +1562,14 @@ def test_b3_fused_checks_its_pass_one_equivalence_at_every_sleep(tmp_path, wave)
 
 
 def _leak_items():
-    from erase_probe import Bystander
+    from experiments.erasure.wake_items import Bystander
 
     return [Bystander("clara", "Where does Clara live?", "Clara lives in Lisbon.",
                       f"{USER} Where does Clara live?{ASST} Clara lives in", " Lisbon")]
 
 
 def test_the_leakage_probe_scores_distractor_content_against_its_own_floor():
-    from dream_sleep import probe_leakage
+    from experiments.dreams.probes import probe_leakage
 
     items = _leak_items()
     records: list[dict] = []
@@ -1597,7 +1589,7 @@ def test_the_leakage_probe_scores_distractor_content_against_its_own_floor():
 
 
 def test_the_leakage_probe_reports_a_miss_as_a_miss():
-    from dream_sleep import probe_leakage
+    from experiments.dreams.probes import probe_leakage
 
     records: list[dict] = []
     probe_leakage(_leak_items(), lambda p, a: ("Oslo.", -4.0), records.append,
@@ -1727,7 +1719,7 @@ def _build_set(tmp_path, decoded: str, battery=None, **over):
     every token decodes to, which is how the binding scan is steered."""
     from types import SimpleNamespace
 
-    from dream_sleep import build_dream_set
+    from experiments.dreams.runner import build_dream_set
 
     model = TinyModel()
     path = tmp_path / "dream_set_s1234.pt"
@@ -1835,7 +1827,7 @@ def test_the_pilot_capture_records_battery_read_queries_on_gpu_not_offline(tmp_p
 
 
 def test_dream_is_degenerate_flags_mojibake_and_tolerates_ordinary_unicode():
-    from dream_sleep import dream_is_degenerate
+    from experiments.dreams.probes import dream_is_degenerate
 
     assert dream_is_degenerate("�" * 16)
     assert dream_is_degenerate("fine text " + "�" + " more")   # any replacement char
@@ -1847,7 +1839,7 @@ def test_dream_is_degenerate_flags_mojibake_and_tolerates_ordinary_unicode():
 def test_a_degenerate_dream_is_regenerated_under_a_bumped_seed(tmp_path, monkeypatch, capsys):
     """Sec 2.1's mojibake clause, enforced per dream: a degenerate dream never
     enters the set; the slot is regenerated and counted, loudly."""
-    import dream_sleep as ds
+    from experiments.dreams import runner as ds
 
     real = ds.teacher_dream
     calls = {"n": 0}
@@ -1870,7 +1862,7 @@ def test_a_degenerate_dream_is_regenerated_under_a_bumped_seed(tmp_path, monkeyp
 
 
 def test_a_slot_that_stays_degenerate_is_a_stop_and_think(tmp_path, monkeypatch):
-    import dream_sleep as ds
+    from experiments.dreams import runner as ds
 
     real = ds.teacher_dream
 
@@ -1890,7 +1882,7 @@ def test_battery_read_queries_follow_the_model_device_not_the_callers():
     """build_dream_set hands over a wake state that state_to already moved to
     CPU for the cache; the battery forward must run wherever the model is
     (sec 1.8 -- the all-CPU fake backbone can never catch this)."""
-    from dream_sleep import battery_read_queries
+    from experiments.dreams.probes import battery_read_queries
 
     model, _, wake, _ = _tiny_setup()
     model = model.to("cuda")
@@ -1920,7 +1912,7 @@ def test_an_empty_gate_yields_an_empty_eraser_not_a_failure(tmp_path):
 def test_a_single_query_dream_with_an_empty_qcm_basis_still_builds(tmp_path, capsys):
     """qcm drops v1; with one gated query that leaves nothing. An empty
     variant basis is a loud NOTE, never a refused cache."""
-    from dream_sleep import dream_bases
+    from experiments.dreams.cache import dream_bases
 
     wake = FakeState([torch.randn(1, 2, 1, 4)])
     queries = [[torch.tensor([[1.0, 0.0, 0.0, 0.0]])]]
@@ -1935,7 +1927,7 @@ def test_dream_seed_offset_makes_parallel_builds_disjoint(tmp_path):
     the same wake state produce IDENTICAL dreams -- parallel builds would
     duplicate instead of extending the set. The offset shifts the derivation
     so N processes cover disjoint dream indices."""
-    from dream_sleep import dream_generation_seed
+    from experiments.dreams.generation import dream_generation_seed
 
     base = [dream_generation_seed(1234, i, attempt=0, offset=0) for i in range(20)]
     shifted = [dream_generation_seed(1234, i, attempt=0, offset=20) for i in range(20)]

@@ -15,7 +15,7 @@ import pytest
 import torch
 
 
-from prepare_cram import add_block_args, build_blocks, make_items, split_articles, split_sentences, validate_blocks
+from preparation.cram import add_block_args, build_blocks, make_items, split_articles, split_sentences, validate_blocks
 
 USER_ID, ASST_ID = 1, 2
 SEP_ID, NL_ID = ord(" "), ord("\n")

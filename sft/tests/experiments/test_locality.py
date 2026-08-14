@@ -6,8 +6,8 @@ import json
 import pytest
 import torch
 
-from consolidation_null import target_logprob
-from probes_common import (
+from experiments.inference import target_logprob
+from experiments.locality import (
     BATTERY_CANDIDATES,
     CalibrationError,
     battery_hit,

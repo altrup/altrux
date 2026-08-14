@@ -9,19 +9,18 @@ the smallest shape where deflation and a rank cap are not degenerate.
 import pytest
 import torch
 
-from b4 import (
+from experiments.erasure.gating import (
     ADDRESS_BUDGET_FRACTION,
     VARIANTS,
     address_budget,
     aggregate_basis,
-    erase_state_subspace,
-    erase_subspace,
     gated_positions,
     rank_median,
     rank_ratio_gap,
     state_divergence,
     variant_basis,
 )
+from experiments.erasure.operators import erase_state_subspace, erase_subspace
 
 
 def _queries(m: int = 3, n: int = 8, seed: int = 0) -> list[torch.Tensor]:
@@ -228,7 +227,7 @@ def test_sigma_scaled_erase_is_partial_and_ordered_by_singular_value():
     """
     import torch
 
-    from b4 import erase_subspace, erase_subspace_scaled
+    from experiments.erasure.operators import erase_subspace, erase_subspace_scaled
 
     torch.manual_seed(0)
     basis = torch.linalg.qr(torch.randn(8, 2))[0].T.contiguous()
@@ -248,7 +247,7 @@ def test_sigma_scaled_erase_is_partial_and_ordered_by_singular_value():
 
 
 def test_sigma_gammas_come_from_the_spectrum_normalised_to_its_top():
-    from b4 import sigma_gammas
+    from experiments.erasure.operators import sigma_gammas
 
     assert sigma_gammas([4.0, 2.0, 1.0], rank=3) == pytest.approx([1.0, 0.5, 0.25])
     assert sigma_gammas([4.0, 2.0, 1.0], rank=2) == pytest.approx([1.0, 0.5])

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import copy
-import sys
 import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from experiments.dreams.generation import copy_state, rehearsal_fraction, sample_next
-from experiments.dreams.types import CachedDream, Dream
+from experiments.dreams.types import CachedDream, Dream, DreamCache
 from experiments.erasure.operators import (
     deflate,
     erase_subspace,
@@ -36,11 +35,6 @@ SPINE_BLOCK = 32
 CF_BATCH = 128
 
 
-def _compat(name: str, fallback):
-    legacy = sys.modules.get("dream_sleep")
-    return getattr(legacy, name, fallback) if legacy is not None else fallback
-
-
 def erase_ssm(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float = GAMMA,
               k: int = DEFLATE_K, op: str = ERASE_OP):
     import torch
@@ -50,7 +44,7 @@ def erase_ssm(ssm_state: torch.Tensor, c: torch.Tensor, gamma: float = GAMMA,
     c = c.to(ssm_state.device)
     if op == "raw":
         return rank1_erase(ssm_state, c, gamma), 0
-    direction = deflate(c, _compat("state_top_dirs", state_top_dirs)(ssm_state, k))
+    direction = deflate(c, state_top_dirs(ssm_state, k))
     skip = direction.float().norm(dim=-1) < CONE_SKIP * c.float().norm(dim=-1)
     if bool(skip.all()):
         return ssm_state, int(skip.sum())
@@ -71,11 +65,10 @@ def erase_state(state, queries: Sequence[torch.Tensor], gamma: float = GAMMA,
 
 def make_erase_hook(erase_op: str):
     skipped = 0
-    erase = _compat("erase_ssm", erase_ssm)
 
     def hook(layer_idx: int, ssm_state, c):
         nonlocal skipped
-        erased, was_skipped = erase(ssm_state, c, op=erase_op)
+        erased, was_skipped = erase_ssm(ssm_state, c, op=erase_op)
         skipped += was_skipped
         return erased
 
@@ -99,18 +92,23 @@ def erased_start(wake_state, bases: Sequence[torch.Tensor]):
     return state
 
 
-def dream_from_cached(cached: CachedDream, device) -> Dream:
+def dream_from_cached(cached: CachedDream | DreamCache, device) -> Dream:
     import torch
 
     return Dream(tokens=torch.tensor([cached.dream_ids], dtype=torch.long, device=device),
                  logits=cached.teacher_logits, queries=cached.queries, final_state=None,
                  token_texts=cached.token_texts, skipped_cone=0, cue_flags=cached.cue_flags,
-                 stop_reason=cached.stop_reason)
+                 stop_reason=cached.stop_reason, prefix_len=cached.prefix_len)
 
 
-def _scored_keep(cue_flags: Sequence[bool], prefix_len: int) -> list[bool]:
+def target_keep_mask(cue_flags: Sequence[bool]) -> list[bool]:
+    return [index + 1 >= len(cue_flags) or not cue_flags[index + 1]
+            for index in range(len(cue_flags))]
+
+
+def scored_keep(cue_flags: Sequence[bool], prefix_len: int) -> list[bool]:
     masked = [cue or index < prefix_len for index, cue in enumerate(cue_flags)]
-    return [index + 1 >= len(masked) or not masked[index + 1] for index in range(len(masked))]
+    return target_keep_mask(masked)
 
 
 def distill_replay(model, opt, dream: Dream, steps: int, chunk_len: int, kl_temp: float, on_step,
@@ -161,7 +159,7 @@ def distill_dream_set(model, opt, dreams: Sequence[CachedDream], wake_state, var
             tokens += distill_replay(
                 model, opt, dream, 1, dream.tokens.shape[1], kl_temp,
                 lambda s, loss, base=step: on_step(base + s, loss),
-                keep=_scored_keep(cached.cue_flags, cached.prefix_len), init_state=start)
+                keep=scored_keep(cached.cue_flags, cached.prefix_len), init_state=start)
             step += 1
             on_boundary(i, epoch, step)
     return tokens
@@ -297,10 +295,10 @@ def distill_fused(model, opt, dream: Dream, wake_state, steps: int, kl_temp: flo
         if frozen_spine is not None:
             spine = frozen_spine
         elif deep:
-            spine = _compat("spine_states", spine_states)(model, dream.tokens, wake_state, block)
+            spine = spine_states(model, dream.tokens, wake_state, block)
         else:
             with torch.no_grad():
-                spine = _compat("spine_states", spine_states)(model, dream.tokens, wake_state, block)
+                spine = spine_states(model, dream.tokens, wake_state, block)
         loss, _ = fused_pass(model, dream, wake_state, spine, scored, kl_temp, erase_op, cf_batch,
                              backward=True, retain=deep)
         if step == 0 and frozen_spine is not None and check is not None:
@@ -312,7 +310,7 @@ def distill_fused(model, opt, dream: Dream, wake_state, steps: int, kl_temp: flo
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             with torch.no_grad():
-                live = _compat("spine_states", spine_states)(model, dream.tokens, wake_state, block)
+                live = spine_states(model, dream.tokens, wake_state, block)
                 reference, _ = fused_pass(model, dream, wake_state, live, scored, kl_temp,
                                          erase_op, cf_batch, backward=False)
             del live
@@ -382,4 +380,4 @@ def distill_sft(model, opt, ids: torch.Tensor, steps: int, chunk_len: int, on_st
 __all__ = ["distill_counterfactual", "distill_dream_set", "distill_fused", "distill_live",
            "distill_replay", "distill_sft", "dream_from_cached", "erase_state", "erase_ssm",
            "erased_start", "erased_start_scaled", "fused_pass", "make_erase_hook", "sft_steps",
-           "spine_states"]
+           "scored_keep", "spine_states", "target_keep_mask"]

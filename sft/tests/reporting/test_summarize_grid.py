@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from summarize_grid import (
+from reporting.grid import (
     apply_floor,
     check_hashes,
     check_init_adapter,
