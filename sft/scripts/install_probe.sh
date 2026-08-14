@@ -9,12 +9,11 @@
 # Arm A only: it is the arm that moved most (dlogp +1.8 vs +0.08/-0.07), so it
 # is the cheapest test of whether installation is reachable at all here.
 set -u
-cd ~/altrux/sft
 probe() {
   local name=$1; shift
   echo "=== install $name ==="
   MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.. \
-    uv run --no-sync python -u dream_sleep.py --arm replay --n-facts 4 --filler-tokens 40 \
+    uv run --no-sync python -u -m experiments.dreams.cli --arm replay --n-facts 4 --filler-tokens 40 \
       --dream-temp 0.7 --cue-greedy 12 --seed 1234 "$@" 2>&1 \
     | grep --line-buffered -E "rehearsal fraction|probe w1|battery retained|held-out ppl 2|dPPL"
 }

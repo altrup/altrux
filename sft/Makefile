@@ -11,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator
+.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
 
 sync:
 	uv sync --inexact
@@ -290,6 +290,33 @@ adaptive-wake-smoke:
 
 user-generator:
 	PYTHONPATH=$(PYTHONPATH) uv run --no-sync python -u -m providers.user_generator $(ARGS)
+
+cue-sweep:
+	bash scripts/cue_sweep.sh $(ARGS)
+
+cue-sweep2:
+	bash scripts/cue_sweep2.sh $(ARGS)
+
+cue-sweep3:
+	bash scripts/cue_sweep3.sh $(ARGS)
+
+cue-sweep4:
+	bash scripts/cue_sweep4.sh $(ARGS)
+
+cue-sweep5:
+	bash scripts/cue_sweep5.sh $(ARGS)
+
+install-probe:
+	bash scripts/install_probe.sh $(ARGS)
+
+grid:
+	bash scripts/run_grid.sh $(ARGS)
+
+grid2:
+	bash scripts/run_grid2.sh $(ARGS)
+
+ladder:
+	bash scripts/run_ladder.sh $(ARGS)
 
 # --data is repeatable, and each slice can carry its own token share and its
 # own chunk-len/batch-size/gradient-checkpointing. Quote each slice so the

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The d800 baselines of DISCUSSION-20260807 sec 4(3), one seed per invocation:
 #
-#   INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ERASE_OP=deflated ./run_grid2.sh 1234
+#   INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ERASE_OP=deflated make grid2 ARGS=1234
 #
 # Concurrency is a per-card decision, not a property of this script (sft/CLAUDE.md):
 # serial on an A10, three seeds at once on a GH200.
@@ -20,7 +20,7 @@
 # and every cell records its hashes so summarize_grid.py can assert they agree.
 set -u
 source "$(dirname "$0")/_driver_common.sh"
-seed=${1:?usage: INIT_ADAPTER=<ckpt|none> [ERASE_OP=deflated] run_grid2.sh SEED}
+seed=${1:?usage: INIT_ADAPTER=<ckpt|none> [ERASE_OP=deflated] make grid2 ARGS=SEED}
 # A seed whose dream binds fewer than 3/4 codes to their own entity is rebuilt
 # at CUE_EVERY=24 (DISCUSSION-20260806 sec 5a); the arms of that seed run at the
 # same value so the cell's flags regenerate the cache they distilled.
@@ -28,10 +28,9 @@ cue_every=${CUE_EVERY:-32}
 erase_op=${ERASE_OP:-deflated}
 
 require_init_adapter \
-  "INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 ./run_grid2.sh $seed"
+  "INIT_ADAPTER=../models/mamba2_780m/checkpoints/epoch-1/step-400 make grid2 ARGS=$seed"
 echo "[$(stamp)] === seed $seed | erase op $erase_op | warm start ${init_adapter} | cue_every $cue_every ==="
 
-cd ~/altrux/sft
 env_vars="MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.."
 common="--n-facts 4 --filler-tokens 40 --dream-tokens 512 --dream-temp 0.7 --cue-every $cue_every --cue-greedy 12"
 regime="--lr 1e-4 --distill-steps 800 --probe-every 200 --erase-op $erase_op"
@@ -39,7 +38,7 @@ regime="--lr 1e-4 --distill-steps 800 --probe-every 200 --erase-op $erase_op"
 cache="data/dream_cache_s${seed}.pt"
 if [ ! -f "$cache" ]; then
   echo "[$(stamp)] === building dream cache: seed=$seed ==="
-  env $env_vars uv run --no-sync python -u dream_sleep.py $common $init_flag --seed "$seed" \
+  env $env_vars uv run --no-sync python -u -m experiments.dreams.cli $common $init_flag --seed "$seed" \
     --build-dream-cache 2>&1 | tee "logs/g2_cache_s${seed}.log"
   # Read the sidecar before running a single arm: a seed whose binding-aware
   # coverage is below 3/4 gets its cache regenerated at --cue-every 24 first.
@@ -58,7 +57,7 @@ run() {  # run <name> <args...>
     echo "[$(stamp)] === skip $name s$seed (done) ==="; return
   fi
   echo "[$(stamp)] === grid $name seed=$seed erase=$erase_op ==="
-  env $env_vars uv run --no-sync python -u dream_sleep.py $common $regime $init_flag --seed "$seed" "$@" \
+  env $env_vars uv run --no-sync python -u -m experiments.dreams.cli $common $regime $init_flag --seed "$seed" "$@" \
       --out "$out" 2>&1 \
     | tee "logs/g2_${name}_s${seed}.log" \
     | grep --line-buffered -E "rehearsal fraction|bound|probe w|battery retained|held-out ppl|in_context w|token-gradient|dream_sha|equivalence|WARNING|Error"

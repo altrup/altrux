@@ -1,4 +1,4 @@
-# Shared front matter for the sec 3.1 grid drivers. Sourced, not executed.
+# Shared front matter for the sec 3.1 grid drivers.
 stamp() { date +%H:%M:%S; }
 
 # The registered protocol for this session is warm-start-everything (sec 3.1):

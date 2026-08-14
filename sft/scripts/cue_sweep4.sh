@@ -12,13 +12,12 @@
 # being identical across arms it stays arm-neutral (sec 3 requires A and B2 to
 # share a byte-identical dream at a seed).
 set -u
-cd ~/altrux/sft
 STEM='[USER] What is the code for the'
 for seed in 2345 3456 1234; do
   for cue in "$STEM" "Let me go back over the codes from earlier.$STEM"; do
     echo "=== cell4 seed=$seed cue='$cue' ==="
     MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.. \
-      uv run --no-sync python -u dream_sleep.py \
+      uv run --no-sync python -u -m experiments.dreams.cli \
         --arm replay --n-facts 4 --filler-tokens 40 --dream-tokens 2048 \
         --distill-steps 1 --seed "$seed" --dream-temp 0.7 --dream-prompt "$cue" \
         --out "logs/stem_sweep_${seed}_${#cue}.jsonl" 2>&1 | grep -E "rehearsal fraction"

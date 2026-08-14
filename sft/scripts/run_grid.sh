@@ -14,8 +14,7 @@
 #                        entities everywhere, 3-4/4 codes.
 # Everything else is the registered configuration.
 set -u
-seed=${1:?usage: run_grid.sh SEED}
-cd ~/altrux/sft
+seed=${1:?usage: make grid ARGS=SEED}
 common="--n-facts 4 --filler-tokens 40 --dream-tokens 512 --dream-temp 0.7 --cue-every 64 --cue-greedy 12"
 
 run() {  # run <name> <args...>
@@ -27,7 +26,7 @@ run() {  # run <name> <args...>
   if grep -q '"phase": "locality"' "$out" 2>/dev/null; then echo "=== skip $name s$seed (done) ==="; return; fi
   echo "=== grid $name seed=$seed ==="
   MODEL_NAME=mamba2_780m HF_HOME=$PWD/../.cache/huggingface PYTHONPATH=$PWD/.. \
-    uv run --no-sync python -u dream_sleep.py $common --seed "$seed" "$@" --out "$out" 2>&1 \
+    uv run --no-sync python -u -m experiments.dreams.cli $common --seed "$seed" "$@" --out "$out" 2>&1 \
     | grep --line-buffered -E "rehearsal fraction|probe w|battery retained|held-out ppl|in_context w|WARNING|Error"
 }
 

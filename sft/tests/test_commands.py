@@ -130,3 +130,46 @@ def test_remaining_make_targets_run_domain_modules(target: str, module: str) -> 
 
 def test_sft_root_has_only_the_shared_progress_module() -> None:
     assert {path.name for path in SFT.glob("*.py")} == {"progress.py"}
+
+
+def test_shell_drivers_live_under_scripts() -> None:
+    names = {
+        "_driver_common.sh",
+        "cue_sweep.sh",
+        "cue_sweep2.sh",
+        "cue_sweep3.sh",
+        "cue_sweep4.sh",
+        "cue_sweep5.sh",
+        "install_probe.sh",
+        "run_grid.sh",
+        "run_grid2.sh",
+        "run_ladder.sh",
+    }
+    assert not list(SFT.glob("*.sh"))
+    assert {path.name for path in (SFT / "scripts").glob("*.sh")} == names
+
+
+@pytest.mark.parametrize(
+    ("target", "script"),
+    (
+        ("cue-sweep", "cue_sweep.sh"),
+        ("cue-sweep2", "cue_sweep2.sh"),
+        ("cue-sweep3", "cue_sweep3.sh"),
+        ("cue-sweep4", "cue_sweep4.sh"),
+        ("cue-sweep5", "cue_sweep5.sh"),
+        ("install-probe", "install_probe.sh"),
+        ("grid", "run_grid.sh"),
+        ("grid2", "run_grid2.sh"),
+        ("ladder", "run_ladder.sh"),
+    ),
+)
+def test_shell_drivers_are_exposed_by_make(target: str, script: str) -> None:
+    result = subprocess.run(
+        ["make", "-n", target, "ARGS=1234"],
+        cwd=SFT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"bash scripts/{script}" in result.stdout
