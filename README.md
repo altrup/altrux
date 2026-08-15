@@ -1,6 +1,6 @@
 # altrux
 
-Experiments with LLMs — specifically, building toward a model that revises its own output based on user feedback.
+Some LLM experiments I was curious about
 
 ## Layout
 
