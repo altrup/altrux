@@ -1,6 +1,6 @@
 # altrux
 
-Some LLM experiments I was curious about
+Some LLM experiments I was curious about, lot of code written by Claude + Codex
 
 ## Layout
 
