@@ -2,7 +2,7 @@
 
 ## Current reading path
 
-Read [the governing discussion](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md), then [the run it interprets](experiments/EXPERIMENT_NOTES-20260810-231500.md). Open older notes from the catalog only when the governing discussion links a decision or a live question needs its source. The local harness and provider migration are implemented through `3504363`; the real-hardware smoke and frozen wake schedule remain before launch. The next run is the six-wake, three-seed comparison of replay, no-sleep, and sequential SFT; B-family erase arms are closed.
+Read [the governing generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md), then [the CL foundations review](research/RESEARCH-20260814-continual-learning-foundations.md) and [the earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md). Open older notes from the catalog only when one of these documents links a decision or a live question needs its source. The local six-wake harness and provider migration are implemented through `3504363`, but the code-only run is a pilot rather than the headline experiment. Hold the science launch until the heterogeneous-task design, raw-replay baseline, metrics, holdouts, and external confirmation stage are frozen.
 
 ## Discussion notes
 
@@ -22,6 +22,7 @@ Read [the governing discussion](discussion/DISCUSSION-20260811-multisleep-adapti
 - [2026-08-07 — g2 results](discussion/DISCUSSION-20260807-g2-results-erase-geometry-and-warmstart-run.md): Confirms dream distillation can install facts cheaply, selects deflated erasure, and makes installation-to-forgetting ratio the standing objective.
 - [2026-08-08 — headline collapse](discussion/DISCUSSION-20260808-headline-collapse-deep-block-and-regime-bridge.md): Shows warm-start damage is real, selects deflated operators, demotes single-shot geometry, and queues a deeper 2.7B bridge test.
 - [2026-08-11 — multisleep and agent migration](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md): Closes B-family erasure after the 2.7B failure and registers replay, no-sleep, and sequential SFT across six adaptive wakes.
+- [2026-08-14 — generalizable CL evaluation](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md): Reclassifies the code-only run as a pilot and defines a two-stage program across heterogeneous knowledge, standard replay, held-out streams, model scales, and external language tasks.
 
 ## Experiment notes
 
