@@ -2,7 +2,7 @@
 
 ## Current reading path
 
-Read [the governing generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md), then [the CL foundations review](research/RESEARCH-20260814-continual-learning-foundations.md) and [the earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md). Open older notes from the catalog only when one of these documents links a decision or a live question needs its source. The local six-wake harness and provider migration are implemented through `3504363`, but the code-only run is a pilot rather than the headline experiment. Hold the science launch until the heterogeneous-task design, raw-replay baseline, metrics, holdouts, and external confirmation stage are frozen.
+Read [the continual-knowledge benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md), then [the CL foundations review](research/RESEARCH-20260814-continual-learning-foundations.md) and [the earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md). The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source. Do not change the harness or launch a science run until the published benchmark protocol is reviewed and frozen in a new discussion.
 
 ## Discussion notes
 
@@ -48,3 +48,4 @@ Read [the governing generalizability discussion](discussion/DISCUSSION-20260814-
 - [2026-07-30 — SSM erase-on-read](research/RESEARCH-20260730-erase-on-read-in-the-ssm-state.md): Derives rank-1 consume-on-read erasure for Mamba's linear state, compares prior art, and bounds the novelty and failure modes.
 - [2026-08-05 — dream-distillation prior art](research/RESEARCH-20260805-dream-distillation-prior-art.md): Surveys erase-on-read, generative replay, context distillation, and sleep-framed LLM work, locating the proposed erase-defined KL loop among known pieces.
 - [2026-08-14 — continual-learning foundations](research/RESEARCH-20260814-continual-learning-foundations.md): Maps canonical CL methods, standard forgetting metrics, benchmark pitfalls, the language-model bridge, and the current Altrux evaluation onto the field.
+- [2026-08-21 — continual-knowledge benchmark selection](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md): Compares published parametric and inference-time benchmarks and recommends reproducing LAMA-CKL before a benchmark-compliant Mamba evaluation.
