@@ -11,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-run lama-ckl-upstream-summarize summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
+.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
 
 sync:
 	uv sync --inexact
@@ -224,6 +224,11 @@ lama-ckl-upstream-summarize:
 	test -n "$(RESULT)"
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.upstream summarize "$(RESULT)"
+
+lama-ckl-split:
+	@mkdir -p logs
+	set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.split $(ARGS) 2>&1 | tee logs/lama-ckl-split-$(shell date +%Y%m%d-%H%M%S).log
 
 # Warm-start SFT (DISCUSSION-20260808 sec 2.9.3): ordinary chat data rendered
 # into the repo's marker format by prepare_data.py, then 800 train.py steps /

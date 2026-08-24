@@ -143,7 +143,11 @@ Implement and commit these slices in order:
 2. Add official metric reporting, per-cycle curves, artifact hashes, and the
    reproduction tolerance gate.
 3. Build and freeze the Mamba-conditioned 500/500 split from the pinned
-   recap-0.5 checkpoint.
+   recap-0.5 checkpoint. Preserve the published object-token metric's meaning,
+   but align Mamba object tokens from the last object character span because
+   GPT-NeoX tokenizes a standalone object differently from the same text inside
+   the descriptive sentence. Record this cross-tokenizer adaptation in the
+   artifact manifest; do not apply it to the upstream Llama reproduction.
 4. Add the evidence-document wake path and verify its exact decoded structure
    and recurrent-state continuity.
 5. Add the wake-closing `<|endofconversation|>` plus fixed dream instruction,
