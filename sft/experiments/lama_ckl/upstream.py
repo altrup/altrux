@@ -43,10 +43,76 @@ PUBLISHED_FINETUNE = {
 }
 ACCURACY_TOLERANCE = 0.02
 EPOCH_TOLERANCE = 2
+SINGLE_GPU_SMOKE_SIZE = 64
+
+_SINGLE_GPU_REPLACEMENTS = (
+    ("CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", "CUDA_VISIBLE_DEVICES=0"),
+    ("--train_grad_accum_step=1", "--train_grad_accum_step=8"),
+)
+_SMOKE_REPLACEMENTS = (
+    ("--max_epochs=30", "--max_epochs=1"),
+    (
+        '--train_data="./data/LAMA_ckl/variant.jsonl"',
+        '--train_data="./data/LAMA_ckl/gh200_smoke/variant.jsonl"',
+    ),
+    (
+        '--eval_data_changed="./data/LAMA_ckl/variant.jsonl"',
+        '--eval_data_changed="./data/LAMA_ckl/gh200_smoke/variant.jsonl"',
+    ),
+    (
+        '--eval_data_unchanged="./data/LAMA_ckl/invariant_descriptive.jsonl"',
+        '--eval_data_unchanged="./data/LAMA_ckl/gh200_smoke/invariant_descriptive.jsonl"',
+    ),
+    ('--add_to_title=""', '--add_to_title="gh200_smoke"'),
+)
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _replace_once(text: str, old: str, new: str) -> str:
+    if text.count(old) != 1:
+        raise ValueError(f"expected exactly one upstream marker: {old}")
+    return text.replace(old, new)
+
+
+def adapt_single_gpu_script(text: str, *, smoke: bool = False) -> str:
+    """Make the pinned eight-GPU launcher batch-equivalent on one GPU."""
+    for old, new in _SINGLE_GPU_REPLACEMENTS:
+        text = _replace_once(text, old, new)
+    if smoke:
+        for old, new in _SMOKE_REPLACEMENTS:
+            text = _replace_once(text, old, new)
+    return text
+
+
+def prepare_single_gpu_smoke(root: str | Path) -> dict[str, int]:
+    """Build the deterministic 64-row inputs for one accumulated update."""
+    source = Path(root) / "data" / "LAMA_ckl"
+    output = source / "gh200_smoke"
+    output.mkdir(parents=True, exist_ok=True)
+    report: dict[str, int] = {}
+    for name in ("variant.jsonl", "invariant_descriptive.jsonl"):
+        rows = [json.loads(line) for line in (source / name).read_text().splitlines()]
+        if len(rows) < SINGLE_GPU_SMOKE_SIZE:
+            raise ValueError(f"{source / name} has fewer than {SINGLE_GPU_SMOKE_SIZE} rows")
+        selected = rows[:SINGLE_GPU_SMOKE_SIZE]
+        malformed = sum(not REQUIRED_KEYS <= row.keys() for row in selected)
+        duplicates = len(selected) - len({row.get("uuid") for row in selected})
+        missing_bindings = sum(
+            row.get("subject") not in row.get("evidence", "")
+            or row.get("object") not in row.get("evidence", "")
+            for row in selected
+        )
+        if malformed or duplicates or missing_bindings:
+            raise ValueError(
+                f"{name} smoke invariants failed: malformed={malformed}, duplicates={duplicates}, "
+                f"missing_bindings={missing_bindings}"
+            )
+        (output / name).write_text("".join(json.dumps(row) + "\n" for row in selected))
+        report[name] = len(selected)
+    return report
 
 
 def verify_release(
@@ -140,6 +206,11 @@ def main() -> None:
     verify.add_argument("root", type=Path, help="TAALM repository root")
     summarize = subparsers.add_parser("summarize", help="gate an official result pickle")
     summarize.add_argument("result", type=Path)
+    adapt = subparsers.add_parser("adapt-single-gpu", help="emit the pinned launcher for one GPU")
+    adapt.add_argument("root", type=Path, help="TAALM repository root")
+    adapt.add_argument("--smoke", action="store_true")
+    prepare = subparsers.add_parser("prepare-single-gpu-smoke", help="build one-update smoke inputs")
+    prepare.add_argument("root", type=Path, help="TAALM repository root")
     args = parser.parse_args()
     if args.command == "verify":
         report = verify_release(args.root / "data" / "LAMA_ckl")
@@ -148,7 +219,7 @@ def main() -> None:
             print(f"[{ts()}] {name}: rows={item['rows']} sha256={item['sha256']}")
             print(f"[{ts()}] invariants={json.dumps(item['invariants'], sort_keys=True)}")
             print(f"[{ts()}] sample={sample['task_descriptive']!r} evidence={sample['evidence'][:300]!r}")
-    else:
+    elif args.command == "summarize":
         curve = load_official_result(args.result)
         for row in curve:
             print(f"[{ts()}] epoch={row['epoch']} to_learn={row['to_learn_accuracy']:.6f} "
@@ -157,6 +228,17 @@ def main() -> None:
         print(f"[{ts()}] summary={json.dumps(summary, sort_keys=True)}")
         if not summary["passes_gate"]:
             raise SystemExit("official Llama-2-7B QLoRA reproduction gate failed")
+    elif args.command == "adapt-single-gpu":
+        script = (args.root / "scripts" / "eval" / "lamackl" / "finetune.sh").read_text()
+        print(adapt_single_gpu_script(script, smoke=args.smoke), end="")
+    else:
+        report = prepare_single_gpu_smoke(args.root)
+        for name, count in report.items():
+            sample = json.loads(
+                (args.root / "data" / "LAMA_ckl" / "gh200_smoke" / name).read_text().splitlines()[0]
+            )
+            print(f"[{ts()}] {name}: rows={count} malformed=0 duplicates=0 missing_bindings=0")
+            print(f"[{ts()}] sample={sample['task_descriptive']!r} evidence={sample['evidence'][:300]!r}")
 
 
 if __name__ == "__main__":

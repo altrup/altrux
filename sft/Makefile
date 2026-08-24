@@ -11,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split lama-ckl-run lama-ckl-smoke lama-ckl-report summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
+.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-smoke lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split lama-ckl-run lama-ckl-smoke lama-ckl-report summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
 
 sync:
 	uv sync --inexact
@@ -218,8 +218,21 @@ lama-ckl-upstream-check:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.upstream verify "$(TAALM_DIR)"
 
+lama-ckl-upstream-smoke: lama-ckl-upstream-check
+	@mkdir -p logs
+	set -o pipefail; { \
+		HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync python -u -m experiments.lama_ckl.upstream prepare-single-gpu-smoke "$(TAALM_DIR)"; \
+		HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync python -u -m experiments.lama_ckl.upstream adapt-single-gpu "$(TAALM_DIR)" --smoke \
+			| (cd "$(TAALM_DIR)" && HF_HOME="$(HF_CACHE)" PYTHONUNBUFFERED=1 bash); \
+	} 2>&1 | awk '{ print "[" strftime("%H:%M:%S") "] " $$0; fflush(); }' | tee logs/lama-ckl-upstream-smoke-$(shell date +%Y%m%d-%H%M%S).log
+
 lama-ckl-upstream-run: lama-ckl-upstream-check
-	cd "$(TAALM_DIR)" && bash scripts/eval/lamackl/finetune.sh
+	@mkdir -p logs
+	set -o pipefail; HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.upstream adapt-single-gpu "$(TAALM_DIR)" \
+		| (cd "$(TAALM_DIR)" && HF_HOME="$(HF_CACHE)" PYTHONUNBUFFERED=1 bash) 2>&1 \
+		| awk '{ print "[" strftime("%H:%M:%S") "] " $$0; fflush(); }' \
+		| tee logs/lama-ckl-upstream-run-$(shell date +%Y%m%d-%H%M%S).log
 
 lama-ckl-upstream-summarize:
 	test -n "$(RESULT)"
