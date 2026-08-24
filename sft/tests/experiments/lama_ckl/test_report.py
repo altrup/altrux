@@ -1,6 +1,6 @@
 import pytest
 
-from experiments.lama_ckl.report import aggregate_runs
+from experiments.lama_ckl.report import aggregate_runs, scientific_runs
 
 
 def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
@@ -40,3 +40,10 @@ def test_aggregate_runs_rejects_smokes_and_mixed_splits():
             {**run, "seed": 43,
              "settings": {"engineering_only": False, "split_manifest_sha256": "y"}},
         ])
+
+
+def test_scientific_runs_ignores_adjacent_smoke_directories():
+    full = {"settings": {"engineering_only": False}}
+    smoke = {"settings": {"engineering_only": True}}
+
+    assert scientific_runs([smoke, full]) == [full]

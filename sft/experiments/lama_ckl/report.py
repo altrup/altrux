@@ -24,6 +24,10 @@ def _stats(values: Sequence[float]) -> dict[str, object]:
     return {"mean": mean, "stderr": stderr, "values": list(values)}
 
 
+def scientific_runs(runs: Sequence[Mapping[str, object]]) -> list[Mapping[str, object]]:
+    return [run for run in runs if not bool(run["settings"].get("engineering_only"))]
+
+
 def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     if not runs:
         raise ValueError("no completed runs")
@@ -104,7 +108,7 @@ def main() -> None:
     parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
     paths = sorted(args.root.glob("*/summary.json"))
-    runs = [json.loads(path.read_text()) for path in paths]
+    runs = scientific_runs([json.loads(path.read_text()) for path in paths])
     if not args.allow_incomplete:
         present = {(str(run["arm"]), int(run["seed"])) for run in runs
                    if not bool(run["settings"].get("engineering_only"))}
