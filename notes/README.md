@@ -2,7 +2,7 @@
 
 ## Current reading path
 
-Read [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md), then [the modern LLM CL evaluation review](research/RESEARCH-20260823-modern-llm-continual-learning-evaluations.md), [the benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md), and [the dream-distillation prior-art review](research/RESEARCH-20260805-dream-distillation-prior-art.md). The [earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md) is retained as engineering evidence, not the next science target. The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source.
+Read [the rented-GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu-handoff.md), [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md), then [the modern LLM CL evaluation review](research/RESEARCH-20260823-modern-llm-continual-learning-evaluations.md), [the benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md), and [the dream-distillation prior-art review](research/RESEARCH-20260805-dream-distillation-prior-art.md). The [earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md) is retained as engineering evidence, not the next science target. The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source.
 
 ## Discussion notes
 
@@ -27,6 +27,7 @@ Read [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-
 
 ## Experiment notes
 
+- [2026-08-23 — LAMA-CKL GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu-handoff.md): Records the verified local implementation, exact rented-machine gate order, stop conditions, and artifact contract for the published benchmark run.
 - [2026-07-16](experiments/EXPERIMENT_NOTES-2026-07-16.md): Fixes the unnormalized gated-delta write-key instability and shows the SSM handles low-load recall while M contributes almost nothing under the original data.
 - [2026-07-20](experiments/EXPERIMENT_NOTES-20260720-023324.md): Runs episodic chains, observes an early gist rise followed by collapse, and tests cross-sleep-biased data and freeze-LoRA recovery.
 - [2026-07-21](experiments/EXPERIMENT_NOTES-20260721-030057.md): Validates the gist harness, finds a positive step-435 gist peak, then records erosion, a no-op mid-conversation sleep bug, and the final step-435 deliverable.
