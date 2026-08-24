@@ -382,6 +382,26 @@ The cache build **gates rather than warns**: every fact must bind in at least `-
 
 **Cues.** Free generation rehearses by luck (distinct-code coverage 4/4, 0/4, 0/4 across three seeds at the best fixed temperature and length), so `--cue-every N` forces each fact's own wake-session question stem into the dream every N tokens, cycling the facts, and `--cue-greedy K` (12) decodes the K tokens after each cue greedily — the cue names which fact to recall, the state still supplies the digits. A fired cue timer waits for the next `.`/newline (up to 20 tokens) before splicing, so a cue never cuts a thought in half, and cue tokens are **loss-masked as targets** in both KL and CE: positions whose next-token target is cue text drop out of the sum, the cue stays in context, and the first post-cue answer digit is not masked. A fully-masked chunk takes no optimizer step. Because the timer restarts from the end of each spliced cue, a sizeable share of a "512-token dream" is cue text — every cell logs its actual free-generation token count. The dream seed is the assistant marker plus a literal space, per the trained chat format.
 
+### LAMA-CKL reproduction gate
+
+The external benchmark gate runs the authors' code at TAALM commit
+`b12f344a9dbae555c239635b1c192c555bed001b`; Altrux does not copy or rewrite
+that unlicensed trainer. Clone it into `.cache/TAALM`, detach that exact commit,
+install its `requirements.txt` in an isolated environment, and make
+`/results/lamackl` writable. Then run:
+
+```bash
+make lama-ckl-upstream-check
+PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
+make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl
+```
+
+The check verifies the four released files by row count, structure, decoded
+sample, and SHA-256. The summary streams every epoch and requires the published
+Llama-2-7B QLoRA result within the frozen gate: peak TO-LEARN accuracy
+`0.115 ± 0.02`, first peak at epoch `16 ± 2`, and the paired NOT-TO-FORGET
+accuracy `0.8174 ± 0.02`. This gate must pass before the Mamba comparison runs.
+
 **Probes.** The primary reliability metric is the **distractor-code margin** (§4): the summed log-prob of the correct code minus that of a fixed random foil code, same question, fresh state — immune to the format prior the cues inject and to the digit-counting attractor that broke greedy exact match. A fact counts installed at margin ≥ 1.0 nat; the margin, both raw sums and the verdict are logged per probe point. Greedy exact match and the four-paraphrase generality battery are reported and never gate. The full battery — margin, paraphrases, knowledge battery and held-out ΔPPL from `probes_common.py` — streams every `--probe-every` steps (200), so every cell yields a learned-vs-forgotten *curve* and iso-learning comparisons are read off curves rather than engineered with hyperparameters. Dream rehearsal is **binding-aware**: a code counts only where it appears in the same sentence as its own entity, and codes sitting next to a different fact's entity are reported separately as misbindings. The carried-state column stays a **diagnostic, never scored as installation**. Box tool (trains a LoRA, holds a full-vocab dream logit cache); 780M-only, since the erase is addressed through `Model.c_capture` and applied through `Model.erase_hook`.
 
 **Multi-sleep** (`--waves K`, the registered shape is `--waves 4 --n-facts 4` — `notes/discussion/DISCUSSION-20260807-g2-results-erase-geometry-and-warmstart-run.md` §3.7). Each wave wakes on the state the last one carried, sleeps, and is probed on **every fact so far** plus the battery; probes are fresh-state only, since state continuity across sleeps is load-bearing for the B arms. Wave 1 distils the seed's shared cache; **every later sleep generates its own dream** from the state it carried in, cued on that wave's facts only — spontaneous rehearsal of earlier waves is then a measured observable rather than a cue artifact. `--wave-teacher` is mandatory above one wave and names the generator: `current` is the registered protocol (the student as of that sleep's start), `base` is the one-seed drift-contribution control, pinned at the frozen base at every sleep. Each generated dream writes a `phase: "cache"` record with its hash, its cue coverage and its generator, so the wave-≥2 dreams are recorded rather than asserted equal — they legitimately differ per arm, which is the object of the comparison. Later waves get foils of their own, drawn clear of every code already in play.
