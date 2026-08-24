@@ -2,10 +2,11 @@
 
 ## Current reading path
 
-Read [the continual-knowledge benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md), then [the CL foundations review](research/RESEARCH-20260814-continual-learning-foundations.md) and [the earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md). The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source. Do not change the harness or launch a science run until the published benchmark protocol is reviewed and frozen in a new discussion.
+Read [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md), then [the benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md) and [the dream-distillation prior-art review](research/RESEARCH-20260805-dream-distillation-prior-art.md). The [earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md) is retained as engineering evidence, not the next science target. The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source.
 
 ## Discussion notes
 
+- [2026-08-23 — LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md): Freezes the trusted benchmark, 30-cycle wake/sleep mapping, EOC-plus-instruction dream transition, secondary dream diagnostics, and implementation docket.
 - [2026-07-20 — gist eval](discussion/DISCUSSION-20260720-gist-eval.md): Reframes the failed exact-code probe as a possible gist mismatch and specifies a continuous-text cross-sleep gist evaluation.
 - [2026-07-21 — peak reproducibility](discussion/DISCUSSION-20260721-peak-reproducibility.md): Establishes step 435 as a reproducible episodic-gist checkpoint and orders tests for generalization, reproduction, and continuous improvement.
 - [2026-07-22 — stage 2 readout](discussion/DISCUSSION-20260722-stage2-readout.md): Moves stage 2 from peak chasing to readout bandwidth, write fidelity, and compute-depth diagnostics around checkpoint 447-T3.
