@@ -322,7 +322,8 @@ unreachable path never pulls — there's nothing to pull from an instance that
 won't answer ssh.
 
 "Training" = a process matching `--pattern` (default `train.py`; alternation
-works, e.g. `train.py|probe_recall.py` — what launch's auto-started watchdog
+works, e.g. `train.py|probe_recall.py`. The default also covers the TAALM
+evaluation and the LAMA-CKL split and runner — what launch's auto-started watchdog
 passes, so eval/probe runs count as activity too) exists on the instance,
 probed over ssh every `--interval` (60s). An instance that
 stops answering ssh while the API reports it active is terminated after

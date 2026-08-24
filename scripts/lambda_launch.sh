@@ -286,7 +286,7 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     # ServerAliveInterval so a silently-dropped connection kills the ssh (and
     # its poll loop) instead of leaving the window waiting forever.
     rssh="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i '$SSH_KEY_PATH' $SSH_USER@$ip"
-    tmux new-session -d -s "$sess" -n watch "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --pattern 'train.py|probe_recall.py|consolidation_null.py|capacity_ladder.py|dream_sleep.py' --no-mem-state; exec bash"
+    tmux new-session -d -s "$sess" -n watch "LAMBDA_INSTANCE_ID='$instance_id' LAMBDA_INSTANCE_IP='$ip' '$SCRIPT_DIR/lambda_watchdog.sh' --arm-after-training --no-mem-state; exec bash"
     tmux new-window -t "$sess" -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
     tmux new-window -t "$sess" -n agent "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
     tmux new-window -t "$sess" -n work "$rssh -t 'until tmux has-session -t work 2>/dev/null; do echo \"waiting for remote work tmux...\"; sleep 5; done; exec tmux attach -t work'; exec bash"

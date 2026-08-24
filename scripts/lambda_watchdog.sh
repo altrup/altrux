@@ -82,7 +82,7 @@ fi
 timeout=1800
 interval=60
 unreachable_timeout=900
-pattern="train.py|probe_recall.py|consolidation_null.py|capacity_ladder.py|dream_sleep.py"
+pattern="train.py|probe_recall.py|consolidation_null.py|capacity_ladder.py|dream_sleep.py|evaluation_run.py|experiments.lama_ckl.split|experiments.lama_ckl.runner"
 terminate_cmd=""
 pull=1
 pull_interval=300
