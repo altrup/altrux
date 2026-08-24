@@ -27,7 +27,7 @@ Read [the rented-GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu
 
 ## Experiment notes
 
-- [2026-08-23 — LAMA-CKL GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu-handoff.md): Records the verified local implementation, exact rented-machine gate order, stop conditions, and artifact contract for the published benchmark run.
+- [2026-08-23 — LAMA-CKL GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu-handoff.md): Records the verified local implementation, single-GH200 gate order, stop conditions, and artifact contract for the published benchmark run.
 - [2026-07-16](experiments/EXPERIMENT_NOTES-2026-07-16.md): Fixes the unnormalized gated-delta write-key instability and shows the SSM handles low-load recall while M contributes almost nothing under the original data.
 - [2026-07-20](experiments/EXPERIMENT_NOTES-20260720-023324.md): Runs episodic chains, observes an early gist rise followed by collapse, and tests cross-sleep-biased data and freeze-LoRA recovery.
 - [2026-07-21](experiments/EXPERIMENT_NOTES-20260721-030057.md): Validates the gist harness, finds a positive step-435 gist peak, then records erosion, a no-op mid-conversation sleep bug, and the final step-435 deliverable.

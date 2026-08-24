@@ -11,7 +11,7 @@ the benchmark or its score.
 
 Use the published LAMA-CKL experiment for the primary evaluation:
 
-1. Reproduce the published Llama-2-7B QLoRA baseline first.
+1. Replicate the published Llama-2-7B QLoRA baseline on one GH200 first.
 2. Use the official model-conditioned sampling procedure to freeze one
    Mamba-specific 500-to-learn/500-not-to-forget artifact.
 3. Compare frozen Mamba, backbone-native LoRA, Mix-Review, and Altrux on that
@@ -21,6 +21,19 @@ Use the official evidence documents as the waking input. Do not add local
 facts, generated dialogues, Luna-authored text, local probes, or a custom
 success threshold. Evaluation starts from fresh recurrent state and uses the
 published object-token accuracy and checkpoint metrics.
+
+The upstream paper used eight GPUs with microbatch 8, for an effective batch
+of 64. The available experiment hardware is one GH200. Run the pinned authors'
+trainer with one visible GPU, microbatch 8, and gradient accumulation 8. This
+keeps 64 examples per optimizer update and the published number of updates per
+epoch. Keep every other released argument, all 30 epochs, the official data,
+metric, seed, and frozen acceptance tolerances unchanged. Call this the
+**single-GH200 batch-equivalent replication**, not an exact hardware
+reproduction: DDP, dropout streams, and floating-point reduction order differ.
+Run this gate once with the released seed-42 sampler. Five-seed upstream
+dispersion is a later strengthening, not part of this registered gate. Do not
+tune the adaptation toward the released score. A failed frozen gate stops the
+Mamba comparison.
 
 The Mamba comparison starts from the recap-0.5 warm start:
 
@@ -121,9 +134,9 @@ with `[DREAM]` is a preregistered ablation, not an adaptive repair to this run.
 
 ## 4. Comparison and claim boundary
 
-The Llama-2 run is a faithful reproduction gate. The Mamba run is a
-benchmark-compliant cross-backbone comparison. It is not a numerical
-reproduction of the Llama-2 result.
+The Llama-2 run is a single-GH200 batch-equivalent replication gate. The Mamba
+run is a benchmark-compliant cross-backbone comparison. Neither is an exact
+numerical reproduction of the released eight-GPU result.
 
 All Mamba arms use the same warm-start weights, split, evidence order, source
 exposure, evaluation schedule, and random-seed policy. Report generated and
@@ -141,9 +154,10 @@ learning or broad dream quality.
 Implement and commit these slices in order:
 
 1. Pin the official TAALM commit and verify its released LAMA-CKL artifacts,
-   then reproduce the published Llama-2-7B QLoRA baseline without locally
-   rewriting its trainer or evaluator. The released notebook, not the paper's
-   conflicting prose, defines artifact construction: choose the longest
+   then run the published Llama-2-7B QLoRA baseline without modifying its
+   trainer or evaluator. Adapt only the pinned launcher's GPU visibility and
+   accumulation count as registered above. The released notebook, not the
+   paper's conflicting prose, defines artifact construction: choose the longest
    `masked_sentence` by character count, replace `[MASK]` with the object,
    require more than 200 characters plus subject and object presence, and
    apply the 512-token limit during training tokenization.
@@ -167,6 +181,6 @@ Implement and commit these slices in order:
 8. Run local fake-model tests and a short real-model smoke before any paid
    30-cycle run.
 
-The first paid Altrux comparison remains blocked until the faithful baseline
-passes its frozen reproduction tolerance and the Mamba split satisfies the
-official zero/one selection rules.
+The first paid Altrux comparison remains blocked until the batch-equivalent
+baseline passes its frozen tolerance and the Mamba split satisfies the official
+zero/one selection rules.

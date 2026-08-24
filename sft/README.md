@@ -385,19 +385,39 @@ The cache build **gates rather than warns**: every fact must bind in at least `-
 ### LAMA-CKL reproduction gate
 
 The external benchmark gate runs the authors' code at TAALM commit
-`b12f344a9dbae555c239635b1c192c555bed001b`; Altrux does not copy or rewrite
-that unlicensed trainer. Clone it into `.cache/TAALM`, detach that exact commit,
-install its `requirements.txt` in an isolated environment, and make
-`/results/lamackl` writable. Then run:
+`b12f344a9dbae555c239635b1c192c555bed001b`; Altrux does not copy or modify
+that unlicensed trainer or evaluator. The released run used eight GPUs with
+microbatch 8. The registered GH200 adapter changes only the pinned launcher's
+GPU visibility and accumulation count: one GPU, microbatch 8, accumulation 8,
+and the same effective batch 64. DDP numerics can differ, so this is a
+single-GH200 batch-equivalent replication, not an exact hardware reproduction.
+From the repository root, prepare its isolated environment and results path:
+
+```bash
+git clone https://github.com/ybseo-ac/TAALM.git .cache/TAALM
+git -C .cache/TAALM checkout --detach b12f344a9dbae555c239635b1c192c555bed001b
+uv venv --python 3.10 .cache/TAALM/.venv
+UV_TORCH_BACKEND=cu128 uv pip install \
+  --python .cache/TAALM/.venv/bin/python \
+  -r .cache/TAALM/requirements.txt
+sudo install -d -o "$(id -u)" -g "$(id -g)" /results/lamackl
+cd sft
+```
+
+Keep the pinned dependency versions. Stop if they do not install on ARM64;
+do not substitute newer packages during the registered gate. Then run:
 
 ```bash
 make lama-ckl-upstream-check
+PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
 PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
 make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl
 ```
 
 The check verifies the four released files by row count, structure, decoded
-sample, and SHA-256. The summary streams every epoch and requires the published
+sample, and SHA-256. The smoke uses the first 64 verified rows, accumulation 8,
+and one epoch, so it performs one optimizer update before the paid full gate.
+The summary streams every full-run epoch and requires the published
 Llama-2-7B QLoRA result within the frozen gate: peak TO-LEARN accuracy
 `0.115 ± 0.02`, first peak at epoch `16 ± 2`, and the paired NOT-TO-FORGET
 accuracy `0.8174 ± 0.02`. After the gate passes, the summary target archives
@@ -409,7 +429,11 @@ contains `relations.jsonl` and `TREx/`, then build the model-conditioned Mamba
 split on the rented CUDA GPU:
 
 ```bash
-make lama-ckl-split ARGS="--lama-root ../.cache/LAMA"
+mkdir -p ../.cache/LAMA
+wget -O ../.cache/LAMA/data.zip https://dl.fbaipublicfiles.com/LAMA/data.zip
+unzip ../.cache/LAMA/data.zip -d ../.cache/LAMA
+rm ../.cache/LAMA/data.zip
+make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA"
 ```
 
 This loads the pinned recap-0.5 warm start, scores the descriptive and schematic
@@ -427,10 +451,10 @@ two 32-token dreams where applicable, and one cycle, and writes to a separate
 `-smoke` directory:
 
 ```bash
-make lama-ckl-smoke ARGS="--arm frozen --seed 42"
-make lama-ckl-smoke ARGS="--arm lora --seed 42"
-make lama-ckl-smoke ARGS="--arm mix-review --seed 42"
-make lama-ckl-smoke ARGS="--arm altrux --seed 42"
+make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm frozen --seed 42"
+make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm lora --seed 42"
+make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42"
+make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm altrux --seed 42"
 ```
 
 After the smoke fixes batch sizes for that rented machine, run the registered
@@ -440,7 +464,8 @@ seeds; the split itself stays the one seed-42 artifact:
 ```bash
 for seed in 42 43 44; do
   for arm in frozen lora mix-review altrux; do
-    make lama-ckl-run ARGS="--arm $arm --seed $seed --dream-batch-size 8 --eval-batch-size 16"
+    make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm $arm \
+      --seed $seed --dream-batch-size 8 --eval-batch-size 16"
   done
 done
 ```
