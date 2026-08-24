@@ -39,9 +39,14 @@ evaluate both official fact sets after every cycle, as the published baseline
 does after every epoch.
 
 In each wake, present the same official 500 evidence documents once in the
-official frozen order. Preserve the recurrent state across the documents. Do
-not generate assistant replies or add explanations to the evidence. Append one
-`<|endofconversation|>` token after the complete wake to close it.
+official frozen order. Render each document as one user turn and let the arm's
+current model generate its assistant turn greedily, with a 64-token backstop.
+The reply must emit the tokenizer EOS before that backstop and must not emit
+`<|endofconversation|>` inside the wake. Preserve the recurrent state across
+all 500 exchanges. Append one `<|endofconversation|>` token only after the
+complete wake to close it. Record every prompt and generated token exactly;
+the official evidence is the controlled source exposure, while the reply is a
+model process measurement and can differ after the arms' weights diverge.
 
 Dream generation runs from copies of the intact post-wake state. It does not
 consume or replace the state carried to the next wake. Each dream starts from
@@ -63,6 +68,13 @@ splicing, fact-aware prompt, content filter, coverage target, or regeneration
 after inspection. Distil one pass over every realized dream. Cache and hash the
 complete set before training. A retry is allowed only for a technical failure
 that produces no valid artifact; it cannot depend on dream content.
+
+Full-vocabulary teacher logits are a rolling, per-cycle training artifact, not
+a permanent result. After successful distillation, retain the exact dream token
+IDs and text, generation seeds, stop reasons, set hash, teacher-checkpoint hash,
+batch topology, and metrics. These values and the saved teacher checkpoint can
+reconstruct the logits. This keeps a 30-cycle seed from retaining about 660 GiB
+of redundant full-logit caches.
 
 `<|endofconversation|>` and the instruction have separate purposes. The token
 closes waking. The instruction selects dream generation. The warm start also
@@ -121,8 +133,13 @@ learning or broad dream quality.
 
 Implement and commit these slices in order:
 
-1. Import and pin the official LAMA-CKL artifacts and reproduce the published
-   Llama-2-7B QLoRA baseline.
+1. Pin the official TAALM commit and verify its released LAMA-CKL artifacts,
+   then reproduce the published Llama-2-7B QLoRA baseline without locally
+   rewriting its trainer or evaluator. The released notebook, not the paper's
+   conflicting prose, defines artifact construction: choose the longest
+   `masked_sentence` by character count, replace `[MASK]` with the object,
+   require more than 200 characters plus subject and object presence, and
+   apply the 512-token limit during training tokenization.
 2. Add official metric reporting, per-cycle curves, artifact hashes, and the
    reproduction tolerance gate.
 3. Build and freeze the Mamba-conditioned 500/500 split from the pinned
