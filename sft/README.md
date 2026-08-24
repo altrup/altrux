@@ -400,7 +400,9 @@ The check verifies the four released files by row count, structure, decoded
 sample, and SHA-256. The summary streams every epoch and requires the published
 Llama-2-7B QLoRA result within the frozen gate: peak TO-LEARN accuracy
 `0.115 ± 0.02`, first peak at epoch `16 ± 2`, and the paired NOT-TO-FORGET
-accuracy `0.8174 ± 0.02`. This gate must pass before the Mamba comparison runs.
+accuracy `0.8174 ± 0.02`. After the gate passes, the summary target archives
+the result at `.cache/lama_ckl/upstream/finetune_qlora.pkl`. This gate must pass
+before the Mamba comparison runs.
 
 After that gate passes, unpack the official LAMA download so the supplied path
 contains `relations.jsonl` and `TREx/`, then build the model-conditioned Mamba

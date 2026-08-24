@@ -211,6 +211,7 @@ adaptive-multisleep:
 
 TAALM_DIR ?= $(CURDIR)/../.cache/TAALM
 TAALM_COMMIT := b12f344a9dbae555c239635b1c192c555bed001b
+LAMA_CKL_CACHE := $(CURDIR)/../.cache/lama_ckl
 
 lama-ckl-upstream-check:
 	test "$$(git -C "$(TAALM_DIR)" rev-parse HEAD)" = "$(TAALM_COMMIT)"
@@ -224,6 +225,8 @@ lama-ckl-upstream-summarize:
 	test -n "$(RESULT)"
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.upstream summarize "$(RESULT)"
+	mkdir -p "$(LAMA_CKL_CACHE)/upstream"
+	cp "$(RESULT)" "$(LAMA_CKL_CACHE)/upstream/finetune_qlora.pkl"
 
 lama-ckl-split:
 	@mkdir -p logs

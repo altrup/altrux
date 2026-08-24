@@ -36,4 +36,8 @@ grep -Fq 'source "$SCRIPT_DIR/lambda_cache_artifacts.sh"' "$ROOT/scripts/lambda_
 grep -Fq 'UV_FIND_LINKS="$REPO_DIR/.cache/wheels"' "$ROOT/scripts/lambda_setup.sh"
 grep -Fq 'LAMBDA_CACHE_ARTIFACTS=' "$ROOT/scripts/.env.example"
 
+summarize_dry_run="$(make -n -C "$ROOT/sft" lama-ckl-upstream-summarize RESULT=/tmp/finetune_qlora.pkl)"
+grep -Fq '.cache/lama_ckl/upstream' <<< "$summarize_dry_run"
+grep -Fq 'cp "/tmp/finetune_qlora.pkl"' <<< "$summarize_dry_run"
+
 echo "lambda cache artifact tests passed"

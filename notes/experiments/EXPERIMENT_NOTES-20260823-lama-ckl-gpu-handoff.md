@@ -46,7 +46,8 @@ isolated TAALM environment for Altrux.
 4. Run
    `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl`.
    Stop unless it passes peak acquisition `0.115 ± 0.02`, first peak epoch
-   `16 ± 2`, and paired retention `0.8174 ± 0.02`.
+   `16 ± 2`, and paired retention `0.8174 ± 0.02`. A passing summary copies
+   the result to `.cache/lama_ckl/upstream/finetune_qlora.pkl` for pull-back.
 5. Unpack the official LAMA data into `.cache/LAMA`, with `relations.jsonl`
    and `TREx/` directly below that directory.
 6. Run `make lama-ckl-split ARGS="--lama-root ../.cache/LAMA"`. Read the
@@ -78,4 +79,3 @@ teacher adapter hash, topology, and diagnostics before training. Full teacher
 logits stay in memory only through the cycle's distillation. Per-cycle adapters
 and the exact dream tokens reconstruct them. Dream diagnostics are read-only;
 they cannot select, regenerate, stop, or tune dreams.
-
