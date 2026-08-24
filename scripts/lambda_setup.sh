@@ -96,12 +96,12 @@ sed -i "s/^MODEL_NAME=.*/MODEL_NAME=/" "$REPO_DIR/sft/.env"
 echo "MODEL_NAME left blank — pass MODEL_NAME=<arm> inline on each command"
 
 step "make sync (torch + mamba-ssm — several minutes)"
-# Wheels uploaded by lambda_launch.sh (harvested from a previous instance)
+# Wheels uploaded through LAMBDA_CACHE_ARTIFACTS (harvested from a previous instance)
 # spare the mamba-ssm CUDA compile; a stale/mismatched wheel is simply not
 # selected and uv builds from source as usual.
-if ls "$HOME"/wheels/*.whl >/dev/null 2>&1; then
-  echo "using stashed wheels from ~/wheels: $(ls "$HOME"/wheels)"
-  export UV_FIND_LINKS="$HOME/wheels"
+if ls "$REPO_DIR"/.cache/wheels/*.whl >/dev/null 2>&1; then
+  echo "using stashed wheels from $REPO_DIR/.cache/wheels: $(ls "$REPO_DIR"/.cache/wheels)"
+  export UV_FIND_LINKS="$REPO_DIR/.cache/wheels"
 fi
 make -C "$REPO_DIR/sft" sync
 

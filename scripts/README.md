@@ -80,12 +80,15 @@ in seconds), or the API answers with a non-JSON body (CDN rate limiting), launch
 drops straight back to polling — the next poll re-checks availability before
 trying again, and the interval doubles as the rate-limit cool-off.
 
-If `.cache/wheels/` (repo root, gitignored) holds any `*.whl` — harvested
+If `.cache/wheels/` (repo root, gitignored) holds compatible wheels — harvested
 from a running instance's uv cache with `./scripts/lambda_harvest_wheels.sh`
 (grabs the compiled `mamba_ssm` and `causal_conv1d` wheels; run it any time
-after the instance's `make sync` finishes) — launch uploads them and setup
+after the instance's `make sync` finishes) — select them with
+`LAMBDA_CACHE_ARTIFACTS` and setup
 installs from them via `UV_FIND_LINKS`, skipping the multi-minute CUDA
-compile. A wheel with a mismatched python tag is ignored automatically, but a
+compile. For example, a GH200 host uses
+`LAMBDA_CACHE_ARTIFACTS="lama_ckl wheels/*aarch64.whl"`. A wheel with a
+mismatched Python or platform tag is ignored automatically, but a
 torch major-version bump isn't detectable from the filename — clear the stash
 when torch changes, or the import will fail at runtime.
 
@@ -127,6 +130,11 @@ training starts fresh.
 Local `sft/data/` artifacts ride the same staging route automatically (see
 "Training-data artifacts" above) — no env var needed to opt in, and the confirm
 screen lists what's going up with sizes.
+
+`LAMBDA_CACHE_ARTIFACTS` adds a symmetric allowlist for selected files,
+directories, or globs below the repo's `.cache/`. Missing entries are skipped
+on upload and can still be pulled after the instance creates them. Broad or
+escaping entries are rejected; the launcher never mirrors all of `.cache/`.
 
 It waits for the instance to boot and accept ssh, then starts `lambda_setup.sh`
 inside a detached tmux session named `train` and returns immediately, printing

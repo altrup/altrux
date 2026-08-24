@@ -17,6 +17,8 @@
 #   LAMBDA_INSTANCE_NAME   optional, default altrux-train
 #   LAMBDA_DATA_ARTIFACTS  optional, sft/data/ globs to upload (see
 #                          lambda_data_artifacts.sh); empty = upload no data
+#   LAMBDA_CACHE_ARTIFACTS optional, space-separated paths or globs below
+#                          .cache/ to upload and pull symmetrically
 #   LAMBDA_CAPACITY_POLL_INTERVAL  optional, default 60 (seconds between
 #                          capacity retries when the instance type is sold out)
 #   LAMBDA_CAPACITY_MAX_WAIT  optional, default 0 = poll forever; else give up
@@ -92,6 +94,8 @@ all_ckpts=("${resume_ckpts[@]}" "${resume_ckpts_full[@]}")
 # only ever generates what this machine doesn't already have.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lambda_data_artifacts.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lambda_cache_artifacts.sh"
 
 # shellcheck source=experimenter_agent.sh
 source "$SCRIPT_DIR/experimenter_agent.sh"
@@ -128,6 +132,12 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
     for p in "${data_local_files[@]}"; do printf '  %5s  %s\n' "$(du -h "$p" | cut -f1)" "${p#*/./}"; done
   else
     echo "Data artifacts to upload: none (the box generates all of its own)"
+  fi
+  if (( ${#cache_local_paths[@]} )); then
+    echo "Cache artifacts to upload ($(du -shc "${cache_local_paths[@]}" | tail -1 | cut -f1)):"
+    for p in "${cache_local_paths[@]}"; do printf '  %5s  %s\n' "$(du -sh "$p" | cut -f1)" "${p#*/./}"; done
+  else
+    echo "Cache artifacts to upload: none"
   fi
   if [[ -t 0 ]]; then
     read -r -p "Proceed? [Y/n] " reply
@@ -294,7 +304,7 @@ if [[ "$RUN_SETUP" == 0 ]]; then
   exit 0
 fi
 
-if (( ${#all_ckpts[@]} + ${#data_local_files[@]} )); then
+if (( ${#all_ckpts[@]} + ${#data_local_files[@]} + ${#cache_local_paths[@]} )); then
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
   RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
 fi
@@ -316,6 +326,11 @@ if (( ${#data_local_files[@]} )); then
   rsync -rtR --info=progress2 "${RSYNC_SSH[@]}" "${data_local_files[@]}" "$SSH_USER@$ip:resume-staging/"
 fi
 
+if (( ${#cache_local_paths[@]} )); then
+  echo "Uploading ${#cache_local_paths[@]} cache artifact(s) to staging..."
+  rsync -rtR --info=progress2 "${RSYNC_SSH[@]}" "${cache_local_paths[@]}" "$SSH_USER@$ip:resume-staging/"
+fi
+
 if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
   claude_files=()
   for f in CLAUDE.md statusline.sh keybindings.json skills commands agents; do
@@ -334,16 +349,6 @@ else
     echo "Uploading selected Codex config and cached authentication..."
     tar -C "$HOME" -czf - "${codex_files[@]}" | ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "tar -xzf - -C ~"
   fi
-fi
-
-# Stashed wheels (e.g. mamba-ssm harvested from a previous instance) save
-# setup a multi-minute CUDA compile — uv falls back to building from source
-# when no stashed wheel matches the box's torch/python combo.
-wheel_dir="$SCRIPT_DIR/../.cache/wheels"
-if compgen -G "$wheel_dir/*.whl" >/dev/null; then
-  echo "Uploading stashed wheels ($(ls "$wheel_dir"))..."
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "mkdir -p ~/wheels"
-  scp "${SSH_OPTS[@]}" "$wheel_dir"/*.whl "$SSH_USER@$ip:wheels/"
 fi
 
 echo "Uploading setup + config..."

@@ -3,7 +3,8 @@
 # machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/,
 # notes/ (the experimenter session's observations — committed to git only
 # from this machine after a run; rsync is how they travel off the
-# instance), and the sft/data/ artifacts listed in lambda_data_artifacts.sh
+# instance), the sft/data/ artifacts listed in lambda_data_artifacts.sh,
+# and the .cache/ paths listed in lambda_cache_artifacts.sh
 # (so a dataset generated on the box is archived here and uploaded again on
 # the next launch instead of regenerated). Whichever of those don't exist
 # yet are skipped. A missing repo
@@ -59,6 +60,8 @@ fi
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lambda_data_artifacts.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lambda_cache_artifacts.sh"
 
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
 follow=0
@@ -126,6 +129,11 @@ probe_paths() {
     for p in $probe_dirs; do
       [ -d \"\$p\" ] && printf '%s\n' \"\$p\"
     done
+    for pat in $CACHE_ARTIFACTS; do
+      for p in .cache/\$pat; do
+        [ -e \"\$p\" ] && printf '%s\n' \"\$p\"
+      done
+    done
     exit 0
   "
 }
@@ -142,6 +150,11 @@ write_receipt() {
     find $artifact_dirs -type f -printf '%s %p\n' 2>/dev/null
     for pat in $DATA_ARTIFACTS; do
       stat -c '%s %n' sft/data/$pat 2>/dev/null
+    done
+    for pat in $CACHE_ARTIFACTS; do
+      for p in .cache/$pat; do
+        if [[ -d "$p" ]]; then find "$p" -type f -printf '%s %p\n'; else stat -c '%s %n' "$p" 2>/dev/null; fi
+      done
     done
   } | ssh "${SSH_OPTS[@]}" "ubuntu@${ip}" "cat > '$remote_repo/scripts/.pull-receipt'"
 }
@@ -162,12 +175,12 @@ pull() {
   fi
 
   while IFS= read -r p; do
-    echo "[$(date +%H:%M:%S)] Pulling $p/ ..."
+    echo "[$(date +%H:%M:%S)] Pulling $p ..."
     # sft/data holds scratch and raw intermediates alongside the artifacts
     # worth keeping, so it's the one path that pulls a filtered subset.
     filter=()
     [[ "$p" == sft/data ]] && filter=("${data_filter[@]}")
-    "${RSYNC[@]}" "${filter[@]}" --relative "ubuntu@${ip}:${remote_repo}/./${p}/" "$REPO_ROOT/" || return 1
+    "${RSYNC[@]}" "${filter[@]}" --relative "ubuntu@${ip}:${remote_repo}/./${p}" "$REPO_ROOT/" || return 1
   done <<< "$paths"
 
   if [[ "$dry_run" -eq 0 ]]; then
