@@ -2,7 +2,7 @@
 
 ## Current reading path
 
-Read [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md), then [the benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md) and [the dream-distillation prior-art review](research/RESEARCH-20260805-dream-distillation-prior-art.md). The [earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md) is retained as engineering evidence, not the next science target. The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source.
+Read [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md), then [the modern LLM CL evaluation review](research/RESEARCH-20260823-modern-llm-continual-learning-evaluations.md), [the benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md), and [the dream-distillation prior-art review](research/RESEARCH-20260805-dream-distillation-prior-art.md). The [earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md) is retained as engineering evidence, not the next science target. The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source.
 
 ## Discussion notes
 
@@ -43,6 +43,7 @@ Read [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-
 
 ## Research notes
 
+- [2026-08-23 — modern LLM CL evaluations](research/RESEARCH-20260823-modern-llm-continual-learning-evaluations.md): Maps factual, instruction, temporal, continual-pretraining, aligned-behavior, and inference-memory evaluations; records normal protocols, LAMA's source chain, and the staged external-benchmark roadmap.
 - [2026-07-22 — consolidation landscape](research/RESEARCH-20260722-memory-consolidation-landscape.md): Surveys sleep consolidation, replay, evaluation, and memory integration points, then sketches M-to-weights consolidation risks.
 - [2026-07-24 — local diagnostics](research/RESEARCH-20260724-local-diagnostics.md): Measures SSM interference capacity and finds the mix read path numerically active but functionally near-inert.
 - [2026-07-24 — training-data structure](research/RESEARCH-20260724-training-data-structure.md): Audits this repository's data and comparable literature, finding weak cross-boundary demands and documenting concrete segment/reset recipes.
