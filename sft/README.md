@@ -420,6 +420,59 @@ The manifest records that adaptation, the source-tree hash, warm-start hash,
 model IDs, settings, artifact hashes, zero-valued invariants, and decoded
 samples.
 
+Run the engineering gate for each arm before a full cell. It uses two documents,
+two 32-token dreams where applicable, and one cycle, and writes to a separate
+`-smoke` directory:
+
+```bash
+make lama-ckl-smoke ARGS="--arm frozen --seed 42"
+make lama-ckl-smoke ARGS="--arm lora --seed 42"
+make lama-ckl-smoke ARGS="--arm mix-review --seed 42"
+make lama-ckl-smoke ARGS="--arm altrux --seed 42"
+```
+
+After the smoke fixes batch sizes for that rented machine, run the registered
+cells serially. Seeds `42`, `43`, and `44` are the frozen Mamba replication
+seeds; the split itself stays the one seed-42 artifact:
+
+```bash
+for seed in 42 43 44; do
+  for arm in frozen lora mix-review altrux; do
+    make lama-ckl-run ARGS="--arm $arm --seed $seed --dream-batch-size 8 --eval-batch-size 16"
+  done
+done
+```
+
+Each full cell runs 30 cycles. Every wake has 500 `[USER]` evidence turns and
+greedy `[ASSISTANT]` replies that must end within 64 tokens, followed by one
+`<|endofconversation|>`. Native LoRA trains one fixed seed-42 pass over the 500
+evidence documents per cycle. Mix-Review pairs that pass with the 500 retention
+documents in the official fixed seed-0 review order. Altrux generates 300
+uncued 512-token dreams at temperature `0.7` from the intact post-wake state and
+distils one pass at KL temperature `1.0`. All trainable arms use AdamW at
+`1e-4`; evaluation uses the published descriptive object-token accuracy from
+fresh state after every cycle.
+
+Runs resume from the last atomically completed `cycle-NN/`. Each cycle stores
+the exact wake, adapter and optimizer, carried state, metric vectors, resource
+counts, hashes, and decoded samples. Altrux stores exact dream token IDs, text,
+seeds, stop reasons, diagnostics, teacher adapter hash, and set hash. Its
+full-vocabulary teacher logits exist only in memory through that cycle's
+distillation; the saved teacher adapter and tokens can reconstruct them. Dream
+diagnostics never select, regenerate, stop, or tune a dream.
+
+After all 12 cells finish, aggregate the official checkpoint metrics, full
+per-cycle curves, acquisition, forgetting, generated/training tokens, adapter
+bytes, wall-clock GPU hours, and peak VRAM:
+
+```bash
+make lama-ckl-report
+```
+
+The report rejects smoke results, mixed split hashes, mixed shared settings,
+duplicate arm/seed cells, or a missing registered cell. Use
+`ARGS="--allow-incomplete"` only for an interim engineering report.
+
 **Probes.** The primary reliability metric is the **distractor-code margin** (§4): the summed log-prob of the correct code minus that of a fixed random foil code, same question, fresh state — immune to the format prior the cues inject and to the digit-counting attractor that broke greedy exact match. A fact counts installed at margin ≥ 1.0 nat; the margin, both raw sums and the verdict are logged per probe point. Greedy exact match and the four-paraphrase generality battery are reported and never gate. The full battery — margin, paraphrases, knowledge battery and held-out ΔPPL from `probes_common.py` — streams every `--probe-every` steps (200), so every cell yields a learned-vs-forgotten *curve* and iso-learning comparisons are read off curves rather than engineered with hyperparameters. Dream rehearsal is **binding-aware**: a code counts only where it appears in the same sentence as its own entity, and codes sitting next to a different fact's entity are reported separately as misbindings. The carried-state column stays a **diagnostic, never scored as installation**. Box tool (trains a LoRA, holds a full-vocab dream logit cache); 780M-only, since the erase is addressed through `Model.c_capture` and applied through `Model.erase_hook`.
 
 **Multi-sleep** (`--waves K`, the registered shape is `--waves 4 --n-facts 4` — `notes/discussion/DISCUSSION-20260807-g2-results-erase-geometry-and-warmstart-run.md` §3.7). Each wave wakes on the state the last one carried, sleeps, and is probed on **every fact so far** plus the battery; probes are fresh-state only, since state continuity across sleeps is load-bearing for the B arms. Wave 1 distils the seed's shared cache; **every later sleep generates its own dream** from the state it carried in, cued on that wave's facts only — spontaneous rehearsal of earlier waves is then a measured observable rather than a cue artifact. `--wave-teacher` is mandatory above one wave and names the generator: `current` is the registered protocol (the student as of that sleep's start), `base` is the one-seed drift-contribution control, pinned at the frozen base at every sleep. Each generated dream writes a `phase: "cache"` record with its hash, its cue coverage and its generator, so the wave-≥2 dreams are recorded rather than asserted equal — they legitimately differ per arm, which is the object of the comparison. Later waves get foils of their own, drawn clear of every code already in play.

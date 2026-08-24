@@ -120,14 +120,20 @@ def lama_dream_diagnostics(dreams, rows: Sequence[dict[str, object]],
     for dream in dreams:
         text = "".join(dream.token_texts)
         sentences = re.split(r"[.\n]", text)
-        for row, subject, obj in zip(rows, subjects, objects, strict=True):
-            correct += any(subject.lower() in sentence.lower() and obj in sentence
-                           for sentence in sentences)
-            misbound += sum(
-                subject.lower() in sentence.lower() and obj not in sentence
-                and any(other in sentence for other in objects if other != obj)
-                for sentence in sentences
-            )
+        bound: set[int] = set()
+        for sentence in sentences:
+            low = sentence.lower()
+            present_objects = {index for index, obj in enumerate(objects) if obj in sentence}
+            if not present_objects:
+                continue
+            for index, subject in enumerate(subjects):
+                if subject.lower() not in low:
+                    continue
+                if index in present_objects:
+                    bound.add(index)
+                elif present_objects - {index}:
+                    misbound += 1
+        correct += len(bound)
         generated = dream.dream_ids[dream.prefix_len:]
         copy_fractions.append(copy_fraction(generated, transcript_ids))
         longest.append(longest_verbatim_run(generated, transcript_ids, n=1))

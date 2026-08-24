@@ -69,6 +69,13 @@ after inspection. Distil one pass over every realized dream. Cache and hash the
 complete set before training. A retry is allowed only for a technical failure
 that produces no valid artifact; it cannot depend on dream content.
 
+Use the existing successful treatment settings: 512 tokens per dream,
+temperature 0.7, KL temperature 1.0, AdamW at `1e-4`, and one optimizer step per
+dream. Native LoRA uses one fixed seed-42 shuffled pass over the 500 evidence
+documents per cycle. Mix-Review pairs those batches with the 500 retention
+documents in the released fixed seed-0 review order. The Mamba replication
+seeds are 42, 43, and 44; all use the same seed-42 split artifact.
+
 Full-vocabulary teacher logits are a rolling, per-cycle training artifact, not
 a permanent result. After successful distillation, retain the exact dream token
 IDs and text, generation seeds, stop reasons, set hash, teacher-checkpoint hash,
