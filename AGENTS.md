@@ -67,6 +67,16 @@ Whenever you add, rename, or remove a backend environment variable, also update 
 Whenever you add, rename, or remove a frontend environment variable, also update `frontend/.env.example`.
 Whenever you add, rename, or remove an sft environment variable, also update `sft/.env.example`.
 
+## Research from existing notes first
+
+Before external research, read `notes/README.md` and the relevant notes it
+links. Use the existing research and decision record as the starting point so
+work is not repeated and superseded direction is not restored by accident.
+Search external primary sources only for information that the notes do not
+cover, claims that are disputed or time-sensitive, or source verification that
+the task requires. Update the relevant note and index when new research changes
+or extends the repository's standing knowledge.
+
 ## Keep AGENTS.md files current
 
 There's an `AGENTS.md` at the root and in some subdirectories (e.g. `models/AGENTS.md`, `sft/AGENTS.md`). Update the relevant one in the same change whenever you introduce or discover something a future session would otherwise have to rediscover the hard way — a non-obvious gotcha, a workaround for broken tooling, a convention that isn't visible just from reading the code, or a rule you had to be told twice. Don't record anything derivable by reading the code itself (that belongs in comments or a README, not here). Each `CLAUDE.md` imports its sibling `AGENTS.md`; don't duplicate instructions there.
