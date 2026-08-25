@@ -44,6 +44,7 @@ Read [the rented-GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu
 
 ## Research notes
 
+- [2026-08-25 — desktop multimodal action-state tokenization](research/RESEARCH-20260825-desktop-multimodal-action-state-tokenization.md): Surveys multimodal and GUI-agent representations, defines synchronized screen-action transitions, and registers a fixed-grammar baseline with forward-dynamics and tokenizer ablations as a separate branch from LAMA-CKL.
 - [2026-08-23 — modern LLM CL evaluations](research/RESEARCH-20260823-modern-llm-continual-learning-evaluations.md): Maps factual, instruction, temporal, continual-pretraining, aligned-behavior, and inference-memory evaluations; records normal protocols, LAMA's source chain, and the staged external-benchmark roadmap.
 - [2026-07-22 — consolidation landscape](research/RESEARCH-20260722-memory-consolidation-landscape.md): Surveys sleep consolidation, replay, evaluation, and memory integration points, then sketches M-to-weights consolidation risks.
 - [2026-07-24 — local diagnostics](research/RESEARCH-20260724-local-diagnostics.md): Measures SSM interference capacity and finds the mix read path numerically active but functionally near-inert.
