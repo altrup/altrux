@@ -5,8 +5,8 @@ import torch.nn as nn
 
 
 # The single LoRA config warm-start checkpoints are written and read at.
-# dream_sleep.py's --init-adapter treats a rank/alpha mismatch against the
-# checkpoint's lora_config.json as fatal, so the warm start (train.py's
+# experiments/dreams/cli.py's --init-adapter treats a rank/alpha mismatch against the
+# checkpoint's lora_config.json as fatal, so the warm start (training/loop.py's
 # --lora-rank/--lora-alpha, pinned in the Makefile's warm-start target) has to
 # use the same numbers or no checkpoint loads.
 DEFAULT_RANK = 16
@@ -19,13 +19,7 @@ class LoRALinear(nn.Module):
         super().__init__()
         self.linear = linear
         self.scale = alpha / rank
-        # linear.weight.dtype is the packed storage dtype (e.g. uint8) when
-        # `linear` is a quantized bitsandbytes Linear4bit (see
-        # models.common.quantize_lora_targets for QLoRA) -- compute_dtype is
-        # the dtype it actually computes/dequantizes in, and is what the
-        # adapters need to match. Plain nn.Linear has no compute_dtype, so
-        # this falls back to its (correct) weight dtype.
-        dtype = getattr(linear, "compute_dtype", None) or linear.weight.dtype
+        dtype = linear.weight.dtype
         device = linear.weight.device
         self.lora_A = nn.Parameter(torch.empty(rank, linear.in_features, device=device, dtype=dtype))
         self.lora_B = nn.Parameter(torch.zeros(linear.out_features, rank, device=device, dtype=dtype))
@@ -39,14 +33,6 @@ class LoRALinear(nn.Module):
     def weight(self) -> torch.Tensor:
         # mamba2's fused kernel accesses .weight directly; return the merged weight
         # so LoRA is applied even through the fused path and gradients flow correctly.
-        # When `linear` is a quantized Linear4bit (detected the same way __init__
-        # does, via compute_dtype), its .weight is packed 4-bit storage -- not
-        # addable to lora_B @ lora_A -- so skip the merge. Harmless for QLoRA
-        # models: they never reach the fused-kernel path (see this class's
-        # historical note), the only other caller is mamba_ssm's
-        # allocate_inference_cache, which just reads .weight.device.
-        if getattr(self.linear, "compute_dtype", None) is not None:
-            return self.linear.weight
         return self.linear.weight + (self.lora_B @ self.lora_A) * self.scale
 
     @property

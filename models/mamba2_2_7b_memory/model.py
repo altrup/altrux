@@ -57,10 +57,10 @@ TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
 # trainable low-rank adapters) rather than left fully frozen, on the theory
 # that a fully frozen backbone is unlikely to integrate a memory signal
 # injected straight into its SSM state well. The 2.7B backbone in bf16 is
-# ~5.4 GB -- comfortable on a cloud A100/H100 without 4-bit quantization, so
-# no QUANTIZE_LORA_BASE flag here. The memory subsystem (front-end, gate
-# projections) is separate from LoRA: it has no pretrained weights to adapt,
-# so it trains with ordinary full-parameter gradients from a random init.
+# ~5.4 GB -- comfortable on a cloud A100/H100 in full precision. The memory
+# subsystem (front-end, gate projections) is separate from LoRA: it has no
+# pretrained weights to adapt, so it trains with ordinary full-parameter
+# gradients from a random init.
 TARGET_LORA_MODULES: list[str] = ["in_proj", "out_proj"]
 
 # Chat format role markers -- see models/mamba2_780m/model.py for the

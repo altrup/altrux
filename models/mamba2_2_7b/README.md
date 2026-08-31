@@ -17,8 +17,8 @@ else.
 
 [`state-spaces/mamba2-2.7b`](https://huggingface.co/state-spaces/mamba2-2.7b) — a
 2.7B-parameter Mamba2 state-space language model: 64 layers, `d_model` 2560,
-80 heads of `headdim` 64, `d_state` 128. Loaded in bf16 (~5.4 GB), so LoRA runs
-full-precision on the adapter targets and there is no `QUANTIZE_LORA_BASE`.
+80 heads of `headdim` 64, `d_state` 128. Loaded in bf16 (~5.4 GB), with
+full-precision LoRA on the adapter targets.
 
 ## Tokenizer
 

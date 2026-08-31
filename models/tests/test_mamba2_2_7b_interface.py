@@ -35,10 +35,6 @@ def test_package_reexports_the_model_interface():
         assert getattr(pkg, name, None) is getattr(M, name), name
 
 
-def test_lora_base_is_not_quantized():
-    assert getattr(M, "QUANTIZE_LORA_BASE", False) is False
-
-
 def test_train_hooks_export_the_generic_loops_interface():
     assert callable(hooks.setup_training)
     assert callable(hooks.chunk_loss)
