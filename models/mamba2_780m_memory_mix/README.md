@@ -37,7 +37,7 @@ over the read — a 2/3 variant would never ship, and a fixed boundary means
 a checkpoint's geometry can never contradict its folder name.
 
 **Gradient checkpointing** comes from the shared implementation unchanged —
-`train_hooks.set_grad_checkpoint` re-exports it, and `sft/train.py` turns it
+`train_hooks.set_grad_checkpoint` re-exports it, and `sft/training/loop.py` turns it
 on per data slice so the chunk-512 cram slices pay the recompute tax and the
 short-chunk slices don't. See `models/mamba2_2_7b_memory/README.md`'s
 "Gradient checkpointing" for the block-size arithmetic and for why the

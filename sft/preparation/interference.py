@@ -1,6 +1,6 @@
 """Injects interference-recall structure into an already-tokenized dataset.
 
-Motivation (see notes/WATCH_NOTES.md, 2026-07-17): probe_recall.py showed the
+Motivation (see notes/WATCH_NOTES.md, 2026-07-17): diagnostics/recall.py showed the
 backbone's SSM state alone handles the recall load the current training data
 ever presents (a handful of facts per example), so the gradient has no reason
 to use the Titans neural memory and learns to suppress it instead. The
@@ -27,15 +27,15 @@ IS the recall training signal for mask-respecting models (mamba2_2_7b_memory
 itself trains on all tokens regardless).
 
 The output also carries a `recall_masks` list (True exactly on the spliced
-answer-content tokens, None for untouched examples) so train.py's
+answer-content tokens, None for untouched examples) so training/loop.py's
 --recall-weight can amplify the recall signal, which is otherwise ~0.1% of
 all tokens.
 
-Fact keys come from the same vocab scan as probe_recall.py but from a
+Fact keys come from the same vocab scan as diagnostics/recall.py but from a
 disjoint slice (skip=1024), so the probe remains an honest held-out eval.
 
   make prepare-interference           # data/train_memory.pt -> data/train_memory_v2.pt
-  uv run --no-sync python prepare_interference.py --fraction 0.3 --max-facts 256
+  uv run --no-sync python preparation/interference.py --fraction 0.3 --max-facts 256
 """
 
 import argparse

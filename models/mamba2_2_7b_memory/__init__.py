@@ -15,7 +15,7 @@ from .model import (
 
 def post_load(model: Model, checkpoint_path: str | Path) -> None:
     # global_step isn't stored inside state.pt itself -- it's the
-    # checkpoint directory's own name (see train.py's save_checkpoint),
+    # checkpoint directory's own name (see training/loop.py's save_checkpoint),
     # e.g. ".../epoch-3/step-171" -> 171.
     step_dir = Path(checkpoint_path).name
     if step_dir.startswith("step-"):

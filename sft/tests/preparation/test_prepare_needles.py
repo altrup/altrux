@@ -1,5 +1,5 @@
 """CPU tests for the babilong -> item conversion. Block assembly itself is
-prepare_cram's and is covered by test_prepare_cram.py.
+`preparation.cram`'s and is covered by `test_prepare_cram.py`.
 """
 
 import sys

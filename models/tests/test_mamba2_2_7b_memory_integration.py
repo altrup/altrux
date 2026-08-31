@@ -5,7 +5,7 @@ binding the real 2.7B dims. The mixer path still calls Triton-backed norm
 kernels, so these need a working GPU (any -- the local ROCm box qualifies);
 they skip on CPU-only hosts.
 
-Pins the injection_enabled kill switch (sft/probe_recall.py --ablation none):
+Pins the injection_enabled kill switch (sft/diagnostics/recall.py --ablation none):
 with it off, forward must be invariant to the neural memory's content and
 produce no memory activity at all; with it on (the default), memory content
 must reach the logits.

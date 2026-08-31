@@ -24,20 +24,20 @@ Three properties make the answer memory-dependent rather than retrievable:
   block i carries ceiling_start * (ceiling_end/ceiling_start)^(i/n). Every
   item records its `gap`, `target_gap` and `ceiling`, so a consumer that
   shuffles can restore the curriculum by sorting on `ceiling`.
-- **Credit on the entity span only.** recall_masks (train.py's --recall-weight
+- **Credit on the entity span only.** recall_masks (training/cli.py's --recall-weight
   multiplier) is True exactly on the entity tokens of the assistant turn. The
   rest of the completed sentence is copied from the visible cue and must earn
   no recall credit.
 
 Solvability is *not* established here -- prepare_cram emits candidates and
-filter_items.py decides which keep their recall credit (discarded items keep
+preparation/filtering.py decides which keep their recall credit (discarded items keep
 their passages as interference; only the credit is dropped).
 
 Held-out articles are reserved before item construction and written to a
 separate artifact, so eval items can never come from a trained article.
 
   make prepare-cram
-  uv run --no-sync python prepare_cram.py --articles 4000
+  uv run --no-sync python preparation/cram.py --articles 4000
 """
 
 import argparse
@@ -608,7 +608,7 @@ def build_items(passages: list[dict], ents: list[list[dict]], seed: int,
 
 
 def add_block_args(parser) -> None:
-    """Block-assembly and curriculum flags, shared with prepare_needles.py."""
+    """Block-assembly and curriculum flags, shared with preparation/needles.py."""
     parser.add_argument("--gap-min", type=int, default=192,
                         help="Floor on the per-item gap (tokens between a source passage and its cue). "
                              "192 is where dense interference kills plain-backbone recall "

@@ -12,7 +12,7 @@ def test_merge_preserves_artifact_concatenation(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "sys.argv",
-        ["merge_data.py", str(first), str(second), "--output", str(output)],
+        ["preparation/merge.py", str(first), str(second), "--output", str(output)],
     )
     merge.main()
 

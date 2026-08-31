@@ -536,7 +536,7 @@ def test_rebasing_recomputes_erasers_without_touching_the_dreams():
     for _ in range(2):
         d = _dream([10, 11, 12, 13])
         # As the builder stores them: divergence over EVERY position, but
-        # queries only for the gated ones, in gate order (dream_sleep.py:2574).
+        # queries only for the gated ones, in gate order (experiments/dreams/cli.py:2574).
         d.divergence = [0.01, 0.05, 0.02, 6.0, 0.03, 4.0]
         d.gate_positions = [3, 5]
         d.queries = [[torch.randn(1, 16)] for _ in range(2)]

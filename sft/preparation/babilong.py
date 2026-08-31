@@ -1,8 +1,8 @@
 """Converts RMT-team/babilong (a long-context recall QA benchmark, schema
 {input, question, target}) into the {messages: [{role, content}]} JSONL shape
-prepare_data.py expects from --input. Kept separate from prepare_data.py
+preparation/conversations.py expects from --input. Kept separate from preparation/conversations.py
 because babilong's schema is benchmark-specific, not a chat dataset --
-running this once produces a JSONL that prepare_data.py then tokenizes
+running this once produces a JSONL that preparation/conversations.py then tokenizes
 exactly like any other conversation dataset.
 
 babilong embeds the answer-bearing fact at a random position inside long,
@@ -48,9 +48,9 @@ def main() -> None:
                     ds = ds.select(range(min(args.max_per_split, len(ds))))
                 for ex in ds:
                     # The question rides in its own field, not joined into
-                    # content: prepare_data.py appends it to the same user turn
+                    # content: preparation/conversations.py appends it to the same user turn
                     # (token-identical to the joined form) but records its
-                    # token offset, so prepare_chains.py's split-QA can move
+                    # token offset, so preparation/chains.py's split-QA can move
                     # the dataset's own question verbatim to the resumed tail.
                     record = {
                         "messages": [

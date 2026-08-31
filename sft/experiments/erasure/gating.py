@@ -4,7 +4,7 @@
 Pure tensor math over a state and a set of captured read queries. Sec 2.9.1's
 prod-validity constraint is a property of this module rather than a promise
 about it: nothing here is handed the injected facts, so no gate, weighting or
-rank choice can consult them. The harness (dream_sleep.py) owns the capture,
+rank choice can consult them. The harness (experiments/dreams/cli.py) owns the capture,
 the cache format and the binding-scan validation overlay.
 
 The chain, per dream:

@@ -1,7 +1,6 @@
-"""Concatenates multiple prepare_data.py outputs (each {ids: [...], masks: [...]})
-into one .pt file. train.py only accepts a single --data path, so mixing
-sources (e.g. LongAlign-10k + babilong) needs this merge step after each is
-tokenized separately.
+"""Concatenates preparation/conversations.py outputs into one .pt artifact.
+
+Use this when sources must form one dataset rather than separate training slices.
 """
 
 import argparse
@@ -11,7 +10,7 @@ import torch
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Merge multiple prepare_data.py .pt outputs into one")
+    parser = argparse.ArgumentParser(description="Merge multiple preparation/conversations.py .pt outputs into one")
     parser.add_argument("inputs", nargs="+", help="Input .pt files to merge")
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
     args = parser.parse_args()

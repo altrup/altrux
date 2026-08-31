@@ -190,7 +190,7 @@ def _adapter_model(rank: int = 2, alpha: float = 4.0) -> nn.Module:
 
 
 def _write_checkpoint(monkeypatch, tmp_path, model, rank: int, alpha: float):
-    """A real train.py checkpoint directory (trainable.pt + lora_config.json),
+    """A real training/loop.py checkpoint directory (trainable.pt + lora_config.json),
     which is what --init-adapter takes."""
     from training.checkpoints import save_checkpoint
 

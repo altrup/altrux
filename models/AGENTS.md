@@ -8,7 +8,7 @@ Each model folder's `README.md` should briefly cover:
 - **`Model` wrapper quirks** — anything non-obvious about the inference wrapper (e.g. deviations from the upstream model's forward pass)
 - **Special tokens** — which role markers are registered as tokenizer special tokens and why
 
-See `models/mamba2_780m/README.md` for an example.
+See `models/mamba2_2_7b/README.md` for an example.
 
 ## Checkpoints
 
@@ -29,4 +29,4 @@ Each model folder also contains a `train_hooks.py`, sibling to `model.py`, expor
 
 `mask_slice` exists for interface parity across models even when a given model ignores it (`mamba2_2_7b_memory` trains on every token, not just assistant turns, so it ignores `mask_slice`). Checkpoint save/load is *not* a per-model hook — it's generic in `sft/training/checkpoints.py` (saves every parameter with `requires_grad=True`), since that criterion is already correct for both a LoRA-only model and one with an additional full-gradient subsystem.
 
-See `models/mamba2_780m/train_hooks.py` for the simple case and `models/mamba2_2_7b_memory/train_hooks.py` for the one that also defines `chunk_extra_log`.
+See `models/mamba2_2_7b/train_hooks.py` for the simple case and `models/mamba2_2_7b_memory/train_hooks.py` for the one that also defines `chunk_extra_log`.

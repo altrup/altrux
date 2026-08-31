@@ -1,4 +1,4 @@
-"""Fast (CPU, seconds) tests for sft/train.py's generic, model-agnostic
+"""Fast (CPU, seconds) tests for sft/training/loop.py's generic, model-agnostic
 training machinery: the chunk slicer, mid-example state replay on resume,
 and the token-based checkpoint trigger. Exercised against a tiny fake
 stateful model + fake hooks module instead of a real Mamba2 model, since

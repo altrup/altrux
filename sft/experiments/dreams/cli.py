@@ -159,7 +159,7 @@ def file_sha(path: str | Path) -> str:
 
 
 def load_init_adapter(model, ckpt: str | Path, rank: int, alpha: float) -> str:
-    """Load a train.py checkpoint directory into an already-LoRA-attached
+    """Load a training/loop.py checkpoint directory into an already-LoRA-attached
     model and return its trainable.pt SHA-256 (the hash stamped on every
     record). A rank/alpha mismatch is fatal: a warm start that silently
     half-applied would be indistinguishable in the results from one that
@@ -292,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pilot-capture", action="store_true",
                         help="Multi-dream cache builds only: also write the sec 2.10.7 gate-pilot capture "
                              "beside the cache -- every position's read queries and D_t, plus the battery "
-                             "items' read queries, so gate_pilot.py can score every gating scheme offline. "
+                             "items' read queries, so experiments/erasure/pilot.py can score every gating scheme offline. "
                              "Harness instrumentation; the cache itself is unchanged")
     parser.add_argument("--build-dream-cache", action="store_true",
                         help="Generate this seed's teacher dream, write the cache and its decoded sidecar, and stop. "
@@ -328,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kl-temp", type=float, default=1.0, help="Distillation temperature (default: %(default)s)")
     parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward chunk (default: the model's DEFAULT_CHUNK_LEN)")
     parser.add_argument("--init-adapter", default=None,
-                        help="Warm-start checkpoint directory (a train.py step-N/ dir) loaded into the model before "
+                        help="Warm-start checkpoint directory (a training/loop.py step-N/ dir) loaded into the model before "
                              "the dream cache, the battery or any training; its trainable.pt SHA-256 is stamped "
                              "on every record and the summarizer refuses to pool cells that disagree")
     parser.add_argument("--lora-rank", type=int, default=DEFAULT_RANK)

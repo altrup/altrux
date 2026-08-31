@@ -3,7 +3,7 @@
 
 The RMT-proven needle form under the *identical* curriculum, block assembly
 and recall weighting as the Wikipedia cram slice -- everything structural
-comes from prepare_cram.build_blocks; only the items differ:
+comes from preparation.cram.build_blocks; only the items differ:
 
   source = a bAbI story (RMT-team/babilong's `0k` config: the task text with
            no filler, so the gap is ours to control, not the benchmark's)
@@ -81,7 +81,7 @@ def main() -> None:
     # A second bAbI story would re-state where the apple is and invalidate the
     # first question's target. And a bAbI target ("kitchen") recurs across
     # stories by construction while the binding the question asks about does
-    # not, so test B of filter_items.py, not a string check, decides
+    # not, so test B of preparation/filtering.py, not a string check, decides
     # solvability for this slice.
     parser.set_defaults(max_items_per_block=1, allow_repeated_credit=True)
     args = parser.parse_args()

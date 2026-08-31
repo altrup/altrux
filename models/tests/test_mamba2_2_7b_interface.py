@@ -1,7 +1,7 @@
 """Interface test for the plain mamba2_2_7b substrate.
 
 No weights are downloaded and no model is instantiated: this pins the module
-contract every caller reads at import time (sft/train.py, sft/dream_sleep.py,
+contract every caller reads at import time (sft/training/loop.py, sft/experiments/dreams/cli.py,
 backend/app/model/registry.py) -- which is exactly the part that a
 copy-adaptation from mamba2_780m can get wrong.
 """

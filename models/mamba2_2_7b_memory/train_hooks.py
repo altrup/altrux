@@ -1,6 +1,6 @@
-"""Training hooks for mamba2_2_7b_memory, called by sft/train.py's generic
+"""Training hooks for mamba2_2_7b_memory, called by sft/training/loop.py's generic
 training loop. Contrast with models/mamba2_780m/train_hooks.py: this model's
-Model.forward(input_ids, state) is stateful, so sft/train.py processes
+Model.forward(input_ids, state) is stateful, so sft/training/loop.py processes
 examples in --chunk-len chunks with `state` carried (and detached) across
 chunks of the SAME example -- never across different examples -- bounding
 training RAM by chunk length rather than example length. See
@@ -8,7 +8,7 @@ models/mamba2_2_7b_memory/README.md for why long examples aren't truncated at
 data-prep time instead.
 
 Unlike standard SFT (and unlike the other model's hooks), loss is computed
-over EVERY non-padded token: prepare_data.py's mask marks user turns as
+over EVERY non-padded token: preparation/conversations.py's mask marks user turns as
 non-trainable, which is correct for short Q&A-style chat, but for this model
 most of the content that's supposed to exercise long-range recall is *in* the
 long user turns (a document, a long context) -- masking that out would throw
@@ -78,11 +78,11 @@ def chunk_loss(
     eos_weight: float,
 ):
     """mask_slice is a (B, T) per-token loss-weight tensor: 0 = padding,
-    1 = normal token, and values >1 carry train.py's optional recall/head
+    1 = normal token, and values >1 carry training/loop.py's optional recall/head
     boosts (--recall-weight/--head-weight).
     Trains on every real token (no user/assistant distinction -- see module
     docstring). Returns (loss_sum, weight_sum, state); the generic loop in
-    sft/train.py owns chunking, accumulation, checkpointing, and live
+    sft/training/loop.py owns chunking, accumulation, checkpointing, and live
     progress display across calls."""
     logits, state = model(input_ids, state=state)
     loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
@@ -101,7 +101,7 @@ def reset_slot(model, state, slot_idx: int) -> None:
 
 
 def sleep_slot(model, state, slot_idx: int) -> None:
-    """Optional hook -- train.py calls this (if defined) when a slot reaches
+    """Optional hook -- training/loop.py calls this (if defined) when a slot reaches
     one of its example's sleep_positions offsets: wipe the backbone state
     (per-layer SSM/conv) while the neural memory persists, so cross-sleep
     recall in the episodic-chains data can only flow through the memory.
@@ -110,7 +110,7 @@ def sleep_slot(model, state, slot_idx: int) -> None:
 
 
 def set_grad_checkpoint(model, enabled: bool, block: int | None = None) -> None:
-    """Optional hook -- train.py calls this (if defined) at the start of every
+    """Optional hook -- training/loop.py calls this (if defined) at the start of every
     config-group segment with that slice's `grad_checkpoint` setting, so a
     long-chunk slice can pay the recompute tax while the short-chunk slices in
     the same run don't. See Model.set_grad_checkpoint."""
@@ -121,7 +121,7 @@ def set_grad_checkpoint(model, enabled: bool, block: int | None = None) -> None:
 
 
 def on_step(model, global_step: int) -> None:
-    """Optional hook -- train.py calls this (if defined) once before training
+    """Optional hook -- training/loop.py calls this (if defined) once before training
     starts and again after every optimizer step, passing the global step
     count. Used here to anneal beta's startup suppression away over the
     first BETA_BIAS_ANNEAL_STEPS optimizer steps (see model.py's
@@ -134,7 +134,7 @@ def on_step(model, global_step: int) -> None:
 
 
 def extra_log(model) -> str | None:
-    """Optional hook -- train.py calls this (if defined) after each optimizer
+    """Optional hook -- training/loop.py calls this (if defined) after each optimizer
     step and prints whatever string it returns (None to print nothing this
     step). Used here to report whether the memory subsystem is actually
     being used, not just receiving gradient -- see Model.pop_memory_stats
@@ -164,7 +164,7 @@ def extra_log(model) -> str | None:
 
 
 def chunk_extra_log(model) -> list[str] | None:
-    """Optional hook -- train.py's generic per-chunk live progress display
+    """Optional hook -- training/loop.py's generic per-chunk live progress display
     calls this (if defined) for extra per-slot status lines. Returns one
     string per batch slot (last_token_log is a live snapshot of each slot's
     last token). None if forward() hasn't run yet."""

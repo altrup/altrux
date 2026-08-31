@@ -1,22 +1,24 @@
 # altrux
 
-Some LLM experiments I was curious about, lot of code written by Claude + Codex
+Research code for continual learning and dream-based consolidation in Mamba2
+models.
 
 ## Layout
 
 ```
 altrux/
 ├── models/          # Model definitions — one folder per model (package + README.md)
-│   └── mamba2_780m/
+│   ├── mamba2_2_7b/              # Active plain 2.7B substrate
+│   └── mamba2_2_7b_memory/       # Memory-augmented 2.7B model
 ├── backend/         # FastAPI inference server
 ├── frontend/        # React Router v7 chat UI
-├── sft/             # LoRA supervised fine-tuning scripts
+├── sft/             # Training and continual-learning experiments
 └── scripts/         # Standalone helper scripts (e.g. Lambda Cloud instance termination)
 ```
 
 ## Adding a new model
 
-1. Create a `models/my_model/` package — see `models/mamba2_780m/` for the required interface (`MODEL_ID`, `TOKENIZER_ID`, `TARGET_LORA_MODULES`, `USER_OPEN`, `ASST_OPEN`, `SPECIAL_TOKENS`, `Model`, `load_base`, `load_inference`) and add a `README.md` following `models/CLAUDE.md`
+1. Create a `models/my_model/` package — see `models/mamba2_2_7b/` for the required interface (`MODEL_ID`, `TOKENIZER_ID`, `TARGET_LORA_MODULES`, `USER_OPEN`, `ASST_OPEN`, `SPECIAL_TOKENS`, `Model`, `load_base`, `load_inference`) and add a `README.md` following `models/CLAUDE.md`
 2. Set `MODEL_NAME=my_model` in `backend/.env` and/or `sft/.env`
 3. Start the backend or run sft — no other code changes needed
 

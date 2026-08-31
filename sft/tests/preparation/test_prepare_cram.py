@@ -1,5 +1,5 @@
 """Fast (CPU, seconds) tests for the cram/needle block generator in
-prepare_cram.py. build_blocks is IO-free -- items and filler passages in,
+preparation/cram.py. build_blocks is IO-free -- items and filler passages in,
 dataset dict out, tokenizer injected as a plain callable -- so these run
 against synthetic items and a character-level stub tokenizer, no downloads
 and no model import.

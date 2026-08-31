@@ -38,7 +38,7 @@ ablated recall degrades and see whether intact holds up.
 --gist DATA.pt replaces the engineered fact/query machinery entirely with a
 natural-continuation eval: the memory is a gist mechanism, and the
 exact-code conditions above are blind to any fuzzier trace it carries. Each
-probe row takes one real long conversation from DATA.pt (a prepare_data.py
+probe row takes one real long conversation from DATA.pt (a preparation/conversations.py
 output), places the wipe at the between-turn boundary nearest the
 conversation's middle, feeds the preceding --gist-prefix tokens as prefix,
 then teacher-forces the conversation's actual continuation and scores mean
@@ -74,8 +74,8 @@ intervening episode + sleep; (gist-delta - dist-delta) is the flush cost of
 that episode boundary.
 
 Run via `make probe-recall` (defaults) or directly:
-  uv run --no-sync python probe_recall.py --gaps 1024 --n-facts 64,128,256
-  uv run --no-sync python probe_recall.py --gist data/train_memory_longalign.pt
+  uv run --no-sync python diagnostics/recall.py --gaps 1024 --n-facts 64,128,256
+  uv run --no-sync python diagnostics/recall.py --gist data/train_memory_longalign.pt
 """
 
 import argparse
@@ -116,7 +116,7 @@ def single_token_labels(tokenizer, n: int, skip: int = 0) -> list[str]:
     exactly one token after a space (scanned from the tokenizer's own vocab),
     so query rows stay equal-length no matter which label each row asks for.
     `skip` offsets into the scan order: the probe uses skip=0 and
-    prepare_interference.py trains on a disjoint pool (skip=1024), keeping
+    preparation/interference.py trains on a disjoint pool (skip=1024), keeping
     this probe an honest held-out eval."""
     import re
 
@@ -446,7 +446,7 @@ def main() -> None:
     parser.add_argument("--n-facts", default="64,128", help="Comma-separated fact counts per conversation (interference sweep)")
     parser.add_argument("--n-probes", type=int, default=8, help="Probe conversations per gap (batched together)")
     parser.add_argument("--sleep", action="store_true", help="Also score the cross-sleep conditions (backbone wiped after the prefix, memory kept vs replaced) -- see the module docstring")
-    parser.add_argument("--gist", default=None, help="Natural-continuation gist eval on real conversations from this prepare_data.py .pt file (replaces the fact/query probe; see the module docstring)")
+    parser.add_argument("--gist", default=None, help="Natural-continuation gist eval on real conversations from this preparation/conversations.py .pt file (replaces the fact/query probe; see the module docstring)")
     parser.add_argument("--gist-prefix", type=int, default=6144, help="Pre-wipe prefix length in tokens (rounded down to a chunk multiple)")
     parser.add_argument("--gist-cont", type=int, default=1536, help="Post-wipe continuation length in tokens to score")
     parser.add_argument("--gist-recent", type=int, default=576, help="Suffix length for the sleep-recent recency control")
@@ -473,7 +473,7 @@ def main() -> None:
     from training.checkpoints import latest_checkpoint, load_checkpoint
     from training.cli import default_model_name
 
-    # train.py's import (above) already ran load_dotenv(), so MODEL_NAME
+    # training/cli.py's import (above) already ran load_dotenv(), so MODEL_NAME
     # comes from sft/.env like every other script here. The 780m memory arm
     # packages re-export the shared _NeuralMemory/MemoryState this probe
     # touches.

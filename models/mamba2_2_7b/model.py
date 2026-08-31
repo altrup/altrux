@@ -38,7 +38,7 @@ MODEL_ID = "state-spaces/mamba2-2.7b"
 
 def load_base(device: str) -> MambaLMHeadModel:
     """Load the raw HuggingFace model in bf16 (the shared module's load_base
-    records why bf16). Used by sft/train.py."""
+    records why bf16). Used by sft/training/loop.py."""
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from models.common import build_tokenizer, extend_embeddings
 

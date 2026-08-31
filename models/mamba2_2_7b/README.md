@@ -40,7 +40,7 @@ transformer.
 (`SPECIAL_TOKENS` in `model.py`), so each is a single atomic token id rather
 than several ordinary BPE pieces. The markers are bare — no trailing space —
 since the marker is a vocab-level concept distinct from prompt formatting;
-callers append a literal `" "` separator explicitly (see `sft/prepare_data.py`,
+callers append a literal `" "` separator explicitly (see `sft/preparation/conversations.py`,
 `backend/app/model/registry.py`). `load_base` resizes
 `backbone.embedding`/`lm_head` to fit the grown vocabulary, re-tying them
 (`tie_embeddings: true` in this model's config), and initializes each new row to
@@ -52,9 +52,9 @@ exactly those rows train while the other ~50k stay frozen and out of the
 checkpoints.
 
 `EOC` is a conversation boundary of the same family as `<|endoftext|>` (which
-ends an assistant turn in this corpus). `sft/prepare_data.py` appends it to
+ends an assistant turn in this corpus). `sft/preparation/conversations.py` appends it to
 every rendered conversation, so the corpus teaches it as conversation-end;
-`sft/dream_sleep.py` reads the same token as the point a self-terminating dream
+`sft/experiments/dreams/cli.py` reads the same token as the point a self-terminating dream
 stops, and as the dream-start steer prefix.
 
 ## `Model` wrapper quirks
@@ -76,12 +76,12 @@ summarized:
   on a non-ROCm CUDA host with the kernel importable and no `erase_hook` set;
   the dev box (an unsupported ROCm gfx arch, where both of `mamba_ssm`'s fused
   kernel families are broken) always takes the token loop.
-- State threading gives chunked training for free: `sft/train.py` (via
+- State threading gives chunked training for free: `sft/training/loop.py` (via
   `train_hooks.py`) carries and detaches `MixerState` across `--chunk-len`
   chunks of the same example, bounding training RAM by chunk length rather than
   example length.
 - `Model.c_capture`: set to a list to have `_mixer_step` append each layer's
-  post-conv read query `C` (detached), token-major — how `sft/erase_probe.py`
+  post-conv read query `C` (detached), token-major — how `sft/experiments/erasure/probe.py`
   and the dream-sleep loop address the state erase. Per-token path only.
 - `Model.erase_hook`: set to `hook(layer_idx, ssm_state, C)` to replace a
   layer's carried state just before its decay+write — the

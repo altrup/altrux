@@ -5,7 +5,7 @@ A chain is one long training example: a shuffled sequence of episodes
 (whole conversations from the source datasets) concatenated up to a sampled
 token budget, with three things layered in:
 
-- **Sleeps** (`sleep_positions` metadata): token offsets where train.py
+- **Sleeps** (`sleep_positions` metadata): token offsets where training/loop.py
   wipes the slot's backbone state while the neural memory persists.
   Placed at randomly chosen between-episode boundaries so a wake spans
   1-4 episodes (unpredictable -- a fixed cadence would train a pre-sleep
@@ -21,13 +21,13 @@ token budget, with three things layered in:
   intervening episode, training the memory to retain a conversation's gist
   through unrelated material. Single-QA episodes (a long document turn then
   its answer) instead cut at the *question start* recorded by
-  prepare_data.py (`--split-qa-rate`): the head keeps the document only
+  preparation/conversations.py (`--split-qa-rate`): the head keeps the document only
   (suspended behind a sleep), and the tail re-emits a fresh [USER] marker +
   " " before the dataset's own question and answer -- read the document
   now, get asked about it an episode and a sleep later, with every content
   token dataset-authored. Episodes without a recorded question never split.
 - **Fact blocks**: a fraction of episodes host a block of key/value facts
-  (heterogeneous kinds and phrasings, shared with prepare_interference.py),
+  (heterogeneous kinds and phrasings, shared with preparation/interference.py),
   spliced at the episode's second turn boundary. A fraction of facts are
   later revised, training delta-rule overwrite.
 - **Queries at three distances**: each block gets query/answer pairs whose
@@ -43,14 +43,14 @@ cram slices (notes/discussion/DISCUSSION-20260724-next-run-plan.md §1.3).
 Everything operates on token ids -- carrier conversations are never
 re-tokenized, only the short injected turns are (one batched call).
 Fact keys use the vocab-scan slice [1024, 2048), disjoint from
-probe_recall.py's [0, 1024), so the probe stays a held-out eval.
+diagnostics/recall.py's [0, 1024), so the probe stays a held-out eval.
 
 Output: {ids, masks, recall_masks, sleep_positions}. recall_masks are True
 exactly on spliced answer-content tokens (for --recall-weight);
 sleep_positions are sorted post-splice token offsets per chain.
 
   make prepare-chains     # data/train.pt + data/train_memory.pt -> data/train_chains.pt
-  uv run --no-sync python prepare_chains.py --sources data/train_memory.pt
+  uv run --no-sync python preparation/chains.py --sources data/train_memory.pt
 """
 
 import argparse
@@ -94,7 +94,7 @@ def build_chains(
     boundary is a sent_end token immediately followed by a space_start token.
 
     pool_qoffs (aligned with pool_ids) carries each episode's question token
-    offset from prepare_data.py, or None; sep_id is the token id of a literal
+    offset from preparation/conversations.py, or None; sep_id is the token id of a literal
     " ". Both feed split-QA: single-QA episodes with an offset are cut at the
     question start, and the tail re-emits [user_id, sep_id] before the
     verbatim question tokens. Episodes without an offset never split."""
@@ -166,7 +166,7 @@ def build_chains(
                 if len(ids) > mp:
                     b = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
                     # Single-QA episodes (two turns: document then answer) cut
-                    # at the question start recorded by prepare_data.py: head
+                    # at the question start recorded by preparation/conversations.py: head
                     # keeps the document only, the tail re-emits a fresh user
                     # marker before the dataset's own question + answer. No
                     # recorded question -> never split (fail closed; e.g.
@@ -541,7 +541,7 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
     assert not any(n_bpe.values()), (
         f"BPE-spelled role markers found ({n_bpe}); the single special-token id is the only "
         f"legal marker encoding -- a source episode pool was tokenized without the special "
-        f"tokens registered (regenerate it via prepare_data.py)"
+        f"tokens registered (regenerate it via preparation/conversations.py)"
     )
     return bad
 
@@ -549,7 +549,7 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--sources", nargs="+", default=["data/train.pt", "data/train_memory.pt"],
-                        help="Episode pools (prepare_data.py/merge_data.py outputs); every episode is used exactly once")
+                        help="Episode pools (preparation/conversations.py/preparation/merge.py outputs); every episode is used exactly once")
     parser.add_argument("--output", default="data/train_chains.pt")
     parser.add_argument("--min-budget", type=int, default=30_000, help="Per-chain token budget, log-uniform lower bound")
     parser.add_argument("--max-budget", type=int, default=130_000, help="Per-chain token budget, log-uniform upper bound")
@@ -564,7 +564,7 @@ def main() -> None:
     parser.add_argument("--split-min-part", type=int, default=256,
                         help="Minimum tokens on each side of a split-episode cut boundary")
     parser.add_argument("--split-qa-rate", type=float, default=None,
-                        help="Split rate for single-QA episodes (exactly two turns). The cut lands at the question start recorded by prepare_data.py; the tail resumes behind a fresh [USER] marker with the question moved verbatim. Episodes without a recorded question never split. Default: --split-episode-rate")
+                        help="Split rate for single-QA episodes (exactly two turns). The cut lands at the question start recorded by preparation/conversations.py; the tail resumes behind a fresh [USER] marker with the question moved verbatim. Episodes without a recorded question never split. Default: --split-episode-rate")
     parser.add_argument("--split-gap-min", type=int, default=2,
                         help="Minimum episodes between a split head and its resumed tail")
     parser.add_argument("--split-gap-max", type=int, default=2,

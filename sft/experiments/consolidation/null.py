@@ -261,7 +261,7 @@ def main() -> None:
     # One step = one replay chunk. State is carried (detached) across chunks
     # within a pass and reset to None at each pass boundary, so the student
     # always sees the replay from a fresh state -- truncated BPTT, the same
-    # shape train.py uses.
+    # shape training/loop.py uses.
     model.train()
     opt = torch.optim.AdamW(trainable, lr=args.lr)
     n_chunks = (transcript.shape[1] + chunk_len - 1) // chunk_len

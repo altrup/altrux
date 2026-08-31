@@ -143,7 +143,7 @@ class Model(nn.Module):
 
         # When set to a list, _mixer_step appends each layer's post-conv read
         # query C (detached) -- one entry per layer per token, token-major.
-        # Used by sft/erase_probe.py (and the dream-sleep loop) to address the
+        # Used by sft/experiments/erasure/probe.py (and the dream-sleep loop) to address the
         # rank-1 state erase; per-token path only, so drive the model one
         # token at a time while capturing.
         self.c_capture: list[torch.Tensor] | None = None
@@ -151,7 +151,7 @@ class Model(nn.Module):
         # When set, _mixer_step calls it as hook(layer_idx, ssm_state, C) just
         # before that layer's decay+write and writes onto whatever it returns
         # -- the ablate-then-write-then-read micro-order the dream-sleep
-        # counterfactual arms need (sft/dream_sleep.py). Per-token path only.
+        # counterfactual arms need (sft/experiments/dreams/cli.py). Per-token path only.
         self.erase_hook: Callable[[int, torch.Tensor, torch.Tensor], torch.Tensor] | None = None
 
     def _init_state(self, batch_size: int, dtype) -> MixerState:
@@ -361,7 +361,7 @@ class Model(nn.Module):
 
 
 def load_base(device: str) -> MambaLMHeadModel:
-    """Load the raw HuggingFace model. Used by sft/train.py.
+    """Load the raw HuggingFace model. Used by sft/training/loop.py.
 
     Loads in bf16, not fp32 -- this model's manual per-token mixer step
     (see Model docstring) holds a live backward graph whose activation

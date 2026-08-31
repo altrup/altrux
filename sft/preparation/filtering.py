@@ -307,7 +307,7 @@ def rescore_dataset(dataset: dict, args) -> dict:
 
 class BackboneScorer:
     """Teacher-forced span scoring with the repo's own chunked state-carrying
-    forward (the same pattern as probe_recall.run_chunks), so a 32k-token
+    forward (the same pattern as diagnostics.recall.run_chunks), so a 32k-token
     block never materializes 32k rows of vocab logits at once.
 
     Scores a batch of independent rows at once (see pad_rows). Chunk
@@ -351,7 +351,7 @@ class BackboneScorer:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--data", required=True, help="A prepare_cram.py/prepare_needles.py artifact")
+    parser.add_argument("--data", required=True, help="A preparation/cram.py/preparation/needles.py artifact")
     parser.add_argument("--output", default=None, help="Default: <data> with -filtered before the suffix")
     parser.add_argument("--a-min", type=float, default=-2.0,
                         help="Test A passes at or above this mean log-prob per credited token. A loose "

@@ -1,7 +1,7 @@
 """The gate pilot (DISCUSSION-20260808 sec 2.10.6, 2.10.7): capture everything
 once, then score every gating scheme offline.
 
-`dream_sleep.py --build-dream-cache --dreams N --pilot-capture` writes the
+`experiments/dreams/cli.py --build-dream-cache --dreams N --pilot-capture` writes the
 capture this module reads. What is stored, and why:
 
   * **every position's per-layer read query**, fp16 -- not just the gated ones,
@@ -20,7 +20,7 @@ with a floor, weighted-capped -- is a function of D_t, which is stored in full.
 The accepted limit: trying a DIFFERENT divergence measure needs a fresh capture
 run.
 
-Scoring (`python gate_pilot.py <capture>`) runs sec 2.10.7's two tests:
+Scoring (`python experiments/erasure/pilot.py <capture>`) runs sec 2.10.7's two tests:
 
   * **test 1, separability** -- D_t at the binding scan's fact positions against
     every other position, AUC per dream and pooled. Below `--min-auc` the gate
@@ -29,7 +29,7 @@ Scoring (`python gate_pilot.py <capture>`) runs sec 2.10.7's two tests:
   * **test 2, the bake-off** -- {hard@tau, divergence-weighted, sqrt-capped,
     clip-capped} x a tau grid taken from the capture's own D_t quantiles. Each
     scheme builds every dream's per-layer V through the SAME primitives prod
-    uses (`experiments.erasure.gating` + `dream_sleep.dream_bases`), and is
+    uses (`experiments.erasure.gating` + `experiments.dreams.cache.dream_bases`), and is
     scored on sec 2.10.6's DECISION METRIC: target removal (readout removed
     along oracle fact-read queries) against collateral removal (along context
     reads and battery-item queries), measured by applying V to the actual wake

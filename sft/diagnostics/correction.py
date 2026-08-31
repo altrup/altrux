@@ -18,7 +18,7 @@ answer "Donald Trump"); scenario B corrects to a counterfactual name, so
 the signal is tracking-the-correction, not matching-the-prior. The verdict
 is sleep-intact vs sleep-none on the corrected name.
 
-Turn formatting goes through prepare_data.format_conversation so the probe
+Turn formatting goes through preparation.conversations.format_conversation so the probe
 cannot drift from the training format (user turns end with "\\n", assistant
 turns with EOS).
 

@@ -79,7 +79,7 @@ def test_chunk_loss_upweights_eos_positions():
 
 
 def test_chunk_loss_handles_the_batched_weight_mask_train_py_passes():
-    """train.py stacks its slots into (B, chunk_len) inputs and a (B, chunk_len)
+    """training/loop.py stacks its slots into (B, chunk_len) inputs and a (B, chunk_len)
     float weight mask -- the shape every real run uses (--batch-size default 6)."""
     model, _ = _build_tiny_model()
     ids = torch.randint(1, 50, (3, 8), device=DEVICE)

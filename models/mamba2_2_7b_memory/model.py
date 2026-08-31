@@ -461,7 +461,7 @@ class _TitansFrontEnd(nn.Module):
         # deep into sigmoid's rails -- theta pinned at ~0 (the memory is
         # never written), eta pinned at its cap, alpha slammed to a random
         # rail per token -- with ~no gradient through the saturated sigmoids
-        # to recover. sft/measure_knobs.py measures the actual per-token
+        # to recover. sft/diagnostics/knobs.py measures the actual per-token
         # knob distributions on a checkpoint or fresh init.
         self.knob_proj = nn.Linear(d_model, 3)
         nn.init.zeros_(self.knob_proj.weight)
@@ -599,7 +599,7 @@ class _GatedDeltaInjection(nn.Module):
         # case of loading a checkpoint saved before step
         # BETA_BIAS_ANNEAL_STEPS. Training itself overrides this to the
         # correct in-progress value immediately via the one-time
-        # pre-training-loop on_step call in sft/train.py, before this would
+        # pre-training-loop on_step call in sft/training/loop.py, before this would
         # otherwise matter there either.
         self.beta_anneal_offset = 0.0
 
@@ -805,7 +805,7 @@ class Model(nn.Module):
         for name, p in self.layers.named_parameters():
             # LoRA adapters (lora_A/lora_B) may already be attached to
             # in_proj/out_proj before this model is constructed -- see
-            # apply_lora in sft/lora.py / backend/app/model/lora.py. Leave
+            # apply_lora in sft/adapters/lora.py / backend/app/model/lora.py. Leave
             # those trainable; freeze the rest of the backbone.
             p.requires_grad_("lora_A" in name or "lora_B" in name)
         for p in self.norm_f.parameters():
@@ -854,7 +854,7 @@ class Model(nn.Module):
         )
         self.mix = _TokenMixInjection(self.d_model, self.mem_dim) if integration == "mix" else None
         # Kill switch for the memory->backbone pathway (used by
-        # sft/probe_recall.py's --ablation none): when False, no injection
+        # sft/diagnostics/recall.py's --ablation none): when False, no injection
         # events fire AND the front-end read/write machinery is skipped
         # entirely, so forward() is exactly the plain (LoRA'd) backbone and
         # is invariant to the neural memory's content. Plain attribute, not
@@ -1194,7 +1194,7 @@ class Model(nn.Module):
         is buffered purely locally within one call and must fully flush
         before that call returns, so it can never span across two forward()
         calls (which may be separated by a detach() at a chunk boundary
-        during chunked training -- see MemoryState.detach). sft/train.py
+        during chunked training -- see MemoryState.detach). sft/training/loop.py
         enforces `chunk_len % memory_window == 0` for training; inference
         always keeps memory_window=1, which divides any seqlen and
         reproduces today's exact per-token injection as a special case, not
@@ -1705,7 +1705,7 @@ class Model(nn.Module):
         """Sets how many tokens' worth of write inputs `_NeuralMemory.write`
         consolidates into one gradient step (see forward()'s docstring).
         Must evenly divide whatever seqlen forward() is called with --
-        sft/train.py validates `chunk_len % memory_window == 0` before
+        sft/training/loop.py validates `chunk_len % memory_window == 0` before
         calling this. 1 (the default set in __init__) reproduces the
         original exact per-token behavior."""
         assert window >= 1, f"memory_window must be >= 1, got {window}"
@@ -1918,9 +1918,9 @@ class Model(nn.Module):
 
 
 def load_base(device: str) -> MambaLMHeadModel:
-    """Load the raw HuggingFace model. Used by sft/train.py and the backend
+    """Load the raw HuggingFace model. Used by sft/training/loop.py and the backend
     registry; LoRA adapters themselves are attached separately by the
-    caller (see sft/lora.py / backend/app/model/lora.py), after this.
+    caller (see sft/adapters/lora.py / backend/app/model/lora.py), after this.
 
     Loads in bf16. The 2.7B backbone in bf16 is ~5.4 GB -- comfortable on a
     cloud A100/H100 without 4-bit quantization.

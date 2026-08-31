@@ -1,4 +1,4 @@
-"""Fast (CPU, seconds) tests for prepare_chains.py's chain generator --
+"""Fast (CPU, seconds) tests for preparation/chains.py's chain generator --
 build_chains is IO-free (pool tensors in, dataset dict out) with the
 tokenizer injected as a plain callable, so these run against a synthetic
 episode pool and a stub tokenizer, no downloads.

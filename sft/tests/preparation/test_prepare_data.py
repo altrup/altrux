@@ -1,4 +1,4 @@
-"""CPU tests for prepare_data.py's conversation formatting against the real
+"""CPU tests for preparation/conversations.py's conversation formatting against the real
 tokenizer (cached locally; build_tokenizer prefers local files). The point
 pinned down here: role markers round-trip as the single registered
 special-token ids, never as their multi-token BPE spellings -- the stale

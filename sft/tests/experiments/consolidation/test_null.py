@@ -1,4 +1,4 @@
-"""CPU tests for consolidation_null.py's pure logic: transcript assembly,
+"""CPU tests for experiments/consolidation/null.py's pure logic: transcript assembly,
 answer grading, the cue ladder, and the pre-registered verdict thresholds.
 
 Nothing here loads a model or a tokenizer -- consolidation_null keeps every

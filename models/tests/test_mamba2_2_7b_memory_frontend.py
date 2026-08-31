@@ -9,7 +9,7 @@ tens at READ_LAYER) -- both with the zero-init weights and once the weights
 have grown to ordinary magnitudes. A parameterization that feeds the raw
 residual straight into the sigmoid saturates every knob at a rail (theta
 ~0: memory never written; alpha at a random rail per token) with ~no
-gradient to recover, which sft/measure_knobs.py confirmed on a real
+gradient to recover, which sft/diagnostics/knobs.py confirmed on a real
 checkpoint.
 """
 

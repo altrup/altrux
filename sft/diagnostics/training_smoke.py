@@ -1,5 +1,5 @@
 """Fast real-model sanity check: loads the actual model (paying the real
-load/quantize cost) and drives it through train.py's real run_training loop
+load/quantize cost) and drives it through training/loop.py's real run_training loop
 -- same slot-based batching, same gradient-accumulation counting, same
 --batch-size/--accum-tokens defaults as `make train` -- on a synthetic dataset
 sized to complete exactly one optimizer step, then asserts gradients actually
@@ -26,7 +26,7 @@ the real batching/accumulation path.
 
 Each synthetic example defaults to exactly `accum_steps * chunk_len + 1`
 tokens (accum_steps derived from --accum-tokens the same way run_training
-derives it -- see train.py's run_training) so all `batch_size` slots finish
+derives it -- see training/loop.py's run_training) so all `batch_size` slots finish
 together after precisely one optimizer step -- override with --length to
 also use this as a tool for tuning DEFAULT_CHUNK_LEN: a single isolated
 chunk's peak VRAM is NOT representative of real multi-chunk training -- the
@@ -50,9 +50,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fast real-model gradient-wiring smoke test")
     parser.add_argument("--length", type=int, default=None, help="Per-example synthetic sequence length in tokens -- defaults to accum_steps * chunk_len + 1 (accum_steps derived from --accum-tokens), so batch_size slots finish together after exactly one optimizer step")
     parser.add_argument("--chunk-len", type=int, default=None, help="Defaults to the model's own DEFAULT_CHUNK_LEN")
-    parser.add_argument("--memory-window", type=int, default=None, help="Same meaning as train.py's --memory-window -- no-op for models without set_memory_window")
-    parser.add_argument("--batch-size", type=int, default=6, help="Same meaning as train.py's --batch-size")
-    parser.add_argument("--accum-tokens", type=int, default=256, help="Same meaning as train.py's --accum-tokens")
+    parser.add_argument("--memory-window", type=int, default=None, help="Same meaning as training/cli.py's --memory-window -- no-op for models without set_memory_window")
+    parser.add_argument("--batch-size", type=int, default=6, help="Same meaning as training/cli.py's --batch-size")
+    parser.add_argument("--accum-tokens", type=int, default=256, help="Same meaning as training/cli.py's --accum-tokens")
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--eos-weight", type=float, default=5.0)
     parser.add_argument("--lora-rank", type=int, default=16)

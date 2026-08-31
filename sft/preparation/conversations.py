@@ -52,10 +52,10 @@ def format_conversation(
 ) -> tuple[list[int], list[bool], int | None]:
     """Returns (ids, mask, question_offset).
 
-    A user message may carry a separate "question" field (prepare_babilong.py
+    A user message may carry a separate "question" field (preparation/babilong.py
     emits this): the question is appended to the turn after a newline --
     token-identical to it having been part of `content` -- and its token
-    offset within `ids` is returned, so prepare_chains.py's split-QA can later
+    offset within `ids` is returned, so preparation/chains.py's split-QA can later
     cut the episode at the question start without synthesizing any text.
     Offset is None when no question survives (no question field, a tokenizer
     seam mismatch, or the turn dropped by max_len) -- consumers fail closed

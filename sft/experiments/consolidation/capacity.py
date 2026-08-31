@@ -1,7 +1,7 @@
 """In-context capacity ladder: how many competing facts can the SSM state
 actually hold, and is the limit fact *count* or transcript *distance*?
 
-Motivation. `consolidation_null.py`'s in-context positive control -- the check
+Motivation. `experiments/consolidation/null.py`'s in-context positive control -- the check
 that the transcript is held losslessly before asking whether distillation can
 move it into weights -- measured 1.000 at 4 facts and 0.03 at 40. That gap
 invalidates the null at 40 facts (the teacher does not know the facts, so

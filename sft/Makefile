@@ -31,7 +31,7 @@ test:
 # --max-len far above any real conversation: ultrachat trains UNCAPPED (the
 # old 1024 cap only ever lived in a stale train.pt artifact; see
 # notes/discussion/DISCUSSION-20260724-next-run-plan.md 1.3) -- explicit here so the
-# no-cap intent is visible rather than riding on prepare_data.py's default.
+# no-cap intent is visible rather than riding on preparation/conversations.py's default.
 data:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -m preparation.conversations \
@@ -99,7 +99,7 @@ resume:
 # reproduce a crash you already hit partway through a real run, which means
 # starting from its latest checkpoint, not from scratch -- and --resume
 # already no-ops into a fresh start on its own if no checkpoint exists yet
-# (see train.py's main(): "no checkpoint found, starting fresh"), so this
+# (see training/cli.py's main(): "no checkpoint found, starting fresh"), so this
 # is never wrong to default to.
 detect-anomaly:
 	@mkdir -p logs
@@ -259,7 +259,7 @@ lama-ckl-report:
 	uv run --no-sync python -u -m experiments.lama_ckl.report $(ARGS)
 
 # Warm-start SFT (DISCUSSION-20260808 sec 2.9.3): ordinary chat data rendered
-# into the repo's marker format by prepare_data.py, then 800 train.py steps /
+# into the repo's marker format by preparation/conversations.py, then 800 training/loop.py steps /
 # 2 epochs at 1e-4 and dream_sleep's LoRA config -- the checkpoint every
 # dream_sleep cell loads with --init-adapter
 # (models/$(MODEL_NAME)/checkpoints/epoch-2/step-800; --keep-ckpts 1 leaves
@@ -299,15 +299,15 @@ dream-fidelity:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m diagnostics.dream_fidelity $(ARGS) 2>&1 | tee logs/dream-$(shell date +%Y%m%d-%H%M%S).log
 
-# Gradient-wiring check on a synthetic dataset, driven through train.py's
+# Gradient-wiring check on a synthetic dataset, driven through training/loop.py's
 # real run_training loop with the same --batch-size/--accum-steps defaults
 # as `make train` -- useful for mamba2_2_7b_memory, whose real examples are
 # thousands of tokens and whose --chunk-len is capped at 8 by this
-# hardware's 8GB VRAM (see smoke_test.py). Still pays for loading the real
+# hardware's 8GB VRAM (see diagnostics/training_smoke.py). Still pays for loading the real
 # model. Checkpoints from the run go to a throwaway temp dir, not the real
 # checkpoints/ tree. --length defaults to accum_steps * chunk_len + 1 tokens
 # per example (exercises a full accumulation window, not one isolated
-# chunk -- see smoke_test.py's docstring for why that matters); pass
+# chunk -- see diagnostics/training_smoke.py's docstring for why that matters); pass
 # --length to override.
 smoke-test:
 	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
@@ -374,7 +374,7 @@ ladder:
 #                    --data 'data/train_cram.pt,share=35,chunk-len=512,grad-checkpoint=1,shuffle=0'"
 # See sft/README.md's "Training on several dataset slices at once".
 #
-# train.py is generic across every model in models/ -- it dispatches to
+# training/loop.py is generic across every model in models/ -- it dispatches to
 # models/{MODEL_NAME}/train_hooks.py for the model-specific parts (how to
 # load the model, how to run forward+backward for one example). For
 # mamba2_2_7b_memory specifically:

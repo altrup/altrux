@@ -1,4 +1,4 @@
-"""CPU tests for train.py's multi-dataset support: spec parsing, per-dataset
+"""CPU tests for training/loop.py's multi-dataset support: spec parsing, per-dataset
 training config, share-proportional mixing, curriculum-order preservation,
 and the ramped recall weight. Same fake model/hooks as test_train.py -- none
 of this is model-specific.

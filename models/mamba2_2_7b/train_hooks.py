@@ -1,4 +1,4 @@
-"""Training hooks for mamba2_2_7b, called by sft/train.py's generic training
+"""Training hooks for mamba2_2_7b, called by sft/training/loop.py's generic training
 loop.
 
 Model.forward loops over tokens and threads a MixerState across calls (see
@@ -8,7 +8,7 @@ detached across chunks of the *same* example, never across different
 examples, so training RAM is bounded by chunk length rather than example
 length.
 
-sft/train.py owns everything that's the same across models: shuffling,
+sft/training/loop.py owns everything that's the same across models: shuffling,
 gradient-accumulation counting, checkpoint cadence/rotation (including
 mid-example resume), non-finite checks, chunk iteration itself, evaluation,
 and preflight. What's irreducibly model-specific -- how to load/wrap the
@@ -59,7 +59,7 @@ def setup_training(device, lora_rank: int, lora_alpha: float, lora_dropout: floa
 
 
 def set_grad_checkpoint(model, enabled: bool, block: int | None = None) -> None:
-    """Optional hook -- train.py calls this (if defined) at the start of every
+    """Optional hook -- training/loop.py calls this (if defined) at the start of every
     config-group segment with that slice's `grad_checkpoint` setting, so a
     long-chunk slice can pay the recompute tax while the short-chunk slices in
     the same run don't. See Model.set_grad_checkpoint."""
@@ -82,7 +82,7 @@ def chunk_loss(
     positions, 0 otherwise -- unlike mamba2_2_7b_memory (which shares this
     backbone), this model has no
     reason to train on user turns too. Returns (loss_sum,
-    weight_sum, state); the generic loop in sft/train.py owns chunking,
+    weight_sum, state); the generic loop in sft/training/loop.py owns chunking,
     accumulation, and checkpointing across calls.
 
     A chunk with no assistant-turn tokens (mask_slice all zero -- the common
