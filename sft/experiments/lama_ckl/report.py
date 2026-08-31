@@ -28,6 +28,15 @@ def scientific_runs(runs: Sequence[Mapping[str, object]]) -> list[Mapping[str, o
     return [run for run in runs if not bool(run["settings"].get("engineering_only"))]
 
 
+def _load_run(path: Path) -> dict[str, object]:
+    run = json.loads(path.read_text())
+    run["persistent_artifact_bytes"] = sum(
+        artifact.stat().st_size for artifact in path.parent.rglob("*")
+        if artifact.is_file() and artifact.relative_to(path.parent).parts[0] != "work"
+    )
+    return run
+
+
 def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     if not runs:
         raise ValueError("no completed runs")
@@ -39,7 +48,8 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     core_keys = (
         "cycles", "train_batch_size", "learning_rate", "evidence_tokens", "reply_tokens",
         "reply_temperature", "eval_batch_size", "requested_dream_batch_size", "model_name",
-        "warmstart_sha256", "split_manifest_sha256",
+        "warmstart_sha256", "split_manifest_sha256", "lora_rank", "lora_alpha",
+        "total_parameters", "source_document_tokens", "review_document_tokens",
     )
     for key in core_keys:
         if len({run["settings"].get(key) for run in runs}) != 1:
@@ -60,6 +70,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             raise ValueError(f"{arm} seed {seed} has an incomplete cycle curve")
         summary = curve_summary(curve)
         initial, final = curve[0], curve[-1]
+        wall_seconds = sum(float(row.get("cycle_seconds", 0.0)) for row in curve)
         metrics = {
             "top_accuracy": float(summary["top_accuracy"]),
             "peak_cycle": float(summary["cycle"]),
@@ -75,19 +86,38 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
                 float(initial["not_to_forget_accuracy"])
                 - float(final["not_to_forget_accuracy"])
             ),
-            "gpu_hours": sum(float(row.get("cycle_seconds", 0.0)) for row in curve) / 3600,
-            "artifact_bytes": sum(float(row.get("artifact_bytes", 0.0)) for row in curve),
+            "wall_seconds": wall_seconds,
+            "gpu_hours": wall_seconds * int(run["settings"].get("gpu_count", 1)) / 3600,
+            "artifact_bytes": float(run.get(
+                "persistent_artifact_bytes",
+                sum(float(row.get("artifact_bytes", 0.0)) for row in curve),
+            )),
             "optimizer_steps": sum(float(row.get("treatment", {}).get("optimizer_steps", 0.0))
                                    for row in curve),
             "token_gradients": sum(float(row.get("treatment", {}).get("token_gradients", 0.0))
                                    for row in curve),
             "generated_tokens": sum(float(row.get("treatment", {}).get("generated_tokens", 0.0))
                                     for row in curve),
+            "source_tokens": sum(float(row.get("source_tokens", 0.0)) for row in curve),
+            "wake_tokens": sum(float(row.get("wake_tokens", 0.0)) for row in curve),
+            "review_tokens": sum(float(row.get("treatment", {}).get("review_tokens", 0.0))
+                                 for row in curve),
+            "total_parameters": float(run["settings"].get("total_parameters", 0.0)),
+            "optimizer_parameters": float(run["settings"].get("optimizer_parameters", 0.0)),
             "peak_vram_bytes": max(float(row.get("peak_vram_bytes", 0.0)) for row in curve),
         }
         for name, value in metrics.items():
             raw.setdefault(arm, {}).setdefault(name, []).append(value)
-        per_run.append({"arm": arm, "seed": seed, **metrics})
+        per_run.append({
+            "arm": arm,
+            "seed": seed,
+            "gpu_model": run["settings"].get("gpu_model"),
+            "gpu_count": run["settings"].get("gpu_count"),
+            "visible_gpu_count": run["settings"].get("visible_gpu_count"),
+            "lora_rank": run["settings"].get("lora_rank"),
+            "lora_alpha": run["settings"].get("lora_alpha"),
+            **metrics,
+        })
         for row in curve:
             cycle = int(row["cycle"])
             cell = curves.setdefault(arm, {}).setdefault(cycle, {
@@ -112,7 +142,7 @@ def main() -> None:
     parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
     paths = sorted(args.root.glob("*/summary.json"))
-    runs = scientific_runs([json.loads(path.read_text()) for path in paths])
+    runs = scientific_runs([_load_run(path) for path in paths])
     if not args.allow_incomplete:
         present = {(str(run["arm"]), int(run["seed"])) for run in runs
                    if not bool(run["settings"].get("engineering_only"))}

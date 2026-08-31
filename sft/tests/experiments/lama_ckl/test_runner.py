@@ -1,8 +1,9 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
 
-from experiments.lama_ckl.runner import compact_dream_payload, curve_summary
+from experiments.lama_ckl.runner import _write_cycle_result, compact_dream_payload, curve_summary
 
 
 def test_compact_dream_payload_keeps_reconstruction_data_but_not_logits():
@@ -34,3 +35,13 @@ def test_curve_summary_uses_first_acquisition_peak_and_paired_retention():
         "not_to_forget_accuracy": 0.9,
         "total_knowledge": 1.1,
     }
+
+
+def test_write_cycle_result_includes_itself_in_artifact_bytes(tmp_path: Path):
+    (tmp_path / "trainable.pt").write_bytes(b"adapter")
+    result: dict[str, object] = {"cycle": 1}
+
+    _write_cycle_result(tmp_path, result)
+
+    actual = sum(path.stat().st_size for path in tmp_path.rglob("*") if path.is_file())
+    assert result["artifact_bytes"] == actual

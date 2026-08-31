@@ -489,8 +489,9 @@ distillation; the saved teacher adapter and tokens can reconstruct them. Dream
 diagnostics never select, regenerate, stop, or tune a dream.
 
 After all 12 cells finish, aggregate the official checkpoint metrics, full
-per-cycle curves, acquisition, forgetting, generated/training tokens, adapter
-bytes, wall-clock GPU hours, and peak VRAM:
+per-cycle curves, acquisition, forgetting, source, wake, review, generated and
+training tokens, all persistent artifact bytes, wall time, GPU-hours, peak
+VRAM, parameter counts, LoRA configuration, and GPU identity:
 
 ```bash
 make lama-ckl-report

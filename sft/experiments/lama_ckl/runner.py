@@ -91,6 +91,15 @@ def _write_json(path: Path, value: Mapping[str, object]) -> None:
     path.write_text(json.dumps(value, indent=1, sort_keys=True) + "\n")
 
 
+def _write_cycle_result(directory: Path, result: dict[str, object]) -> None:
+    while True:
+        _write_json(directory / "result.json", result)
+        artifact_bytes = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+        if result.get("artifact_bytes") == artifact_bytes:
+            return
+        result["artifact_bytes"] = artifact_bytes
+
+
 def _load_split(root: Path) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
     manifest = json.loads((root / "manifest.json").read_text())
     rows = []
@@ -168,8 +177,7 @@ def _save_cycle(directory: Path, model, optimizer, state, result: dict[str, obje
     if optimizer is not None:
         torch.save(optimizer.state_dict(), directory / "optimizer.pt")
     torch.save(state_to(copy_state(state), torch.device("cpu")), directory / "state.pt")
-    result["artifact_bytes"] = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
-    _write_json(directory / "result.json", result)
+    _write_cycle_result(directory, result)
 
 
 def _completed_cycles(output: Path) -> list[Path]:
@@ -198,6 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    run_started = time.time()
     args = build_parser().parse_args()
     import torch
 
@@ -205,6 +214,7 @@ def main() -> None:
         raise SystemExit("LAMA-CKL treatment runs require a CUDA GPU with the fused Mamba path")
     if args.dream_batch_size < 1 or args.eval_batch_size < 1:
         raise SystemExit("batch sizes must be positive")
+    torch.cuda.reset_peak_memory_stats()
     learned, retained, split_manifest = _load_split(args.split)
     cycles, dream_count, dream_tokens = CYCLES, DREAM_COUNT, DREAM_TOKENS
     if args.smoke:
@@ -238,12 +248,6 @@ def main() -> None:
         "warmstart_sha256": warm_sha,
         "split_manifest_sha256": file_sha(args.split / "manifest.json"),
     }
-    manifest_path = output / "run.json"
-    serialized_settings = json.dumps(settings, indent=1, sort_keys=True) + "\n"
-    if manifest_path.exists() and manifest_path.read_text() != serialized_settings:
-        raise SystemExit(f"existing run uses different settings: {manifest_path}")
-    manifest_path.write_text(serialized_settings)
-
     device = torch.device("cuda")
     torch.manual_seed(args.seed)
     model_mod = importlib.import_module(f"models.{args.model_name}")
@@ -264,6 +268,26 @@ def main() -> None:
     documents = [str(row["evidence"]) for row in learned]
     learned_tokens = _encode_documents(tokenizer, learned)
     retained_tokens = _encode_documents(tokenizer, retained)
+    source_token_count = sum(map(len, learned_tokens))
+    review_token_count = sum(map(len, retained_tokens))
+    settings.update({
+        "gpu_model": torch.cuda.get_device_name(device),
+        "gpu_count": 1,
+        "visible_gpu_count": torch.cuda.device_count(),
+        "lora_rank": rank,
+        "lora_alpha": alpha,
+        "total_parameters": sum(parameter.numel() for parameter in model.parameters()),
+        "optimizer_parameters": (
+            0 if optimizer is None else sum(parameter.numel() for parameter in trainable)
+        ),
+        "source_document_tokens": source_token_count,
+        "review_document_tokens": review_token_count,
+    })
+    manifest_path = output / "run.json"
+    serialized_settings = json.dumps(settings, indent=1, sort_keys=True) + "\n"
+    if manifest_path.exists() and manifest_path.read_text() != serialized_settings:
+        raise SystemExit(f"existing run uses different settings: {manifest_path}")
+    manifest_path.write_text(serialized_settings)
     train_batch_size = int(settings["train_batch_size"])
     learned_batches = epoch_batches(len(learned), train_batch_size, 42)
     review_batches = epoch_batches(len(retained), train_batch_size, 0)
@@ -283,16 +307,25 @@ def main() -> None:
     else:
         initial = _evaluate(model, tokenizer, learned, retained, args.eval_batch_size, device, 0)
         work = Path(tempfile.mkdtemp(prefix="cycle-00.", dir=output / "work"))
-        initial.update({"arm": args.arm, "seed": args.seed, "treatment": {"kind": "initial"}})
+        initial.update({
+            "arm": args.arm,
+            "seed": args.seed,
+            "source_tokens": 0,
+            "wake_tokens": 0,
+            "treatment": {"kind": "initial", "review_tokens": 0},
+            "cycle_seconds": time.time() - run_started,
+            "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
+        })
         _save_cycle(work, model, optimizer, None, initial, None, None, rank, alpha)
         os.replace(work, output / "cycle-00")
         curve.append(initial)
         start_cycle = 1
 
     for cycle in range(start_cycle, cycles + 1):
-        if torch.cuda.is_available():
+        resumed_setup = bool(completed and cycle == start_cycle)
+        if not resumed_setup:
             torch.cuda.reset_peak_memory_stats()
-        cycle_started = time.time()
+        cycle_started = run_started if resumed_setup else time.time()
         work = Path(tempfile.mkdtemp(prefix=f"cycle-{cycle:02d}.", dir=output / "work"))
         wake_started = time.time()
         wake, state = run_conversational_wake(
@@ -308,7 +341,10 @@ def main() -> None:
         treatment: dict[str, object]
         dream_payload = None
         if args.arm == "frozen":
-            treatment = {"kind": "frozen", "optimizer_steps": 0, "token_gradients": 0}
+            treatment = {
+                "kind": "frozen", "optimizer_steps": 0, "token_gradients": 0,
+                "review_tokens": 0,
+            }
         elif args.arm in ("lora", "mix-review"):
             if args.arm == "lora":
                 training_documents = learned_tokens
@@ -326,6 +362,7 @@ def main() -> None:
                     label=f"{args.arm} cycle {cycle}",
                 ),
                 "raw_documents": len(training_documents),
+                "review_tokens": review_token_count if args.arm == "mix-review" else 0,
             }
         else:
             teacher_sha = warm_sha if cycle == 1 else str(curve[-1]["adapter_sha256"])
@@ -365,6 +402,7 @@ def main() -> None:
                 "optimizer_steps": len(dreams),
                 "token_gradients": token_gradients,
                 "generated_tokens": sum(len(dream.dream_ids) - dream.prefix_len for dream in dreams),
+                "review_tokens": 0,
                 "dreams": len(dreams),
                 "set_sha256": dream_payload["set_sha256"],
                 "teacher_sha256": teacher_sha,
@@ -379,6 +417,8 @@ def main() -> None:
             "seed": args.seed,
             "wake_sha256": wake["transcript_sha256"],
             "wake_seconds": wake_seconds,
+            "source_tokens": source_token_count,
+            "wake_tokens": len(wake["transcript_token_ids"]),
             "treatment": treatment,
             "cycle_seconds": time.time() - cycle_started,
             "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),

@@ -1,6 +1,9 @@
+import json
+from pathlib import Path
+
 import pytest
 
-from experiments.lama_ckl.report import aggregate_runs, scientific_runs
+from experiments.lama_ckl.report import _load_run, aggregate_runs, scientific_runs
 
 
 def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
@@ -10,10 +13,16 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
         "eval_batch_size": 16,
         "requested_dream_batch_size": 8,
         "split_manifest_sha256": "x",
+        "gpu_model": "NVIDIA GH200",
+        "gpu_count": 1,
+        "lora_rank": 8,
+        "lora_alpha": 16.0,
+        "total_parameters": 2_700_000_000,
+        "optimizer_parameters": 1_000_000,
     }
     runs = [
         {"arm": "frozen", "seed": 42,
-         "settings": settings,
+         "settings": settings | {"optimizer_parameters": 0},
          "curve": [
              {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
              {"cycle": 1, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
@@ -22,7 +31,10 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
          "settings": settings,
          "curve": [
              {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-             {"cycle": 1, "to_learn_accuracy": 0.2, "not_to_forget_accuracy": 0.9},
+             {"cycle": 1, "to_learn_accuracy": 0.2, "not_to_forget_accuracy": 0.9,
+              "source_tokens": 400, "wake_tokens": 500,
+              "treatment": {"review_tokens": 100, "token_gradients": 300,
+                            "generated_tokens": 200}},
          ]},
     ]
 
@@ -30,6 +42,13 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
 
     assert report["arms"]["altrux"]["top_accuracy"]["mean"] == 0.2
     assert report["arms"]["altrux"]["final_forgetting"]["mean"] == pytest.approx(0.1)
+    assert report["arms"]["altrux"]["source_tokens"]["mean"] == 400
+    assert report["arms"]["altrux"]["wake_tokens"]["mean"] == 500
+    assert report["arms"]["altrux"]["review_tokens"]["mean"] == 100
+    assert report["runs"][1]["gpu_model"] == "NVIDIA GH200"
+    assert report["runs"][1]["gpu_count"] == 1
+    assert report["runs"][1]["lora_rank"] == 8
+    assert report["runs"][1]["total_parameters"] == 2_700_000_000
     assert report["arms"]["frozen"]["final_forgetting"]["mean"] == 0.0
 
 
@@ -100,3 +119,19 @@ def test_scientific_runs_ignores_adjacent_smoke_directories():
     smoke = {"settings": {"engineering_only": True}}
 
     assert scientific_runs([smoke, full]) == [full]
+
+
+def test_load_run_counts_persistent_files_but_not_work_files(tmp_path: Path):
+    run = tmp_path / "arm-seed-42"
+    work = run / "work"
+    work.mkdir(parents=True)
+    summary = run / "summary.json"
+    summary.write_text(json.dumps({"settings": {"engineering_only": False}}))
+    (run / "run.json").write_text("settings")
+    (work / "partial.pt").write_bytes(b"unfinished")
+
+    loaded = _load_run(summary)
+
+    assert loaded["persistent_artifact_bytes"] == (
+        summary.stat().st_size + (run / "run.json").stat().st_size
+    )
