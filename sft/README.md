@@ -496,8 +496,9 @@ bytes, wall-clock GPU hours, and peak VRAM:
 make lama-ckl-report
 ```
 
-The report ignores adjacent smoke directories and rejects mixed split hashes,
-mixed shared settings, duplicate arm/seed cells, or a missing registered cell. Use
+The report ignores adjacent smoke directories and rejects incomplete cycle
+curves, mixed split hashes, evaluation or dream batch sizes, other shared
+settings, duplicate arm/seed cells, or a missing registered cell. Use
 `ARGS="--allow-incomplete"` only for an interim engineering report.
 
 **Probes.** The primary reliability metric is the **distractor-code margin** (§4): the summed log-prob of the correct code minus that of a fixed random foil code, same question, fresh state — immune to the format prior the cues inject and to the digit-counting attractor that broke greedy exact match. A fact counts installed at margin ≥ 1.0 nat; the margin, both raw sums and the verdict are logged per probe point. Greedy exact match and the four-paraphrase generality battery are reported and never gate. The full battery — margin, paraphrases, knowledge battery and held-out ΔPPL from `probes_common.py` — streams every `--probe-every` steps (200), so every cell yields a learned-vs-forgotten *curve* and iso-learning comparisons are read off curves rather than engineered with hyperparameters. Dream rehearsal is **binding-aware**: a code counts only where it appears in the same sentence as its own entity, and codes sitting next to a different fact's entity are reported separately as misbindings. The carried-state column stays a **diagnostic, never scored as installation**. Box tool (trains a LoRA, holds a full-vocab dream logit cache); 780M-only, since the erase is addressed through `Model.c_capture` and applied through `Model.erase_hook`.

@@ -38,11 +38,12 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         raise ValueError("runs use different split artifacts")
     core_keys = (
         "cycles", "train_batch_size", "learning_rate", "evidence_tokens", "reply_tokens",
-        "reply_temperature", "model_name", "warmstart_sha256", "split_manifest_sha256",
+        "reply_temperature", "eval_batch_size", "requested_dream_batch_size", "model_name",
+        "warmstart_sha256", "split_manifest_sha256",
     )
-    cores = {tuple(run["settings"].get(key) for key in core_keys) for run in runs}
-    if len(cores) != 1:
-        raise ValueError("runs use different shared protocol settings")
+    for key in core_keys:
+        if len({run["settings"].get(key) for run in runs}) != 1:
+            raise ValueError(f"runs use different {key} settings")
 
     raw: dict[str, dict[str, list[float]]] = {}
     per_run: list[dict[str, object]] = []
@@ -54,6 +55,9 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             raise ValueError(f"duplicate run for {arm} seed {seed}")
         seen.add((arm, seed))
         curve = run["curve"]
+        expected_cycles = list(range(int(run["settings"]["cycles"]) + 1))
+        if [int(row["cycle"]) for row in curve] != expected_cycles:
+            raise ValueError(f"{arm} seed {seed} has an incomplete cycle curve")
         summary = curve_summary(curve)
         initial, final = curve[0], curve[-1]
         metrics = {
