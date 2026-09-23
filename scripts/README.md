@@ -6,7 +6,7 @@ Standalone helper scripts that don't belong to a specific subproject.
 
 One-time setup: `cp scripts/.env.example scripts/.env` and fill in
 `LAMBDA_API_KEY`. Everything below assumes exactly one active instance (the
-scripts find its IP via the API) and the repo cloned at `~/altrux` on it.
+scripts find its IP via the API) and the repo rsynced to `~/altrux` on it.
 
 On the **local** machine — must stay awake and online for the whole run,
 it's the only thing that can stop the billing:
@@ -23,11 +23,23 @@ its own, for a watchdog-less session.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
-on it (clone, `make sync`, install the selected agent CLI). Set
+on it (keep a pristine copy of the uploaded repo, `make sync`, install the
+selected agent CLI). Set
 `EXPERIMENTER_AGENT=claude|codex`. Launch uploads only that provider's config
 and credentials. The remote tmux session is always named `experimenter`; the
 agent loads the shared repository experimenter workflow. No watchdog, terminate
-chain, or Lambda API key lives on the instance.
+chain, Lambda API key, git, or GitHub token lives on the instance.
+
+**The box never commits.** Launch rsyncs this working tree up (tracked and
+untracked files, ignored ones excluded, no `.git`). A code fix the experimenter
+makes on the box goes into `notes/experiments/patches/<UTC>-<name>.patch` via
+`scripts/box_patch.sh <name>`, a diff against the pristine copy setup keeps at
+`~/pristine`. The notes pull carries it home; review it, `git apply` it, and
+commit here. Files listed in the root `PROTECTED_PATHS` are hand-written and
+off-limits to agents locally (a PreToolUse hook in `.claude/settings.json`
+blocks Edit/Write); the box may patch one only to unblock a crash, and
+results after such a patch are provisional until the patch is accepted — the
+rules are in the experimenter skill.
 
 ## Training-data artifacts: generate once, reuse forever
 
@@ -148,21 +160,22 @@ ending, and monitoring never blocks on the run. Reattach to either with
 so a launch fails fast with a clear message when there's no capacity rather
 than erroring mid-launch.
 
-Config (`GITHUB_TOKEN`, `HF_TOKEN`, `TORCH_BACKEND`, `MAX_JOBS`, and the
-`LAMBDA_REPO_*` / `LAMBDA_SETUP_*` overrides) is forwarded to the instance via a
-temporary env file, not the command line, so tokens don't appear in its process
-list. `TORCH_BACKEND=cu128` is needed on GH200, where uv's `auto` backend
+Config (`HF_TOKEN`, `TORCH_BACKEND`, `MAX_JOBS`, `LAMBDA_REMOTE_REPO`) is
+forwarded to the instance via a temporary env file, not the command line, so
+tokens don't appear in its process list. `TORCH_BACKEND=cu128` is needed on GH200, where uv's `auto` backend
 guesses the wrong torch wheel.
 
 ## `lambda_setup.sh`
 
 Configures a freshly-launched instance: install `uv` if absent, wire up
-`GITHUB_TOKEN` / `HF_TOKEN` if provided, clone-or-pull the repo at `~/altrux`,
-write `sft/.env` with `MODEL_NAME` deliberately blank (it's gitignored, so a
-clone has none; a run that doesn't name a model inline fails at import rather
-than silently training a default — the experimenter passes `MODEL_NAME=<arm>`
-inline per command), `make sync` (and verify torch sees a CUDA GPU), verify `git push`
-auth, and install the selected Claude or Codex CLI. It also places whatever launch staged —
+`HF_TOKEN` if provided, copy the rsynced repo at `~/altrux` to `~/pristine`
+(the base `box_patch.sh` diffs against), write `sft/.env` with `MODEL_NAME`
+deliberately blank (it's gitignored, so the upload has none; a run that doesn't
+name a model inline fails at import rather than silently training a default —
+the experimenter passes `MODEL_NAME=<arm>` inline per command), `make sync`
+(and verify torch sees a CUDA GPU), and install the selected Claude or Codex
+CLI. For Claude it sets `ALTRUX_PROTECT_OFF=1` in the box's settings so the
+repo's protect-paths hook is a local rule only. It also places whatever launch staged —
 resume checkpoints and `sft/data/` artifacts — printing each one, so the
 experimenter can see which datasets already exist. Data *prep* is deliberately
 not part of setup: which data to build (and with what flags) is an experimental

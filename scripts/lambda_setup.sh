@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # Configures a freshly-launched Lambda Cloud GPU instance for a training run:
-# clone/pull the repo, `make sync` (+ verify CUDA torch), and install the
-# selected agent CLI so an experimenter session can take over. Data prep is
+# keep a pristine copy of the rsync-uploaded repo, `make sync` (+ verify CUDA
+# torch), and install the selected agent CLI so an experimenter session can
+# take over. There is no git on the instance: code changes come home as
+# patches (scripts/box_patch.sh) that a person applies and commits locally. Data prep is
 # deliberately NOT done here — which data (and with what flags) is an
 # experimental decision the experimenter makes from the notes.
 #
 # Runs ON the instance (not the local machine — it holds no Lambda API key and
 # needs none). Either run it by hand after ssh-ing in, or let lambda_launch.sh
 # scp it up and run it automatically. Idempotent: safe to re-run after a
-# partial failure (clone-or-pull, sync re-runs cleanly).
+# partial failure (sync re-runs cleanly).
 #
 # Config (all optional, via environment):
-#   LAMBDA_REPO_URL        git URL to clone       (default: repo's origin)
 #   LAMBDA_REMOTE_REPO     dir name under $HOME   (default: altrux)
-#   LAMBDA_REPO_REF        branch/tag/commit      (default: repo default)
-#   GITHUB_TOKEN           if set, configures git to clone+push over HTTPS
 #   HF_TOKEN               if set, exported for gated/large HF downloads and
 #                          persisted to ~/.bashrc for later sessions
 #   TORCH_BACKEND          passed to `make sync` (e.g. cu128 for GH200)
@@ -28,28 +27,17 @@ source "$SCRIPT_DIR/experimenter_agent.sh"
 EXPERIMENTER_AGENT="${EXPERIMENTER_AGENT:-claude}"
 experimenter_agent_validate "$EXPERIMENTER_AGENT"
 
-REPO_URL="${LAMBDA_REPO_URL:-https://github.com/altrup/altrux.git}"
 REPO_DIR="$HOME/${LAMBDA_REMOTE_REPO:-altrux}"
-REPO_REF="${LAMBDA_REPO_REF:-}"
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
 step "Bootstrap: uv + credentials"
-command -v git >/dev/null || { echo "error: git not found on instance" >&2; exit 1; }
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 # shellcheck disable=SC1091
 [[ -f "$HOME/.local/bin/env" ]] && . "$HOME/.local/bin/env"
 
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  git config --global \
-    url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-fi
-# Forwarded by lambda_launch.sh from the local machine's git config, so
-# commits made on the instance carry the same identity.
-[[ -n "${GIT_USER_NAME:-}" ]] && git config --global user.name "$GIT_USER_NAME"
-[[ -n "${GIT_USER_EMAIL:-}" ]] && git config --global user.email "$GIT_USER_EMAIL"
 if [[ -n "${HF_TOKEN:-}" ]]; then
   export HF_TOKEN
   grep -q '^export HF_TOKEN=' "$HOME/.bashrc" 2>/dev/null \
@@ -61,15 +49,12 @@ if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
     || echo "export CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}" >> "$HOME/.bashrc"
 fi
 
-step "Repo: $REPO_DIR"
-if [[ -d "$REPO_DIR/.git" ]]; then
-  git -C "$REPO_DIR" fetch --prune
-  [[ -n "$REPO_REF" ]] && git -C "$REPO_DIR" checkout "$REPO_REF"
-  git -C "$REPO_DIR" pull --ff-only
-else
-  git clone "$REPO_URL" "$REPO_DIR"
-  [[ -n "$REPO_REF" ]] && git -C "$REPO_DIR" checkout "$REPO_REF"
-fi
+step "Repo: $REPO_DIR (uploaded by rsync, no git)"
+[[ -f "$REPO_DIR/.upload-rev" ]] || { echo "error: $REPO_DIR was not uploaded by lambda_launch.sh (no .upload-rev)" >&2; exit 1; }
+echo "local revision: $(cat "$REPO_DIR/.upload-rev")"
+rm -rf "$REPO_DIR/.git" "$HOME/pristine"
+# The untouched code: box_patch.sh diffs the working tree against this copy.
+cp -a "$REPO_DIR" "$HOME/pristine"
 
 step "Stage uploaded checkpoints + data artifacts"
 # lambda_launch.sh uploads both path-preserving (repo-relative), so staging
@@ -112,12 +97,6 @@ if ! uv run --project "$REPO_DIR/sft" --no-sync python -c \
   exit 1
 fi
 
-step "Verify git push auth"
-if ! git -C "$REPO_DIR" push --dry-run origin HEAD; then
-  echo "warning: 'git push --dry-run' failed — the instance can't push fixes." >&2
-  echo "         Set up a deploy key / credential before relying on the experimenter." >&2
-fi
-
 step "Install $EXPERIMENTER_AGENT CLI"
 if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
   if command -v claude >/dev/null 2>&1; then
@@ -154,6 +133,8 @@ if os.environ.get("CLAUDE_MODEL"):
 if os.environ.get("CLAUDE_EFFORT"):
     s["effortLevel"] = os.environ["CLAUDE_EFFORT"]
 s["skipDangerousModePermissionPrompt"] = True
+# The repo's protect-paths hook is a local rule; the box's exception is governed by the skill.
+s.setdefault("env", {})["ALTRUX_PROTECT_OFF"] = "1"
 if (home / ".claude/statusline.sh").exists():
     s["statusLine"] = {"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 1}
 p.parent.mkdir(exist_ok=True)

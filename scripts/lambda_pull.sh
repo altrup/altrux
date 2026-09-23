@@ -9,7 +9,7 @@
 # the next launch instead of regenerated). Whichever of those don't exist
 # yet are skipped. A missing repo
 # is an error in one-shot mode; in --follow mode it's expected at first
-# (launch starts the pull loop before setup clones the repo) and just retried.
+# (launch starts the pull loop before the repo upload lands) and just retried.
 #
 # Run from the LOCAL machine, before terminating the instance — the run's
 # logs live only on the instance and die with it:
@@ -207,9 +207,9 @@ succeeded=0
 while true; do
   rc=0; pull || rc=$?
   if [[ "$rc" -eq 10 ]]; then
-    # Expected right after launch: --follow starts before setup has cloned the
-    # repo. Keep waiting — but if this never clears, LAMBDA_REMOTE_REPO is wrong.
-    echo "[$(date +%H:%M:%S)] $no_repo_msg (expected while setup is still cloning) — retrying in ${interval}s"
+    # Expected right after launch: --follow starts before the repo upload has
+    # landed. Keep waiting — but if this never clears, LAMBDA_REMOTE_REPO is wrong.
+    echo "[$(date +%H:%M:%S)] $no_repo_msg (expected while the repo is still uploading) — retrying in ${interval}s"
   elif [[ "$rc" -ne 0 ]]; then
     if [[ "$succeeded" -eq 0 ]]; then
       echo "error: first pull failed — check the IP and ssh access before trusting --follow" >&2

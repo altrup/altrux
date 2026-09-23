@@ -24,7 +24,7 @@ via the shutdown checklist — not a question.
 ## Local invocation — gate work only, no launch authority
 
 This command can also be invoked on the teammate's local machine (the repo at
-its local path, the ROCm card, no `train` tmux, no `~/altrux` clone). There
+its local path, the ROCm card, no `train` tmux, no `~/altrux` copy). There
 your scope is the newest DISCUSSION note's LOCAL work only — launch-gate
 items and the local pilot — with NO authority to launch, fund, or attach to
 instances; treat every box-side section below (tmux layout, watchdog,
@@ -59,7 +59,7 @@ data regeneration: send it to the `train` tmux (tee output to a file under
 sft/logs/ if you need to parse it), don't run it in your own shell. Inline, it
 blocks your session, dies with it, and is invisible to a teammate attaching to
 the box. Your own shell is for quick commands only — log tails, file edits,
-git, watchdog touches.
+watchdog touches.
 
 ## Before you begin
 
@@ -248,7 +248,8 @@ complete, going nowhere, unfixable crash). In order:
 2. Write the closing section of this run's notes file: what you tried, what
    you learned, what you'd want to discuss (for a success: what worked and
    why).
-3. Commit and push any code changes — code survives ONLY via git push.
+3. Write the patch file for any code change (see PERSISTENCE) — code
+   survives ONLY as a patch the pull carries home.
 4. VERIFY THE ARTIFACTS ARE HOME: `touch scripts/.watchdog-fetch`, then wait
    ~2 min (touch `.watchdog-delay` while you wait) for a fresh
    `scripts/.pull-receipt` — the teammate's pull writes it back after every
@@ -260,13 +261,10 @@ complete, going nowhere, unfixable crash). In order:
    g2 session its entire cache set. A missing file or a stale header
    timestamp: touch `.watchdog-fetch` once more and re-check; still missing
    → step 5.
-5. RESCUE BRANCH: push `rescue/<run-timestamp>` carrying, MANDATORY, this
-   run's notes file and every result jsonl in `sft/logs/`, plus whatever
-   else you judge necessary for the run's results to survive. Hard limits:
-   50 MB per file, 1 GB total (GitHub rejects files over 100 MB). Never the
-   heavy `.pt` caches. Record everything left behind as UNRETRIEVED, with
-   sizes, in the notes — which ride the branch, so the record survives even
-   when the artifacts don't.
+5. Record everything still missing from the receipt as UNRETRIEVED, with
+   sizes, in the notes, then touch `.watchdog-fetch` one last time and wait
+   for the receipt to list the notes file. There is no git on this instance
+   and no other route home: the pull is the only one.
 6. `touch scripts/.watchdog-terminate` — the watchdog's next probe (within
    ~1 min) does a final pull (retried twice), terminates regardless, and
    leaves a `PULL-FAILED-<timestamp>` file on the teammate's machine if the
@@ -288,23 +286,27 @@ out the remaining idle window.
 
 ## Persistence
 
-Everything on this instance is DESTROYED at termination. Two things survive:
-what you git push, and what your teammate's machine rsyncs down via
-scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/, notes/, the
-sft/data/ artifacts). You cannot see their disk — `scripts/.pull-receipt`,
+Everything on this instance is DESTROYED at termination. One thing survives:
+what your teammate's machine rsyncs down via scripts/lambda_pull.sh
+(sft/logs/, models/*/checkpoints/, notes/, the sft/data/ artifacts). THERE IS
+NO GIT ON THIS INSTANCE: the repo arrived by rsync, has no `.git`, and holds
+no GitHub credential. Never install, initialise, or authenticate git here.
+You cannot see their disk — `scripts/.pull-receipt`,
 which every successful pull writes back onto this instance (timestamp + the
 size of each file as it landed there), is the ONLY evidence a pull carried
 something. Read it; don't assume. Therefore:
 
-- Any code change: commit AND push promptly. Never leave fixes only in the
-  working tree.
+- Any code change: write it home as a patch, promptly. `~/pristine/` holds
+  the tree exactly as uploaded; after editing, run
+  `scripts/box_patch.sh <name>`, which diffs the working tree against it into
+  `notes/experiments/patches/<UTC>-<name>.patch` (one patch per fix; a later
+  patch supersedes an earlier one, say so in the notes). Patches ride the
+  notes pull; your teammate applies and commits them after review. A fix that
+  exists only in the working tree is lost at termination.
 - Write observations (health checks, anomalies, fixes, open questions) to
   this run's notes file (`notes/experiments/EXPERIMENT_NOTES-<timestamp>.md`, created
-  above) as you go, not at the end. Never commit notes/ from the instance on
-  main — the rsync pull carries it to your teammate's machine, where it gets
-  committed after the run; an instance-side commit would race that flow. The
-  one exception is a `rescue/<timestamp>` branch (shutdown checklist step 5),
-  which exists precisely because the pull didn't carry them.
+  above) as you go, not at the end. The rsync pull carries notes/ to your
+  teammate's machine, where it gets committed after the run.
 - The teammate's watchdog pulls every ~5 minutes, so anything you write needs
   the instance alive that much longer to survive. You can also ask for a pull
   RIGHT NOW — `touch scripts/.watchdog-fetch` — and should, whenever you've
@@ -405,12 +407,28 @@ re-reading the whole file costs more than never delegating.
 ## If training crashes
 
 1. Diagnose from the traceback and log tail before restarting.
-2. Clean fix -> apply, commit, push, then restart training in the `train`
-   tmux session with the args you're currently running (the baseline command
-   above if you haven't changed them).
+2. Clean fix -> apply, write the patch (see PERSISTENCE), then restart
+   training in the `train` tmux session with the args you're currently
+   running (the baseline command above if you haven't changed them).
 3. Same failure twice after a fix attempt, or you're guessing: stop and run
    the shutdown checklist. An unsolved bug at 3am is a problem for the team
    tomorrow, not a reason to bill more hours tonight.
+
+## Protected files
+
+`PROTECTED_PATHS` at the repo root lists the hand-written files: the memory
+mechanism, losses and erase operators, the benchmark scorer and split, the
+probes, and the data-splice invariants. Your teammate owns them. You may edit
+one ONLY to unblock a crash, and then:
+
+- Never the scorer, split, or upstream-pin files (`sft/experiments/lama_ckl/`
+  except `training.py`, and `sft/experiments/erasure/probe.py`). A bug there
+  means stop the run and write it up; a mid-run fix to verdict code makes the
+  verdict unreviewable.
+- Write the patch immediately (PERSISTENCE), and open a `PROTECTED EDIT`
+  heading in this run's notes naming the file, the traceback, and the change.
+- Mark every result produced after the edit PROVISIONAL in the notes. It
+  stands only once your teammate accepts the patch.
 
 ## No Lambda credentials
 

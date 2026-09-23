@@ -3,8 +3,11 @@
 #
 # Runs on the LOCAL machine (it needs LAMBDA_API_KEY, which by design never
 # lives on the instance). It launches the instance, waits for it to boot and
-# accept ssh, then scp's lambda_setup.sh up and runs it — leaving a box that
-# starts the selected Claude or Codex experimenter when credentials are present.
+# accept ssh, rsyncs this working tree up (tracked + untracked, never ignored
+# files — no .git, no GitHub token: the box never commits, its fixes come home
+# as patches under notes/experiments/patches/), then scp's lambda_setup.sh up
+# and runs it — leaving a box that starts the selected Claude or Codex
+# experimenter when credentials are present.
 #
 # Config (scripts/.env):
 #   LAMBDA_API_KEY         required
@@ -23,7 +26,7 @@
 #                          capacity retries when the instance type is sold out)
 #   LAMBDA_CAPACITY_MAX_WAIT  optional, default 0 = poll forever; else give up
 #                          after this many seconds with no capacity
-# plus any LAMBDA_SETUP_* / LAMBDA_REPO_* vars, forwarded to lambda_setup.sh.
+# plus LAMBDA_REMOTE_REPO, forwarded to lambda_setup.sh.
 #
 #   --dry-run   resolve region + print the launch payload, then stop
 #   --no-setup  launch and wait for ssh, but don't run lambda_setup.sh
@@ -111,7 +114,7 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
   done
   echo "Instance: $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}"
   echo "SSH key: $LAMBDA_SSH_KEY_NAME (private key: $SSH_KEY_PATH)"
-  echo "Repo ref: ${LAMBDA_REPO_REF:-(default branch)}"
+  echo "Repo: rsync of this tree at $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD || echo ' + uncommitted changes')"
   if [[ "$EXPERIMENTER_AGENT" == claude && -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
     echo "Experimenter: Claude auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
   elif [[ "$EXPERIMENTER_AGENT" == codex && -f "$HOME/.codex/auth.json" ]]; then
@@ -304,9 +307,18 @@ if [[ "$RUN_SETUP" == 0 ]]; then
   exit 0
 fi
 
+RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
+remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
+echo "Uploading repo (tracked + untracked, ignored files excluded) to ~/$remote_repo..."
+git -C "$ROOT" rev-parse HEAD > "$ROOT/.upload-rev"
+git -C "$ROOT" diff --quiet HEAD || echo "+ uncommitted changes" >> "$ROOT/.upload-rev"
+git -C "$ROOT" ls-files -z --cached --others --exclude-standard \
+  | rsync -rt --info=progress2 --files-from=- --from0 "${RSYNC_SSH[@]}" "$ROOT/" "$SSH_USER@$ip:$remote_repo/"
+rsync -t "${RSYNC_SSH[@]}" "$ROOT/.upload-rev" "$SSH_USER@$ip:$remote_repo/"
+rm -f "$ROOT/.upload-rev"
+
 if (( ${#all_ckpts[@]} + ${#data_local_files[@]} + ${#cache_local_paths[@]} )); then
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
-  RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
 fi
 if (( ${#all_ckpts[@]} )); then
   echo "Uploading ${#all_ckpts[@]} checkpoint(s) (${#resume_ckpts_full[@]} with optimizer.pt, mem_state.pt excluded) to staging..."
@@ -358,10 +370,7 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SCRIPT_DIR/experimenter_age
 # tokens don't land in the instance's process list. Removed after setup reads it.
 env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
-GIT_USER_NAME="$(git config user.name 2>/dev/null || true)"
-GIT_USER_EMAIL="$(git config user.email 2>/dev/null || true)"
-forward_vars=(LAMBDA_REPO_URL LAMBDA_REMOTE_REPO LAMBDA_REPO_REF EXPERIMENTER_AGENT
-  GITHUB_TOKEN HF_TOKEN TORCH_BACKEND MAX_JOBS GIT_USER_NAME GIT_USER_EMAIL)
+forward_vars=(LAMBDA_REMOTE_REPO EXPERIMENTER_AGENT HF_TOKEN TORCH_BACKEND MAX_JOBS)
 if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
   CLAUDE_MODEL="${CLAUDE_MODEL:-$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)}"
   CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"
