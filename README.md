@@ -16,6 +16,12 @@ altrux/
 └── scripts/         # Standalone helper scripts (e.g. Lambda Cloud instance termination)
 ```
 
+## Hand-written code
+
+`PROTECTED_PATHS` lists the files that decide the science (memory mechanism,
+losses, scorer, probes, data invariants). Agents review and test them but do
+not edit them — a Claude Code hook enforces it locally; see `AGENTS.md`.
+
 ## Adding a new model
 
 1. Create a `models/my_model/` package — see `models/mamba2_2_7b/` for the required interface (`MODEL_ID`, `TOKENIZER_ID`, `TARGET_LORA_MODULES`, `USER_OPEN`, `ASST_OPEN`, `SPECIAL_TOKENS`, `Model`, `load_base`, `load_inference`) and add a `README.md` following `models/CLAUDE.md`

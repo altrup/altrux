@@ -50,6 +50,22 @@ Each model is a folder in `models/` at the repo root containing `model.py` (impl
 
 Both `backend` and `sft` read `MODEL_NAME` from their `.env` and import `models.{MODEL_NAME}` at startup. The backend must be started with `PYTHONPATH` pointing at the repo root (the Makefile handles this). `sft` scripts also add the repo root to `sys.path` automatically.
 
+## Protected paths — hand-written code
+
+`PROTECTED_PATHS` at the repo root lists the files where a wrong line gives a
+wrong scientific result without a crash: the memory mechanism, the losses and
+erase operators, the benchmark scorer and split, the probes, and the
+data-splice invariants. The person owns these files. Agents read them, review
+them, write tests for them, and explain them, but do not edit them. A
+PreToolUse hook (`.claude/hooks/protect_paths.py`) enforces this for Edit and
+Write in local sessions; do not route around it with shell edits. Propose the
+change as a diff in the conversation instead.
+
+The rented-box experimenter is the one exception, with its own rules in
+`.agents/skills/altrux-experimenter/SKILL.md`: it may patch a protected file
+only to unblock a crash, never scoring or split logic, and the patch comes
+home for review rather than being committed.
+
 ## Always update READMEs and .env.example
 
 Whenever you change user-facing behaviour — a new endpoint, a new CLI flag, changed defaults, a removed feature — update the relevant README(s) in the same change. The READMEs to keep in sync are:
