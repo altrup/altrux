@@ -416,15 +416,14 @@ re-reading the whole file costs more than never delegating.
 
 ## Protected files
 
-`PROTECTED_PATHS` at the repo root lists the hand-written files: the memory
-mechanism, losses and erase operators, the benchmark scorer and split, the
-probes, and the data-splice invariants. Your teammate owns them. You may edit
-one ONLY to unblock a crash, and then:
+`PROTECTED_PATHS` at the repo root lists the hand-written files: the LAMA-CKL
+protocol, dream generation and distillation, baseline training, scorer, split,
+and cycle runner. Your teammate owns them. You may edit one ONLY to unblock a
+crash, and then:
 
-- Never the scorer, split, or upstream-pin files (`sft/experiments/lama_ckl/`
-  except `training.py`, and `sft/experiments/erasure/probe.py`). A bug there
-  means stop the run and write it up; a mid-run fix to verdict code makes the
-  verdict unreviewable.
+- Never `sft/experiments/lama_ckl/evaluation.py`, `split.py`, or `data.py`. A
+  bug there means stop the run and write it up; a mid-run fix to verdict code
+  makes the verdict unreviewable.
 - Write the patch immediately (PERSISTENCE), and open a `PROTECTED EDIT`
   heading in this run's notes naming the file, the traceback, and the change.
 - Mark every result produced after the edit PROVISIONAL in the notes. It

@@ -10,21 +10,13 @@ def blockwise_checkpoint(forward_fn, input_ids: torch.Tensor, state, block_len: 
     across them, and return the same `(logits, state)` the un-blocked call
     would have produced.
 
-    Only each block's boundary state is retained for backward; the block's own
-    activation graph is thrown away and recomputed when backward reaches it.
-    Works for any model whose forward is already stateful and resumable over
-    an arbitrary token count -- which is every model here, since that's what
-    chunked training needs anyway.
+    Activation memory scales with block_len instead of chunk_len: each block's
+    graph is dropped after forward and recomputed when backward reaches it.
 
     `state` must expose `flatten() -> tuple[Tensor, ...]` and
-    `unflatten(tensors) -> state` (see MemoryState/MixerState): the carried
-    tensors have to cross the checkpoint boundary as positional tensor
-    arguments, or autograd cannot route gradient back through them.
-
-    `use_reentrant=False` is load-bearing rather than stylistic: the memory
-    models run a nested `torch.autograd.grad(..., create_graph=True)` inside
-    the checkpointed region, and only the non-reentrant implementation replays
-    that second-order graph correctly on recompute.
+    `unflatten(tensors) -> state`: the carried tensors have to cross the
+    checkpoint boundary as positional tensor arguments, or autograd cannot
+    route gradient back through them.
     """
     outs = []
     for start in range(0, input_ids.shape[1], block_len):

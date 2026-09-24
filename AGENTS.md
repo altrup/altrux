@@ -53,9 +53,9 @@ Both `backend` and `sft` read `MODEL_NAME` from their `.env` and import `models.
 ## Protected paths — hand-written code
 
 `PROTECTED_PATHS` at the repo root lists the files where a wrong line gives a
-wrong scientific result without a crash: the memory mechanism, the losses and
-erase operators, the benchmark scorer and split, the probes, and the
-data-splice invariants. The person owns these files. Agents read them, review
+wrong scientific result without a crash: the LAMA-CKL protocol (wake, dream
+prompt, dream generation, distillation, baseline training, scorer, split, and
+the cycle runner). The person owns these files. Agents read them, review
 them, write tests for them, and explain them, but do not edit them. A
 PreToolUse hook (`.claude/hooks/protect_paths.py`) enforces this for Edit and
 Write in local sessions; do not route around it with shell edits. Propose the

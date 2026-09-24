@@ -18,8 +18,8 @@ altrux/
 
 ## Hand-written code
 
-`PROTECTED_PATHS` lists the files that decide the science (memory mechanism,
-losses, scorer, probes, data invariants). Agents review and test them but do
+`PROTECTED_PATHS` lists the files that decide the science (the LAMA-CKL
+protocol: dreams, distillation, baselines, scorer, split, runner). Agents review and test them but do
 not edit them — a Claude Code hook enforces it locally; see `AGENTS.md`.
 
 ## Adding a new model
