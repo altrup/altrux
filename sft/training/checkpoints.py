@@ -79,7 +79,7 @@ def save_checkpoint(
     """Saves every trainable parameter -- not just LoRA adapters, since a
     model like mamba2_2_7b_memory has an additional full-gradient subsystem
     that a LoRA-only save would silently drop. slot_states records each
-    slot's (example_idx, pos) for resume; next_ptr is the next example to
+    slot's (example_idx, pos, sleep_i) for resume; next_ptr is the next example to
     assign from the epoch's ordered list.
 
     The saved "last_ckpt_tokens" is this checkpoint's own total_tokens, not
@@ -137,7 +137,7 @@ def save_checkpoint(
     (tmp / "lora_config.json").write_text(json.dumps(lora_config))
     torch.save(optimizer.state_dict(), tmp / "optimizer.pt")
     slot_states = [
-        (s.example_idx, s.pos) if s is not None else None
+        (s.example_idx, s.pos, s.sleep_i) if s is not None else None
         for s in slots
     ]
     state_dict = {

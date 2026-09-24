@@ -174,18 +174,19 @@ class _Slot:
         self.pos = 0
         self.seqlen = ids.numel()
 
-    def seek(self, pos: int) -> None:
-        """Set the position (resume), marking sleeps at or before it as
-        already fired -- the saved internal state already reflects them, so
-        the training loop must not fire them again. last_reset uses the
-        sleep's own offset rather than the chunk boundary it originally
-        fired at (off by < chunk_len, and only if --chunk-len changed
-        between runs would even that differ) -- close enough for the
-        --head-weight ramp it feeds."""
+    def seek(self, pos: int, sleep_i: int | None = None) -> None:
+        """Set the position (resume). `sleep_i` is the checkpoint's count of
+        fired sleeps; a sleep reached but not yet fired at save time (the
+        save runs after pos advances, the sleep check before the next chunk)
+        fires on the next chunk. Legacy checkpoints without it treat every
+        sleep at or before pos as fired. last_reset uses the sleep's own
+        offset rather than the chunk boundary it originally fired at (off by
+        < chunk_len) -- close enough for the --head-weight ramp it feeds."""
         self.pos = pos
-        fired = [s for s in self.sleeps if s <= pos]
-        self.sleep_i = len(fired)
-        self.last_reset = fired[-1] if fired else 0
+        if sleep_i is None:
+            sleep_i = sum(1 for s in self.sleeps if s <= pos)
+        self.sleep_i = sleep_i
+        self.last_reset = self.sleeps[sleep_i - 1] if sleep_i else 0
 
     def is_done(self) -> bool:
         return self.pos >= self.seqlen - 1
@@ -378,18 +379,25 @@ def run_segment(
             f"examples {next_ptr}/{n_valid}  budget {budget:,.0f} tok"
         )
 
-    # Assign initial examples to slots.
+    # Assign initial examples to slots: a saved in-flight example first
+    # (the checkpoint's next_ptr already points past it), else the next
+    # fresh one.
     slots: list[_Slot | None] = []
     for b in range(batch_size):
-        if next_ptr < n_valid:
-            idx = order[next_ptr]
+        saved = resume_slot_states[b] if resume_slot_states is not None and b < len(resume_slot_states) else None
+        if saved is not None and saved[0] in order:
+            idx, pos, *rest = saved
+        elif next_ptr < n_valid:
+            idx, pos, rest = order[next_ptr], 0, []
             next_ptr += 1
-            ids = train_ids[idx].to(device)
-            mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
-            recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
-            slots.append(_Slot(b, idx, ids, mask, recall, train_sleeps[idx]))
         else:
             slots.append(None)
+            continue
+        ids = train_ids[idx].to(device)
+        mask = train_masks[idx].to(device) if train_masks[idx] is not None else None
+        recall = train_recall[idx].to(device) if train_recall[idx] is not None else None
+        slots.append(_Slot(b, idx, ids, mask, recall, train_sleeps[idx]))
+        slots[b].seek(pos, rest[0] if rest else None)
 
     if all(s is None for s in slots):
         ptrs[gi] = next_ptr
@@ -421,22 +429,7 @@ def run_segment(
     else:
         batched_state = None  # model initializes it on first chunk_loss call
 
-    # On resume: restore each slot's example/position from the checkpoint
-    # first -- needed regardless of how (or whether) internal state is
-    # recovered below.
     if resume_slot_states is not None:
-        for b, saved in enumerate(resume_slot_states):
-            if saved is None or b >= len(slots) or slots[b] is None:
-                continue
-            example_idx, pos = saved
-            if example_idx not in order:
-                continue  # example was filtered out -- start slot fresh
-            ids = train_ids[example_idx].to(device)
-            mask = train_masks[example_idx].to(device) if train_masks[example_idx] is not None else None
-            recall = train_recall[example_idx].to(device) if train_recall[example_idx] is not None else None
-            slots[b] = _Slot(b, example_idx, ids, mask, recall, train_sleeps[example_idx])
-            slots[b].seek(pos)
-
         if use_full_state:
             # Exact resume: the checkpoint saved the full batched
             # internal state (see rotate_full_state) -- use it as-is,
@@ -528,6 +521,11 @@ def run_segment(
                     if actual < chunk_len:
                         rm = F.pad(rm, (0, chunk_len - actual))
                     wt = torch.where(rm, wt * recall_w, wt)
+                if slot.mask is not None:
+                    tm = slot.mask[slot.pos + 1:end + 1]
+                    if actual < chunk_len:
+                        tm = F.pad(tm, (0, chunk_len - actual))
+                    wt = torch.where(tm, wt, torch.zeros_like(wt))
                 batch_inputs.append(inp)
                 batch_targets.append(tgt)
                 batch_weights.append(wt)
@@ -939,14 +937,17 @@ def run_training(
         elif epoch == start_epoch:
             ptrs[min(start_group_idx, len(groups) - 1)] = start_next_ptr
 
-        while any(ptrs[i] < len(orders[i]) for i in range(len(groups))) and not budget_spent():
-            available = [i for i in range(len(groups)) if ptrs[i] < len(orders[i])]
-            if resume_group is not None and resume_group in available:
+        # A resumed group still has its in-flight slots to finish even when
+        # its pointer is already past the last example.
+        def pending(i: int) -> bool:
+            return ptrs[i] < len(orders[i]) or (i == resume_group and resume_slot_states is not None)
+
+        while any(pending(i) for i in range(len(groups))) and not budget_spent():
+            if resume_group is not None:
                 gi = resume_group
             else:
-                # The resumed group is already finished, so its saved slot
-                # positions have nothing to restore into.
-                gi, resume_slot_states, resume_full_state = pick_deficit(group_tokens, shares, available), None, None
+                available = [i for i in range(len(groups)) if pending(i)]
+                gi = pick_deficit(group_tokens, shares, available)
             progress = run_segment(
                 execution,
                 data,

@@ -112,7 +112,7 @@ def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch
     # a record of whatever the caller's baseline was before this save (see
     # save_checkpoint's docstring for why that distinction matters).
     assert state == {
-        "epoch": 0, "slot_states": [(12, 8)], "next_ptr": 13,
+        "epoch": 0, "slot_states": [(12, 8, 0)], "next_ptr": 13,
         "dataset_fingerprint": None,
         "total_tokens": 123.0, "last_ckpt_tokens": 123.0,
     }
@@ -263,7 +263,7 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     assert len(ckpts) > 0
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
-    example_idx, pos = state["slot_states"][0]
+    example_idx, pos, _ = state["slot_states"][0]
     assert pos > 0, "first checkpoint should land mid-example given the small token threshold"
     assert example_idx == 0
 
@@ -329,7 +329,7 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
-    example_idx, pos = state["slot_states"][0]
+    example_idx, pos, _ = state["slot_states"][0]
     assert example_idx == 0
     assert pos == 4, "should restart from 0 (then advance one chunk), not continue from the saved pos 12"
 
@@ -357,7 +357,7 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
     assert len(ckpts) > 0
     _, first_ckpt_path = ckpts[0]
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
-    example_idx, pos = state["slot_states"][0]
+    example_idx, pos, _ = state["slot_states"][0]
     assert pos == 0
     assert example_idx == 1
 
@@ -412,6 +412,26 @@ def test_head_weight_ramps_down_linearly_over_head_tokens(monkeypatch, tmp_path)
     tpos = torch.arange(1, 13, dtype=torch.float32)
     expected = 1.0 + 4.0 * (1.0 - tpos / 8).clamp(min=0.0)
     assert torch.allclose(weights, expected)
+
+
+def test_train_mask_zeroes_weights_of_untrainable_target_tokens(monkeypatch, tmp_path):
+    mask = torch.ones(13, dtype=torch.bool)
+    mask[[0, 1, 2, 7]] = False
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+
+    class Hooks(_RecordingHooks):
+        recorded = []
+
+    loop.run_training(tmp_path, "test",
+        Hooks, model, optimizer, list(model.parameters()), [_ids(13, seed=3)], [mask], [None], [None], "cpu",
+        _make_args(), start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
+        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    )
+    weights = torch.cat([w[0] for w in Hooks.recorded])
+    # weight index i covers target token at absolute position i + 1
+    assert torch.equal(weights, mask[1:].float())
 
 
 # ---------------------------------------------------------------------------
@@ -482,10 +502,54 @@ def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypa
     loop.run_training(tmp_path, "test",
         Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None],
         [torch.tensor([6])], "cpu", _make_args(),
-        start_epoch=0, start_slot_states=[(0, 8)], start_next_ptr=1, start_step=0,
+        start_epoch=0, start_slot_states=[(0, 8, 1)], start_next_ptr=1, start_step=0,
         start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
     )
     assert Hooks.fired == []
+
+
+def test_resume_fires_a_sleep_reached_but_not_yet_fired_at_save_time(monkeypatch, tmp_path):
+    # Sleep at 6 fires at the chunk boundary pos=8, but the checkpoint was
+    # written at pos=8 before that boundary's sleep check ran (sleep_i=0).
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    full_state = tmp_path / "mem_state_fake.pt"
+    torch.save(torch.zeros(1), full_state)
+
+    class Hooks(_SleepRecordingHooks):
+        recorded = []
+        fired = []
+
+    loop.run_training(tmp_path, "test",
+        Hooks, model, optimizer, list(model.parameters()), [_ids(13, seed=3)], [None], [None],
+        [torch.tensor([6])], "cpu", _make_args(),
+        start_epoch=0, start_slot_states=[(0, 8, 0)], start_next_ptr=1, start_step=0,
+        start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
+    )
+    assert Hooks.fired == [(0, 0)]
+
+
+def test_resume_trains_every_example_after_the_in_flight_one(monkeypatch, tmp_path):
+    # 3 examples of 13 tokens = 3 chunks each. Saved mid example 0 at pos 8
+    # with next_ptr=1: 1 chunk left on example 0, then 3 + 3 = 7 chunks.
+    torch.manual_seed(0)
+    model = FakeStatefulModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    full_state = tmp_path / "mem_state_fake.pt"
+    torch.save(torch.zeros(1), full_state)
+    train_ids = [_ids(13, seed=i) for i in range(3)]
+
+    class Hooks(_RecordingHooks):
+        recorded = []
+
+    loop.run_training(tmp_path, "test",
+        Hooks, model, optimizer, list(model.parameters()), train_ids, [None] * 3, [None] * 3,
+        [None] * 3, "cpu", _make_args(ckpt_every_tokens=10**9),
+        start_epoch=0, start_slot_states=[(0, 8, 0)], start_next_ptr=1, start_step=0,
+        start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
+    )
+    assert len(Hooks.recorded) == 7
 
 
 # ---------------------------------------------------------------------------
