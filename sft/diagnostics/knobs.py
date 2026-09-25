@@ -1,4 +1,6 @@
-"""Measure the memory front-end's data-dependent write knobs on real data."""
+"""Experiment: memory-model
+
+Measure the memory front-end's data-dependent write knobs on real data."""
 
 from __future__ import annotations
 

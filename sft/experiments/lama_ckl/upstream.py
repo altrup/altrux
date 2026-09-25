@@ -1,4 +1,6 @@
-"""Pin, verify, and summarize the official TAALM LAMA-CKL release."""
+"""Experiment: lama-ckl
+
+Pin, verify, and summarize the official TAALM LAMA-CKL release."""
 
 from __future__ import annotations
 

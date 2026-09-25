@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Score the CL A/B grid: the install-vs-damage frontier per arm.
+"""Experiment: state-erasure
+
+Score the CL A/B grid: the install-vs-damage frontier per arm.
 
 Installs are the distractor-code margin (DISCUSSION-20260806 sec 4), read at
 the last probe point of each cell; greedy exact match is reported and never

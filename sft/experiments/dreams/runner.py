@@ -1,4 +1,6 @@
-"""Dream cache construction and sleep/wave orchestration."""
+"""Experiment: state-erasure
+
+Dream cache construction and sleep/wave orchestration."""
 
 from __future__ import annotations
 

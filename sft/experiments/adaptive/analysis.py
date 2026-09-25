@@ -1,4 +1,6 @@
-"""Aggregation and retention analysis for adaptive experiments."""
+"""Experiment: state-erasure
+
+Aggregation and retention analysis for adaptive experiments."""
 
 from __future__ import annotations
 

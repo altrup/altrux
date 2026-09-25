@@ -1,4 +1,6 @@
-"""The warm-start acceptance check — DISCUSSION-20260808 §2.1, at the token level.
+"""Experiment: state-erasure
+
+The warm-start acceptance check — DISCUSSION-20260808 §2.1, at the token level.
 
 A warm start is accepted when its free-running dreams emit the REGISTERED role
 markers rather than plain-text imitations of them, and no mojibake. Both

@@ -1,4 +1,6 @@
-"""babilong-style needle blocks: the 15% retention slice of the next run
+"""Experiment: shared
+
+babilong-style needle blocks: the 15% retention slice of the next run
 (notes/discussion/DISCUSSION-20260724-next-run-plan.md 1.3).
 
 The RMT-proven needle form under the *identical* curriculum, block assembly

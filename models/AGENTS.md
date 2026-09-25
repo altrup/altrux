@@ -10,6 +10,10 @@ Each model folder's `README.md` should briefly cover:
 
 See `models/mamba2_2_7b/README.md` for an example.
 
+## Experiment header
+
+Each module's docstring starts with `Experiment: <slug>` — see `sft/AGENTS.md` for the slug set and rule.
+
 ## Checkpoints
 
 Training checkpoints for a model live in `models/{name}/checkpoints/`, gitignored via `models/.gitignore`, since they're a model artifact consumed by both `sft` (writes) and `backend` (reads), not an `sft`-only concern.

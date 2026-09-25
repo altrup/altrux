@@ -1,4 +1,6 @@
-"""Dream and dream-cache data types."""
+"""Experiment: shared
+
+Dream and dream-cache data types."""
 
 from __future__ import annotations
 

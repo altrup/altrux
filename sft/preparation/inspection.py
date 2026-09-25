@@ -1,4 +1,6 @@
-"""Quick cross-slice sanity read before training: a few decoded windows and
+"""Experiment: shared
+
+Quick cross-slice sanity read before training: a few decoded windows and
 headline counts from each data artifact -- NOT a substitute for the full
 generation-time validation, just the ten-second read that catches a slice
 whose contents don't match its name (root CLAUDE.md: no dataset goes to a

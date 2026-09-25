@@ -1,4 +1,6 @@
-"""Injects interference-recall structure into an already-tokenized dataset.
+"""Experiment: shared
+
+Injects interference-recall structure into an already-tokenized dataset.
 
 Motivation (see notes/WATCH_NOTES.md, 2026-07-17): diagnostics/recall.py showed the
 backbone's SSM state alone handles the recall load the current training data

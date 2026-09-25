@@ -1,4 +1,6 @@
-"""Concatenates preparation/conversations.py outputs into one .pt artifact.
+"""Experiment: shared
+
+Concatenates preparation/conversations.py outputs into one .pt artifact.
 
 Use this when sources must form one dataset rather than separate training slices.
 """

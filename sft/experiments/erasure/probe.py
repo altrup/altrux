@@ -1,4 +1,6 @@
-"""Erase-efficacy probe: does the rank-1 state erase `S <- S(I - g c c^T)`
+"""Experiment: shared
+
+Erase-efficacy probe: does the rank-1 state erase `S <- S(I - g c c^T)`
 actually make a primed Mamba2 SSM forget the targeted fact -- and only it?
 
 This is the physics check for the dream-distillation sleep protocol

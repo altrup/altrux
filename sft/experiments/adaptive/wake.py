@@ -1,4 +1,6 @@
-"""Live adaptive wake realization and provider control."""
+"""Experiment: state-erasure
+
+Live adaptive wake realization and provider control."""
 
 from __future__ import annotations
 

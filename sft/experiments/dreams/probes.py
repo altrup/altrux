@@ -1,4 +1,6 @@
-"""Dream acceptance, leakage, and artifact diagnostics."""
+"""Experiment: shared
+
+Dream acceptance, leakage, and artifact diagnostics."""
 
 from __future__ import annotations
 

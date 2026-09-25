@@ -1,4 +1,6 @@
-"""The gate pilot (DISCUSSION-20260808 sec 2.10.6, 2.10.7): capture everything
+"""Experiment: shared
+
+The gate pilot (DISCUSSION-20260808 sec 2.10.6, 2.10.7): capture everything
 once, then score every gating scheme offline.
 
 `experiments/dreams/cli.py --build-dream-cache --dreams N --pilot-capture` writes the

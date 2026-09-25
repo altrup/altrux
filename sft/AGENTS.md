@@ -6,6 +6,10 @@ Whenever you change user-facing behaviour — new CLI flags, changed defaults, a
 
 Whenever you add, rename, or remove an environment variable, also update `sft/.env.example`.
 
+## Every module names its owning experiment
+
+The first line of each module docstring under `sft/` and `models/` (not tests, not `__init__.py`) is `Experiment: <slug>`, with slug one of `lama-ckl`, `state-erasure`, `memory-model`, `shared`. `shared` means more than one experiment, or generic training/preparation infra, reaches the module. The header records ownership only: `notes/README.md` decides which experiments are live. `tests/test_experiment_headers.py` enforces it and skips `PROTECTED_PATHS` files, whose headers the person adds by hand.
+
 ## Cache policy
 
 HuggingFace cache is shared at the repo root (`../.cache/huggingface`), not inside this folder. The Makefile sets `HF_HOME=$(CURDIR)/../.cache/huggingface` on every relevant target. See the root `AGENTS.md` for the full policy.

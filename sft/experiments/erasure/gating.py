@@ -1,4 +1,6 @@
-"""B4's gating and per-layer basis mechanism (DISCUSSION-20260808 sec 2.7,
+"""Experiment: shared
+
+B4's gating and per-layer basis mechanism (DISCUSSION-20260808 sec 2.7,
 2.9.2, 2.10.3).
 
 Pure tensor math over a state and a set of captured read queries. Sec 2.9.1's

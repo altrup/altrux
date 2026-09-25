@@ -1,4 +1,6 @@
-"""Natural-language fact-correction probe: does the neural memory carry a
+"""Experiment: memory-model
+
+Natural-language fact-correction probe: does the neural memory carry a
 conversational correction ("no, the president is X now") across a sleep?
 
 A short conversation asserts a stale fact, the user corrects it, a filler

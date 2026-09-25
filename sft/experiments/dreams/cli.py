@@ -1,4 +1,6 @@
-"""Dream CLI implementation."""
+"""Experiment: state-erasure
+
+Dream CLI implementation."""
 
 from __future__ import annotations
 

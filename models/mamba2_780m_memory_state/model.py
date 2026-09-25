@@ -1,4 +1,6 @@
-"""Mamba2-780M + the Titans memory subsystem, STATE-INJECTION arm -- the
+"""Experiment: memory-model
+
+Mamba2-780M + the Titans memory subsystem, STATE-INJECTION arm -- the
 2.7B design with layer indices scaled to 48 layers: gated-delta merge of the
 read into ssm_state at INJECTED_LAYERS, front-end at READ_LAYER (2/3 depth).
 

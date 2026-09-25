@@ -1,4 +1,6 @@
-"""Manifest schemas, validation, identity, and counterbalancing."""
+"""Experiment: state-erasure
+
+Manifest schemas, validation, identity, and counterbalancing."""
 
 from __future__ import annotations
 

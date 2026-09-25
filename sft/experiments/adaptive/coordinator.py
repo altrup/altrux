@@ -1,4 +1,6 @@
-"""Adaptive multi-sleep coordination and manifest runtime."""
+"""Experiment: state-erasure
+
+Adaptive multi-sleep coordination and manifest runtime."""
 
 from __future__ import annotations
 

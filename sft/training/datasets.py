@@ -1,4 +1,6 @@
-"""Training dataset specifications, loading, and deterministic ordering."""
+"""Experiment: shared
+
+Training dataset specifications, loading, and deterministic ordering."""
 
 from dataclasses import dataclass
 from pathlib import Path

@@ -1,4 +1,6 @@
-"""Training hooks for mamba2_2_7b, called by sft/training/loop.py's generic training
+"""Experiment: shared
+
+Training hooks for mamba2_2_7b, called by sft/training/loop.py's generic training
 loop.
 
 Model.forward loops over tokens and threads a MixerState across calls (see

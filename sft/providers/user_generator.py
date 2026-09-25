@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Normalize authenticated Claude Code or Codex CLI sessions as wake-user JSON."""
+"""Experiment: state-erasure
+
+Normalize authenticated Claude Code or Codex CLI sessions as wake-user JSON."""
 
 from __future__ import annotations
 

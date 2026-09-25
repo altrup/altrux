@@ -1,4 +1,6 @@
-"""Plain Mamba2-2.7B — the substrate registered by DISCUSSION-20260808
+"""Experiment: shared
+
+Plain Mamba2-2.7B — the substrate registered by DISCUSSION-20260808
 §2.10.14. NOT the memory-augmented `mamba2_2_7b_memory`.
 
 The manual-mixer wrapper is mamba2_780m's, shared by import rather than
