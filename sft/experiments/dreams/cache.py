@@ -10,7 +10,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache, dream_set_sha, token_sha
+from experiments.dreams.types import (
+    CachedDream,
+    DreamCache,
+    DreamSetCache,
+    dream_set_sha,
+    token_sha,
+)
 from experiments.erasure.gating import (
     RANK_RULES,
     VARIANTS,
@@ -47,8 +53,9 @@ def fact_read_positions(token_texts: Sequence[str], facts: Sequence[Fact]) -> di
             ends = [text.find(stop, at) for stop in CUE_STOPS]
             end = min([e for e in ends if e != -1], default=len(text))
             if fact.entity.lower() in text[start:end].lower():
-                hits |= {i for i, (lo, hi) in enumerate(spans)
-                         if lo < at + len(fact.code) and hi > at}
+                hits |= {
+                    i for i, (lo, hi) in enumerate(spans) if lo < at + len(fact.code) and hi > at
+                }
             at = text.find(fact.code, at + 1)
         out[fact.entity] = sorted(hits)
     return out
@@ -59,10 +66,13 @@ def gate_agreement(gate: Sequence[int], fact_positions: dict[str, list[int]]) ->
     reads = {t for positions in fact_positions.values() for t in positions}
     gated = set(gate)
     hit = len(gated & reads)
-    return {"precision": hit / len(gated) if gated else 0.0,
-            "recall": hit / len(reads) if reads else 0.0,
-            "gated": len(gated), "read_positions": len(reads),
-            "per_fact": {e: len(gated & set(p)) for e, p in fact_positions.items()}}
+    return {
+        "precision": hit / len(gated) if gated else 0.0,
+        "recall": hit / len(reads) if reads else 0.0,
+        "gated": len(gated),
+        "read_positions": len(reads),
+        "per_fact": {e: len(gated & set(p)) for e, p in fact_positions.items()},
+    }
 
 
 def binding_coverage(text: str, facts: Sequence[Fact]) -> tuple[dict[str, int], dict[str, int]]:
@@ -81,18 +91,22 @@ def binding_coverage(text: str, facts: Sequence[Fact]) -> tuple[dict[str, int], 
     return bound, misbound
 
 
-def copy_fraction(dream_tokens: Sequence[str], transcript_tokens: Sequence[str],
-                  n: int = 12, cue_flags: Sequence[bool] | None = None) -> float:
+def copy_fraction(
+    dream_tokens: Sequence[str],
+    transcript_tokens: Sequence[str],
+    n: int = 12,
+    cue_flags: Sequence[bool] | None = None,
+) -> float:
     """Return the fraction in transcript runs of at least ``n`` tokens."""
     if cue_flags is not None:
-        keep = [i for i, token in enumerate(dream_tokens)
-                if not (i < len(cue_flags) and cue_flags[i])]
+        keep = [
+            i for i, token in enumerate(dream_tokens) if not (i < len(cue_flags) and cue_flags[i])
+        ]
         dream_tokens = [dream_tokens[i] for i in keep]
     if not dream_tokens or not transcript_tokens or n <= 0:
         return 0.0
     grams: set[tuple[str, ...]] = {
-        tuple(transcript_tokens[i : i + n])
-        for i in range(len(transcript_tokens) - n + 1)
+        tuple(transcript_tokens[i : i + n]) for i in range(len(transcript_tokens) - n + 1)
     }
     copied = [False] * len(dream_tokens)
     for i in range(len(dream_tokens) - n + 1):
@@ -112,8 +126,9 @@ def aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact]) -> d
     return counts
 
 
-def assert_aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact],
-                             min_dreams: int) -> dict[str, int]:
+def assert_aggregate_binding(
+    dreams: Sequence[CachedDream], facts: Sequence[Fact], min_dreams: int
+) -> dict[str, int]:
     """Refuse a set where a fact is bound in too few dreams."""
     counts = aggregate_binding(dreams, facts)
     short = {e: n for e, n in counts.items() if n < min_dreams}
@@ -126,8 +141,13 @@ def assert_aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact
     return counts
 
 
-def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], wake_state,
-                rank_rule: str, weights: Sequence[float] | None = None):
+def dream_bases(
+    queries: Sequence[Sequence[torch.Tensor]],
+    gate: Sequence[int],
+    wake_state,
+    rank_rule: str,
+    weights: Sequence[float] | None = None,
+):
     """Build the shared per-layer bases stored in a dream cache."""
     import torch
 
@@ -153,12 +173,18 @@ def dream_bases(queries: Sequence[Sequence[torch.Tensor]], gate: Sequence[int], 
         for variant in VARIANTS:
             basis = variant_basis(v_full, chosen[rank_rule], variant, wake_state.ssm_states[layer])
             if basis.shape[0] == 0:
-                print(f"[{ts()}]  NOTE: layer {layer}'s {variant} basis is empty at rank "
-                      f"{chosen[rank_rule]} over {len(gate)} gated queries -- this dream's "
-                      f"{variant} eraser removes nothing at this layer.")
+                print(
+                    f"[{ts()}]  NOTE: layer {layer}'s {variant} basis is empty at rank "
+                    f"{chosen[rank_rule]} over {len(gate)} gated queries -- this dream's "
+                    f"{variant} eraser removes nothing at this layer."
+                )
             identity = basis @ basis.T
-            if basis.shape[0] and not bool((identity - torch.eye(basis.shape[0])).abs().max() < 1e-4):
-                raise SystemExit(f"layer {layer}'s {variant} basis is not orthonormal (sec 2.7 asserts V^T V = I)")
+            if basis.shape[0] and not bool(
+                (identity - torch.eye(basis.shape[0])).abs().max() < 1e-4
+            ):
+                raise SystemExit(
+                    f"layer {layer}'s {variant} basis is not orthonormal (sec 2.7 asserts V^T V = I)"
+                )
             bases[variant].append(basis.cpu())
     return spectra, ranks, bases
 
@@ -171,10 +197,14 @@ def rebase_dream_set(cache: DreamSetCache, family: str, rank_rule: str) -> Dream
         gate = dream.gate_positions
         if not gate:
             continue
-        weights = (None if family == "hard"
-                   else scheme_weights([dream.divergence[t] for t in gate], family))
-        spectra, ranks, bases = dream_bases(dream.queries, range(len(gate)), cache.wake_state,
-                                            rank_rule, weights)
+        weights = (
+            None
+            if family == "hard"
+            else scheme_weights([dream.divergence[t] for t in gate], family)
+        )
+        spectra, ranks, bases = dream_bases(
+            dream.queries, range(len(gate)), cache.wake_state, rank_rule, weights
+        )
         dream.spectra, dream.ranks, dream.bases = spectra, ranks, bases
     cache.gate_family = family
     cache.rank_rule = rank_rule
@@ -193,11 +223,13 @@ def merge_dream_sets(caches: Sequence[DreamSetCache]) -> DreamSetCache:
             raise SystemExit(
                 f"merge_dream_sets: cache {i} has a different wake transcript "
                 f"({token_sha(cache.transcript_ids)[:12]} vs {first.transcript_sha[:12]}) -- "
-                "its dreams came from a different state and cannot pool.")
+                "its dreams came from a different state and cannot pool."
+            )
         if cache.generator != first.generator:
             raise SystemExit(
                 f"merge_dream_sets: cache {i} has generator {cache.generator[:12]}, "
-                f"first has {first.generator[:12]} -- a different teacher wrote those dreams.")
+                f"first has {first.generator[:12]} -- a different teacher wrote those dreams."
+            )
         for dream in cache.dreams:
             if len(dream.dream_ids) > MIN_DISTINCT_DREAM_TOKENS:
                 if dream.dream_sha in seen:
@@ -205,7 +237,8 @@ def merge_dream_sets(caches: Sequence[DreamSetCache]) -> DreamSetCache:
                         f"merge_dream_sets: cache {i} repeats a {len(dream.dream_ids)}-token "
                         f"dream already in cache {seen[dream.dream_sha]} "
                         f"(sha {dream.dream_sha[:12]}) -- two builds shared a "
-                        "--dream-seed-offset.")
+                        "--dream-seed-offset."
+                    )
                 seen[dream.dream_sha] = i
             dreams.append(dream)
     merged = copy.copy(first)
@@ -229,18 +262,29 @@ def load_dream_cache(path: str | Path) -> DreamCache | DreamSetCache:
     if isinstance(cache, DreamSetCache):
         for i, dream in enumerate(cache.dreams):
             if token_sha(dream.dream_ids) != dream.dream_sha:
-                raise SystemExit(f"dream set {path} is corrupt: dream {i}'s tokens do not match its sha-256")
-        if token_sha(cache.transcript_ids) != cache.transcript_sha or dream_set_sha(cache.dreams) != cache.set_sha:
-            raise SystemExit(f"dream set {path} is corrupt: the set no longer matches its recorded sha-256")
+                raise SystemExit(
+                    f"dream set {path} is corrupt: dream {i}'s tokens do not match its sha-256"
+                )
+        if (
+            token_sha(cache.transcript_ids) != cache.transcript_sha
+            or dream_set_sha(cache.dreams) != cache.set_sha
+        ):
+            raise SystemExit(
+                f"dream set {path} is corrupt: the set no longer matches its recorded sha-256"
+            )
         return cache
     cache.generator = getattr(cache, "generator", "base")
     cache.stop_reason = getattr(cache, "stop_reason", "max-tokens")
     cache.dream_prompt = getattr(cache, "dream_prompt", "")
     cache.prefix_len = getattr(cache, "prefix_len", 0)
-    for name, ids, recorded in (("transcript", cache.transcript_ids, cache.transcript_sha),
-                                ("dream", cache.dream_ids, cache.dream_sha)):
+    for name, ids, recorded in (
+        ("transcript", cache.transcript_ids, cache.transcript_sha),
+        ("dream", cache.dream_ids, cache.dream_sha),
+    ):
         if token_sha(ids) != recorded:
-            raise SystemExit(f"dream cache {path} is corrupt: {name} tokens do not match their recorded sha-256")
+            raise SystemExit(
+                f"dream cache {path} is corrupt: {name} tokens do not match their recorded sha-256"
+            )
     return cache
 
 
@@ -278,7 +322,8 @@ def write_dream_sidecar(cache: DreamCache, path: str | Path) -> None:
         "arm's scored positions)",
         f"{len(cache.dream_ids)} dream tokens, {cache.free_tokens} freely generated, "
         f"{len(cache.dream_ids) - cache.free_tokens} spliced cue text",
-        "facts: " + ", ".join(f"{f.entity}={f.code} (foil {cache.distractors[f.entity]})" for f in facts),
+        "facts: "
+        + ", ".join(f"{f.entity}={f.code} (foil {cache.distractors[f.entity]})" for f in facts),
         "bound rehearsals: " + ", ".join(f"{e}={n}" for e, n in bound.items()),
         "misbound rehearsals: " + ", ".join(f"{e}={n}" for e, n in misbound.items()),
         "",
@@ -294,13 +339,17 @@ def write_dream_set_sidecar(cache: DreamSetCache, path: str | Path) -> None:
         f"generated by: {cache.generator}   {len(cache.dreams)} dreams",
         f"steer prefix: {cache.dream_prompt!r}   gate threshold {cache.gate_threshold} nats "
         f"   rank rule {cache.rank_rule}",
-        "facts: " + ", ".join(f"{f.entity}={f.code} (foil {cache.distractors[f.entity]})" for f in facts),
-        "dreams bound per fact: " + ", ".join(f"{e}={n}" for e, n in aggregate_binding(cache.dreams, facts).items()),
+        "facts: "
+        + ", ".join(f"{f.entity}={f.code} (foil {cache.distractors[f.entity]})" for f in facts),
+        "dreams bound per fact: "
+        + ", ".join(f"{e}={n}" for e, n in aggregate_binding(cache.dreams, facts).items()),
         "",
     ]
     for i, dream in enumerate(cache.dreams):
         bound, misbound = binding_coverage("".join(dream.token_texts), facts)
-        agreement = gate_agreement(dream.gate_positions, fact_read_positions(dream.token_texts, facts))
+        agreement = gate_agreement(
+            dream.gate_positions, fact_read_positions(dream.token_texts, facts)
+        )
         lines += [
             f"--- dream {i}  sha {dream.dream_sha[:12]}  {len(dream.dream_ids)} tokens  "
             f"ended {dream.stop_reason} ---",
@@ -309,8 +358,8 @@ def write_dream_set_sidecar(cache: DreamSetCache, path: str | Path) -> None:
             f"gate: {len(dream.gate_positions)} positions, precision {agreement['precision']:.3f} "
             f"recall {agreement['recall']:.3f}, per-fact contribution {agreement['per_fact']}",
             "per-layer rank: " + "  ".join(f"{rule}={dream.ranks[rule]}" for rule in RANK_RULES),
-            "per-layer spectra: " + "; ".join(
-                " ".join(f"{s:.3g}" for s in spectrum) for spectrum in dream.spectra),
+            "per-layer spectra: "
+            + "; ".join(" ".join(f"{s:.3g}" for s in spectrum) for spectrum in dream.spectra),
             "".join(dream.token_texts),
             "",
         ]

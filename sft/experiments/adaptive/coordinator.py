@@ -20,14 +20,21 @@ class MultiSleepCoordinator:
     def __init__(
         self,
         arms: Sequence[str],
-        wake: Callable[[str, int, object, Sequence[tuple[str, str]], str], tuple[dict[str, object], object]],
+        wake: Callable[
+            [str, int, object, Sequence[tuple[str, str]], str], tuple[dict[str, object], object]
+        ],
         fork_state: Callable[[object], object],
         initial_state: object,
         store_artifact: Callable[[dict[str, object]], None],
     ):
         if tuple(arms) != ("replay", "nosleep", "sft-ref"):
             raise AdaptiveWakeError("registered arms are replay, nosleep, and sft-ref")
-        self.arms, self.wake, self.fork_state, self.initial_state = tuple(arms), wake, fork_state, initial_state
+        self.arms, self.wake, self.fork_state, self.initial_state = (
+            tuple(arms),
+            wake,
+            fork_state,
+            initial_state,
+        )
         self.store_artifact = store_artifact
 
     def run(
@@ -39,13 +46,17 @@ class MultiSleepCoordinator:
         probe: Callable[[str, int, object, dict[str, object]], None],
         wakes: int = 6,
     ) -> dict[tuple[str, int], dict[str, object]]:
-        shared, shared_state = self.wake("shared", 1, self.initial_state, facts_for_wake(1), scenario_for_wake(1))
+        shared, shared_state = self.wake(
+            "shared", 1, self.initial_state, facts_for_wake(1), scenario_for_wake(1)
+        )
         artifacts: dict[tuple[str, int], dict[str, object]] = {}
         states = {arm: self.fork_state(shared_state) for arm in self.arms}
         for arm in self.arms:
             artifact = dict(shared)
             artifact["arm"] = arm
-            artifact["artifact_sha256"] = _sha({key: value for key, value in artifact.items() if key != "artifact_sha256"})
+            artifact["artifact_sha256"] = _sha(
+                {key: value for key, value in artifact.items() if key != "artifact_sha256"}
+            )
             self.store_artifact(artifact)
             artifacts[arm, 1] = artifact
         for wake in range(1, wakes + 1):
@@ -62,11 +73,18 @@ class MultiSleepCoordinator:
 class ExperimentRuntime:
     """Manifest-driven production boundary around the ordered coordinator."""
 
-    def __init__(self, manifest: ExperimentManifest, *, initial_state: object,
-                 fork_state: Callable[[object], object],
-                 wake: Callable[[str, int, object, Sequence[tuple[str, str]], str], tuple[dict[str, object], object]],
-                 sleep: Callable[[str, int, object, dict[str, object]], object],
-                 probe: Callable[[str, int, object, dict[str, object]], dict[str, object]]):
+    def __init__(
+        self,
+        manifest: ExperimentManifest,
+        *,
+        initial_state: object,
+        fork_state: Callable[[object], object],
+        wake: Callable[
+            [str, int, object, Sequence[tuple[str, str]], str], tuple[dict[str, object], object]
+        ],
+        sleep: Callable[[str, int, object, dict[str, object]], object],
+        probe: Callable[[str, int, object, dict[str, object]], dict[str, object]],
+    ):
         self.manifest = manifest
         self.initial_state, self.fork_state = initial_state, fork_state
         self.wake, self.sleep, self.probe = wake, sleep, probe
@@ -77,19 +95,41 @@ class ExperimentRuntime:
         records: list[dict[str, object]] = []
 
         def probe(arm: str, wake: int, state: object, artifact: dict[str, object]) -> None:
-            records.append({"seed": seed, "arm": arm, "wake": wake, "artifact_sha256": artifact.get("artifact_sha256"),
-                            "transcript_token_sha256": artifact.get("transcript_token_sha256"),
-                            "state_sha256": artifact.get("state_sha256"),
-                            **self.probe(arm, wake, state, artifact)})
+            records.append(
+                {
+                    "seed": seed,
+                    "arm": arm,
+                    "wake": wake,
+                    "artifact_sha256": artifact.get("artifact_sha256"),
+                    "transcript_token_sha256": artifact.get("transcript_token_sha256"),
+                    "state_sha256": artifact.get("state_sha256"),
+                    **self.probe(arm, wake, state, artifact),
+                }
+            )
 
-        coordinator = MultiSleepCoordinator(self.manifest.config.arms, self.wake, self.fork_state,
-                                             self.initial_state, lambda _: None)
+        coordinator = MultiSleepCoordinator(
+            self.manifest.config.arms,
+            self.wake,
+            self.fork_state,
+            self.initial_state,
+            lambda _: None,
+        )
         coordinator.run(
             facts_for_wake=lambda wake: counterbalanced_facts(
-                self.manifest.wakes[wake - 1].facts, self.manifest.config.seeds.index(seed), wake,
+                self.manifest.wakes[wake - 1].facts,
+                self.manifest.config.seeds.index(seed),
+                wake,
             ),
             scenario_for_wake=lambda wake: self.manifest.wakes[wake - 1].scenario,
-            sleep=self.sleep, probe=probe,
+            sleep=self.sleep,
+            probe=probe,
         )
-        return {"records": records, "execution": {"batch_sizes": self.manifest.batch_sizes,
-                "peak_vram_bytes": None, "throughput": None, "retries": 0}}
+        return {
+            "records": records,
+            "execution": {
+                "batch_sizes": self.manifest.batch_sizes,
+                "peak_vram_bytes": None,
+                "throughput": None,
+                "retries": 0,
+            },
+        }

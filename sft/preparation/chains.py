@@ -135,11 +135,14 @@ def build_chains(
     # silent joins. Drawing nothing at rate 1.0 keeps the RNG stream --
     # and so the output -- identical to an ungated run.
     sleep_rate = getattr(args, "sleep_chain_rate", 1.0)
-    sleeping = ([True] * len(chains) if sleep_rate >= 1.0
-                else [rng.random() < sleep_rate for _ in chains])
+    sleeping = (
+        [True] * len(chains) if sleep_rate >= 1.0 else [rng.random() < sleep_rate for _ in chains]
+    )
     n_sleep_chains = sum(sleeping)
-    print(f"planned {len(chains)} chains from {len(order)} episodes "
-          f"({n_sleep_chains} sleeping, {100 * n_sleep_chains / max(len(chains), 1):.1f}%)")
+    print(
+        f"planned {len(chains)} chains from {len(order)} episodes "
+        f"({n_sleep_chains} sleeping, {100 * n_sleep_chains / max(len(chains), 1):.1f}%)"
+    )
 
     # Interleaved continuations: split an eligible episode at a middle-third
     # turn boundary and resume its tail two episodes later, behind a forced
@@ -183,7 +186,9 @@ def build_chains(
                         # requiring 256 of them silently disqualified every
                         # episode in the pool.
                         qoff = pool_qoffs[ep]
-                        splittable = qoff is not None and sep_id is not None and mp <= qoff < len(ids)
+                        splittable = (
+                            qoff is not None and sep_id is not None and mp <= qoff < len(ids)
+                        )
                         mid = [qoff] if splittable else []
                     else:
                         mid = [x for x in b if mp <= x <= len(ids) - mp]
@@ -195,8 +200,12 @@ def build_chains(
                         out.append(len(pool_ids) - 1)
                         if is_qa:
                             split_qa_heads.add(len(pool_ids) - 1)
-                            tail_ids = torch.cat([torch.tensor([user_id, sep_id], dtype=ids.dtype), ids[cut:]])
-                            tail_masks = torch.cat([torch.zeros(2, dtype=torch.bool), pool_masks[ep][cut:]])
+                            tail_ids = torch.cat(
+                                [torch.tensor([user_id, sep_id], dtype=ids.dtype), ids[cut:]]
+                            )
+                            tail_masks = torch.cat(
+                                [torch.zeros(2, dtype=torch.bool), pool_masks[ep][cut:]]
+                            )
                         else:
                             tail_ids = ids[cut:]
                             tail_masks = pool_masks[ep][cut:]
@@ -207,8 +216,12 @@ def build_chains(
                         # How many earlier heads are still awaiting their tail
                         # here -- a deep interleave stacks several unanswered
                         # turns at once, much worse than a single suspension.
-                        max_pending = max(max_pending, 1 + sum(1 for due, _ in pending if due > len(out)))
-                        pending.append((len(out) + rng.randint(gap_min, gap_max), len(pool_ids) - 1))
+                        max_pending = max(
+                            max_pending, 1 + sum(1 for due, _ in pending if due > len(out))
+                        )
+                        pending.append(
+                            (len(out) + rng.randint(gap_min, gap_max), len(pool_ids) - 1)
+                        )
                         n_split += 1
                         n_split_qa += is_qa
                         continue
@@ -219,7 +232,9 @@ def build_chains(
                 out.insert(min(due + i, len(out)), tail)
             chains[ci] = out
     if n_split:
-        print(f"split {n_split} episodes ({n_split_qa} single-QA) into head/tail interleaved continuations")
+        print(
+            f"split {n_split} episodes ({n_split_qa} single-QA) into head/tail interleaved continuations"
+        )
 
     # Pass 1: plan every chain -- sleeps, fact blocks, revisions, queries --
     # and collect all injected-turn strings for one batched tokenizer call.
@@ -288,7 +303,10 @@ def build_chains(
         # sentence instead -- trains reading-persistence across a sleep.
         if sentence_sleep_rate > 0 and sent_end_t is not None and space_start_t is not None:
             for i, ep in enumerate(chain):
-                if len(pool_ids[ep]) < args.mid_sleep_min_len or rng.random() >= sentence_sleep_rate:
+                if (
+                    len(pool_ids[ep]) < args.mid_sleep_min_len
+                    or rng.random() >= sentence_sleep_rate
+                ):
                     continue
                 lo, hi = len(pool_ids[ep]) // 3, 2 * len(pool_ids[ep]) // 3
                 seg, nxt = pool_ids[ep][lo:hi], pool_ids[ep][lo + 1 : hi + 1]
@@ -327,7 +345,14 @@ def build_chains(
                 kind = rng.choice(FACT_KINDS)
                 stmt, q, a, rev = rng.choice(kind["sets"])
                 v = sample_value(kind, rng)
-                fact = {"templates": (q, a, rev), "kind": kind, "k": k, "v": v, "v2": None, "floor": block_pos}
+                fact = {
+                    "templates": (q, a, rev),
+                    "kind": kind,
+                    "k": k,
+                    "v": v,
+                    "v2": None,
+                    "floor": block_pos,
+                }
                 fact_turn_idx.append(add_string(f"{user_open} {stmt.format(k=k, v=v)}"))
                 facts.append(fact)
             inserts.append((block_pos, fact_turn_idx, False))
@@ -337,13 +362,23 @@ def build_chains(
             for f in facts:
                 if rng.random() >= args.revise_rate:
                     continue
-                later = all_candidates[bisect_right(all_candidates, block_pos):]
+                later = all_candidates[bisect_right(all_candidates, block_pos) :]
                 if not later:
                     continue
                 f["v2"] = sample_value(f["kind"], rng)
                 pos = rng.choice(later[: max(1, len(later) // 2)])
                 f["floor"] = pos
-                inserts.append((pos, [add_string(f"{user_open} {f['templates'][2].format(k=f['k'], v=f['v2'])}")], False))
+                inserts.append(
+                    (
+                        pos,
+                        [
+                            add_string(
+                                f"{user_open} {f['templates'][2].format(k=f['k'], v=f['v2'])}"
+                            )
+                        ],
+                        False,
+                    )
+                )
                 n_revised += 1
 
             # Queries, each at one of three distances from its fact's floor
@@ -351,10 +386,14 @@ def build_chains(
             # later episode within the same wake, or beyond a sleep.
             n_queries = rng.randint(args.min_queries, min(args.max_queries, n_facts))
             for f in rng.sample(facts, n_queries):
-                later = all_candidates[bisect_right(all_candidates, f["floor"]):]
+                later = all_candidates[bisect_right(all_candidates, f["floor"]) :]
                 if not later:
                     continue
-                by_dist: dict[str, list[int]] = {"within_episode": [], "cross_episode": [], "cross_sleep": []}
+                by_dist: dict[str, list[int]] = {
+                    "within_episode": [],
+                    "cross_episode": [],
+                    "cross_sleep": [],
+                }
                 for b in later:
                     if bisect_right(sleeps, b) > bisect_right(sleeps, f["floor"]):
                         by_dist["cross_sleep"].append(b)
@@ -375,19 +414,25 @@ def build_chains(
                 dist_counts[dist] += 1
                 q, a, _ = f["templates"]
                 final_v = f["v2"] if f["v2"] is not None else f["v"]
-                inserts.append((
-                    rng.choice(by_dist[dist]),
-                    [add_string(f"{user_open} {q.format(k=f['k'])}"),
-                     add_string(f"{asst_open} {a.format(k=f['k'], v=final_v)}")],
-                    True,
-                ))
+                inserts.append(
+                    (
+                        rng.choice(by_dist[dist]),
+                        [
+                            add_string(f"{user_open} {q.format(k=f['k'])}"),
+                            add_string(f"{asst_open} {a.format(k=f['k'], v=final_v)}"),
+                        ],
+                        True,
+                    )
+                )
 
         inserts.sort(key=lambda x: x[0])
         plans.append((chain, inserts, sleeps))
 
-    print(f"tokenizing {len(strings)} injected turns "
-          f"({n_blocks} fact blocks, {n_facts_total} facts, {n_revised} revisions; "
-          f"queries {dist_counts}) ...")
+    print(
+        f"tokenizing {len(strings)} injected turns "
+        f"({n_blocks} fact blocks, {n_facts_total} facts, {n_revised} revisions; "
+        f"queries {dist_counts}) ..."
+    )
     encoded = encode(strings) if strings else []
 
     def turn_tensors(idx: int, trainable: bool) -> tuple[torch.Tensor, torch.Tensor]:
@@ -428,10 +473,7 @@ def build_chains(
         mask_parts.append(masks[cursor:])
         recall_parts.append(torch.zeros(len(ids) - cursor, dtype=torch.bool))
 
-        shifted = [
-            s + sum(insert_lengths[: bisect_left(insert_positions, s)])
-            for s in sleeps
-        ]
+        shifted = [s + sum(insert_lengths[: bisect_left(insert_positions, s)]) for s in sleeps]
         out_ids.append(torch.cat(id_parts))
         out_masks.append(torch.cat(mask_parts))
         out_recall.append(torch.cat(recall_parts) if inserts else None)
@@ -440,12 +482,23 @@ def build_chains(
             print(f"\r  built {done + 1}/{len(plans)} chains", end="", flush=True)
     print(f"\r  built {len(plans)}/{len(plans)} chains")
 
-    dataset = {"ids": out_ids, "masks": out_masks, "recall_masks": out_recall, "sleep_positions": out_sleeps}
+    dataset = {
+        "ids": out_ids,
+        "masks": out_masks,
+        "recall_masks": out_recall,
+        "sleep_positions": out_sleeps,
+    }
     stats = {
-        "n_blocks": n_blocks, "n_facts": n_facts_total, "n_revised": n_revised,
-        "dist_counts": dist_counts, "n_split": n_split, "n_split_qa": n_split_qa,
-        "n_mid_sleeps": n_mid_sleeps, "n_sentence_sleeps": n_sentence_sleeps,
-        "max_pending": max_pending, "n_sleep_chains": n_sleep_chains,
+        "n_blocks": n_blocks,
+        "n_facts": n_facts_total,
+        "n_revised": n_revised,
+        "dist_counts": dist_counts,
+        "n_split": n_split,
+        "n_split_qa": n_split_qa,
+        "n_mid_sleeps": n_mid_sleeps,
+        "n_sentence_sleeps": n_sentence_sleeps,
+        "max_pending": max_pending,
+        "n_sleep_chains": n_sleep_chains,
     }
     return dataset, stats
 
@@ -455,7 +508,9 @@ UU_SILENT = "USER->USER silent (no sleep between)"
 AA = "ASST->ASST"
 
 
-def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2, ctx: int = 90) -> int:
+def validate(
+    dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2, ctx: int = 90
+) -> int:
     """Report structural invariants and decode a sample of each event, per the
     root CLAUDE.md rule. Returns the malformed-adjacency count.
 
@@ -478,7 +533,9 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
     # special tokens registered (a stale pre-registration artifact).
     bpe_spellings = {
         tokenizer.convert_ids_to_tokens(mid): tokenizer(
-            tokenizer.convert_ids_to_tokens(mid), add_special_tokens=False, split_special_tokens=True
+            tokenizer.convert_ids_to_tokens(mid),
+            add_special_tokens=False,
+            split_special_tokens=True,
         )["input_ids"]
         for mid in (user_id, asst_id)
     }
@@ -512,29 +569,41 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
                 kind = AA
             counts[kind] += 1
             if len(samples[kind]) < n_samples:
-                samples[kind].append(f"gap {b - a} tokens, sleep between: {slept}\n"
-                                     f"    {tokenizer.decode(ids[max(0, b - ctx):b + ctx])!r}")
+                samples[kind].append(
+                    f"gap {b - a} tokens, sleep between: {slept}\n"
+                    f"    {tokenizer.decode(ids[max(0, b - ctx) : b + ctx])!r}"
+                )
         for s in sl[:1]:
             if len(sleep_samples) < n_samples:
-                sleep_samples.append(f"offset {s}\n    {tokenizer.decode(ids[max(0, s - ctx):s + ctx])!r}")
+                sleep_samples.append(
+                    f"offset {s}\n    {tokenizer.decode(ids[max(0, s - ctx) : s + ctx])!r}"
+                )
 
     bad = counts[UU_SILENT] + counts[AA]
     total = ok + sum(counts.values())
     n_chains = len(dataset["ids"])
     n_sleeping = sum(1 for s in dataset["sleep_positions"] if len(s))
     print(f"\nstructural validation ({total} role transitions):")
-    print(f"  chains carrying sleeps: {n_sleeping}/{n_chains} "
-          f"({100 * n_sleeping / max(n_chains, 1):.1f}%); the rest are plain concatenations")
-    print(f"  marker ids: {n_marker[user_id]} user, {n_marker[asst_id]} assistant "
-          f"(~{(n_marker[user_id] + n_marker[asst_id]) / max(n_chains, 1):.1f}/chain); "
-          f"chains with no markers: {chains_no_marker}")
-    print(f"  BPE-spelled markers (expected 0): "
-          + ", ".join(f"{marker}: {n}" for marker, n in n_bpe.items()))
+    print(
+        f"  chains carrying sleeps: {n_sleeping}/{n_chains} "
+        f"({100 * n_sleeping / max(n_chains, 1):.1f}%); the rest are plain concatenations"
+    )
+    print(
+        f"  marker ids: {n_marker[user_id]} user, {n_marker[asst_id]} assistant "
+        f"(~{(n_marker[user_id] + n_marker[asst_id]) / max(n_chains, 1):.1f}/chain); "
+        f"chains with no markers: {chains_no_marker}"
+    )
+    print(
+        f"  BPE-spelled markers (expected 0): "
+        + ", ".join(f"{marker}: {n}" for marker, n in n_bpe.items())
+    )
     for kind in counts:
         print(f"  {kind}: {counts[kind]}")
     if bad:
-        print(f"  ** {bad} malformed ({100 * bad / total:.1f}%) -- every one of these is a turn "
-              f"whose addressee is not in the stream; expected value is 0 **")
+        print(
+            f"  ** {bad} malformed ({100 * bad / total:.1f}%) -- every one of these is a turn "
+            f"whose addressee is not in the stream; expected value is 0 **"
+        )
     for kind, exs in samples.items():
         for i, ex in enumerate(exs):
             print(f"\n  [{kind} sample {i + 1}] {ex}")
@@ -550,42 +619,109 @@ def validate(dataset, tokenizer, user_id: int, asst_id: int, n_samples: int = 2,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--sources", nargs="+", default=["data/train.pt", "data/train_memory.pt"],
-                        help="Episode pools (preparation/conversations.py/preparation/merge.py outputs); every episode is used exactly once")
+    parser.add_argument(
+        "--sources",
+        nargs="+",
+        default=["data/train.pt", "data/train_memory.pt"],
+        help="Episode pools (preparation/conversations.py/preparation/merge.py outputs); every episode is used exactly once",
+    )
     parser.add_argument("--output", default="data/train_chains.pt")
-    parser.add_argument("--min-budget", type=int, default=30_000, help="Per-chain token budget, log-uniform lower bound")
-    parser.add_argument("--max-budget", type=int, default=130_000, help="Per-chain token budget, log-uniform upper bound")
-    parser.add_argument("--min-wake", type=int, default=1, help="Minimum episodes per wake (between sleeps)")
+    parser.add_argument(
+        "--min-budget",
+        type=int,
+        default=30_000,
+        help="Per-chain token budget, log-uniform lower bound",
+    )
+    parser.add_argument(
+        "--max-budget",
+        type=int,
+        default=130_000,
+        help="Per-chain token budget, log-uniform upper bound",
+    )
+    parser.add_argument(
+        "--min-wake", type=int, default=1, help="Minimum episodes per wake (between sleeps)"
+    )
     parser.add_argument("--max-wake", type=int, default=4, help="Maximum episodes per wake")
-    parser.add_argument("--sleep-chain-rate", type=float, default=0.1,
-                        help="Fraction of chains carrying the sleep apparatus at all (sleeps, splits, fact blocks). The rest are plain multi-episode concatenations with silent joins -- chains are deployment shape, retention pressure lives in the cram slices; 1.0 restores the fully-engineered dataset")
-    parser.add_argument("--mid-sleep-rate", type=float, default=0.2,
-                        help="Fraction of long episodes that get one mid-conversation sleep (the natural-continuation signal)")
-    parser.add_argument("--split-episode-rate", type=float, default=0.0,
-                        help="Fraction of eligible episodes split at a turn boundary (>= --split-min-part tokens on each side) with the tail resumed two episodes later behind a forced sleep -- trains cross-episode gist retention (interleaved continuation)")
-    parser.add_argument("--split-min-part", type=int, default=256,
-                        help="Minimum tokens on each side of a split-episode cut boundary")
-    parser.add_argument("--split-qa-rate", type=float, default=None,
-                        help="Split rate for single-QA episodes (exactly two turns). The cut lands at the question start recorded by preparation/conversations.py; the tail resumes behind a fresh [USER] marker with the question moved verbatim. Episodes without a recorded question never split. Default: --split-episode-rate")
-    parser.add_argument("--split-gap-min", type=int, default=2,
-                        help="Minimum episodes between a split head and its resumed tail")
-    parser.add_argument("--split-gap-max", type=int, default=2,
-                        help="Maximum episodes between a split head and its resumed tail (gap sampled per split)")
-    parser.add_argument("--mid-sleep-min-len", type=int, default=4096,
-                        help="Minimum episode length in tokens to be eligible for a mid-conversation sleep")
-    parser.add_argument("--sentence-sleep-rate", type=float, default=0.0,
-                        help="Fraction of long episodes (>= --mid-sleep-min-len) that get one sleep at a SENTENCE boundary in the middle third -- reaches inside long document turns where no turn boundary exists (reading-persistence signal)")
-    parser.add_argument("--fact-rate", type=float, default=0.3, help="Fraction of episodes that host a fact block")
+    parser.add_argument(
+        "--sleep-chain-rate",
+        type=float,
+        default=0.1,
+        help="Fraction of chains carrying the sleep apparatus at all (sleeps, splits, fact blocks). The rest are plain multi-episode concatenations with silent joins -- chains are deployment shape, retention pressure lives in the cram slices; 1.0 restores the fully-engineered dataset",
+    )
+    parser.add_argument(
+        "--mid-sleep-rate",
+        type=float,
+        default=0.2,
+        help="Fraction of long episodes that get one mid-conversation sleep (the natural-continuation signal)",
+    )
+    parser.add_argument(
+        "--split-episode-rate",
+        type=float,
+        default=0.0,
+        help="Fraction of eligible episodes split at a turn boundary (>= --split-min-part tokens on each side) with the tail resumed two episodes later behind a forced sleep -- trains cross-episode gist retention (interleaved continuation)",
+    )
+    parser.add_argument(
+        "--split-min-part",
+        type=int,
+        default=256,
+        help="Minimum tokens on each side of a split-episode cut boundary",
+    )
+    parser.add_argument(
+        "--split-qa-rate",
+        type=float,
+        default=None,
+        help="Split rate for single-QA episodes (exactly two turns). The cut lands at the question start recorded by preparation/conversations.py; the tail resumes behind a fresh [USER] marker with the question moved verbatim. Episodes without a recorded question never split. Default: --split-episode-rate",
+    )
+    parser.add_argument(
+        "--split-gap-min",
+        type=int,
+        default=2,
+        help="Minimum episodes between a split head and its resumed tail",
+    )
+    parser.add_argument(
+        "--split-gap-max",
+        type=int,
+        default=2,
+        help="Maximum episodes between a split head and its resumed tail (gap sampled per split)",
+    )
+    parser.add_argument(
+        "--mid-sleep-min-len",
+        type=int,
+        default=4096,
+        help="Minimum episode length in tokens to be eligible for a mid-conversation sleep",
+    )
+    parser.add_argument(
+        "--sentence-sleep-rate",
+        type=float,
+        default=0.0,
+        help="Fraction of long episodes (>= --mid-sleep-min-len) that get one sleep at a SENTENCE boundary in the middle third -- reaches inside long document turns where no turn boundary exists (reading-persistence signal)",
+    )
+    parser.add_argument(
+        "--fact-rate", type=float, default=0.3, help="Fraction of episodes that host a fact block"
+    )
     parser.add_argument("--min-facts", type=int, default=4)
     parser.add_argument("--max-facts", type=int, default=64)
     parser.add_argument("--min-queries", type=int, default=3)
     parser.add_argument("--max-queries", type=int, default=8)
-    parser.add_argument("--revise-rate", type=float, default=0.12, help="Fraction of facts later revised to a new value")
-    parser.add_argument("--cross-sleep-bias", type=float, default=0.0,
-                        help="Probability of forcing a query to cross_sleep distance when that option exists (0.0 = uniform over available distances; only cross_sleep queries require the neural memory)")
+    parser.add_argument(
+        "--revise-rate",
+        type=float,
+        default=0.12,
+        help="Fraction of facts later revised to a new value",
+    )
+    parser.add_argument(
+        "--cross-sleep-bias",
+        type=float,
+        default=0.0,
+        help="Probability of forcing a query to cross_sleep distance when that option exists (0.0 = uniform over available distances; only cross_sleep queries require the neural memory)",
+    )
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--validate-samples", type=int, default=2,
-                        help="Decoded samples printed per structural event kind")
+    parser.add_argument(
+        "--validate-samples",
+        type=int,
+        default=2,
+        help="Decoded samples printed per structural event kind",
+    )
     args = parser.parse_args()
 
     import models.mamba2_2_7b_memory as model_mod
@@ -603,7 +739,9 @@ def main() -> None:
         pool_masks.extend(data["masks"])
         qoffs = data.get("question_offsets") or [None] * len(data["ids"])
         pool_qoffs.extend(qoffs)
-        print(f"  {src}: +{len(data['ids'])} episodes ({sum(q is not None for q in qoffs)} with question offsets)")
+        print(
+            f"  {src}: +{len(data['ids'])} episodes ({sum(q is not None for q in qoffs)} with question offsets)"
+        )
 
     sent_end_ids: set[int] = set()
     space_start_ids: set[int] = set()
@@ -615,22 +753,28 @@ def main() -> None:
                 sent_end_ids.add(tid)
             if tok.startswith(("Ġ", "Ċ")):
                 space_start_ids.add(tid)
-        print(f"sentence-boundary vocab scan: {len(sent_end_ids)} sentence-end ids, "
-              f"{len(space_start_ids)} space-start ids")
+        print(
+            f"sentence-boundary vocab scan: {len(sent_end_ids)} sentence-end ids, "
+            f"{len(space_start_ids)} space-start ids"
+        )
 
     sep = tokenizer.encode(" ", add_special_tokens=False)
     assert len(sep) == 1, f'expected " " to be a single token, got {sep}'
 
     dataset, stats = build_chains(
-        pool_ids, pool_masks,
+        pool_ids,
+        pool_masks,
         encode=lambda strings: tokenizer(strings, add_special_tokens=False)["input_ids"],
         labels=labels,
-        user_open=model_mod.USER_OPEN, asst_open=model_mod.ASST_OPEN,
+        user_open=model_mod.USER_OPEN,
+        asst_open=model_mod.ASST_OPEN,
         user_id=tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
         asst_id=tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
         args=args,
-        sent_end_ids=sent_end_ids, space_start_ids=space_start_ids,
-        pool_qoffs=pool_qoffs, sep_id=sep[0],
+        sent_end_ids=sent_end_ids,
+        space_start_ids=space_start_ids,
+        pool_qoffs=pool_qoffs,
+        sep_id=sep[0],
     )
 
     torch.save(dataset, args.output)
@@ -649,13 +793,17 @@ def main() -> None:
         f"{n_recall / 1e3:.1f}k recall-answer tokens"
     )
     print(f"max concurrent suspended episodes: {stats['max_pending']}")
-    bad = validate(dataset, tokenizer,
-                   tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
-                   tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
-                   n_samples=args.validate_samples)
+    bad = validate(
+        dataset,
+        tokenizer,
+        tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
+        tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
+        n_samples=args.validate_samples,
+    )
     if bad:
         # The artifact is already on disk -- inspect it, then regenerate.
         sys.exit(f"\n{args.output} has {bad} malformed role transitions; expected 0")
+
 
 __all__ = [
     "sample_log_uniform",

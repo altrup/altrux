@@ -8,7 +8,10 @@ def test_merge_preserves_artifact_concatenation(tmp_path, monkeypatch):
     second = tmp_path / "second.pt"
     output = tmp_path / "merged.pt"
     torch.save({"ids": [torch.tensor([1])], "masks": [torch.tensor([True])]}, first)
-    torch.save({"ids": [torch.tensor([2])], "masks": [torch.tensor([False])], "question_offsets": [3]}, second)
+    torch.save(
+        {"ids": [torch.tensor([2])], "masks": [torch.tensor([False])], "question_offsets": [3]},
+        second,
+    )
 
     monkeypatch.setattr(
         "sys.argv",

@@ -154,7 +154,18 @@ class _Slot:
     happened (0 = example start), the origin for --head-weight's ramp.
     """
 
-    __slots__ = ("slot_idx", "example_idx", "ids", "mask", "recall", "sleeps", "sleep_i", "last_reset", "pos", "seqlen")
+    __slots__ = (
+        "slot_idx",
+        "example_idx",
+        "ids",
+        "mask",
+        "recall",
+        "sleeps",
+        "sleep_i",
+        "last_reset",
+        "pos",
+        "seqlen",
+    )
 
     def __init__(
         self,
@@ -368,8 +379,9 @@ def run_segment(
         return {
             "group_idx": gi,
             "group_ptrs": [next_ptr if i == gi else p for i, p in enumerate(ptrs)],
-            "group_tokens": [base_tokens + segment_tokens if i == gi else t
-                             for i, t in enumerate(group_tokens)],
+            "group_tokens": [
+                base_tokens + segment_tokens if i == gi else t for i, t in enumerate(group_tokens)
+            ],
         }
 
     if len(groups) > 1:
@@ -386,7 +398,11 @@ def run_segment(
     # fresh one.
     slots: list[_Slot | None] = []
     for b in range(batch_size):
-        saved = resume_slot_states[b] if resume_slot_states is not None and b < len(resume_slot_states) else None
+        saved = (
+            resume_slot_states[b]
+            if resume_slot_states is not None and b < len(resume_slot_states)
+            else None
+        )
         if saved is not None and saved[0] in order:
             idx, pos, *rest = saved
         elif next_ptr < n_valid:
@@ -458,7 +474,9 @@ def run_segment(
                 if slot is not None:
                     slot.seek(0)
             if n_restarted:
-                print(f"no saved internal state for resume -- restarting {n_restarted} slot(s) from the beginning of their example")
+                print(
+                    f"no saved internal state for resume -- restarting {n_restarted} slot(s) from the beginning of their example"
+                )
 
     accum_count = 0
     window_loss_sum = 0.0
@@ -466,7 +484,9 @@ def run_segment(
     prev_n_lines = 0
 
     while any(s is not None for s in slots) and global_step < max_steps:
-        recall_w = recall_weight_at(global_step, recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
+        recall_w = recall_weight_at(
+            global_step, recall_start, recall_end, recall_ramp_steps, recall_ramp_shape
+        )
 
         # Build the batched chunk: gather next chunk_len tokens from each slot.
         batch_inputs: list[torch.Tensor] = []
@@ -498,8 +518,8 @@ def run_segment(
                         )
                 end = min(slot.pos + chunk_len, slot.seqlen - 1)
                 actual = end - slot.pos
-                inp = slot.ids[slot.pos:end]
-                tgt = slot.ids[slot.pos + 1:end + 1]
+                inp = slot.ids[slot.pos : end]
+                tgt = slot.ids[slot.pos + 1 : end + 1]
                 wt = torch.ones(chunk_len, dtype=torch.float32, device=device)
                 if actual < chunk_len:
                     pad = chunk_len - actual
@@ -515,16 +535,19 @@ def run_segment(
                     tpos = torch.arange(
                         slot.pos + 1 - slot.last_reset,
                         slot.pos + 1 - slot.last_reset + chunk_len,
-                        device=device, dtype=torch.float32,
+                        device=device,
+                        dtype=torch.float32,
                     )
-                    wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(min=0.0)
+                    wt *= 1.0 + (args.head_weight - 1.0) * (1.0 - tpos / args.head_tokens).clamp_(
+                        min=0.0
+                    )
                 if slot.recall is not None and recall_w != 1.0:
-                    rm = slot.recall[slot.pos + 1:end + 1]
+                    rm = slot.recall[slot.pos + 1 : end + 1]
                     if actual < chunk_len:
                         rm = F.pad(rm, (0, chunk_len - actual))
                     wt = torch.where(rm, wt * recall_w, wt)
                 if slot.mask is not None:
-                    tm = slot.mask[slot.pos + 1:end + 1]
+                    tm = slot.mask[slot.pos + 1 : end + 1]
                     if actual < chunk_len:
                         tm = F.pad(tm, (0, chunk_len - actual))
                     wt = torch.where(tm, wt, torch.zeros_like(wt))
@@ -533,9 +556,11 @@ def run_segment(
                 batch_weights.append(wt)
                 chunk_actual_lens.append(actual)
 
-        input_ids = torch.stack(batch_inputs)   # (B, chunk_len)
+        input_ids = torch.stack(batch_inputs)  # (B, chunk_len)
         target_ids = torch.stack(batch_targets)  # (B, chunk_len)
-        weight_mask = torch.stack(batch_weights)  # (B, chunk_len) float: 0 = padding, may carry >1 boosts
+        weight_mask = torch.stack(
+            batch_weights
+        )  # (B, chunk_len) float: 0 = padding, may carry >1 boosts
 
         loss_sum, weight_sum, batched_state = hooks.chunk_loss(
             model, input_ids, target_ids, weight_mask, batched_state, args.eos_weight
@@ -586,7 +611,13 @@ def run_segment(
                 accum_count += 1
                 trained_any = True
                 prev_n_lines = _show_batch_progress(
-                    model, chunk_extra_log_fn, slots, chunk_actual_lens, loss_sum, weight_sum, prev_n_lines
+                    model,
+                    chunk_extra_log_fn,
+                    slots,
+                    chunk_actual_lens,
+                    loss_sum,
+                    weight_sum,
+                    prev_n_lines,
                 )
 
         # The segment/mix budget counts tokens fed, finite or not -- it
@@ -626,7 +657,8 @@ def run_segment(
         # possible for models that expose per-slot state repair.
         if reset_slot_fn is not None and batched_state is not None:
             bad_slots = [
-                b for b, slot in enumerate(slots)
+                b
+                for b, slot in enumerate(slots)
                 if slot is not None and not _slot_state_finite(batched_state, b)
             ]
             if bad_slots:
@@ -646,7 +678,9 @@ def run_segment(
                     _clear_live(prev_n_lines)
                     prev_n_lines = 0
                 for b in bad_slots:
-                    print(f"  warning: non-finite internal state in slot {b}, abandoning example and resetting state")
+                    print(
+                        f"  warning: non-finite internal state in slot {b}, abandoning example and resetting state"
+                    )
                     slots[b].pos = slots[b].seqlen
 
         # Advance slot positions; assign next example to any that finished.
@@ -696,13 +730,19 @@ def run_segment(
                 on_step_fn(model, global_step)
 
             ramping = f"  recall_w {recall_w:.2f}" if recall_w != recall_end else ""
-            print(f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}{ramping}")
+            print(
+                f"[{ts}]  epoch {epoch + 1}  step {global_step:>6}  examples {next_ptr}/{n_valid}  loss {avg_loss:.4f}  gnorm {grad_norm:.3f}  lr {used_lr:.2e}{ramping}"
+            )
             if extra_log_fn is not None:
                 line = extra_log_fn(model)
                 if line is not None:
                     print(f"    {line}")
 
-            bad = [name for name, p in model.named_parameters() if p.requires_grad and not torch.isfinite(p).all()]
+            bad = [
+                name
+                for name, p in model.named_parameters()
+                if p.requires_grad and not torch.isfinite(p).all()
+            ]
             if bad:
                 print(f"FATAL: non-finite weights after step {global_step}: {bad[:5]}")
                 print("Checkpoints NOT saved. Exiting.")
@@ -710,8 +750,16 @@ def run_segment(
 
             if total_tokens - last_ckpt_tokens >= args.ckpt_every_tokens:
                 path = checkpoints.save_checkpoint(
-                    ckpt_dir, model, optimizer, global_step, epoch, slots, next_ptr,
-                    total_tokens, args.lora_rank, args.lora_alpha,
+                    ckpt_dir,
+                    model,
+                    optimizer,
+                    global_step,
+                    epoch,
+                    slots,
+                    next_ptr,
+                    total_tokens,
+                    args.lora_rank,
+                    args.lora_alpha,
                     batched_state=batched_state if args.keep_full_state > 0 else None,
                     dataset_fingerprint=data_fp,
                     memory_window=memory_window,
@@ -743,8 +791,13 @@ def run_segment(
 
     ptrs[gi] = next_ptr
     group_tokens[gi] = base_tokens + segment_tokens
-    final_save.update(epoch=epoch, slots=slots, next_ptr=next_ptr,
-                      batched_state=batched_state, group_state=group_state())
+    final_save.update(
+        epoch=epoch,
+        slots=slots,
+        next_ptr=next_ptr,
+        batched_state=batched_state,
+        group_state=group_state(),
+    )
     return SegmentProgress(global_step, total_tokens, last_ckpt_tokens, trained_any)
 
 
@@ -813,8 +866,15 @@ def run_training(
     first chunk's detach() -- see rotate_full_state for how checkpoints keep
     this file only for the most recent few."""
     if specs is None:
-        specs = [DataSpec(path=str(args.data), chunk_len=args.chunk_len,
-                          batch_size=args.batch_size, lo=0, hi=len(train_ids))]
+        specs = [
+            DataSpec(
+                path=str(args.data),
+                chunk_len=args.chunk_len,
+                batch_size=args.batch_size,
+                lo=0,
+                hi=len(train_ids),
+            )
+        ]
     for spec in specs:
         if spec.chunk_len is None:
             spec.chunk_len = hooks.DEFAULT_CHUNK_LEN
@@ -833,7 +893,9 @@ def run_training(
     set_memory_window_fn = getattr(model, "set_memory_window", None)
     memory_window = None
     if set_memory_window_fn is not None:
-        memory_window = getattr(args, "memory_window", None) or getattr(hooks, "DEFAULT_MEMORY_WINDOW", 1)
+        memory_window = getattr(args, "memory_window", None) or getattr(
+            hooks, "DEFAULT_MEMORY_WINDOW", 1
+        )
         for spec in specs:
             if spec.chunk_len % memory_window != 0:
                 raise ValueError(
@@ -858,7 +920,9 @@ def run_training(
     recall_start = getattr(args, "recall_ramp_start", 1.0)
     recall_ramp_steps = getattr(args, "recall_ramp_steps", 0)
     recall_ramp_shape = getattr(args, "recall_ramp_shape", "linear")
-    segment_budget = math.inf if len(groups) == 1 else getattr(args, "mix_segment_tokens", 1_000_000)
+    segment_budget = (
+        math.inf if len(groups) == 1 else getattr(args, "mix_segment_tokens", 1_000_000)
+    )
     max_steps = getattr(args, "max_steps", None) or math.inf
 
     global_step = start_step
@@ -901,8 +965,14 @@ def run_training(
     execution = SegmentExecution(hooks, model, optimizer, trainable_params, device, args)
     data = SegmentData(train_ids, train_masks, train_recall, train_sleeps, data_fp)
     callbacks = SegmentCallbacks(
-        extra_log_fn, chunk_extra_log_fn, on_step_fn, reset_slot_fn,
-        sleep_slot_fn, init_state_fn, set_grad_ckpt_fn, set_lr,
+        extra_log_fn,
+        chunk_extra_log_fn,
+        on_step_fn,
+        reset_slot_fn,
+        sleep_slot_fn,
+        init_state_fn,
+        set_grad_ckpt_fn,
+        set_lr,
     )
     checkpoint_policy = SegmentCheckpointPolicy(ckpt_dir, memory_window, max_steps)
     loss_policy = SegmentLossPolicy(recall_start, recall_end, recall_ramp_steps, recall_ramp_shape)
@@ -942,7 +1012,9 @@ def run_training(
         # A resumed group still has its in-flight slots to finish even when
         # its pointer is already past the last example.
         def pending(i: int) -> bool:
-            return ptrs[i] < len(orders[i]) or (i == resume_group and resume_slot_states is not None)
+            return ptrs[i] < len(orders[i]) or (
+                i == resume_group and resume_slot_states is not None
+            )
 
         while any(pending(i) for i in range(len(groups))) and not budget_spent():
             if resume_group is not None:
@@ -957,8 +1029,16 @@ def run_training(
                 checkpoint_policy,
                 loss_policy,
                 SegmentSchedule(
-                    groups, orders, ptrs, group_tokens, final_save, gi, epoch,
-                    segment_budget, resume_slot_states, resume_full_state,
+                    groups,
+                    orders,
+                    ptrs,
+                    group_tokens,
+                    final_save,
+                    gi,
+                    epoch,
+                    segment_budget,
+                    resume_slot_states,
+                    resume_full_state,
                 ),
                 progress,
             )
@@ -969,12 +1049,22 @@ def run_training(
             resume_slot_states = resume_full_state = resume_group = None
 
     if not trained_any:
-        print("nothing to train -- already at or past the requested epochs. Pass a larger --epochs to continue.")
+        print(
+            "nothing to train -- already at or past the requested epochs. Pass a larger --epochs to continue."
+        )
         return
 
     path = checkpoints.save_checkpoint(
-        ckpt_dir, model, optimizer, global_step, final_save["epoch"], final_save["slots"], final_save["next_ptr"],
-        total_tokens, args.lora_rank, args.lora_alpha,
+        ckpt_dir,
+        model,
+        optimizer,
+        global_step,
+        final_save["epoch"],
+        final_save["slots"],
+        final_save["next_ptr"],
+        total_tokens,
+        args.lora_rank,
+        args.lora_alpha,
         batched_state=final_save["batched_state"] if args.keep_full_state > 0 else None,
         dataset_fingerprint=data_fp,
         memory_window=memory_window,

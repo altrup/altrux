@@ -35,8 +35,9 @@ class Dream(Protocol):
     prefix_len: int
 
 
-def acceptance(dreams: Sequence[Dream], user_id: int, asst_id: int,
-               plain_id: int = PLAIN_BRACKET_ID) -> dict[str, object]:
+def acceptance(
+    dreams: Sequence[Dream], user_id: int, asst_id: int, plain_id: int = PLAIN_BRACKET_ID
+) -> dict[str, object]:
     """Both §2.1 clauses over the free-running spans of ``dreams``."""
     plain = markers = non_ascii = 0
     for dream in dreams:
@@ -48,15 +49,23 @@ def acceptance(dreams: Sequence[Dream], user_id: int, asst_id: int,
     slots = plain + markers
     share = plain / slots if slots else 0.0
     passed = bool(slots) and share < MARKER_SHARE_MAX and non_ascii == 0
-    return {"dreams": len(dreams), "plain": plain, "markers": markers,
-            "share": share, "non_ascii": non_ascii, "passed": passed}
+    return {
+        "dreams": len(dreams),
+        "plain": plain,
+        "markers": markers,
+        "share": share,
+        "non_ascii": non_ascii,
+        "passed": passed,
+    }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--cache", required=True,
-                        help="Dream cache to score (single-dream or dream-set)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--cache", required=True, help="Dream cache to score (single-dream or dream-set)"
+    )
     args = parser.parse_args()
 
     import importlib
@@ -74,14 +83,18 @@ def main() -> None:
     cache = load_dream_cache(args.cache)
     dreams = list(getattr(cache, "dreams", [cache]))
 
-    result = acceptance(dreams,
-                        user_id=tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
-                        asst_id=tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN))
+    result = acceptance(
+        dreams,
+        user_id=tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
+        asst_id=tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
+    )
     print(f"[{ts()}] acceptance check ({args.cache}, {result['dreams']} dreams, free spans only)")
     print(f"[{ts()}]   real markers (USER/ASST ids) : {result['markers']}")
     print(f"[{ts()}]   plain ']' (id {PLAIN_BRACKET_ID})            : {result['plain']}")
-    print(f"[{ts()}]   plain share of marker slots  : {result['share']:.1%}  "
-          f"(must be < {MARKER_SHARE_MAX:.0%})")
+    print(
+        f"[{ts()}]   plain share of marker slots  : {result['share']:.1%}  "
+        f"(must be < {MARKER_SHARE_MAX:.0%})"
+    )
     print(f"[{ts()}]   non-ASCII tokens (mojibake)  : {result['non_ascii']}  (must be 0)")
     print(f"[{ts()}] {'PASSED' if result['passed'] else 'FAILED'}")
     raise SystemExit(0 if result["passed"] else 1)

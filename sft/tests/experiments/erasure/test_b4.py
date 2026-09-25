@@ -43,8 +43,9 @@ def read(ssm_state: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
 
 def test_divergence_is_zero_where_the_state_changed_nothing():
     logits = torch.randn(5, 7)
-    torch.testing.assert_close(state_divergence(logits, logits.clone()),
-                               torch.zeros(5), atol=1e-6, rtol=0)
+    torch.testing.assert_close(
+        state_divergence(logits, logits.clone()), torch.zeros(5), atol=1e-6, rtol=0
+    )
 
 
 def test_divergence_is_larger_where_the_state_moved_the_prediction_further():
@@ -73,8 +74,12 @@ def test_the_gate_never_captures_a_prefix_or_a_cue_position():
 def test_the_gate_uses_no_fact_knowledge():
     """Sec 2.9.1: the mechanism path sees a divergence vector and a threshold.
     Anything else would have to arrive through a parameter that does not exist."""
-    assert set(gated_positions.__code__.co_varnames[:gated_positions.__code__.co_argcount]) == {
-        "divergence", "threshold", "prefix_len", "exclude"}
+    assert set(gated_positions.__code__.co_varnames[: gated_positions.__code__.co_argcount]) == {
+        "divergence",
+        "threshold",
+        "prefix_len",
+        "exclude",
+    }
 
 
 # ---- rank rules and the address budget (sec 2.7) --------------------------

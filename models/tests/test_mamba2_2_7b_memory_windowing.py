@@ -66,9 +66,15 @@ def test_window1_matches_original_per_token_write():
     for step in range(3):
         torch.manual_seed(100 + step)
         k, v = torch.randn(BATCH, DIM), torch.randn(BATCH, DIM)
-        eta, theta, alpha = torch.rand(BATCH) * 0.9, torch.rand(BATCH) * 0.1, torch.rand(BATCH) * 0.1
+        eta, theta, alpha = (
+            torch.rand(BATCH) * 0.9,
+            torch.rand(BATCH) * 0.1,
+            torch.rand(BATCH) * 0.1,
+        )
 
-        new_params, new_momentum, orig_loss, orig_gnorm = _original_single_token_write(mem_orig, k, v, eta, theta, alpha)
+        new_params, new_momentum, orig_loss, orig_gnorm = _original_single_token_write(
+            mem_orig, k, v, eta, theta, alpha
+        )
         mem_orig.w1, mem_orig.b1, mem_orig.w2, mem_orig.b2 = new_params
         mem_orig.momentum = new_momentum
 
@@ -77,8 +83,9 @@ def test_window1_matches_original_per_token_write():
         )
 
         for name in ("w1", "b1", "w2", "b2"):
-            assert torch.allclose(getattr(mem_orig, name), getattr(mem_windowed, name), atol=1e-5), \
-                f"step {step}: {name} diverges from original write() at window=1"
+            assert torch.allclose(
+                getattr(mem_orig, name), getattr(mem_windowed, name), atol=1e-5
+            ), f"step {step}: {name} diverges from original write() at window=1"
         assert torch.allclose(orig_gnorm, win_gnorm, atol=1e-5)
         assert torch.allclose(orig_loss, win_loss.squeeze(0), atol=1e-5)
 
@@ -92,7 +99,11 @@ def test_window_gt_1_stays_finite_and_gradient_reaches_upstream_projections():
 
     ks = torch.stack([residuals[t] @ k_proj_w for t in range(W)], dim=0)
     vs = torch.stack([residuals[t] @ v_proj_w for t in range(W)], dim=0)
-    etas, thetas, alphas = torch.rand(W, BATCH) * 0.9, torch.rand(W, BATCH) * 0.1, torch.rand(W, BATCH) * 0.1
+    etas, thetas, alphas = (
+        torch.rand(W, BATCH) * 0.9,
+        torch.rand(W, BATCH) * 0.1,
+        torch.rand(W, BATCH) * 0.1,
+    )
 
     loss, gnorm = mem.write(ks, vs, etas, thetas, alphas)
     assert loss.shape == (W, BATCH)
@@ -130,12 +141,16 @@ def test_multi_window_sequence_flushes_cleanly():
         pending["theta"].append(torch.rand(BATCH) * 0.1)
         pending["alpha"].append(torch.rand(BATCH) * 0.1)
         if len(pending["k"]) == W:
-            mem.write(*(torch.stack(pending[name], dim=0) for name in ("k", "v", "eta", "theta", "alpha")))
+            mem.write(
+                *(torch.stack(pending[name], dim=0) for name in ("k", "v", "eta", "theta", "alpha"))
+            )
             n_writes += 1
             pending = {k: [] for k in pending}
 
     assert n_writes == n_windows
-    assert all(len(v) == 0 for v in pending.values()), "unflushed tokens left over -- window didn't divide evenly"
+    assert all(len(v) == 0 for v in pending.values()), (
+        "unflushed tokens left over -- window didn't divide evenly"
+    )
 
 
 @pytest.mark.parametrize("window", [1, 2, 4, 8])
@@ -143,9 +158,18 @@ def test_various_window_sizes_produce_finite_weights(window):
     mem = _make_memory()
     ks = torch.randn(window, BATCH, DIM)
     vs = torch.randn(window, BATCH, DIM)
-    etas, thetas, alphas = torch.rand(window, BATCH) * 0.9, torch.rand(window, BATCH) * 0.1, torch.rand(window, BATCH) * 0.1
+    etas, thetas, alphas = (
+        torch.rand(window, BATCH) * 0.9,
+        torch.rand(window, BATCH) * 0.1,
+        torch.rand(window, BATCH) * 0.1,
+    )
     mem.write(ks, vs, etas, thetas, alphas)
-    assert torch.isfinite(mem.w1).all() and torch.isfinite(mem.w2).all() and torch.isfinite(mem.b1).all() and torch.isfinite(mem.b2).all()
+    assert (
+        torch.isfinite(mem.w1).all()
+        and torch.isfinite(mem.w2).all()
+        and torch.isfinite(mem.b1).all()
+        and torch.isfinite(mem.b2).all()
+    )
 
 
 # --- Injection batching (Model.forward's is_window_close gate + the
@@ -157,6 +181,7 @@ def test_various_window_sizes_produce_finite_weights(window):
 # constructed with no args in Model.__init__, binding those as defaults) and
 # so can't be wrapped around a small synthetic backbone for a cheap local
 # integration test.
+
 
 def _is_window_close(t: int, window: int) -> bool:
     """Mirrors Model.forward's own `is_window_close` expression exactly."""
@@ -201,7 +226,9 @@ def test_pooling_is_a_convex_combination_and_upweights_the_most_surprising_token
     assert torch.isfinite(pooled_o).all() and torch.isfinite(pooled_surprise).all()
 
     weights = torch.softmax(surprise, dim=0)
-    assert torch.allclose(weights.sum(dim=0), torch.ones(BATCH), atol=1e-6), "pooling weights must sum to 1"
+    assert torch.allclose(weights.sum(dim=0), torch.ones(BATCH), atol=1e-6), (
+        "pooling weights must sum to 1"
+    )
 
     # The most-surprising token in the window should get the largest weight
     # for every batch row, by construction of softmax.
@@ -219,6 +246,7 @@ def test_pooling_is_a_convex_combination_and_upweights_the_most_surprising_token
 # feature detection, and the windowed read/surprise math _forward_fused
 # uses in place of Model._forward_manual's per-token read()/surprise()
 # calls at READ_LAYER (see _NeuralMemory.read_windowed/surprise_windowed).
+
 
 def test_fused_kernel_usable_false_without_causal_conv1d(monkeypatch):
     monkeypatch.setattr(_model_mod, "causal_conv1d_fn", None)
@@ -291,7 +319,11 @@ def test_read_windowed_uses_window_start_weights_not_mid_window():
     # A write() call must not retroactively change what read_windowed
     # would have returned for weights captured before it.
     ks, vs = torch.randn(W, BATCH, DIM), torch.randn(W, BATCH, DIM)
-    etas, thetas, alphas = torch.rand(W, BATCH) * 0.9, torch.rand(W, BATCH) * 0.1, torch.rand(W, BATCH) * 0.1
+    etas, thetas, alphas = (
+        torch.rand(W, BATCH) * 0.9,
+        torch.rand(W, BATCH) * 0.1,
+        torch.rand(W, BATCH) * 0.1,
+    )
     mem.write(ks, vs, etas, thetas, alphas)
 
     after_fresh_call = mem.read_windowed(q_stack)
@@ -314,4 +346,6 @@ def test_window_span_boundaries_partition_the_chunk_exactly(window, seqlen):
 
     assert covered == list(range(seqlen))
     last_start, last_boundary = (n_windows - 1) * window, (n_windows - 1) * window + window - 1
-    assert last_boundary == seqlen - 1, "last window's boundary token must be the chunk's last token"
+    assert last_boundary == seqlen - 1, (
+        "last window's boundary token must be the chunk's last token"
+    )

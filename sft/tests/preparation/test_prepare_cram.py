@@ -15,7 +15,14 @@ import pytest
 import torch
 
 
-from preparation.cram import add_block_args, build_blocks, make_items, split_articles, split_sentences, validate_blocks
+from preparation.cram import (
+    add_block_args,
+    build_blocks,
+    make_items,
+    split_articles,
+    split_sentences,
+    validate_blocks,
+)
 
 USER_ID, ASST_ID = 1, 2
 SEP_ID, NL_ID = ord(" "), ord("\n")
@@ -49,20 +56,25 @@ def _items(n: int, entity=lambda i: f"Zorblat{i:03d}") -> list[dict]:
         ent = entity(i)
         answer = f"The regional capital is {ent} in the northern valley."
         s = answer.index(ent)
-        items.append({
-            "source": f"Article {i} covers a region of moderate size. {answer} "
-                      f"Trade routes crossed it for centuries and the population grew steadily.",
-            "cue": answer.replace(ent, "____"),
-            "answer": answer,
-            "span": (s, s + len(ent)),
-            "meta": {"article": f"art{i}", "entity": ent, "entity_type": "LOC"},
-        })
+        items.append(
+            {
+                "source": f"Article {i} covers a region of moderate size. {answer} "
+                f"Trade routes crossed it for centuries and the population grew steadily.",
+                "cue": answer.replace(ent, "____"),
+                "answer": answer,
+                "span": (s, s + len(ent)),
+                "meta": {"article": f"art{i}", "entity": ent, "entity_type": "LOC"},
+            }
+        )
     return items
 
 
 def _fillers(n: int) -> list[str]:
-    return [f"Unrelated passage {i} about weather patterns, soil composition and the slow "
-            f"drift of sediment along a river delta over many seasons." for i in range(n)]
+    return [
+        f"Unrelated passage {i} about weather patterns, soil composition and the slow "
+        f"drift of sediment along a river delta over many seasons."
+        for i in range(n)
+    ]
 
 
 def _groups(n: int, per: int) -> list[list[dict]]:
@@ -70,43 +82,65 @@ def _groups(n: int, per: int) -> list[list[dict]]:
     density knob draws on."""
     groups = []
     for g in range(n):
-        answers = [f"The regional capital of district {j} is Zorb{g:03d}{j} in the northern valley."
-                   for j in range(per)]
-        source = (f"Article {g} covers a region of moderate size. " + " ".join(answers)
-                  + " Trade routes crossed it for centuries and the population grew steadily.")
+        answers = [
+            f"The regional capital of district {j} is Zorb{g:03d}{j} in the northern valley."
+            for j in range(per)
+        ]
+        source = (
+            f"Article {g} covers a region of moderate size. "
+            + " ".join(answers)
+            + " Trade routes crossed it for centuries and the population grew steadily."
+        )
         group = []
         for j, answer in enumerate(answers):
             ent = f"Zorb{g:03d}{j}"
             s = answer.index(ent)
-            group.append({
-                "source": source, "cue": answer.replace(ent, "____"), "answer": answer,
-                "span": (s, s + len(ent)),
-                "meta": {"article": f"art{g}", "entity": ent, "entity_type": "LOC"},
-            })
+            group.append(
+                {
+                    "source": source,
+                    "cue": answer.replace(ent, "____"),
+                    "answer": answer,
+                    "span": (s, s + len(ent)),
+                    "meta": {"article": f"art{g}", "entity": ent, "entity_type": "LOC"},
+                }
+            )
         groups.append(group)
     return groups
 
 
 def _args(**overrides):
     defaults = dict(
-        seed=0, gap_min=40, ceiling_start=80, ceiling_end=400,
-        block_gap_ratio=4, min_block_tokens=400, max_block_tokens=8000,
-        max_tail_units=2, item_rate=1.0, max_pending=32, max_items_per_block=0,
-        items_per_source_start=1, items_per_source_end=1,
+        seed=0,
+        gap_min=40,
+        ceiling_start=80,
+        ceiling_end=400,
+        block_gap_ratio=4,
+        min_block_tokens=400,
+        max_block_tokens=8000,
+        max_tail_units=2,
+        item_rate=1.0,
+        max_pending=32,
+        max_items_per_block=0,
+        items_per_source_start=1,
+        items_per_source_end=1,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
 
-def _build(n_items=60, n_fillers=60, encode=_encode, items=None, fillers=None, groups=None,
-           **overrides):
+def _build(
+    n_items=60, n_fillers=60, encode=_encode, items=None, fillers=None, groups=None, **overrides
+):
     if groups is None:
         groups = [[it] for it in (_items(n_items) if items is None else items)]
     return build_blocks(
         groups,
         _fillers(n_fillers) if fillers is None else fillers,
         encode,
-        user_id=USER_ID, asst_id=ASST_ID, sep_id=SEP_ID, nl_id=NL_ID,
+        user_id=USER_ID,
+        asst_id=ASST_ID,
+        sep_id=SEP_ID,
+        nl_id=NL_ID,
         args=_args(**overrides),
     )
 
@@ -159,8 +193,8 @@ def test_recall_credit_marks_exactly_the_entity_span():
         marked = int(recall.sum())
         assert marked == sum(it["span_end"] - it["span_start"] for it in block)
         for it in block:
-            assert recall[it["span_start"]:it["span_end"]].all()
-            assert tok.decode(ids[it["span_start"]:it["span_end"]]).strip() == it["entity"]
+            assert recall[it["span_start"] : it["span_end"]].all()
+            assert tok.decode(ids[it["span_start"] : it["span_end"]]).strip() == it["entity"]
             n += 1
     assert n > 10
 
@@ -169,8 +203,8 @@ def test_recall_credit_never_lands_on_the_copied_span_in_the_cue_or_source():
     dataset, _ = _build()
     for recall, block in zip(dataset["recall_masks"], dataset["items"]):
         for it in block:
-            assert not recall[it["source_start"]:it["source_end"]].any()
-            assert not recall[it["cue_start"]:it["cue_end"]].any()
+            assert not recall[it["source_start"] : it["source_end"]].any()
+            assert not recall[it["cue_start"] : it["cue_end"]].any()
 
 
 def test_cue_is_not_always_the_last_thing_before_the_answer():
@@ -190,7 +224,13 @@ def test_turns_strictly_alternate_user_assistant():
 
 def test_source_always_precedes_its_cue_which_precedes_its_answer():
     for it in _all_items(_build()[0]):
-        assert it["source_end"] <= it["cue_start"] < it["cue_end"] <= it["answer_start"] < it["span_start"]
+        assert (
+            it["source_end"]
+            <= it["cue_start"]
+            < it["cue_end"]
+            <= it["answer_start"]
+            < it["span_start"]
+        )
 
 
 def test_blocks_respect_the_token_budget_bounds():
@@ -235,8 +275,11 @@ def test_an_entity_visible_in_an_interference_passage_loses_its_credit():
     leaked = [it["meta"]["entity"] for it in items[:10]]
     # max_pending 1 puts a filler between every pair of item sources, so each
     # block is guaranteed to carry the leaking passages.
-    fillers = [f"An unrelated passage that happens to name {', '.join(leaked)} while discussing "
-               f"sediment, weather and the drift of a river delta." for _ in range(40)]
+    fillers = [
+        f"An unrelated passage that happens to name {', '.join(leaked)} while discussing "
+        f"sediment, weather and the drift of a river delta."
+        for _ in range(40)
+    ]
     dataset, stats = _build(items=items, fillers=fillers, max_pending=1)
     assert stats["n_leaked_dropped"] > 0
     assert not (set(leaked) & {it["entity"] for it in _all_items(dataset)})
@@ -249,9 +292,9 @@ def test_validate_catches_a_credited_span_that_also_appears_between_source_and_c
     dataset, _ = _build()
     it = dataset["items"][-1][0]
     ids = dataset["ids"][-1]
-    span = ids[it["span_start"]:it["span_end"]].clone()
+    span = ids[it["span_start"] : it["span_end"]].clone()
     at = it["source_end"] + 1
-    ids[at:at + len(span)] = span
+    ids[at : at + len(span)] = span
     report = validate_blocks(dataset, _Tok(), user_id=USER_ID, asst_id=ASST_ID, n_samples=0)
     assert report["stray_entity_occurrences"] == 1
     assert report["credit_visible_before_cue"] == 1
@@ -293,53 +336,83 @@ def _passage(text, article="art0"):
 
 
 def _ents(text, *surfaces, label="LOC"):
-    return [{"text": s, "label": label, "start": text.index(s), "end": text.index(s) + len(s)}
-            for s in surfaces]
+    return [
+        {"text": s, "label": label, "start": text.index(s), "end": text.index(s) + len(s)}
+        for s in surfaces
+    ]
 
 
-_THREE_ENTITIES = ("Berlin grew quickly in that period and trade expanded across the region. "
-                   "The treaty was signed in Vienna by the delegates after long talks. "
-                   "Later records describe the aftermath in Prague in considerable detail.")
+_THREE_ENTITIES = (
+    "Berlin grew quickly in that period and trade expanded across the region. "
+    "The treaty was signed in Vienna by the delegates after long talks. "
+    "Later records describe the aftermath in Prague in considerable detail."
+)
 
 
 def test_make_items_swaps_a_same_type_entity_and_blanks_only_the_cue():
-    text = ("Berlin grew quickly in that period. The treaty was signed in Vienna by the delegates. "
-            "Later records describe the aftermath in some detail.")
-    items = make_items(_passage(text), _ents(text, "Vienna"), {"LOC": ["Marrakesh"]}, _Rng(),
-                       min_sentence_words=6)
+    text = (
+        "Berlin grew quickly in that period. The treaty was signed in Vienna by the delegates. "
+        "Later records describe the aftermath in some detail."
+    )
+    items = make_items(
+        _passage(text), _ents(text, "Vienna"), {"LOC": ["Marrakesh"]}, _Rng(), min_sentence_words=6
+    )
     assert len(items) == 1
     item = items[0]
     assert "Marrakesh" in item["source"] and "Vienna" not in item["source"]
-    assert item["answer"][item["span"][0]:item["span"][1]] == "Marrakesh"
+    assert item["answer"][item["span"][0] : item["span"][1]] == "Marrakesh"
     assert "____" in item["cue"] and "Marrakesh" not in item["cue"]
     assert item["answer"] == item["cue"].replace("____", "Marrakesh")
     assert item["meta"]["entity_type"] == "LOC"
 
 
 def test_make_items_never_substitutes_inside_a_longer_word():
-    text = ("The Principality of Andorra kept its charter for centuries after the transfer. "
-            "Later records describe the aftermath of that arrangement in some detail.")
+    text = (
+        "The Principality of Andorra kept its charter for centuries after the transfer. "
+        "Later records describe the aftermath of that arrangement in some detail."
+    )
     ents = [{"text": "Principal", "label": "LOC", "start": 4, "end": 13}]
-    assert make_items(_passage(text), ents, {"LOC": ["Marrakesh"]}, _Rng(), min_sentence_words=6) == []
+    assert (
+        make_items(_passage(text), ents, {"LOC": ["Marrakesh"]}, _Rng(), min_sentence_words=6) == []
+    )
 
 
 def test_make_items_declines_when_the_entity_repeats_in_its_sentence():
-    text = "The delegates met in Vienna and Vienna hosted them again the following spring for talks."
-    assert make_items(_passage(text), _ents(text, "Vienna"), {"LOC": ["Marrakesh"]}, _Rng(),
-                      min_sentence_words=6) == []
+    text = (
+        "The delegates met in Vienna and Vienna hosted them again the following spring for talks."
+    )
+    assert (
+        make_items(
+            _passage(text),
+            _ents(text, "Vienna"),
+            {"LOC": ["Marrakesh"]},
+            _Rng(),
+            min_sentence_words=6,
+        )
+        == []
+    )
 
 
 def test_make_items_declines_without_a_same_type_replacement():
     text = "The delegates met in Vienna for a week of talks about the treaty and its terms."
-    assert make_items(_passage(text), _ents(text, "Vienna"), {"LOC": ["Vienna"]}, _Rng(),
-                      min_sentence_words=6) == []
+    assert (
+        make_items(
+            _passage(text), _ents(text, "Vienna"), {"LOC": ["Vienna"]}, _Rng(), min_sentence_words=6
+        )
+        == []
+    )
 
 
 def test_make_items_yields_a_group_sharing_one_substituted_source():
     text = _THREE_ENTITIES
-    items = make_items(_passage(text), _ents(text, "Berlin", "Vienna", "Prague"),
-                       {"LOC": ["Marrakesh", "Quito", "Osaka"]}, _Rng(),
-                       min_sentence_words=6, max_items=3)
+    items = make_items(
+        _passage(text),
+        _ents(text, "Berlin", "Vienna", "Prague"),
+        {"LOC": ["Marrakesh", "Quito", "Osaka"]},
+        _Rng(),
+        min_sentence_words=6,
+        max_items=3,
+    )
     assert len(items) == 3
     assert len({it["source"] for it in items}) == 1
     entities = {it["meta"]["entity"] for it in items}
@@ -350,9 +423,14 @@ def test_make_items_yields_a_group_sharing_one_substituted_source():
 
 def test_group_members_never_reveal_each_others_entity_in_a_cue_or_answer():
     text = _THREE_ENTITIES
-    items = make_items(_passage(text), _ents(text, "Berlin", "Vienna", "Prague"),
-                       {"LOC": ["Marrakesh", "Quito", "Osaka"]}, _Rng(),
-                       min_sentence_words=6, max_items=3)
+    items = make_items(
+        _passage(text),
+        _ents(text, "Berlin", "Vienna", "Prague"),
+        {"LOC": ["Marrakesh", "Quito", "Osaka"]},
+        _Rng(),
+        min_sentence_words=6,
+        max_items=3,
+    )
     for it in items:
         for other in items:
             if other is not it:
@@ -361,14 +439,24 @@ def test_group_members_never_reveal_each_others_entity_in_a_cue_or_answer():
 
 def test_make_items_honours_max_items():
     text = _THREE_ENTITIES
-    items = make_items(_passage(text), _ents(text, "Berlin", "Vienna", "Prague"),
-                       {"LOC": ["Marrakesh", "Quito", "Osaka"]}, _Rng(), min_sentence_words=6)
+    items = make_items(
+        _passage(text),
+        _ents(text, "Berlin", "Vienna", "Prague"),
+        {"LOC": ["Marrakesh", "Quito", "Osaka"]},
+        _Rng(),
+        min_sentence_words=6,
+    )
     assert len(items) == 1
 
 
 def test_a_group_emits_its_shared_source_passage_once():
-    dataset, _ = _build(groups=_groups(40, 3), n_fillers=20, **_DENSE,
-                        items_per_source_start=3, items_per_source_end=3)
+    dataset, _ = _build(
+        groups=_groups(40, 3),
+        n_fillers=20,
+        **_DENSE,
+        items_per_source_start=3,
+        items_per_source_end=3,
+    )
     for ids, block in zip(dataset["ids"], dataset["items"]):
         by_source = {}
         for it in block:
@@ -381,10 +469,20 @@ def test_a_group_emits_its_shared_source_passage_once():
 
 
 def test_interference_density_is_higher_when_a_source_carries_more_items():
-    dense, _ = _build(groups=_groups(60, 3), n_fillers=60, **_DENSE,
-                      items_per_source_start=3, items_per_source_end=3)
-    sparse, _ = _build(groups=_groups(60, 3), n_fillers=60, **_DENSE,
-                       items_per_source_start=1, items_per_source_end=1)
+    dense, _ = _build(
+        groups=_groups(60, 3),
+        n_fillers=60,
+        **_DENSE,
+        items_per_source_start=3,
+        items_per_source_end=3,
+    )
+    sparse, _ = _build(
+        groups=_groups(60, 3),
+        n_fillers=60,
+        **_DENSE,
+        items_per_source_start=1,
+        items_per_source_end=1,
+    )
 
     def tokens_per_item(dataset) -> float:
         n = sum(len(b) for b in dataset["items"])
@@ -394,8 +492,13 @@ def test_interference_density_is_higher_when_a_source_carries_more_items():
 
 
 def test_density_relaxes_as_the_curriculum_ceiling_grows():
-    dataset, _ = _build(groups=_groups(120, 3), n_fillers=60, **_DENSE,
-                        items_per_source_start=3, items_per_source_end=1)
+    dataset, _ = _build(
+        groups=_groups(120, 3),
+        n_fillers=60,
+        **_DENSE,
+        items_per_source_start=3,
+        items_per_source_end=1,
+    )
     blocks = dataset["items"]
     assert len(blocks) > 3
     assert _per_source(blocks[0]) > 2.0
@@ -403,8 +506,9 @@ def test_density_relaxes_as_the_curriculum_ceiling_grows():
 
 
 def test_items_per_source_never_drops_below_one():
-    dataset, _ = _build(groups=_groups(40, 1), n_fillers=40,
-                        items_per_source_start=0, items_per_source_end=0)
+    dataset, _ = _build(
+        groups=_groups(40, 1), n_fillers=40, items_per_source_start=0, items_per_source_end=0
+    )
     assert sum(len(b) for b in dataset["items"]) > 10
 
 
@@ -422,13 +526,15 @@ def test_needle_style_items_with_a_whole_answer_span_still_build():
     items = []
     for i in range(30):
         answer = f"bathroom{i}"
-        items.append({
-            "source": f"Mary went to the bathroom{i}. John moved to the garden. Sandra picked up the apple there.",
-            "cue": f"Where is Mary ({i})?",
-            "answer": answer,
-            "span": (0, len(answer)),
-            "meta": {"article": f"qa1-{i}", "entity": answer, "entity_type": "needle"},
-        })
+        items.append(
+            {
+                "source": f"Mary went to the bathroom{i}. John moved to the garden. Sandra picked up the apple there.",
+                "cue": f"Where is Mary ({i})?",
+                "answer": answer,
+                "span": (0, len(answer)),
+                "meta": {"article": f"qa1-{i}", "entity": answer, "entity_type": "needle"},
+            }
+        )
     dataset, stats = _build(items=items, n_fillers=40)
     report = validate_blocks(dataset, _Tok(), user_id=USER_ID, asst_id=ASST_ID, n_samples=0)
     assert report["span_text_mismatch"] == 0

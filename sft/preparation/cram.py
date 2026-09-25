@@ -93,8 +93,14 @@ def split_articles(titles, heldout_frac: float, seed: int) -> tuple[set[str], se
     return set(uniq) - heldout, heldout
 
 
-def make_items(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
-               min_sentence_words: int = 8, max_items: int = 1) -> list[dict]:
+def make_items(
+    passage: dict,
+    ents: list[dict],
+    pool: dict[str, list[str]],
+    rng,
+    min_sentence_words: int = 8,
+    max_items: int = 1,
+) -> list[dict]:
     """A *group* of up to `max_items` cram items sharing one passage, or [].
 
     `ents` are NER spans over `passage["text"]`; `pool` maps entity type to
@@ -111,9 +117,11 @@ def make_items(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
     """
     text = passage["text"]
     sents = [text[a:b] for a, b in split_sentences(text)]
-    usable = [i for i, s in enumerate(sents)
-              if len(s.split()) >= min_sentence_words and s[:1].isupper()
-              and s.endswith((".", "!", "?"))]
+    usable = [
+        i
+        for i, s in enumerate(sents)
+        if len(s.split()) >= min_sentence_words and s[:1].isupper() and s.endswith((".", "!", "?"))
+    ]
     eligible = [e for e in ents if e["label"] in ENTITY_TYPES and is_clean_surface(e["text"])]
     rng.shuffle(eligible)
 
@@ -129,11 +137,18 @@ def make_items(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
         original, taken = ent["text"], {x for o, r, _, _ in chosen for x in (o, r)}
         if original in taken or any(occurrences(sents[h], original) for *_, h in chosen):
             continue
-        hosts = [i for i in usable
-                 if i not in {h for *_, h in chosen} and occurrences(sents[i], original) == 1
-                 and not any(occurrences(sents[i], o) for o, *_ in chosen)]
-        candidates = [s for s in pool.get(ent["label"], [])
-                      if s != original and s not in text and s not in taken]
+        hosts = [
+            i
+            for i in usable
+            if i not in {h for *_, h in chosen}
+            and occurrences(sents[i], original) == 1
+            and not any(occurrences(sents[i], o) for o, *_ in chosen)
+        ]
+        candidates = [
+            s
+            for s in pool.get(ent["label"], [])
+            if s != original and s not in text and s not in taken
+        ]
         if hosts and candidates:
             chosen.append((original, rng.choice(candidates), ent["label"], rng.choice(hosts)))
     if not chosen:
@@ -144,8 +159,11 @@ def make_items(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
     # substituting one entity at a time lets an earlier replacement be rewritten
     # by a later original.
     swaps = {o: r for o, r, _, _ in chosen}
-    pattern = re.compile(r"(?<!\w)(" + "|".join(
-        re.escape(o) for o in sorted(swaps, key=len, reverse=True)) + r")(?!\w)")
+    pattern = re.compile(
+        r"(?<!\w)("
+        + "|".join(re.escape(o) for o in sorted(swaps, key=len, reverse=True))
+        + r")(?!\w)"
+    )
 
     def substitute(s: str) -> str:
         return pattern.sub(lambda m: swaps[m.group(1)], s)
@@ -155,18 +173,20 @@ def make_items(passage: dict, ents: list[dict], pool: dict[str, list[str]], rng,
     for original, replacement, label, host in chosen:
         answer = substitute(sents[host])
         at = answer.index(replacement)
-        items.append({
-            "source": swapped,
-            "cue": answer.replace(replacement, BLANK),
-            "answer": answer,
-            "span": (at, at + len(replacement)),
-            "meta": {
-                "article": passage["article"],
-                "entity": replacement,
-                "entity_type": label,
-                "original_entity": original,
-            },
-        })
+        items.append(
+            {
+                "source": swapped,
+                "cue": answer.replace(replacement, BLANK),
+                "answer": answer,
+                "span": (at, at + len(replacement)),
+                "meta": {
+                    "article": passage["article"],
+                    "entity": replacement,
+                    "entity_type": label,
+                    "original_entity": original,
+                },
+            }
+        )
     return items
 
 
@@ -178,13 +198,13 @@ def _resolve_span(full: list[int], enc, answer: str, span: tuple[int, int], enti
     space folded into the entity. Fails closed -- a misaligned span would put
     the x16 recall credit on the wrong tokens.
     """
-    if answer[span[0]:span[1]] != entity:
+    if answer[span[0] : span[1]] != entity:
         return None
     for start in (span[0], span[0] - 1):
         if start < 0 or (start != span[0] and answer[start] != " "):
             continue
-        pre, ent = enc(answer[:start]), enc(answer[start:span[1]])
-        if ent and full[:len(pre)] == pre and full[len(pre):len(pre) + len(ent)] == ent:
+        pre, ent = enc(answer[:start]), enc(answer[start : span[1]])
+        if ent and full[: len(pre)] == pre and full[len(pre) : len(pre) + len(ent)] == ent:
             return len(pre), len(pre) + len(ent)
     return None
 
@@ -203,8 +223,17 @@ def _items_per_source(progress: float, args) -> int:
     return max(1, int(round(a + (b - a) * progress)))
 
 
-def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
-                 user_id: int, asst_id: int, sep_id: int, nl_id: int, args) -> tuple[dict, dict]:
+def build_blocks(
+    groups: list[list[dict]],
+    fillers: list[str],
+    encode,
+    *,
+    user_id: int,
+    asst_id: int,
+    sep_id: int,
+    nl_id: int,
+    args,
+) -> tuple[dict, dict]:
     """The generator, IO-free: `encode` is a batched strings -> list[list[int]]
     callable, `args` the CLI namespace. Returns (dataset, stats).
 
@@ -225,15 +254,21 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
 
     items = [it for g in groups for it in g]
     for it in items:
-        it["_i_src"], it["_i_cue"], it["_i_ans"] = add(it["source"]), add(it["cue"]), add(it["answer"])
+        it["_i_src"], it["_i_cue"], it["_i_ans"] = (
+            add(it["source"]),
+            add(it["cue"]),
+            add(it["answer"]),
+        )
         start, end = it["span"]
         for s in (start, start - 1):
             if s >= 0:
                 add(it["answer"][:s])
                 add(it["answer"][s:end])
     filler_idx = [add(f) for f in fillers]
-    print(f"tokenizing {len(strings)} strings ({len(items)} items in {len(groups)} groups, "
-          f"{len(fillers)} fillers) ...")
+    print(
+        f"tokenizing {len(strings)} strings ({len(items)} items in {len(groups)} groups, "
+        f"{len(fillers)} fillers) ..."
+    )
     enc = encode(strings) if strings else []
 
     def enc_of(s: str) -> list[int]:
@@ -244,8 +279,9 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
     for group in groups:
         keep = []
         for it in group:
-            span = _resolve_span(enc[it["_i_ans"]], enc_of, it["answer"], it["span"],
-                                 it["meta"]["entity"])
+            span = _resolve_span(
+                enc[it["_i_ans"]], enc_of, it["answer"], it["span"], it["meta"]["entity"]
+            )
             if span is not None:
                 it["_span"] = span
                 keep.append(it)
@@ -270,9 +306,13 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
 
     while ip < len(resolved):
         progress = ip / len(resolved)
-        ceiling = int(round(args.ceiling_start * (args.ceiling_end / args.ceiling_start) ** progress))
+        ceiling = int(
+            round(args.ceiling_start * (args.ceiling_end / args.ceiling_start) ** progress)
+        )
         per_source = _items_per_source(progress, args)
-        budget = min(args.max_block_tokens, max(args.min_block_tokens, int(ceiling * args.block_gap_ratio)))
+        budget = min(
+            args.max_block_tokens, max(args.min_block_tokens, int(ceiling * args.block_gap_ratio))
+        )
         ids: list[int] = []
         recall: list[bool] = []
         metas: list[dict] = []
@@ -282,7 +322,11 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
         introduced = 0
 
         def can_take_item() -> bool:
-            return ip < len(resolved) and len(pending) < args.max_pending and not (cap and introduced >= cap)
+            return (
+                ip < len(resolved)
+                and len(pending) < args.max_pending
+                and not (cap and introduced >= cap)
+            )
 
         def can_emit() -> bool:
             return can_take_item() or bool(order)
@@ -317,7 +361,9 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
             while True:
                 pos = len(ids) + len(turn)
                 if cue_item is None:
-                    due = next((it for it in pending if pos - it["source_end"] >= it["target_gap"]), None)
+                    due = next(
+                        (it for it in pending if pos - it["source_end"] >= it["target_gap"]), None
+                    )
                     if due is None and pending and (pos >= budget or not can_emit()):
                         # Closing the turn early: probe the longest-waiting item,
                         # but never below the gap floor -- a cue right behind its
@@ -337,7 +383,9 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
                         cue_item = due
                         tail_left = rng.randint(0, args.max_tail_units)
                         continue
-                elif tail_left <= 0 or any(pos - it["source_end"] >= it["target_gap"] for it in pending):
+                elif tail_left <= 0 or any(
+                    pos - it["source_end"] >= it["target_gap"] for it in pending
+                ):
                     # Cut the tail short when the next item comes due, so a
                     # realized gap overshoots its target by at most one passage
                     # plus the answer turn.
@@ -374,15 +422,22 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
             recall += [False] * (len(ids) - len(recall))
             for i in range(span_start, answer_start + 2 + e):
                 recall[i] = True
-            metas.append({
-                "gap": cue_item["gap"], "target_gap": cue_item["target_gap"], "ceiling": ceiling,
-                "source_start": cue_item["source_start"], "source_end": cue_item["source_end"],
-                "cue_start": cue_item["cue_start"], "cue_end": cue_item["cue_end"],
-                "answer_start": answer_start, "span_start": span_start,
-                "span_end": answer_start + 2 + e,
-                "credit_text": cue_item["answer"][cue_item["span"][0]:cue_item["span"][1]],
-                **cue_item["meta"],
-            })
+            metas.append(
+                {
+                    "gap": cue_item["gap"],
+                    "target_gap": cue_item["target_gap"],
+                    "ceiling": ceiling,
+                    "source_start": cue_item["source_start"],
+                    "source_end": cue_item["source_end"],
+                    "cue_start": cue_item["cue_start"],
+                    "cue_end": cue_item["cue_end"],
+                    "answer_start": answer_start,
+                    "span_start": span_start,
+                    "span_end": answer_start + 2 + e,
+                    "credit_text": cue_item["answer"][cue_item["span"][0] : cue_item["span"][1]],
+                    **cue_item["meta"],
+                }
+            )
             if cap and len(metas) >= cap:
                 break
 
@@ -395,11 +450,14 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
         recall_t = torch.tensor(recall, dtype=torch.bool)
         kept = []
         for it in metas:
-            span = ids_t[it["span_start"]:it["span_end"]]
-            stray = [at for at in _find(ids_t, span)
-                     if at != it["span_start"] and not (it["source_start"] <= at < it["source_end"])]
+            span = ids_t[it["span_start"] : it["span_end"]]
+            stray = [
+                at
+                for at in _find(ids_t, span)
+                if at != it["span_start"] and not (it["source_start"] <= at < it["source_end"])
+            ]
             if stray and not getattr(args, "allow_repeated_credit", False):
-                recall_t[it["span_start"]:it["span_end"]] = False
+                recall_t[it["span_start"] : it["span_end"]] = False
                 n_leaked += 1
             else:
                 kept.append(it)
@@ -413,23 +471,35 @@ def build_blocks(groups: list[list[dict]], fillers: list[str], encode, *,
         out_sleeps.append(torch.zeros(0, dtype=torch.long))
         out_items.append(metas)
         ceilings.append(ceiling)
-        print(f"\r  built {len(out_ids)} blocks, {sum(len(m) for m in out_items)} items, "
-              f"ceiling {ceiling}", end="", flush=True)
+        print(
+            f"\r  built {len(out_ids)} blocks, {sum(len(m) for m in out_items)} items, "
+            f"ceiling {ceiling}",
+            end="",
+            flush=True,
+        )
     print()
 
     dataset = {
-        "ids": out_ids, "masks": out_masks, "recall_masks": out_recall,
-        "sleep_positions": out_sleeps, "items": out_items,
+        "ids": out_ids,
+        "masks": out_masks,
+        "recall_masks": out_recall,
+        "sleep_positions": out_sleeps,
+        "items": out_items,
         "curriculum": {
-            "ceilings": ceilings, "gap_min": args.gap_min,
-            "ceiling_start": args.ceiling_start, "ceiling_end": args.ceiling_end,
+            "ceilings": ceilings,
+            "gap_min": args.gap_min,
+            "ceiling_start": args.ceiling_start,
+            "ceiling_end": args.ceiling_end,
             "order": "emission order is the curriculum; sort blocks by ceiling to restore it",
         },
     }
     stats = {
-        "n_blocks": len(out_ids), "n_items": sum(len(m) for m in out_items),
-        "n_span_unresolved": n_unresolved, "n_forced_cues": n_forced,
-        "n_buried_cues": n_buried, "n_leaked_dropped": n_leaked,
+        "n_blocks": len(out_ids),
+        "n_items": sum(len(m) for m in out_items),
+        "n_span_unresolved": n_unresolved,
+        "n_forced_cues": n_forced,
+        "n_buried_cues": n_buried,
+        "n_leaked_dropped": n_leaked,
         "n_tokens": sum(len(t) for t in out_ids),
         "filler_cycles": fp / len(order) if order else 0.0,
     }
@@ -442,40 +512,58 @@ def find_subsequence(ids: torch.Tensor, pat: torch.Tensor) -> list[int]:
         return []
     hit = torch.ones(n - m + 1, dtype=torch.bool)
     for j in range(m):
-        hit &= ids[j:n - m + 1 + j] == pat[j]
+        hit &= ids[j : n - m + 1 + j] == pat[j]
     return hit.nonzero().flatten().tolist()
 
 
 _find = find_subsequence
 
 
-def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
-                    n_samples: int = 2, ctx: int = 220, unique_credit: bool = True) -> dict:
+def validate_blocks(
+    dataset,
+    tokenizer,
+    *,
+    user_id: int,
+    asst_id: int,
+    n_samples: int = 2,
+    ctx: int = 220,
+    unique_credit: bool = True,
+) -> dict:
     """Structural invariants (every count below is correct only at zero) plus
     decoded text around one instance of each structural event, per the root
     CLAUDE.md rule. Counts confirm the generator did what it was told; only
     the decoded text confirms what it was told was right.
     """
     report = dict.fromkeys(
-        ("malformed_adjacency", "span_text_mismatch", "credit_visible_before_cue",
-         "stray_entity_occurrences", "credit_outside_recorded_spans"), 0)
+        (
+            "malformed_adjacency",
+            "span_text_mismatch",
+            "credit_visible_before_cue",
+            "stray_entity_occurrences",
+            "credit_outside_recorded_spans",
+        ),
+        0,
+    )
     gaps: list[int] = []
     samples: list[str] = []
     density: list[tuple[int, int]] = []
 
     for ids, recall, block in zip(dataset["ids"], dataset["recall_masks"], dataset["items"]):
         cues = sorted(it["cue_start"] for it in block)
-        density += [(it["gap"], sum(it["source_end"] <= c < it["cue_start"] for c in cues))
-                    for it in block]
+        density += [
+            (it["gap"], sum(it["source_end"] <= c < it["cue_start"] for c in cues)) for it in block
+        ]
         marks = ((ids == user_id) | (ids == asst_id)).nonzero().flatten().tolist()
         for a, b in zip(marks, marks[1:]):
             report["malformed_adjacency"] += int(ids[a]) == int(ids[b])
         credited = torch.zeros(len(ids), dtype=torch.bool)
         for it in block:
-            credited[it["span_start"]:it["span_end"]] = True
+            credited[it["span_start"] : it["span_end"]] = True
             gaps.append(it["gap"])
-            span = ids[it["span_start"]:it["span_end"]]
-            report["span_text_mismatch"] += tokenizer.decode(span).strip() != it["credit_text"].strip()
+            span = ids[it["span_start"] : it["span_end"]]
+            report["span_text_mismatch"] += (
+                tokenizer.decode(span).strip() != it["credit_text"].strip()
+            )
             for at in _find(ids, span):
                 if it["source_start"] <= at < it["source_end"] or at == it["span_start"]:
                     continue
@@ -485,31 +573,42 @@ def validate_blocks(dataset, tokenizer, *, user_id: int, asst_id: int,
                 samples.append(
                     f"gap {it['gap']} (target {it['target_gap']}, ceiling {it['ceiling']}), "
                     f"entity {it['entity']!r} ({it['entity_type']}), article {it['article']!r}\n"
-                    f"    [source]  ...{tokenizer.decode(ids[it['source_start']:it['source_end']])[:ctx]}...\n"
-                    f"    [cue]     ...{tokenizer.decode(ids[max(0, it['cue_start'] - ctx):it['cue_end']])}\n"
-                    f"    [answer]  {tokenizer.decode(ids[it['answer_start']:it['span_start']])}"
-                    f"<<{tokenizer.decode(ids[it['span_start']:it['span_end']])}>>"
-                    f"{tokenizer.decode(ids[it['span_end']:it['span_end'] + 60])}\n"
+                    f"    [source]  ...{tokenizer.decode(ids[it['source_start'] : it['source_end']])[:ctx]}...\n"
+                    f"    [cue]     ...{tokenizer.decode(ids[max(0, it['cue_start'] - ctx) : it['cue_end']])}\n"
+                    f"    [answer]  {tokenizer.decode(ids[it['answer_start'] : it['span_start']])}"
+                    f"<<{tokenizer.decode(ids[it['span_start'] : it['span_end']])}>>"
+                    f"{tokenizer.decode(ids[it['span_end'] : it['span_end'] + 60])}\n"
                     f"    (<<>> marks the recall-credited span; everything else is uncredited)"
                 )
         report["credit_outside_recorded_spans"] += int((recall & ~credited).sum())
 
     gaps_sorted = sorted(gaps)
-    informational = set() if unique_credit else {"stray_entity_occurrences", "credit_visible_before_cue"}
+    informational = (
+        set() if unique_credit else {"stray_entity_occurrences", "credit_visible_before_cue"}
+    )
     print(f"\nstructural validation ({len(gaps)} items in {len(dataset['ids'])} blocks):")
     for k, v in report.items():
-        note = "informational: closed-vocabulary answers recur" if k in informational else "expected 0"
+        note = (
+            "informational: closed-vocabulary answers recur" if k in informational else "expected 0"
+        )
         print(f"  {k} ({note}): {v}")
     if gaps_sorted:
-        print(f"  gap tokens: min {gaps_sorted[0]}, median {gaps_sorted[len(gaps_sorted) // 2]}, "
-              f"max {gaps_sorted[-1]}; {sum(g < 192 for g in gaps_sorted)} below the 192-token "
-              f"SSM-interference floor (RESEARCH-20260724-local-diagnostics.md 1)")
+        print(
+            f"  gap tokens: min {gaps_sorted[0]}, median {gaps_sorted[len(gaps_sorted) // 2]}, "
+            f"max {gaps_sorted[-1]}; {sum(g < 192 for g in gaps_sorted)} below the 192-token "
+            f"SSM-interference floor (RESEARCH-20260724-local-diagnostics.md 1)"
+        )
         n_tokens = sum(len(t) for t in dataset["ids"])
         short = sorted(n for g, n in density if g <= 512)
-        print(f"  interference density: {n_tokens / len(gaps):.0f} tokens per item; "
-              f"median {sorted(n for _, n in density)[len(density) // 2]} cue/answer turns inside a gap"
-              + (f", {short[len(short) // 2]} inside the {len(short)} gaps at or below 512 tokens"
-                 if short else ", no gaps at or below 512 tokens"))
+        print(
+            f"  interference density: {n_tokens / len(gaps):.0f} tokens per item; "
+            f"median {sorted(n for _, n in density)[len(density) // 2]} cue/answer turns inside a gap"
+            + (
+                f", {short[len(short) // 2]} inside the {len(short)} gaps at or below 512 tokens"
+                if short
+                else ", no gaps at or below 512 tokens"
+            )
+        )
     for i, s in enumerate(samples):
         print(f"\n  [item sample {i + 1}] {s}")
     return report
@@ -537,7 +636,9 @@ def load_wikipedia_passages(args) -> list[dict]:
                 passages.append({"article": row["title"], "text": para})
                 kept += 1
         if seen % 200 == 0:
-            print(f"\r  {seen}/{args.articles} articles, {len(passages)} passages", end="", flush=True)
+            print(
+                f"\r  {seen}/{args.articles} articles, {len(passages)} passages", end="", flush=True
+            )
     print(f"\r  {seen}/{args.articles} articles, {len(passages)} passages")
     return passages
 
@@ -554,26 +655,44 @@ def annotate(texts: list[str], args) -> list[list[dict]]:
     import torch as _torch
     from transformers import pipeline
 
-    device = args.ner_device if args.ner_device is not None else (0 if _torch.cuda.is_available() else -1)
+    device = (
+        args.ner_device
+        if args.ner_device is not None
+        else (0 if _torch.cuda.is_available() else -1)
+    )
     print(f"NER: {args.ner_model} on device {device} over {len(texts)} passages ...")
-    ner = pipeline("token-classification", model=args.ner_model,
-                   aggregation_strategy="simple", device=device)
+    ner = pipeline(
+        "token-classification", model=args.ner_model, aggregation_strategy="simple", device=device
+    )
     out: list[list[dict]] = []
     for i in range(0, len(texts), args.ner_batch):
-        batch = texts[i:i + args.ner_batch]
+        batch = texts[i : i + args.ner_batch]
         for text, res in zip(batch, ner(batch)):
             # Sliced from the source text, not taken from e["word"] -- the
             # aggregated pipeline reports subword pieces there ("##orra").
-            out.append([{"text": text[int(e["start"]):int(e["end"])], "label": e["entity_group"],
-                         "start": int(e["start"]), "end": int(e["end"])} for e in res])
+            out.append(
+                [
+                    {
+                        "text": text[int(e["start"]) : int(e["end"])],
+                        "label": e["entity_group"],
+                        "start": int(e["start"]),
+                        "end": int(e["end"]),
+                    }
+                    for e in res
+                ]
+            )
         print(f"\r  {len(out)}/{len(texts)} passages", end="", flush=True)
     print()
     return out
 
 
-def build_items(passages: list[dict], ents: list[list[dict]], seed: int,
-                min_sentence_words: int, max_items_per_source: int = 1,
-                ) -> tuple[list[list[dict]], list[str]]:
+def build_items(
+    passages: list[dict],
+    ents: list[list[dict]],
+    seed: int,
+    min_sentence_words: int,
+    max_items_per_source: int = 1,
+) -> tuple[list[list[dict]], list[str]]:
     """Item groups (one per usable passage) plus the passages that yielded
     none (kept as filler/interference).
 
@@ -592,8 +711,9 @@ def build_items(passages: list[dict], ents: list[list[dict]], seed: int,
 
     groups, leftover, n_items = [], [], 0
     for i, (p, es) in enumerate(zip(passages, ents)):
-        group = make_items(p, es, pool, rng, min_sentence_words=min_sentence_words,
-                           max_items=max_items_per_source)
+        group = make_items(
+            p, es, pool, rng, min_sentence_words=min_sentence_words, max_items=max_items_per_source
+        )
         if not group:
             leftover.append(p["text"])
         else:
@@ -601,81 +721,140 @@ def build_items(passages: list[dict], ents: list[list[dict]], seed: int,
             n_items += len(group)
             for it in group:
                 used = it["meta"]["entity"]
-                pool[it["meta"]["entity_type"]] = [s for s in pool[it["meta"]["entity_type"]] if s != used]
+                pool[it["meta"]["entity_type"]] = [
+                    s for s in pool[it["meta"]["entity_type"]] if s != used
+                ]
         if i % 200 == 0:
             print(f"\r  {i + 1}/{len(passages)} passages, {n_items} items", end="", flush=True)
-    print(f"\r  {len(passages)}/{len(passages)} passages, {n_items} items in {len(groups)} groups "
-          f"({n_items / max(len(groups), 1):.2f} per source)")
+    print(
+        f"\r  {len(passages)}/{len(passages)} passages, {n_items} items in {len(groups)} groups "
+        f"({n_items / max(len(groups), 1):.2f} per source)"
+    )
     return groups, leftover
 
 
 def add_block_args(parser) -> None:
     """Block-assembly and curriculum flags, shared with preparation/needles.py."""
-    parser.add_argument("--gap-min", type=int, default=192,
-                        help="Floor on the per-item gap (tokens between a source passage and its cue). "
-                             "192 is where dense interference kills plain-backbone recall "
-                             "(notes/research/RESEARCH-20260724-local-diagnostics.md 1)")
-    parser.add_argument("--ceiling-start", type=int, default=448,
-                        help="Gap ceiling for the first block -- inside the 512-token BPTT window, so early "
-                             "recall loss can credit the write end to end")
-    parser.add_argument("--ceiling-end", type=int, default=8192, help="Gap ceiling for the last block")
-    parser.add_argument("--block-gap-ratio", type=float, default=4.0,
-                        help="Block token budget as a multiple of its gap ceiling")
+    parser.add_argument(
+        "--gap-min",
+        type=int,
+        default=192,
+        help="Floor on the per-item gap (tokens between a source passage and its cue). "
+        "192 is where dense interference kills plain-backbone recall "
+        "(notes/research/RESEARCH-20260724-local-diagnostics.md 1)",
+    )
+    parser.add_argument(
+        "--ceiling-start",
+        type=int,
+        default=448,
+        help="Gap ceiling for the first block -- inside the 512-token BPTT window, so early "
+        "recall loss can credit the write end to end",
+    )
+    parser.add_argument(
+        "--ceiling-end", type=int, default=8192, help="Gap ceiling for the last block"
+    )
+    parser.add_argument(
+        "--block-gap-ratio",
+        type=float,
+        default=4.0,
+        help="Block token budget as a multiple of its gap ceiling",
+    )
     parser.add_argument("--min-block-tokens", type=int, default=2048)
     parser.add_argument("--max-block-tokens", type=int, default=32768)
-    parser.add_argument("--max-tail-units", type=int, default=3,
-                        help="Upper bound on passages emitted AFTER the cue in the same user turn -- what "
-                             "keeps the cue off the turn's tail and defeats answer-the-last-thing")
-    parser.add_argument("--item-rate", type=float, default=1.0,
-                        help="Probability a fresh unit is a probed item source rather than plain filler")
-    parser.add_argument("--max-pending", type=int, default=64,
-                        help="Cap on items awaiting their cue at once")
-    parser.add_argument("--items-per-source-start", type=int, default=3,
-                        help="Items a source passage answers in the FIRST (lowest-ceiling) block -- the "
-                             "interference-density knob. A turn costs one passage plus one cue/answer "
-                             "pair, so sharing a passage across k items cuts the block's tokens per item "
-                             "and packs that many more fabricated entities into every token of gap. 3 is "
-                             "where Wikipedia's yield flattens: 1.69 items/passage measured, 251 -> 191 "
-                             "tokens per item and 1.7 -> 2.25 cue/answer turns inside a 512-token gap, "
-                             "for +47%% items off the same articles; 4 buys 2%% more density for 84%% more "
-                             "credit lost to entity leaks")
-    parser.add_argument("--items-per-source-end", type=int, default=1,
-                        help="Items a source passage answers in the LAST (highest-ceiling) block, "
-                             "interpolated linearly from --items-per-source-start across the artifact. "
-                             "Long-gap items get their interference from distance and volume, so density "
-                             "relaxes and the item supply goes further")
-    parser.add_argument("--max-items-per-block", type=int, default=0,
-                        help="Close the block after this many answered items (0 = fill the budget). Needles "
-                             "use 1: bAbI stories share a six-name vocabulary, so a second story in the same "
-                             "block re-answers the first one's question and the credited target goes stale")
-    parser.add_argument("--allow-repeated-credit", action="store_true",
-                        help="Keep items whose credited answer also occurs elsewhere in their block. Off for "
-                             "cram (a fabricated entity that recurs really is readable without memory); on "
-                             "for needles, whose closed-vocabulary answers recur by construction while the "
-                             "binding the question asks about does not")
+    parser.add_argument(
+        "--max-tail-units",
+        type=int,
+        default=3,
+        help="Upper bound on passages emitted AFTER the cue in the same user turn -- what "
+        "keeps the cue off the turn's tail and defeats answer-the-last-thing",
+    )
+    parser.add_argument(
+        "--item-rate",
+        type=float,
+        default=1.0,
+        help="Probability a fresh unit is a probed item source rather than plain filler",
+    )
+    parser.add_argument(
+        "--max-pending", type=int, default=64, help="Cap on items awaiting their cue at once"
+    )
+    parser.add_argument(
+        "--items-per-source-start",
+        type=int,
+        default=3,
+        help="Items a source passage answers in the FIRST (lowest-ceiling) block -- the "
+        "interference-density knob. A turn costs one passage plus one cue/answer "
+        "pair, so sharing a passage across k items cuts the block's tokens per item "
+        "and packs that many more fabricated entities into every token of gap. 3 is "
+        "where Wikipedia's yield flattens: 1.69 items/passage measured, 251 -> 191 "
+        "tokens per item and 1.7 -> 2.25 cue/answer turns inside a 512-token gap, "
+        "for +47%% items off the same articles; 4 buys 2%% more density for 84%% more "
+        "credit lost to entity leaks",
+    )
+    parser.add_argument(
+        "--items-per-source-end",
+        type=int,
+        default=1,
+        help="Items a source passage answers in the LAST (highest-ceiling) block, "
+        "interpolated linearly from --items-per-source-start across the artifact. "
+        "Long-gap items get their interference from distance and volume, so density "
+        "relaxes and the item supply goes further",
+    )
+    parser.add_argument(
+        "--max-items-per-block",
+        type=int,
+        default=0,
+        help="Close the block after this many answered items (0 = fill the budget). Needles "
+        "use 1: bAbI stories share a six-name vocabulary, so a second story in the same "
+        "block re-answers the first one's question and the credited target goes stale",
+    )
+    parser.add_argument(
+        "--allow-repeated-credit",
+        action="store_true",
+        help="Keep items whose credited answer also occurs elsewhere in their block. Off for "
+        "cram (a fabricated entity that recurs really is readable without memory); on "
+        "for needles, whose closed-vocabulary answers recur by construction while the "
+        "binding the question asks about does not",
+    )
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--validate-samples", type=int, default=2)
 
 
-def emit(dataset: dict, stats: dict, path: str, tokenizer, user_id: int, asst_id: int,
-         slice_name: str, heldout: list[str], args) -> None:
+def emit(
+    dataset: dict,
+    stats: dict,
+    path: str,
+    tokenizer,
+    user_id: int,
+    asst_id: int,
+    slice_name: str,
+    heldout: list[str],
+    args,
+) -> None:
     dataset["slice"] = slice_name
     dataset["heldout_articles"] = sorted(heldout)
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(dataset, out)
     n_recall = sum(int(r.sum()) for r in dataset["recall_masks"])
-    print(f"\nwrote {out}: {stats['n_blocks']} blocks, {stats['n_tokens'] / 1e6:.2f}M tokens, "
-          f"{stats['n_items']} items ({n_recall} recall-credited tokens, "
-          f"{100 * n_recall / max(stats['n_tokens'], 1):.2f}% of tokens), "
-          f"{stats['n_span_unresolved']} items dropped on span misalignment, "
-          f"{stats['n_leaked_dropped']} on an entity visible elsewhere in the block, "
-          f"{stats['n_forced_cues']} cues forced early, "
-          f"{stats['n_buried_cues']}/{stats['n_items']} cues followed by more passages in their turn, "
-          f"filler pool used {stats['filler_cycles']:.1f}x (stream more articles if that is far above 1)")
+    print(
+        f"\nwrote {out}: {stats['n_blocks']} blocks, {stats['n_tokens'] / 1e6:.2f}M tokens, "
+        f"{stats['n_items']} items ({n_recall} recall-credited tokens, "
+        f"{100 * n_recall / max(stats['n_tokens'], 1):.2f}% of tokens), "
+        f"{stats['n_span_unresolved']} items dropped on span misalignment, "
+        f"{stats['n_leaked_dropped']} on an entity visible elsewhere in the block, "
+        f"{stats['n_forced_cues']} cues forced early, "
+        f"{stats['n_buried_cues']}/{stats['n_items']} cues followed by more passages in their turn, "
+        f"filler pool used {stats['filler_cycles']:.1f}x (stream more articles if that is far above 1)"
+    )
     unique_credit = not getattr(args, "allow_repeated_credit", False)
-    report = validate_blocks(dataset, tokenizer, user_id=user_id, asst_id=asst_id,
-                             n_samples=args.validate_samples, unique_credit=unique_credit)
+    report = validate_blocks(
+        dataset,
+        tokenizer,
+        user_id=user_id,
+        asst_id=asst_id,
+        n_samples=args.validate_samples,
+        unique_credit=unique_credit,
+    )
     if not unique_credit:
         for k in ("stray_entity_occurrences", "credit_visible_before_cue"):
             report.pop(k)
@@ -686,20 +865,29 @@ def emit(dataset: dict, stats: dict, path: str, tokenizer, user_id: int, asst_id
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--output", default="data/train_cram.pt")
-    parser.add_argument("--heldout-output", default="data/eval_cram.pt",
-                        help="Blocks built from the held-out articles, same schema -- eval items must never "
-                             "come from a trained article")
+    parser.add_argument(
+        "--heldout-output",
+        default="data/eval_cram.pt",
+        help="Blocks built from the held-out articles, same schema -- eval items must never "
+        "come from a trained article",
+    )
     parser.add_argument("--articles", type=int, default=8000, help="Wikipedia articles to stream")
     parser.add_argument("--wiki-dataset", default="wikimedia/wikipedia")
     parser.add_argument("--wiki-config", default="20231101.en")
     parser.add_argument("--passages-per-article", type=int, default=3)
     parser.add_argument("--min-words", type=int, default=45, help="Shortest usable passage")
     parser.add_argument("--max-words", type=int, default=140, help="Longest usable passage")
-    parser.add_argument("--min-sentence-words", type=int, default=8, help="Shortest usable cue sentence")
-    parser.add_argument("--heldout-frac", type=float, default=0.05, help="Fraction of ARTICLES reserved for eval")
+    parser.add_argument(
+        "--min-sentence-words", type=int, default=8, help="Shortest usable cue sentence"
+    )
+    parser.add_argument(
+        "--heldout-frac", type=float, default=0.05, help="Fraction of ARTICLES reserved for eval"
+    )
     parser.add_argument("--ner-model", default="dslim/bert-base-NER")
     parser.add_argument("--ner-batch", type=int, default=64)
-    parser.add_argument("--ner-device", type=int, default=None, help="Default: GPU if one is visible, else CPU")
+    parser.add_argument(
+        "--ner-device", type=int, default=None, help="Default: GPU if one is visible, else CPU"
+    )
     add_block_args(parser)
     args = parser.parse_args()
 
@@ -714,26 +902,44 @@ def main() -> None:
     asst_id = tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN)
     sep = tokenizer.encode(" ", add_special_tokens=False)
     nl = tokenizer.encode("\n", add_special_tokens=False)
-    assert len(sep) == 1 and len(nl) == 1, f'expected " " and "\\n" to be single tokens, got {sep} {nl}'
+    assert len(sep) == 1 and len(nl) == 1, (
+        f'expected " " and "\\n" to be single tokens, got {sep} {nl}'
+    )
 
     passages = load_wikipedia_passages(args)
-    train_titles, heldout_titles = split_articles([p["article"] for p in passages],
-                                                  args.heldout_frac, args.seed)
+    train_titles, heldout_titles = split_articles(
+        [p["article"] for p in passages], args.heldout_frac, args.seed
+    )
     ents = annotate([p["text"] for p in passages], args)
 
     def encode(strings: list[str]) -> list[list[int]]:
         return tokenizer(strings, add_special_tokens=False)["input_ids"]
 
-    for name, titles, path in (("cram", train_titles, args.output),
-                               ("cram-heldout", heldout_titles, args.heldout_output)):
+    for name, titles, path in (
+        ("cram", train_titles, args.output),
+        ("cram-heldout", heldout_titles, args.heldout_output),
+    ):
         sel = [i for i, p in enumerate(passages) if p["article"] in titles]
         print(f"\n== {name}: {len(sel)} passages from {len(titles)} articles ==")
-        groups, leftover = build_items([passages[i] for i in sel], [ents[i] for i in sel],
-                                       args.seed, args.min_sentence_words,
-                                       max(args.items_per_source_start, args.items_per_source_end))
-        dataset, stats = build_blocks(groups, leftover, encode, user_id=user_id, asst_id=asst_id,
-                                      sep_id=sep[0], nl_id=nl[0], args=args)
+        groups, leftover = build_items(
+            [passages[i] for i in sel],
+            [ents[i] for i in sel],
+            args.seed,
+            args.min_sentence_words,
+            max(args.items_per_source_start, args.items_per_source_end),
+        )
+        dataset, stats = build_blocks(
+            groups,
+            leftover,
+            encode,
+            user_id=user_id,
+            asst_id=asst_id,
+            sep_id=sep[0],
+            nl_id=nl[0],
+            args=args,
+        )
         emit(dataset, stats, path, tokenizer, user_id, asst_id, name, sorted(heldout_titles), args)
+
 
 __all__ = [
     "add_block_args",

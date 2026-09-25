@@ -19,21 +19,52 @@ from reporting.grid import (
 
 def _cell(path, arm, transcript_sha, dream_sha, wave2_dream_sha=None, init_adapter_sha256=None):
     rows = [
-        {"phase": "cache", "wave": 1, "arm": arm, "seed": 1234,
-         "transcript_sha": transcript_sha, "dream_sha": dream_sha},
-        {"phase": "dream", "wave": 1, "arm": arm, "rehearsal_fraction": 0.2,
-         "needle_counts": {}, "bound_cov": 3, "misbound": 1},
+        {
+            "phase": "cache",
+            "wave": 1,
+            "arm": arm,
+            "seed": 1234,
+            "transcript_sha": transcript_sha,
+            "dream_sha": dream_sha,
+        },
+        {
+            "phase": "dream",
+            "wave": 1,
+            "arm": arm,
+            "rehearsal_fraction": 0.2,
+            "needle_counts": {},
+            "bound_cov": 3,
+            "misbound": 1,
+        },
         {"phase": "sleep", "wave": 1, "arm": arm, "token_gradients": 800},
-        {"phase": "probe", "wave": 1, "arm": arm, "step": 800, "fact": "osprey", "code": "1 2",
-         "match": False, "logprob_delta": 0.5, "paraphrase_rate": 0.25, "margin": 1.5,
-         "margin_install": True},
+        {
+            "phase": "probe",
+            "wave": 1,
+            "arm": arm,
+            "step": 800,
+            "fact": "osprey",
+            "code": "1 2",
+            "match": False,
+            "logprob_delta": 0.5,
+            "paraphrase_rate": 0.25,
+            "margin": 1.5,
+            "margin_install": True,
+        },
         {"phase": "in_context", "wave": 1, "arm": arm, "fact": "osprey", "match": True},
         {"phase": "locality", "wave": 1, "arm": arm, "ppl_delta": 0.1, "lost": 0, "items": 24},
         {"phase": "done", "arm": arm, "seed": 1234},
     ]
     if wave2_dream_sha:
-        rows.append({"phase": "cache", "wave": 2, "arm": arm, "seed": 1234,
-                     "transcript_sha": transcript_sha, "dream_sha": wave2_dream_sha})
+        rows.append(
+            {
+                "phase": "cache",
+                "wave": 2,
+                "arm": arm,
+                "seed": 1234,
+                "transcript_sha": transcript_sha,
+                "dream_sha": wave2_dream_sha,
+            }
+        )
     for row in rows:
         row["init_adapter_sha256"] = init_adapter_sha256
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
@@ -165,8 +196,16 @@ def test_cells_with_different_erase_operators_still_pool(tmp_path):
 def test_a_failed_b3_equivalence_is_fatal_to_the_summary(tmp_path):
     path = _cell(tmp_path / "g2_b3fused_s1234.jsonl", "b3-fused", "aa", "bb")
     rows = _rows(path)
-    rows.append({"phase": "equivalence", "wave": 2, "arm": "b3-fused", "pass": 1,
-                 "abs_diff": 0.5, "equivalent": False})
+    rows.append(
+        {
+            "phase": "equivalence",
+            "wave": 2,
+            "arm": "b3-fused",
+            "pass": 1,
+            "abs_diff": 0.5,
+            "equivalent": False,
+        }
+    )
     _rewrite(path, rows)
 
     with pytest.raises(SystemExit, match="equivalen"):
@@ -176,8 +215,16 @@ def test_a_failed_b3_equivalence_is_fatal_to_the_summary(tmp_path):
 def test_a_passing_b3_equivalence_scores_normally(tmp_path):
     path = _cell(tmp_path / "g2_b3fused_s1234.jsonl", "b3-fused", "aa", "bb")
     rows = _rows(path)
-    rows.append({"phase": "equivalence", "wave": 1, "arm": "b3-fused", "pass": 1,
-                 "abs_diff": 0.0, "equivalent": True})
+    rows.append(
+        {
+            "phase": "equivalence",
+            "wave": 1,
+            "arm": "b3-fused",
+            "pass": 1,
+            "abs_diff": 0.0,
+            "equivalent": True,
+        }
+    )
     _rewrite(path, rows)
 
     assert len(load_cells([str(path)])) == 1
@@ -185,15 +232,44 @@ def test_a_passing_b3_equivalence_scores_normally(tmp_path):
 
 def _curve_cell(path, arm, points, floor_only_final=False):
     """points: {step: (margin, ppl_delta)} for the single fact 'osprey'."""
-    rows = [{"phase": "cache", "wave": 1, "arm": arm, "seed": 1234,
-             "transcript_sha": "aa", "dream_sha": "bb"},
-            {"phase": "done", "arm": arm, "seed": 1234}]
+    rows = [
+        {
+            "phase": "cache",
+            "wave": 1,
+            "arm": arm,
+            "seed": 1234,
+            "transcript_sha": "aa",
+            "dream_sha": "bb",
+        },
+        {"phase": "done", "arm": arm, "seed": 1234},
+    ]
     for step, (margin, dppl) in points.items():
-        rows.append({"phase": "probe", "wave": 1, "arm": arm, "step": step, "fact": "osprey",
-                     "code": "1 2", "match": False, "logprob_delta": 0.0, "paraphrase_rate": 0.0,
-                     "margin": margin, "margin_install": False})
-        rows.append({"phase": "locality", "wave": 1, "arm": arm, "step": step,
-                     "ppl_delta": dppl, "lost": 0, "items": 24})
+        rows.append(
+            {
+                "phase": "probe",
+                "wave": 1,
+                "arm": arm,
+                "step": step,
+                "fact": "osprey",
+                "code": "1 2",
+                "match": False,
+                "logprob_delta": 0.0,
+                "paraphrase_rate": 0.0,
+                "margin": margin,
+                "margin_install": False,
+            }
+        )
+        rows.append(
+            {
+                "phase": "locality",
+                "wave": 1,
+                "arm": arm,
+                "step": step,
+                "ppl_delta": dppl,
+                "lost": 0,
+                "items": 24,
+            }
+        )
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
     return path
 
@@ -205,7 +281,10 @@ def test_curves_correct_each_probe_step_against_the_floor_at_the_same_step(tmp_p
     rows = curve_rows(_cells(tmp_path))
     drain = [r for r in rows if r["arm"] == "drain"]
 
-    assert [(r["step"], r["dmargin"], r["dppl"]) for r in drain] == [(200, 2.0, 0.1), (400, 3.0, 0.3)]
+    assert [(r["step"], r["dmargin"], r["dppl"]) for r in drain] == [
+        (200, 2.0, 0.1),
+        (400, 3.0, 0.3),
+    ]
 
 
 def test_curves_fall_back_to_the_final_floor_when_the_step_is_missing(tmp_path):
@@ -221,8 +300,11 @@ def test_curves_accept_a_prefixed_no_sleep_floor_arm_name(tmp_path):
     _curve_cell(tmp_path / "g6_nosleep_s1234.jsonl", "g6_nosleep", {400: (2.0, 0.0)})
     _curve_cell(tmp_path / "g6_replay_s1234.jsonl", "g6_replay", {400: (5.0, 0.3)})
 
-    replay = [r for r in curve_rows(load_cells(sorted(str(p) for p in tmp_path.glob("*.jsonl"))))
-              if r["arm"] == "g6_replay"]
+    replay = [
+        r
+        for r in curve_rows(load_cells(sorted(str(p) for p in tmp_path.glob("*.jsonl"))))
+        if r["arm"] == "g6_replay"
+    ]
 
     assert [(r["step"], r["dmargin"]) for r in replay] == [(400, 3.0)]
 
@@ -262,22 +344,62 @@ def test_a_ladder_cell_is_floor_corrected_against_its_seeds_no_sleep_cell(tmp_pa
 def _set_cell(path, arm, set_sha="s1", dreams=2, transcript_sha="aa"):
     """A dream-set cell: no `dream_sha`, no rehearsal fraction, one `dream`
     record per boundary carrying its epoch and dream index."""
-    rows = [{"phase": "cache", "wave": 1, "arm": arm, "seed": 1234, "transcript_sha": transcript_sha,
-             "dreams": dreams, "set_sha": set_sha},
-            {"phase": "sleep", "wave": 1, "arm": arm, "dreams": dreams, "epochs": 1,
-             "token_gradients": 1200},
-            {"phase": "in_context", "wave": 1, "arm": arm, "fact": "osprey", "match": True},
-            {"phase": "locality", "wave": 1, "arm": arm, "ppl_delta": 0.1, "lost": 0, "items": 24},
-            {"phase": "done", "arm": arm, "seed": 1234}]
+    rows = [
+        {
+            "phase": "cache",
+            "wave": 1,
+            "arm": arm,
+            "seed": 1234,
+            "transcript_sha": transcript_sha,
+            "dreams": dreams,
+            "set_sha": set_sha,
+        },
+        {
+            "phase": "sleep",
+            "wave": 1,
+            "arm": arm,
+            "dreams": dreams,
+            "epochs": 1,
+            "token_gradients": 1200,
+        },
+        {"phase": "in_context", "wave": 1, "arm": arm, "fact": "osprey", "match": True},
+        {"phase": "locality", "wave": 1, "arm": arm, "ppl_delta": 0.1, "lost": 0, "items": 24},
+        {"phase": "done", "arm": arm, "seed": 1234},
+    ]
     for i in range(dreams):
-        rows.append({"phase": "dream", "wave": 1, "arm": arm, "dream": i, "epoch": 0, "step": i + 1,
-                     "dream_sha": f"d{i}", "tokens": 300, "stop_reason": "eoc",
-                     "gated_positions": 40, "basis_rank": [2, 2],
-                     "bound_by_fact": {"osprey": 1 if i == 0 else 0, "heron": 1},
-                     "misbound_by_fact": {"osprey": 0, "heron": 1}, "bound_cov": 2 - i})
-        rows.append({"phase": "probe", "wave": 1, "arm": arm, "step": i + 1, "fact": "osprey",
-                     "code": "1 2", "match": False, "logprob_delta": 0.5, "paraphrase_rate": 0.25,
-                     "margin": 1.5, "margin_install": True})
+        rows.append(
+            {
+                "phase": "dream",
+                "wave": 1,
+                "arm": arm,
+                "dream": i,
+                "epoch": 0,
+                "step": i + 1,
+                "dream_sha": f"d{i}",
+                "tokens": 300,
+                "stop_reason": "eoc",
+                "gated_positions": 40,
+                "basis_rank": [2, 2],
+                "bound_by_fact": {"osprey": 1 if i == 0 else 0, "heron": 1},
+                "misbound_by_fact": {"osprey": 0, "heron": 1},
+                "bound_cov": 2 - i,
+            }
+        )
+        rows.append(
+            {
+                "phase": "probe",
+                "wave": 1,
+                "arm": arm,
+                "step": i + 1,
+                "fact": "osprey",
+                "code": "1 2",
+                "match": False,
+                "logprob_delta": 0.5,
+                "paraphrase_rate": 0.25,
+                "margin": 1.5,
+                "margin_install": True,
+            }
+        )
     for row in rows:
         row["dream_set_sha"] = set_sha
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))

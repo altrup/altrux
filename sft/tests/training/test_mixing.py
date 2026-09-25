@@ -19,6 +19,7 @@ from tests.training.test_train import FakeHooks, FakeStatefulModel, _ids, _make_
 # recall-weight ramp (pure function)
 # ---------------------------------------------------------------------------
 
+
 def test_recall_weight_ramp_starts_at_start_and_ends_at_end():
     assert datasets.recall_weight_at(0, 1.0, 16.0, 32) == pytest.approx(1.0)
     assert datasets.recall_weight_at(32, 1.0, 16.0, 32) == pytest.approx(16.0)
@@ -57,10 +58,25 @@ def test_recall_weight_ramp_applies_to_marked_tokens_as_the_step_advances(monkey
     # accum_tokens == chunk_len -> one optimizer step per chunk, so chunk k
     # trains under global_step k.
     args = _make_args(recall_weight=16.0, recall_ramp_start=1.0, recall_ramp_steps=2)
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), [_ids(13, seed=3)], [None], [recall], [None],
-        "cpu", args, start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        [_ids(13, seed=3)],
+        [None],
+        [recall],
+        [None],
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
 
     first_of_chunk = [w[0, 0].item() for w in recorded]
@@ -72,6 +88,7 @@ def test_recall_weight_ramp_applies_to_marked_tokens_as_the_step_advances(monkey
 # ---------------------------------------------------------------------------
 # --data spec parsing
 # ---------------------------------------------------------------------------
+
 
 def test_bare_path_takes_the_global_defaults():
     spec = datasets.parse_data_spec("data/train.pt", default_chunk_len=48, default_batch_size=24)
@@ -85,7 +102,8 @@ def test_bare_path_takes_the_global_defaults():
 def test_spec_overrides_per_dataset_training_config():
     spec = datasets.parse_data_spec(
         "data/train_cram.pt,share=35,chunk-len=512,batch-size=6,grad-checkpoint=1,shuffle=0",
-        default_chunk_len=48, default_batch_size=24,
+        default_chunk_len=48,
+        default_batch_size=24,
     )
     assert spec.path == "data/train_cram.pt"
     assert spec.share == pytest.approx(35.0)
@@ -116,6 +134,7 @@ def test_shares_must_be_given_for_all_datasets_or_none():
 # ---------------------------------------------------------------------------
 # loading several .pt slices into one flat example list
 # ---------------------------------------------------------------------------
+
 
 def _write_dataset(path, lengths, *, recall=False, seed=0):
     ids = [_ids(n, seed=seed + i) for i, n in enumerate(lengths)]
@@ -149,6 +168,7 @@ def test_load_datasets_concatenates_slices_and_records_index_ranges(tmp_path):
 # grouping by training config
 # ---------------------------------------------------------------------------
 
+
 def test_datasets_sharing_a_config_share_a_group():
     specs = [
         datasets.DataSpec(path="chains.pt", chunk_len=48, batch_size=24),
@@ -162,6 +182,7 @@ def test_datasets_sharing_a_config_share_a_group():
 # ---------------------------------------------------------------------------
 # example ordering: curriculum preservation + share-proportional interleaving
 # ---------------------------------------------------------------------------
+
 
 def _keep_all(_idx):
     return True
@@ -183,8 +204,12 @@ def test_single_shuffled_dataset_keeps_the_historical_per_epoch_permutation():
 def test_members_of_a_group_interleave_by_token_share():
     # 12 examples of 10 tokens each: first 8 are dataset A, last 4 dataset B.
     ids = [_ids(10, seed=i) for i in range(12)]
-    a = datasets.DataSpec(path="a.pt", chunk_len=4, batch_size=1, share=3.0, shuffle=False, lo=0, hi=8)
-    b = datasets.DataSpec(path="b.pt", chunk_len=4, batch_size=1, share=1.0, shuffle=False, lo=8, hi=12)
+    a = datasets.DataSpec(
+        path="a.pt", chunk_len=4, batch_size=1, share=3.0, shuffle=False, lo=0, hi=8
+    )
+    b = datasets.DataSpec(
+        path="b.pt", chunk_len=4, batch_size=1, share=1.0, shuffle=False, lo=8, hi=12
+    )
 
     order = datasets.build_order([a, b], ids, epoch=0, keep=_keep_all)
 
@@ -201,6 +226,7 @@ def test_members_of_a_group_interleave_by_token_share():
 # end-to-end: two groups with different chunk-len/batch-size
 # ---------------------------------------------------------------------------
 
+
 def test_run_training_uses_each_groups_own_chunk_len_and_batch_size(monkeypatch, tmp_path):
     torch.manual_seed(0)
     model = FakeStatefulModel()
@@ -216,15 +242,35 @@ def test_run_training_uses_each_groups_own_chunk_len_and_batch_size(monkeypatch,
 
     train_ids = [_ids(17, seed=i) for i in range(4)]
     specs = [
-        datasets.DataSpec(path="a.pt", chunk_len=2, batch_size=1, share=1.0, shuffle=False, lo=0, hi=2),
-        datasets.DataSpec(path="b.pt", chunk_len=8, batch_size=3, share=1.0, shuffle=False, lo=2, hi=4),
+        datasets.DataSpec(
+            path="a.pt", chunk_len=2, batch_size=1, share=1.0, shuffle=False, lo=0, hi=2
+        ),
+        datasets.DataSpec(
+            path="b.pt", chunk_len=8, batch_size=3, share=1.0, shuffle=False, lo=2, hi=4
+        ),
     ]
     args = _make_args(chunk_len=None, batch_size=1, mix_segment_tokens=16)
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), train_ids, [None] * 4, [None] * 4, [None] * 4,
-        "cpu", args, start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0, specs=specs,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None] * 4,
+        [None] * 4,
+        [None] * 4,
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
+        specs=specs,
     )
 
     assert (1, 2) in shapes, "group A must run at its own chunk_len=2 / batch=1"
@@ -247,15 +293,35 @@ def test_run_training_trains_every_token_of_slices_that_share_a_config(monkeypat
 
     train_ids = [_ids(9, seed=i) for i in range(4)]
     specs = [
-        datasets.DataSpec(path="a.pt", chunk_len=4, batch_size=1, share=1.0, shuffle=False, lo=0, hi=2),
-        datasets.DataSpec(path="b.pt", chunk_len=4, batch_size=1, share=1.0, shuffle=False, lo=2, hi=4),
+        datasets.DataSpec(
+            path="a.pt", chunk_len=4, batch_size=1, share=1.0, shuffle=False, lo=0, hi=2
+        ),
+        datasets.DataSpec(
+            path="b.pt", chunk_len=4, batch_size=1, share=1.0, shuffle=False, lo=2, hi=4
+        ),
     ]
     args = _make_args(chunk_len=None, batch_size=1, mix_segment_tokens=8)
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, [None] * 4, [None] * 4, [None] * 4,
-        "cpu", args, start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0, specs=specs,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None] * 4,
+        [None] * 4,
+        [None] * 4,
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
+        specs=specs,
     )
 
     state = torch.load(checkpoints.latest_checkpoint(tmp_path) / "state.pt", weights_only=True)

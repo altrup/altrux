@@ -130,14 +130,15 @@ def pad_rows(rows: list[Row], device) -> tuple[torch.Tensor, list[int]]:
     lens = [len(ids) for ids, _ in rows]
     padded = torch.zeros(len(rows), max(lens), dtype=torch.long, device=device)
     for i, (ids, spans) in enumerate(rows):
-        padded[i, :lens[i]] = torch.as_tensor(ids, dtype=torch.long, device=device)
+        padded[i, : lens[i]] = torch.as_tensor(ids, dtype=torch.long, device=device)
         for a, b in spans:
             assert 0 < a < b <= lens[i], f"span ({a}, {b}) outside row {i} of length {lens[i]}"
     return padded, lens
 
 
-def score_rows(scorer, rows: list[Row], label: str, max_rows: int,
-               max_ratio: float = 2.0) -> tuple[list[list[float]], int]:
+def score_rows(
+    scorer, rows: list[Row], label: str, max_rows: int, max_ratio: float = 2.0
+) -> tuple[list[list[float]], int]:
     """Scores `rows` in padded batches, results in input order. Also returns
     the real token count fed, padding excluded, for the throughput line."""
     out: list[list[float]] = [[] for _ in rows]
@@ -178,28 +179,40 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
         nonlocal width
         comp = " ".join(f"{v.removeprefix('fail_')} {counts[v]}" for v in VERDICTS[1:] if counts[v])
         elapsed = time.time() - t0
-        line = (f"{_ts()}   filtered {done_blocks}/{n_blocks} blocks, {sum(counts.values())} items, "
-                f"{counts['pass']} kept" + (f" ({comp})" if comp else ""))
+        line = (
+            f"{_ts()}   filtered {done_blocks}/{n_blocks} blocks, {sum(counts.values())} items, "
+            f"{counts['pass']} kept" + (f" ({comp})" if comp else "")
+        )
         if fed and done_ids:
-            line += (f", {fed / elapsed:,.0f} tok/s, "
-                     f"ETA {_hms(elapsed * (total_ids - done_ids) / done_ids)}")
+            line += (
+                f", {fed / elapsed:,.0f} tok/s, "
+                f"ETA {_hms(elapsed * (total_ids - done_ids) / done_ids)}"
+            )
         width = max(width, len(line))
         print(f"\r{line:<{width}}", end="", flush=True)
 
     for w0 in range(0, n_blocks, max_rows):
         prepared = []
         for bi in range(w0, min(w0 + max_rows, n_blocks)):
-            ids, recall, items = dataset["ids"][bi], dataset["recall_masks"][bi], dataset["items"][bi]
+            ids, recall, items = (
+                dataset["ids"][bi],
+                dataset["recall_masks"][bi],
+                dataset["items"][bi],
+            )
             done_blocks, done_ids = bi + 1, done_ids + len(ids)
             if not items:
                 continue
             stream, remap = interference_stream(ids, items)
             scored, leaked = [], []
             for it in items:
-                (leaked if leaks(stream, remap(it["cue_start"]), it["credit_text"], tokenizer) else scored).append(it)
+                (
+                    leaked
+                    if leaks(stream, remap(it["cue_start"]), it["credit_text"], tokenizer)
+                    else scored
+                ).append(it)
             for it in leaked:
                 it["filter"] = {"verdict": "fail_leak"}
-                recall[it["span_start"]:it["span_end"]] = False
+                recall[it["span_start"] : it["span_end"]] = False
                 counts["fail_leak"] += 1
 
             if getattr(args, "leak_only", False):
@@ -214,19 +227,29 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
             # One batch of blocks per pass: B and C are whole independent
             # streams, A a short manufactured context per item.
             spans = [[(it["span_start"], it["span_end"]) for it in sc] for *_, sc in prepared]
-            cs, n = score_rows(scorer, [(p[0], sp) for p, sp in zip(prepared, spans)], "C", max_rows)
+            cs, n = score_rows(
+                scorer, [(p[0], sp) for p, sp in zip(prepared, spans)], "C", max_rows
+            )
             fed += n
             progress()
-            bs, n = score_rows(scorer, [(p[2], [(p[3](a), p[3](b)) for a, b in sp])
-                                        for p, sp in zip(prepared, spans)], "B", max_rows)
+            bs, n = score_rows(
+                scorer,
+                [(p[2], [(p[3](a), p[3](b)) for a, b in sp]) for p, sp in zip(prepared, spans)],
+                "B",
+                max_rows,
+            )
             fed += n
             progress()
 
             a_rows: list[Row] = []
             for ids, _, _, _, sc in prepared:
                 for it in sc:
-                    ctx = torch.cat([ids[it["source_start"]:it["source_end"]],
-                                     ids[it["cue_start"]:it["span_end"]]])
+                    ctx = torch.cat(
+                        [
+                            ids[it["source_start"] : it["source_end"]],
+                            ids[it["cue_start"] : it["span_end"]],
+                        ]
+                    )
                     off = (it["source_end"] - it["source_start"]) - it["cue_start"]
                     a_rows.append((ctx, [(it["span_start"] + off, it["span_end"] + off)]))
             as_, n = score_rows(scorer, a_rows, "A", max_rows)
@@ -237,18 +260,23 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
                 for it, b, c in zip(sc, b_row, c_row):
                     a, k = as_[k][0], k + 1
                     v = verdict(a, b, c, args)
-                    it["filter"] = {"a": round(float(a), 4), "b": round(float(b), 4),
-                                    "c": round(float(c), 4), "verdict": v}
+                    it["filter"] = {
+                        "a": round(float(a), 4),
+                        "b": round(float(b), 4),
+                        "c": round(float(c), 4),
+                        "verdict": v,
+                    }
                     counts[v] += 1
                     if v != "pass":
-                        recall[it["span_start"]:it["span_end"]] = False
+                        recall[it["span_start"] : it["span_end"]] = False
                     if len(samples) < args.samples:
                         samples.append(
                             f"{v} -- A {a:+.2f} (source+cue) B {b:+.2f} (interference, no source) "
                             f"C {c:+.2f} (in-stream), gap {it['gap']}, entity {it['credit_text']!r}\n"
-                            f"    [cue]    ...{tokenizer.decode(ids[max(0, it['cue_start'] - 160):it['cue_end']])}\n"
-                            f"    [scored] {tokenizer.decode(ids[it['answer_start']:it['span_start']])}"
-                            f"<<{tokenizer.decode(ids[it['span_start']:it['span_end']])}>>")
+                            f"    [cue]    ...{tokenizer.decode(ids[max(0, it['cue_start'] - 160) : it['cue_end']])}\n"
+                            f"    [scored] {tokenizer.decode(ids[it['answer_start'] : it['span_start']])}"
+                            f"<<{tokenizer.decode(ids[it['span_start'] : it['span_end']])}>>"
+                        )
                         # Printed immediately, not held for the end-of-run report: a
                         # degenerate scoring run should be recognizable at batch one,
                         # not after the full pass.
@@ -262,13 +290,17 @@ def filter_dataset(dataset: dict, scorer, tokenizer, args) -> dict:
         "verdicts": {v: counts[v] for v in VERDICTS},
         "discard_rate": (n_items - counts["pass"]) / n_items if n_items else 0.0,
     }
-    print(f"\n{_ts()} filter: {n_items} items, {counts['pass']} kept, "
-          f"discard rate {100 * stats['discard_rate']:.1f}%")
+    print(
+        f"\n{_ts()} filter: {n_items} items, {counts['pass']} kept, "
+        f"discard rate {100 * stats['discard_rate']:.1f}%"
+    )
     for v in VERDICTS[1:]:
         share = 100 * counts[v] / max(n_items - counts["pass"], 1)
         print(f"{_ts()}   {v}: {counts[v]} ({share:.1f}% of discards)")
-    print(f"{_ts()}   (mostly fail_a -> the cloze construction is bad; mostly fail_b -> entity substitution "
-          "isn't biting; mostly fail_c -> gaps are too short for the interference to defeat the SSM)")
+    print(
+        f"{_ts()}   (mostly fail_a -> the cloze construction is bad; mostly fail_b -> entity substitution "
+        "isn't biting; mostly fail_c -> gaps are too short for the interference to defeat the SSM)"
+    )
     return stats
 
 
@@ -294,13 +326,18 @@ def rescore_dataset(dataset: dict, args) -> dict:
                 v = verdict(rec["a"], rec["b"], rec["c"], args)
             rec["verdict"] = v
             counts[v] += 1
-            recall[it["span_start"]:it["span_end"]] = v == "pass"
+            recall[it["span_start"] : it["span_end"]] = v == "pass"
 
     n_items = sum(counts.values())
-    stats = {"n_items": n_items, "verdicts": {v: counts[v] for v in VERDICTS},
-             "discard_rate": (n_items - counts["pass"]) / n_items if n_items else 0.0}
-    print(f"{_ts()} rescore: {n_items} items, {counts['pass']} kept, "
-          f"discard rate {100 * stats['discard_rate']:.1f}%")
+    stats = {
+        "n_items": n_items,
+        "verdicts": {v: counts[v] for v in VERDICTS},
+        "discard_rate": (n_items - counts["pass"]) / n_items if n_items else 0.0,
+    }
+    print(
+        f"{_ts()} rescore: {n_items} items, {counts['pass']} kept, "
+        f"discard rate {100 * stats['discard_rate']:.1f}%"
+    )
     for v in VERDICTS[1:]:
         share = 100 * counts[v] / max(n_items - counts["pass"], 1)
         print(f"{_ts()}   {v}: {counts[v]} ({share:.1f}% of discards)")
@@ -329,66 +366,104 @@ class BackboneScorer:
         totals = [[0.0] * len(spans) for _, spans in rows]
         state, prev = None, None
         for start in range(0, ids_t.shape[1], self.chunk_len):
-            chunk = ids_t[:, start:start + self.chunk_len]
+            chunk = ids_t[:, start : start + self.chunk_len]
             logits, state = self.model(chunk, state=state)
             state = state.detach()
-            need = [(ri, si, t)
-                    for ri, (_, spans) in enumerate(rows)
-                    for si, (a, b) in enumerate(spans)
-                    for t in range(max(a, start), min(b, start + chunk.shape[1]))]
+            need = [
+                (ri, si, t)
+                for ri, (_, spans) in enumerate(rows)
+                for si, (a, b) in enumerate(spans)
+                for t in range(max(a, start), min(b, start + chunk.shape[1]))
+            ]
             if need:
                 # Credited spans are a few tokens each, so the softmax runs on
                 # the handful of rows actually read: a whole-chunk fp32
                 # log_softmax is ~50 MB per batch row at this vocab.
-                src = torch.stack([prev[ri] if t == start else logits[ri, t - 1 - start]
-                                   for ri, _, t in need])
+                src = torch.stack(
+                    [prev[ri] if t == start else logits[ri, t - 1 - start] for ri, _, t in need]
+                )
                 tgt = ids_t[[ri for ri, _, _ in need], [t for _, _, t in need]]
-                vals = torch.log_softmax(src.float(), dim=-1).gather(1, tgt.view(-1, 1)).squeeze(1).tolist()
+                vals = (
+                    torch.log_softmax(src.float(), dim=-1)
+                    .gather(1, tgt.view(-1, 1))
+                    .squeeze(1)
+                    .tolist()
+                )
                 for (ri, si, _), v in zip(need, vals):
                     totals[ri][si] += v
             prev = logits[:, -1].clone()
-        return [[tot / max(b - a, 1) for tot, (a, b) in zip(totals[ri], spans)]
-                for ri, (_, spans) in enumerate(rows)]
+        return [
+            [tot / max(b - a, 1) for tot, (a, b) in zip(totals[ri], spans)]
+            for ri, (_, spans) in enumerate(rows)
+        ]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--data", required=True, help="A preparation/cram.py/preparation/needles.py artifact")
-    parser.add_argument("--output", default=None, help="Default: <data> with -filtered before the suffix")
-    parser.add_argument("--a-min", type=float, default=-2.0,
-                        help="Test A passes at or above this mean log-prob per credited token. A loose "
-                             "sanity floor only: entity substitution makes the span deliberately "
-                             "implausible, so the backbone's prior fights the copy even with the source "
-                             "in view (pilot: fail_a median A -1.4 at margins of 6+ nats). The margin "
-                             "rule carries the real discrimination")
-    parser.add_argument("--b-max", type=float, default=-1.5,
-                        help="Test B passes at or below this. -1.5 (~0.22/token) sits just above bAbI's "
-                             "~6-way chance level, so closed-vocabulary guessing still passes and the "
-                             "margin rule does the real work there")
+    parser.add_argument(
+        "--data", required=True, help="A preparation/cram.py/preparation/needles.py artifact"
+    )
+    parser.add_argument(
+        "--output", default=None, help="Default: <data> with -filtered before the suffix"
+    )
+    parser.add_argument(
+        "--a-min",
+        type=float,
+        default=-2.0,
+        help="Test A passes at or above this mean log-prob per credited token. A loose "
+        "sanity floor only: entity substitution makes the span deliberately "
+        "implausible, so the backbone's prior fights the copy even with the source "
+        "in view (pilot: fail_a median A -1.4 at margins of 6+ nats). The margin "
+        "rule carries the real discrimination",
+    )
+    parser.add_argument(
+        "--b-max",
+        type=float,
+        default=-1.5,
+        help="Test B passes at or below this. -1.5 (~0.22/token) sits just above bAbI's "
+        "~6-way chance level, so closed-vocabulary guessing still passes and the "
+        "margin rule does the real work there",
+    )
     parser.add_argument("--c-max", type=float, default=-1.5, help="Test C passes at or below this")
-    parser.add_argument("--min-margin", type=float, default=4.0,
-                        help="Required A - B in nats/token: the source, not inferability, must carry "
-                             "the answer. Scale-free where the absolute thresholds are not: a "
-                             "common-word answer scores high everywhere. Margin is over B only -- C has "
-                             "its own absolute bar, and requiring a large A-C gap double-counts it, "
-                             "killing items that are near-certain with the source and dead in-stream. "
-                             "4.0 calibrated on the pilot (pass margins median ~6.4, ill-posed below ~3)")
-    parser.add_argument("--leak-only", action="store_true",
-                        help="Skip the A/B/C scoring; only the string leak-check gates credit. For the "
-                             "needle slice: bAbI items are well-posed and leak-proof by construction, "
-                             "and the base backbone cannot express bare-entity answers in the marker "
-                             "format at all (pilot: A -12..-18 in every context, so scoring measures "
-                             "format competence, not item quality)")
-    parser.add_argument("--rescore", action="store_true",
-                        help="Re-verdict a previously-scored artifact from its stored per-item scores "
-                             "-- no model load, no GPU. Threshold sweeps cost seconds instead of a "
-                             "scoring pass")
-    parser.add_argument("--chunk-len", type=int, default=256, help="Forward chunk for the scoring pass")
-    parser.add_argument("--score-batch", type=int, default=16,
-                        help="Rows per forward: blocks for tests B and C, item contexts for A. Costs "
-                             "one carried SSM state (~39 MB on the 780m backbone) plus one chunk of "
-                             "logits (~26 MB at --chunk-len 256) per row, so 16 is ~1 GB above the "
-                             "model; raise it on a large card. 1 restores the serial path exactly")
+    parser.add_argument(
+        "--min-margin",
+        type=float,
+        default=4.0,
+        help="Required A - B in nats/token: the source, not inferability, must carry "
+        "the answer. Scale-free where the absolute thresholds are not: a "
+        "common-word answer scores high everywhere. Margin is over B only -- C has "
+        "its own absolute bar, and requiring a large A-C gap double-counts it, "
+        "killing items that are near-certain with the source and dead in-stream. "
+        "4.0 calibrated on the pilot (pass margins median ~6.4, ill-posed below ~3)",
+    )
+    parser.add_argument(
+        "--leak-only",
+        action="store_true",
+        help="Skip the A/B/C scoring; only the string leak-check gates credit. For the "
+        "needle slice: bAbI items are well-posed and leak-proof by construction, "
+        "and the base backbone cannot express bare-entity answers in the marker "
+        "format at all (pilot: A -12..-18 in every context, so scoring measures "
+        "format competence, not item quality)",
+    )
+    parser.add_argument(
+        "--rescore",
+        action="store_true",
+        help="Re-verdict a previously-scored artifact from its stored per-item scores "
+        "-- no model load, no GPU. Threshold sweeps cost seconds instead of a "
+        "scoring pass",
+    )
+    parser.add_argument(
+        "--chunk-len", type=int, default=256, help="Forward chunk for the scoring pass"
+    )
+    parser.add_argument(
+        "--score-batch",
+        type=int,
+        default=16,
+        help="Rows per forward: blocks for tests B and C, item contexts for A. Costs "
+        "one carried SSM state (~39 MB on the 780m backbone) plus one chunk of "
+        "logits (~26 MB at --chunk-len 256) per row, so 16 is ~1 GB above the "
+        "model; raise it on a large card. 1 restores the serial path exactly",
+    )
     parser.add_argument("--samples", type=int, default=3, help="Decoded scored items printed")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
@@ -400,23 +475,52 @@ def main() -> None:
         import importlib
         import os
         from models.common import build_tokenizer
+
         model_name = os.getenv("MODEL_NAME", "mamba2_780m")
         model_mod = importlib.import_module(f"models.{model_name}")
         tokenizer = build_tokenizer(model_mod)
-        print(f"{_ts()} loading {model_name} on {args.device} (the plain backbone IS the M-ablated model) ...")
+        print(
+            f"{_ts()} loading {model_name} on {args.device} (the plain backbone IS the M-ablated model) ..."
+        )
         model = model_mod.load_inference(args.device)
         model.eval()
-        stats = filter_dataset(dataset, BackboneScorer(model, args.device, args.chunk_len), tokenizer, args)
-    dataset["filter"] = {"thresholds": {"a_min": args.a_min, "b_max": args.b_max,
-                                        "c_max": args.c_max, "min_margin": args.min_margin}, **stats}
-    out = Path(args.output) if args.output else Path(args.data).with_name(Path(args.data).stem + "-filtered.pt")
+        stats = filter_dataset(
+            dataset, BackboneScorer(model, args.device, args.chunk_len), tokenizer, args
+        )
+    dataset["filter"] = {
+        "thresholds": {
+            "a_min": args.a_min,
+            "b_max": args.b_max,
+            "c_max": args.c_max,
+            "min_margin": args.min_margin,
+        },
+        **stats,
+    }
+    out = (
+        Path(args.output)
+        if args.output
+        else Path(args.data).with_name(Path(args.data).stem + "-filtered.pt")
+    )
     torch.save(dataset, out)
     n_recall = sum(int(r.sum()) for r in dataset["recall_masks"])
     print(f"\n{_ts()} wrote {out}: {n_recall} recall-credited tokens remain")
 
 
-__all__ = ["VERDICTS", "Row", "interference_stream", "aliases", "leaks", "length_batches",
-           "pad_rows", "score_rows", "verdict", "filter_dataset", "rescore_dataset", "BackboneScorer", "main"]
+__all__ = [
+    "VERDICTS",
+    "Row",
+    "interference_stream",
+    "aliases",
+    "leaks",
+    "length_batches",
+    "pad_rows",
+    "score_rows",
+    "verdict",
+    "filter_dataset",
+    "rescore_dataset",
+    "BackboneScorer",
+    "main",
+]
 
 
 if __name__ == "__main__":

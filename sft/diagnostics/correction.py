@@ -56,35 +56,50 @@ SCENARIOS = [
 ]
 
 
-def build_prefix(tokenizer, markers: tuple[str, str], corrected: str, wrong: str, device, filler: bool = True) -> torch.Tensor:
+def build_prefix(
+    tokenizer, markers: tuple[str, str], corrected: str, wrong: str, device, filler: bool = True
+) -> torch.Tensor:
     from diagnostics import recall as pr
     from preparation.conversations import format_conversation
 
     messages = [
         {"role": "user", "content": QUESTION},
         {"role": "assistant", "content": f"{ANSWER_STEM} {wrong}."},
-        {"role": "user", "content": f"No, that is outdated. {corrected} won the most"
-         f" recent election. The current president is {corrected}, not {wrong}."},
-        {"role": "assistant", "content": f"Thanks for the correction. I will remember that"
-         f" the current president is {corrected} now, and that {wrong} is no longer the president."},
+        {
+            "role": "user",
+            "content": f"No, that is outdated. {corrected} won the most"
+            f" recent election. The current president is {corrected}, not {wrong}.",
+        },
+        {
+            "role": "assistant",
+            "content": f"Thanks for the correction. I will remember that"
+            f" the current president is {corrected} now, and that {wrong} is no longer the president.",
+        },
     ]
     # The filler both pushes the correction past a write boundary and is the
     # likeliest thing to evict it under the delta rule -- run both arms to
     # tell "never written" apart from "written then overwritten".
     if filler:
         messages += [
-            {"role": "user", "content": "While I have you, could you also write me a short piece about autumn?"},
+            {
+                "role": "user",
+                "content": "While I have you, could you also write me a short piece about autumn?",
+            },
             {"role": "assistant", "content": FILLER_ANSWER},
         ]
     ids, _, _ = format_conversation(messages, tokenizer, 1 << 30, *markers)
-    keep = len(ids) - len(ids) % pr.CHUNK_LEN  # truncate, don't pad: pad ids would pollute the state
+    keep = (
+        len(ids) - len(ids) % pr.CHUNK_LEN
+    )  # truncate, don't pad: pad ids would pollute the state
     return torch.tensor(ids[:keep], device=device).unsqueeze(0)
 
 
 def build_query(tokenizer, markers: tuple[str, str], device) -> torch.Tensor:
     from preparation.conversations import format_conversation
 
-    ids, _, _ = format_conversation([{"role": "user", "content": QUESTION}], tokenizer, 1 << 30, *markers)
+    ids, _, _ = format_conversation(
+        [{"role": "user", "content": QUESTION}], tokenizer, 1 << 30, *markers
+    )
     ids += tokenizer.encode(f"{markers[1]} {ANSWER_STEM}", add_special_tokens=False)
     return torch.tensor(ids, device=device).unsqueeze(0)
 
@@ -95,11 +110,21 @@ def main() -> None:
     from training.checkpoints import latest_checkpoint, load_checkpoint
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
-    parser.add_argument("--chunk-len", type=int, default=24, help="Forward chunk length (8 fits 2.7B on an 8 GB card)")
+    parser.add_argument(
+        "--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)"
+    )
+    parser.add_argument(
+        "--chunk-len",
+        type=int,
+        default=24,
+        help="Forward chunk length (8 fits 2.7B on an 8 GB card)",
+    )
     parser.add_argument("--memory-window", type=int, default=8)
-    parser.add_argument("--no-filler", action="store_true",
-                        help="Sleep immediately after the correction, with no intervening filler turn")
+    parser.add_argument(
+        "--no-filler",
+        action="store_true",
+        help="Sleep immediately after the correction, with no intervening filler turn",
+    )
     args = parser.parse_args()
 
     pr.CHUNK_LEN = args.chunk_len
@@ -118,8 +143,10 @@ def main() -> None:
 
     def patched_write(self, ks, vs, etas, thetas, alphas, create_graph=True):
         if skip_writes["on"]:
-            return (torch.zeros(ks.shape[0], ks.shape[1], device=ks.device, dtype=ks.dtype),
-                    torch.zeros(ks.shape[1], device=ks.device, dtype=ks.dtype))
+            return (
+                torch.zeros(ks.shape[0], ks.shape[1], device=ks.device, dtype=ks.dtype),
+                torch.zeros(ks.shape[1], device=ks.device, dtype=ks.dtype),
+            )
         return orig_write(self, ks, vs, etas, thetas, alphas, create_graph=False)
 
     mmod._NeuralMemory.write = patched_write
@@ -160,9 +187,15 @@ def main() -> None:
                 state = fresh_state(prefix, condition)
                 skip_writes["on"] = True
                 model.injection_enabled = condition not in ("sleep-none", "parametric")
-                s = pr.score_targets(model, query, torch.tensor(
-                    tokenizer.encode(f" {name}.", add_special_tokens=False), device=device).unsqueeze(0),
-                    state, f"{condition}:{name}")
+                s = pr.score_targets(
+                    model,
+                    query,
+                    torch.tensor(
+                        tokenizer.encode(f" {name}.", add_special_tokens=False), device=device
+                    ).unsqueeze(0),
+                    state,
+                    f"{condition}:{name}",
+                )
                 model.injection_enabled = True
                 del state
                 torch.cuda.empty_cache()
@@ -186,19 +219,28 @@ def main() -> None:
             return [("<non-finite logits>", float("nan"))]
         probs = torch.softmax(last, -1)
         top = probs.topk(k)
-        return [(tokenizer.decode([int(i)]), round(p.item(), 3)) for p, i in zip(top.values, top.indices)]
+        return [
+            (tokenizer.decode([int(i)]), round(p.item(), 3))
+            for p, i in zip(top.values, top.indices)
+        ]
 
     results: dict[str, dict] = {}
     with torch.no_grad():
-        results["parametric (no context)"] = {"scores": score_names(None, "parametric"),
-                                              "top": topk_after_query(None, "parametric")}
+        results["parametric (no context)"] = {
+            "scores": score_names(None, "parametric"),
+            "top": topk_after_query(None, "parametric"),
+        }
         for scen, corrected, wrong in SCENARIOS:
-            prefix = build_prefix(tokenizer, markers, corrected, wrong, device, filler=not args.no_filler)
+            prefix = build_prefix(
+                tokenizer, markers, corrected, wrong, device, filler=not args.no_filler
+            )
             print(f"\n=== {scen} (prefix {prefix.shape[1]} tokens) ===", flush=True)
             rows: dict[str, dict] = {}
             rows["no-sleep"] = {"scores": score_names(prefix, "no-sleep")}
-            rows["sleep-intact"] = {"scores": score_names(prefix, "sleep-intact"),
-                                    "top": topk_after_query(prefix, "sleep-intact")}
+            rows["sleep-intact"] = {
+                "scores": score_names(prefix, "sleep-intact"),
+                "top": topk_after_query(prefix, "sleep-intact"),
+            }
             rows["sleep-none"] = {"scores": score_names(prefix, "sleep-none")}
             results[scen] = rows
 
@@ -208,7 +250,10 @@ def main() -> None:
         if "scores" in rows:
             rows = {"": rows}
         for cond, data in rows.items():
-            print(f"  {cond or 'baseline':>14}: " + "  ".join(f"{n}: {v:+.3f}" for n, v in data["scores"].items()))
+            print(
+                f"  {cond or 'baseline':>14}: "
+                + "  ".join(f"{n}: {v:+.3f}" for n, v in data["scores"].items())
+            )
             if "top" in data:
                 print(f"  {'top-8 next':>14}: " + ", ".join(f"{t!r} {p}" for t, p in data["top"]))
 

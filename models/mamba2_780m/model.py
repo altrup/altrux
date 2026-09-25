@@ -69,7 +69,9 @@ class MixerState:
         self.ssm_states = ssm_states
 
     def detach(self) -> "MixerState":
-        return MixerState([c.detach() for c in self.conv_states], [s.detach() for s in self.ssm_states])
+        return MixerState(
+            [c.detach() for c in self.conv_states], [s.detach() for s in self.ssm_states]
+        )
 
     def flatten(self) -> tuple[torch.Tensor, ...]:
         """Every carried tensor, in a fixed order, for crossing a
@@ -131,7 +133,12 @@ class Model(nn.Module):
         # absent on raw models (e.g. the tiny test fixtures).
         marker_ids = getattr(mamba_model, "marker_token_ids", None)
         self.marker_delta = (
-            MarkerDelta(marker_ids, self.d_model, device=self.embedding.weight.device, dtype=self.embedding.weight.dtype)
+            MarkerDelta(
+                marker_ids,
+                self.d_model,
+                device=self.embedding.weight.device,
+                dtype=self.embedding.weight.dtype,
+            )
             if marker_ids
             else None
         )
@@ -182,7 +189,9 @@ class Model(nn.Module):
             is_rms_norm=isinstance(layer.norm, RMSNorm),
         )
 
-    def _mixer_step(self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state, layer_idx: int = 0):
+    def _mixer_step(
+        self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state, layer_idx: int = 0
+    ):
         """One token through `mixer`, replicating Mamba2.step()'s arithmetic
         manually (see class docstring for why). `ssm_state`/`conv_state` are
         *not* mutated in place (unlike the library's own decode cache): each
@@ -191,9 +200,19 @@ class Model(nn.Module):
         """
         dtype = hidden_states.dtype
         zxbcdt = mixer.in_proj(hidden_states)
-        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        d_mlp = (
+            zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads
+        ) // 2
         z0, x0, z, xBC, dt = torch.split(
-            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+            zxbcdt,
+            [
+                d_mlp,
+                d_mlp,
+                mixer.d_ssm,
+                mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state,
+                mixer.nheads,
+            ],
+            dim=-1,
         )
 
         conv_state = torch.roll(conv_state, shifts=-1, dims=-1)
@@ -203,7 +222,9 @@ class Model(nn.Module):
             xBC = xBC + mixer.conv1d.bias
         xBC = mixer.act(xBC).to(dtype=dtype)
 
-        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        x, B, C = torch.split(
+            xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1
+        )
         if self.c_capture is not None:
             self.c_capture.append(C.detach())
         if self.erase_hook is not None:
@@ -237,9 +258,19 @@ class Model(nn.Module):
         """
         dtype = hidden_states.dtype
         zxbcdt = mixer.in_proj(hidden_states)
-        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        d_mlp = (
+            zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads
+        ) // 2
         z0, x0, z, xBC, dt = torch.split(
-            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+            zxbcdt,
+            [
+                d_mlp,
+                d_mlp,
+                mixer.d_ssm,
+                mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state,
+                mixer.nheads,
+            ],
+            dim=-1,
         )
 
         d_conv = conv_state.shape[-1]
@@ -249,7 +280,9 @@ class Model(nn.Module):
         xBC = F.conv1d(padded, mixer.conv1d.weight, mixer.conv1d.bias, groups=mixer.conv1d.groups)
         xBC = mixer.act(rearrange(xBC, "b d l -> b l d")).to(dtype=dtype)
 
-        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        x, B, C = torch.split(
+            xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1
+        )
         A = -torch.exp(mixer.A_log.float())
 
         y, ssm_state = _chunk_scan_kernel()(
@@ -292,7 +325,9 @@ class Model(nn.Module):
             is_rms_norm=isinstance(self.norm_f, RMSNorm),
         )
 
-    def forward(self, input_ids: torch.Tensor, state: MixerState | None = None) -> tuple[torch.Tensor, MixerState]:
+    def forward(
+        self, input_ids: torch.Tensor, state: MixerState | None = None
+    ) -> tuple[torch.Tensor, MixerState]:
         """Returns (logits (B, T, vocab_size), updated MixerState).
 
         Pass state=None to start a fresh sequence; pass the returned state
@@ -322,7 +357,9 @@ class Model(nn.Module):
         untouched, and nothing about this reaches a checkpoint file."""
         self.grad_checkpoint_block = block if enabled else 0
 
-    def _forward_tokens(self, input_ids: torch.Tensor, state: MixerState) -> tuple[torch.Tensor, MixerState]:
+    def _forward_tokens(
+        self, input_ids: torch.Tensor, state: MixerState
+    ) -> tuple[torch.Tensor, MixerState]:
         seqlen = input_ids.shape[1]
         all_logits = []
         for t in range(seqlen):
@@ -332,7 +369,9 @@ class Model(nn.Module):
             residual = None
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
-                h, conv_state, ssm_state = self._mixer_step(layer.mixer, h, state.conv_states[i], state.ssm_states[i], i)
+                h, conv_state, ssm_state = self._mixer_step(
+                    layer.mixer, h, state.conv_states[i], state.ssm_states[i], i
+                )
                 state.conv_states[i] = conv_state
                 state.ssm_states[i] = ssm_state
 
@@ -344,14 +383,18 @@ class Model(nn.Module):
 
         return torch.stack(all_logits, dim=1), state
 
-    def _forward_chunk(self, input_ids: torch.Tensor, state: MixerState) -> tuple[torch.Tensor, MixerState]:
+    def _forward_chunk(
+        self, input_ids: torch.Tensor, state: MixerState
+    ) -> tuple[torch.Tensor, MixerState]:
         h = self.embedding(input_ids)
         if self.marker_delta is not None:
             h = self.marker_delta.embed(h, input_ids)
         residual = None
         for i, layer in enumerate(self.layers):
             h, residual = self._prenorm(layer, h, residual)
-            h, conv_state, ssm_state = self._mixer_chunk(layer.mixer, h, state.conv_states[i], state.ssm_states[i])
+            h, conv_state, ssm_state = self._mixer_chunk(
+                layer.mixer, h, state.conv_states[i], state.ssm_states[i]
+            )
             state.conv_states[i] = conv_state
             state.ssm_states[i] = ssm_state
 

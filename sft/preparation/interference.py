@@ -56,7 +56,20 @@ LABEL_SKIP = 1024  # probe_recall uses labels [0, 1024); we train on [1024, 2048
 
 COLORS = ["red", "blue", "green", "teal", "amber", "violet", "crimson", "olive", "navy", "coral"]
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-NAMES = ["Maria", "Ethan", "Priya", "Jonas", "Amara", "Felix", "Nadia", "Oscar", "Lena", "Tariq", "Ivy", "Marcus"]
+NAMES = [
+    "Maria",
+    "Ethan",
+    "Priya",
+    "Jonas",
+    "Amara",
+    "Felix",
+    "Nadia",
+    "Oscar",
+    "Lena",
+    "Tariq",
+    "Ivy",
+    "Marcus",
+]
 
 
 def _digits(rng: random.Random) -> str:
@@ -70,57 +83,109 @@ FACT_KINDS = [
     {
         "value": _digits,
         "sets": [
-            ("The code for {k} is {v}.", "What was the code for {k}?", "The code for {k} is {v}.",
-             "Actually, the code for {k} has changed to {v}."),
-            ("{k}'s passcode is {v}.", "Do you remember {k}'s passcode?", "{k}'s passcode is {v}.",
-             "Correction: {k}'s passcode is now {v}."),
-            ("Please note down the access code {v} for {k}.", "Which access code goes with {k}?", "It's {v}.",
-             "Scratch that -- the access code for {k} is now {v}."),
+            (
+                "The code for {k} is {v}.",
+                "What was the code for {k}?",
+                "The code for {k} is {v}.",
+                "Actually, the code for {k} has changed to {v}.",
+            ),
+            (
+                "{k}'s passcode is {v}.",
+                "Do you remember {k}'s passcode?",
+                "{k}'s passcode is {v}.",
+                "Correction: {k}'s passcode is now {v}.",
+            ),
+            (
+                "Please note down the access code {v} for {k}.",
+                "Which access code goes with {k}?",
+                "It's {v}.",
+                "Scratch that -- the access code for {k} is now {v}.",
+            ),
         ],
     },
     {
         "value": "vocab_word",
         "sets": [
-            ("The keyword for {k} is {v}.", "What was the keyword for {k}?", "The keyword for {k} is {v}.",
-             "Update: the keyword for {k} is now {v}."),
-            ("{k} is filed under {v}.", "What is {k} filed under?", "{k} is filed under {v}.",
-             "We moved {k}; it is now filed under {v}."),
+            (
+                "The keyword for {k} is {v}.",
+                "What was the keyword for {k}?",
+                "The keyword for {k} is {v}.",
+                "Update: the keyword for {k} is now {v}.",
+            ),
+            (
+                "{k} is filed under {v}.",
+                "What is {k} filed under?",
+                "{k} is filed under {v}.",
+                "We moved {k}; it is now filed under {v}.",
+            ),
         ],
     },
     {
         "value": lambda rng: rng.choice(COLORS),
         "sets": [
-            ("The {k} folder is marked {v}.", "What color is the {k} folder marked?", "The {k} folder is marked {v}.",
-             "The {k} folder was re-marked {v}."),
-            ("{k}'s team wears {v}.", "What color does {k}'s team wear?", "{k}'s team wears {v}.",
-             "{k}'s team switched to wearing {v}."),
+            (
+                "The {k} folder is marked {v}.",
+                "What color is the {k} folder marked?",
+                "The {k} folder is marked {v}.",
+                "The {k} folder was re-marked {v}.",
+            ),
+            (
+                "{k}'s team wears {v}.",
+                "What color does {k}'s team wear?",
+                "{k}'s team wears {v}.",
+                "{k}'s team switched to wearing {v}.",
+            ),
         ],
     },
     {
         "value": lambda rng: rng.choice(WEEKDAYS),
         "sets": [
-            ("The meeting about {k} is on {v}.", "When is the meeting about {k}?", "The {k} meeting is on {v}.",
-             "The meeting about {k} was moved to {v}."),
-            ("The {k} shipment arrives on {v}.", "Which day does the {k} shipment arrive?", "It arrives on {v}.",
-             "The {k} shipment was rescheduled to {v}."),
+            (
+                "The meeting about {k} is on {v}.",
+                "When is the meeting about {k}?",
+                "The {k} meeting is on {v}.",
+                "The meeting about {k} was moved to {v}.",
+            ),
+            (
+                "The {k} shipment arrives on {v}.",
+                "Which day does the {k} shipment arrive?",
+                "It arrives on {v}.",
+                "The {k} shipment was rescheduled to {v}.",
+            ),
         ],
     },
     {
         "value": lambda rng: str(rng.randrange(2, 99)),
         "sets": [
-            ("There are {v} boxes in the {k} room.", "How many boxes are in the {k} room?",
-             "There are {v} boxes in the {k} room.", "Recount: the {k} room now holds {v} boxes."),
-            ("The {k} order is for {v} units.", "How many units is the {k} order for?", "The {k} order is for {v} units.",
-             "The {k} order was amended to {v} units."),
+            (
+                "There are {v} boxes in the {k} room.",
+                "How many boxes are in the {k} room?",
+                "There are {v} boxes in the {k} room.",
+                "Recount: the {k} room now holds {v} boxes.",
+            ),
+            (
+                "The {k} order is for {v} units.",
+                "How many units is the {k} order for?",
+                "The {k} order is for {v} units.",
+                "The {k} order was amended to {v} units.",
+            ),
         ],
     },
     {
         "value": lambda rng: rng.choice(NAMES),
         "sets": [
-            ("The {k} ledger belongs to {v}.", "Who does the {k} ledger belong to?", "The {k} ledger belongs to {v}.",
-             "The {k} ledger was handed over to {v}."),
-            ("{v} is in charge of {k}.", "Who is in charge of {k}?", "{v} is in charge of {k}.",
-             "{v} has taken over {k}."),
+            (
+                "The {k} ledger belongs to {v}.",
+                "Who does the {k} ledger belong to?",
+                "The {k} ledger belongs to {v}.",
+                "The {k} ledger was handed over to {v}.",
+            ),
+            (
+                "{v} is in charge of {k}.",
+                "Who is in charge of {k}?",
+                "{v} is in charge of {k}.",
+                "{v} has taken over {k}.",
+            ),
         ],
     },
 ]
@@ -130,12 +195,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--source", default="data/train_memory.pt")
     parser.add_argument("--output", default="data/train_memory_v2.pt")
-    parser.add_argument("--fraction", type=float, default=0.3, help="Fraction of examples to inject into")
+    parser.add_argument(
+        "--fraction", type=float, default=0.3, help="Fraction of examples to inject into"
+    )
     parser.add_argument("--min-facts", type=int, default=8)
     parser.add_argument("--max-facts", type=int, default=256)
     parser.add_argument("--min-queries", type=int, default=3)
     parser.add_argument("--max-queries", type=int, default=8)
-    parser.add_argument("--revise-rate", type=float, default=0.12, help="Fraction of facts later revised to a new value")
+    parser.add_argument(
+        "--revise-rate",
+        type=float,
+        default=0.12,
+        help="Fraction of facts later revised to a new value",
+    )
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
 
@@ -198,7 +270,11 @@ def main() -> None:
             q, a, _ = f["templates"]
             final_v = f["v2"] if f["v2"] is not None else f["v"]
             query_plan.append(
-                (j, add_string(f"{user_open} {q.format(k=f['k'])}"), add_string(f"{asst_open} {a.format(k=f['k'], v=final_v)}"))
+                (
+                    j,
+                    add_string(f"{user_open} {q.format(k=f['k'])}"),
+                    add_string(f"{asst_open} {a.format(k=f['k'], v=final_v)}"),
+                )
             )
         plans.append((ex, fact_turn_idx, facts, query_plan))
 
@@ -266,6 +342,7 @@ def main() -> None:
         f"wrote {args.output}: {n} examples ({len(plans)} injected, {n_revised_total} revised facts), "
         f"{total / 1e6:.1f}M tokens ({n_recall / 1e3:.1f}k recall-answer tokens for --recall-weight)"
     )
+
 
 __all__ = [
     "LABEL_POOL",

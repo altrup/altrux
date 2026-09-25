@@ -15,16 +15,30 @@ from experiments.lama_ckl.split import freeze_split
 
 
 def test_build_candidates_uses_longest_masked_sentence_and_not_paper_token_rule(tmp_path):
-    (tmp_path / "relations.jsonl").write_text(json.dumps({
-        "relation": "P530", "label": "diplomatic relation", "template": "[X] knows [Y] .",
-    }) + "\n")
+    (tmp_path / "relations.jsonl").write_text(
+        json.dumps(
+            {
+                "relation": "P530",
+                "label": "diplomatic relation",
+                "template": "[X] knows [Y] .",
+            }
+        )
+        + "\n"
+    )
     trex = tmp_path / "TREx"
     trex.mkdir()
     long = "Ada " + "x" * 205 + " [MASK]"
-    (trex / "P530.jsonl").write_text(json.dumps({
-        "uuid": "u1", "sub_label": "Ada", "obj_label": "London",
-        "evidences": [{"masked_sentence": "Ada [MASK]"}, {"masked_sentence": long}],
-    }) + "\n")
+    (trex / "P530.jsonl").write_text(
+        json.dumps(
+            {
+                "uuid": "u1",
+                "sub_label": "Ada",
+                "obj_label": "London",
+                "evidences": [{"masked_sentence": "Ada [MASK]"}, {"masked_sentence": long}],
+            }
+        )
+        + "\n"
+    )
 
     rows = list(build_candidates(tmp_path))
 
@@ -93,8 +107,9 @@ def test_score_records_batches_fresh_state_and_streams_scores():
                     logits[row, token, ids[row, token + 1]] = 1
             return logits, object()
 
-    rows = [{"task_descriptive": f"Ada knows Rome {index} .", "object": "Rome"}
-            for index in range(3)]
+    rows = [
+        {"task_descriptive": f"Ada knows Rome {index} .", "object": "Rome"} for index in range(3)
+    ]
 
     scores = score_records(Model(), _Tokenizer(), rows, "task_descriptive", 2, 32, "cpu")
 
@@ -104,12 +119,30 @@ def test_score_records_batches_fresh_state_and_streams_scores():
 def test_select_split_applies_official_zero_one_rules_and_seeded_sampling():
     rows = []
     for index in range(4):
-        rows.append({"uuid": f"v{index}", "invariant": False, "relation_code": "P1",
-                     "scores": {"descriptive": 0.0, "schematic": 0.0}})
-        rows.append({"uuid": f"i{index}", "invariant": True, "relation_code": "P2",
-                     "scores": {"descriptive": 1.0, "schematic": 0.5}})
-    rows.append({"uuid": "partial", "invariant": False, "relation_code": "P1",
-                 "scores": {"descriptive": 0.0, "schematic": 0.5}})
+        rows.append(
+            {
+                "uuid": f"v{index}",
+                "invariant": False,
+                "relation_code": "P1",
+                "scores": {"descriptive": 0.0, "schematic": 0.0},
+            }
+        )
+        rows.append(
+            {
+                "uuid": f"i{index}",
+                "invariant": True,
+                "relation_code": "P2",
+                "scores": {"descriptive": 1.0, "schematic": 0.5},
+            }
+        )
+    rows.append(
+        {
+            "uuid": "partial",
+            "invariant": False,
+            "relation_code": "P1",
+            "scores": {"descriptive": 0.0, "schematic": 0.5},
+        }
+    )
 
     learned, retained = select_split(rows, size=2, rng=random.Random(42))
 

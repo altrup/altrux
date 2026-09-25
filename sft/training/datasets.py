@@ -44,7 +44,16 @@ class DataSpec:
         return (self.chunk_len, self.batch_size, self.grad_checkpoint)
 
 
-_SPEC_BOOLS = {"1": True, "0": False, "true": True, "false": False, "yes": True, "no": False, "on": True, "off": False}
+_SPEC_BOOLS = {
+    "1": True,
+    "0": False,
+    "true": True,
+    "false": False,
+    "yes": True,
+    "no": False,
+    "on": True,
+    "off": False,
+}
 
 
 def _spec_value(conv, key: str, value: str):
@@ -96,7 +105,9 @@ def check_shares(specs: list[DataSpec]) -> None:
     given = [s.share is not None for s in specs]
     if any(given) and not all(given):
         missing = [s.path for s in specs if s.share is None]
-        raise ValueError(f"--data share= must be given for every dataset or none; missing for {missing}")
+        raise ValueError(
+            f"--data share= must be given for every dataset or none; missing for {missing}"
+        )
     if any(s.share is not None and s.share <= 0 for s in specs):
         raise ValueError("--data share= must be positive")
 
@@ -154,7 +165,9 @@ def pick_deficit(consumed: list[float], shares: list[float], available: list[int
     return min(available, key=lambda i: consumed[i] / shares[i])
 
 
-def build_order(specs: list[DataSpec], train_ids: list[torch.Tensor], epoch: int, keep) -> list[int]:
+def build_order(
+    specs: list[DataSpec], train_ids: list[torch.Tensor], epoch: int, keep
+) -> list[int]:
     """The example order one config group consumes this epoch: each member
     contributes its own examples in its own order (per-epoch shuffle unless
     shuffle=0), and members are interleaved by token share."""
@@ -162,7 +175,9 @@ def build_order(specs: list[DataSpec], train_ids: list[torch.Tensor], epoch: int
     for i, spec in enumerate(specs):
         n = spec.hi - spec.lo
         if spec.shuffle:
-            local = torch.randperm(n, generator=torch.Generator().manual_seed(epoch + 977 * i)).tolist()
+            local = torch.randperm(
+                n, generator=torch.Generator().manual_seed(epoch + 977 * i)
+            ).tolist()
         else:
             local = range(n)
         lists.append([spec.lo + j for j in local if keep(spec.lo + j)])
@@ -184,7 +199,9 @@ def build_order(specs: list[DataSpec], train_ids: list[torch.Tensor], epoch: int
         consumed[i] += int(train_ids[idx].numel())
 
 
-def recall_weight_at(step: int, start: float, end: float, ramp_steps: int, shape: str = "linear") -> float:
+def recall_weight_at(
+    step: int, start: float, end: float, ramp_steps: int, shape: str = "linear"
+) -> float:
     """The recall-mask loss multiplier at a given optimizer step. Ramped
     rather than constant so the retention pressure doesn't peak while the
     beta anneal is opening -- that window is where the gradient decides

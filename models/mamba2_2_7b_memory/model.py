@@ -46,6 +46,7 @@ from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
 from ..common import MarkerDelta, blockwise_checkpoint
+
 # Importing this is always safe even where causal_conv1d/Triton are broken
 # (this repo's ROCm dev box, see root CLAUDE.md) -- it only hangs/segfaults
 # if actually *called*, and `_fused_path_available` gates every call site.
@@ -186,7 +187,9 @@ GRAD_CHECKPOINT_BLOCK = 64
 _NONFINITE_DUMP_LIMIT = 5
 
 
-def _dump_nonfinite_write(nm: "_NeuralMemory", ks, vs, etas, thetas, alphas, pred, per_token_loss) -> None:
+def _dump_nonfinite_write(
+    nm: "_NeuralMemory", ks, vs, etas, thetas, alphas, pred, per_token_loss
+) -> None:
     """Prints per-slot norms of every write() input and of M's weights the
     first few times the write loss goes non-finite, to localize whether the
     explosion arrives via the write targets (vs, i.e. the residual stream),
@@ -228,9 +231,13 @@ class _NeuralMemory:
     def __init__(self, batch_size: int, dim: int, hidden_dim: int, device, dtype):
         bound1 = 1.0 / math.sqrt(dim)
         bound2 = 1.0 / math.sqrt(hidden_dim)
-        self.w1 = (torch.rand(batch_size, hidden_dim, dim, device=device, dtype=dtype) * 2 - 1) * bound1
+        self.w1 = (
+            torch.rand(batch_size, hidden_dim, dim, device=device, dtype=dtype) * 2 - 1
+        ) * bound1
         self.b1 = torch.zeros(batch_size, hidden_dim, device=device, dtype=dtype)
-        self.w2 = (torch.rand(batch_size, dim, hidden_dim, device=device, dtype=dtype) * 2 - 1) * bound2
+        self.w2 = (
+            torch.rand(batch_size, dim, hidden_dim, device=device, dtype=dtype) * 2 - 1
+        ) * bound2
         self.b2 = torch.zeros(batch_size, dim, device=device, dtype=dtype)
         self.momentum = [torch.zeros_like(p) for p in (self.w1, self.b1, self.w2, self.b2)]
         # Snapshot of the random init, so the w*_drift stats (see
@@ -294,7 +301,7 @@ class _NeuralMemory:
         h = torch.tanh(torch.einsum("bhd,wbd->wbh", w1, ks) + b1)
         pred = torch.einsum("bdh,wbh->wbd", w2, h) + b2
         resid = pred - vs
-        per_token_loss = (resid ** 2).mean(dim=-1)  # (W, batch)
+        per_token_loss = (resid**2).mean(dim=-1)  # (W, batch)
         # d per_token_loss / d pred, with the mean's 1/D folded in.
         dpred = (2.0 / pred.shape[-1]) * resid
         dpre1 = torch.einsum("bdh,wbd->wbh", w2, dpred) * (1 - h * h)
@@ -306,7 +313,15 @@ class _NeuralMemory:
         ]
         return pred, per_token_loss, grads
 
-    def write(self, ks: torch.Tensor, vs: torch.Tensor, etas: torch.Tensor, thetas: torch.Tensor, alphas: torch.Tensor, create_graph: bool = True):
+    def write(
+        self,
+        ks: torch.Tensor,
+        vs: torch.Tensor,
+        etas: torch.Tensor,
+        thetas: torch.Tensor,
+        alphas: torch.Tensor,
+        create_graph: bool = True,
+    ):
         """One test-time gradient step, consolidated over a window of W>=1
         tokens: ks/vs/etas/thetas/alphas are (W, ...) stacks -- one entry per
         token in the window, all computed against this SAME (frozen-for-the-
@@ -448,7 +463,9 @@ class _TitansFrontEnd(nn.Module):
     `_NeuralMemory` write per window, plus a `_NeuralMemory` read/surprise
     every token (see observe()'s docstring)."""
 
-    def __init__(self, d_model: int = D_MODEL, mem_dim: int = MEM_DIM, mem_hidden: int = MEM_HIDDEN):
+    def __init__(
+        self, d_model: int = D_MODEL, mem_dim: int = MEM_DIM, mem_hidden: int = MEM_HIDDEN
+    ):
         super().__init__()
         self.mem_dim = mem_dim
         self.mem_hidden = mem_hidden
@@ -483,7 +500,9 @@ class _TitansFrontEnd(nn.Module):
     def init_memory(self, batch_size: int, device, dtype) -> _NeuralMemory:
         return _NeuralMemory(batch_size, self.mem_dim, self.mem_hidden, device, dtype)
 
-    def observe(self, residual: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def observe(
+        self, residual: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """residual: (batch, d_model) residual stream entering READ_LAYER.
 
         Returns (q, k, v, eta, theta, alpha) -- the part of what used to be
@@ -605,7 +624,9 @@ class _GatedDeltaInjection(nn.Module):
         # otherwise matter there either.
         self.beta_anneal_offset = 0.0
 
-    def signals(self, o_t: torch.Tensor, surprise: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def signals(
+        self, o_t: torch.Tensor, surprise: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns (p, key, beta, retain) for this layer's gated-delta merge.
 
         p: (batch, nheads, headdim) per-head value to write.
@@ -667,7 +688,9 @@ class _TokenMixInjection(nn.Module):
         # see its beta_anneal_offset comment; updated by Model.set_beta_anneal.
         self.beta_anneal_offset = 0.0
 
-    def mix_term(self, o_t: torch.Tensor, surprise: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def mix_term(
+        self, o_t: torch.Tensor, surprise: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns (mix, beta): mix is the gated residual addition, same
         leading shape as o_t with d_model channels; beta the per-token gate.
         Works on (B, mem_dim) and (B, L, mem_dim) alike."""
@@ -710,7 +733,10 @@ class MemoryState:
         return (
             *self.conv_states,
             *self.ssm_states,
-            nm.w1, nm.b1, nm.w2, nm.b2,
+            nm.w1,
+            nm.b1,
+            nm.w2,
+            nm.b2,
             *nm.momentum,
             self.last_o_t,
             self.last_surprise,
@@ -755,8 +781,12 @@ class MemoryState:
         # getattr fallback: a state unpickled from a mem_state.pt saved before
         # w1_init/w2_init existed lacks them -- fall back to the current
         # weights as the drift baseline (heals fully at each slot reset).
-        neural_memory.w1_init = getattr(self.neural_memory, "w1_init", self.neural_memory.w1).detach()
-        neural_memory.w2_init = getattr(self.neural_memory, "w2_init", self.neural_memory.w2).detach()
+        neural_memory.w1_init = getattr(
+            self.neural_memory, "w1_init", self.neural_memory.w1
+        ).detach()
+        neural_memory.w2_init = getattr(
+            self.neural_memory, "w2_init", self.neural_memory.w2
+        ).detach()
         return MemoryState(
             conv_states=[c.detach() for c in self.conv_states],
             ssm_states=[s.detach() for s in self.ssm_states],
@@ -821,7 +851,12 @@ class Model(nn.Module):
         # the freeze block above, so it stays trainable.
         marker_ids = getattr(mamba_model, "marker_token_ids", None)
         self.marker_delta = (
-            MarkerDelta(marker_ids, self.d_model, device=self.embedding.weight.device, dtype=self.embedding.weight.dtype)
+            MarkerDelta(
+                marker_ids,
+                self.d_model,
+                device=self.embedding.weight.device,
+                dtype=self.embedding.weight.dtype,
+            )
             if marker_ids
             else None
         )
@@ -973,9 +1008,19 @@ class Model(nn.Module):
         """
         dtype = hidden_states.dtype
         zxbcdt = mixer.in_proj(hidden_states)
-        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        d_mlp = (
+            zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads
+        ) // 2
         z0, x0, z, xBC, dt = torch.split(
-            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+            zxbcdt,
+            [
+                d_mlp,
+                d_mlp,
+                mixer.d_ssm,
+                mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state,
+                mixer.nheads,
+            ],
+            dim=-1,
         )
 
         if causal_conv1d_update is None:
@@ -987,10 +1032,16 @@ class Model(nn.Module):
             xBC = mixer.act(xBC).to(dtype=dtype)
         else:
             xBC = causal_conv1d_update(
-                xBC, conv_state, rearrange(mixer.conv1d.weight, "d 1 w -> d w"), mixer.conv1d.bias, mixer.activation
+                xBC,
+                conv_state,
+                rearrange(mixer.conv1d.weight, "d 1 w -> d w"),
+                mixer.conv1d.bias,
+                mixer.activation,
             )
 
-        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        x, B, C = torch.split(
+            xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1
+        )
         A = -torch.exp(mixer.A_log.float())
 
         dt = F.softplus(dt + mixer.dt_bias.to(dtype=dt.dtype))
@@ -1060,9 +1111,19 @@ class Model(nn.Module):
         """
         dtype = hidden_states.dtype
         zxbcdt = mixer.in_proj(hidden_states)
-        d_mlp = (zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads) // 2
+        d_mlp = (
+            zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads
+        ) // 2
         z0, x0, z, xBC, dt = torch.split(
-            zxbcdt, [d_mlp, d_mlp, mixer.d_ssm, mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state, mixer.nheads], dim=-1
+            zxbcdt,
+            [
+                d_mlp,
+                d_mlp,
+                mixer.d_ssm,
+                mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state,
+                mixer.nheads,
+            ],
+            dim=-1,
         )
 
         xBC_t = rearrange(xBC, "b l d -> b d l")
@@ -1101,10 +1162,12 @@ class Model(nn.Module):
         # ROCm dev box, see root CLAUDE.md); concatenating and slicing the
         # last d_conv columns reproduces _mixer_step's roll-buffer exactly,
         # using only documented, already-verified shapes.
-        new_conv_state = torch.cat([conv_history, xBC_t], dim=-1)[..., -conv_state.shape[-1]:]
+        new_conv_state = torch.cat([conv_history, xBC_t], dim=-1)[..., -conv_state.shape[-1] :]
         xBC = rearrange(xBC_conv, "b d l -> b l d").to(dtype=dtype)
 
-        x, B, C = torch.split(xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1)
+        x, B, C = torch.split(
+            xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1
+        )
         A = -torch.exp(mixer.A_log.float())
         x_h = rearrange(x, "b l (h p) -> b l h p", p=mixer.headdim)
         B = rearrange(B, "b l (g n) -> b l g n", g=mixer.ngroups)
@@ -1161,7 +1224,9 @@ class Model(nn.Module):
             is_rms_norm=isinstance(self.norm_f, RMSNorm),
         )
 
-    def forward(self, input_ids: torch.Tensor, state: MemoryState | None = None) -> tuple[torch.Tensor, MemoryState]:
+    def forward(
+        self, input_ids: torch.Tensor, state: MemoryState | None = None
+    ) -> tuple[torch.Tensor, MemoryState]:
         """Returns (logits (B, T, vocab_size), updated MemoryState).
 
         Both the memory subsystem's WRITE (`_NeuralMemory.write`) and its
@@ -1221,7 +1286,9 @@ class Model(nn.Module):
         self._pinned_token_logs = self._last_token_logs
         return logits, state
 
-    def _forward_path(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
+    def _forward_path(
+        self, input_ids: torch.Tensor, state: MemoryState
+    ) -> tuple[torch.Tensor, MemoryState]:
         if self._fused_path_available():
             return self._forward_fused(input_ids, state)
         return self._forward_manual(input_ids, state)
@@ -1236,7 +1303,9 @@ class Model(nn.Module):
             return 0
         return max(1, self.grad_checkpoint_block // self.memory_window) * self.memory_window
 
-    def _forward_manual(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
+    def _forward_manual(
+        self, input_ids: torch.Tensor, state: MemoryState
+    ) -> tuple[torch.Tensor, MemoryState]:
         """All-manual per-token fallback: processes `input_ids` one token at
         a time regardless of T (see the module docstring for why) --
         correct for both a many-token prefill and a single incremental
@@ -1281,7 +1350,7 @@ class Model(nn.Module):
             # injection are gated on this, not on "every token" (see
             # forward()'s docstring).
             is_window_close = (t % self.memory_window) == (self.memory_window - 1)
-            token_betas: list[torch.Tensor] = []   # (B,) per injected layer
+            token_betas: list[torch.Tensor] = []  # (B,) per injected layer
             token_retains: list[torch.Tensor] = []
             token_cos_sims: list[torch.Tensor] = []
             last_surprise_per_slot: torch.Tensor | None = None
@@ -1320,7 +1389,13 @@ class Model(nn.Module):
                             self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
                             self._accum_write_stats(state.neural_memory, alphas)
                             self._mem_stat_write_count += 1
-                            pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
+                            pending_k, pending_v, pending_eta, pending_theta, pending_alpha = (
+                                [],
+                                [],
+                                [],
+                                [],
+                                [],
+                            )
                         mix, mix_beta = self.mix.mix_term(o_t, surprise)
                     h = h + mix.to(h.dtype)
                     mix_beta_per_slot = mix_beta.detach()
@@ -1330,9 +1405,11 @@ class Model(nn.Module):
                 h, residual = self._prenorm(layer, h, residual)
                 gated_delta = None
                 if i in self.injected_layers and is_window_close and self.injection_enabled:
-                    gated_delta = self.injections[str(i)].signals(state.last_o_t, state.last_surprise)
+                    gated_delta = self.injections[str(i)].signals(
+                        state.last_o_t, state.last_surprise
+                    )
                     beta, retain = gated_delta[2], gated_delta[3]
-                    beta_per_slot = beta[:, 0, 0, 0].detach()    # (B,)
+                    beta_per_slot = beta[:, 0, 0, 0].detach()  # (B,)
                     retain_per_slot = retain[:, 0, 0, 0].detach()  # (B,)
                     self._mem_stat_sums["beta"] += beta_per_slot.mean()
                     self._mem_stat_sums["retain"] += retain_per_slot.mean()
@@ -1362,7 +1439,7 @@ class Model(nn.Module):
                         # regardless of window size -- separate from the
                         # pooled signal injection actually uses, computed
                         # only at window close, below.
-                        last_surprise_per_slot = surprise.detach()          # (B,)
+                        last_surprise_per_slot = surprise.detach()  # (B,)
                         last_o_t_norm_per_slot = o_t.detach().norm(dim=-1)  # (B,)
                         self._mem_stat_sums["surprise"] += last_surprise_per_slot.mean()
                         self._mem_stat_sums["o_t_norm"] += last_o_t_norm_per_slot.mean()
@@ -1386,7 +1463,13 @@ class Model(nn.Module):
                             self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
                             self._accum_write_stats(state.neural_memory, alphas)
                             self._mem_stat_write_count += 1
-                            pending_k, pending_v, pending_eta, pending_theta, pending_alpha = [], [], [], [], []
+                            pending_k, pending_v, pending_eta, pending_theta, pending_alpha = (
+                                [],
+                                [],
+                                [],
+                                [],
+                                [],
+                            )
 
                             # Surprise-weighted pooling of every token's read
                             # in the window that's about to close -- this,
@@ -1398,9 +1481,9 @@ class Model(nn.Module):
                             # window of 1 makes this a softmax over a single
                             # entry (i.e. weight 1.0), reproducing the
                             # original per-token o_t/surprise exactly.
-                            o_stack = torch.stack(pending_o, dim=0)                  # (W, B, mem_dim)
-                            surprise_stack = torch.stack(pending_surprise, dim=0)    # (W, B)
-                            pool_weights = torch.softmax(surprise_stack, dim=0)      # (W, B)
+                            o_stack = torch.stack(pending_o, dim=0)  # (W, B, mem_dim)
+                            surprise_stack = torch.stack(pending_surprise, dim=0)  # (W, B)
+                            pool_weights = torch.softmax(surprise_stack, dim=0)  # (W, B)
                             state.last_o_t = (pool_weights.unsqueeze(-1) * o_stack).sum(dim=0)
                             state.last_surprise = (pool_weights * surprise_stack).sum(dim=0)
                             pending_o, pending_surprise = [], []
@@ -1432,9 +1515,13 @@ class Model(nn.Module):
                         entry["surprise"] = last_surprise_per_slot[b].item()
                         entry["o_t_norm"] = last_o_t_norm_per_slot[b].item()
                         entry["grad_norm"] = (
-                            last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                            last_grad_norm_per_slot[b].item()
+                            if last_grad_norm_per_slot is not None
+                            else float("nan")
                         )
-                    entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in self.injected_layers)
+                    entry["ssm_norm"] = max(
+                        state.ssm_states[i][b].norm().item() for i in self.injected_layers
+                    )
                     entry["resid_norm"] = residual[b].norm().item()
                     logs.append(entry)
                 self._last_token_logs = logs
@@ -1445,7 +1532,9 @@ class Model(nn.Module):
                         "surprise": last_surprise_per_slot[b].item(),
                         "o_t_norm": last_o_t_norm_per_slot[b].item(),
                         "grad_norm": (
-                            last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                            last_grad_norm_per_slot[b].item()
+                            if last_grad_norm_per_slot is not None
+                            else float("nan")
                         ),
                         "resid_norm": residual[b].norm().item(),
                     }
@@ -1460,7 +1549,9 @@ class Model(nn.Module):
 
         return torch.stack(all_logits, dim=1), state
 
-    def _forward_fused(self, input_ids: torch.Tensor, state: MemoryState) -> tuple[torch.Tensor, MemoryState]:
+    def _forward_fused(
+        self, input_ids: torch.Tensor, state: MemoryState
+    ) -> tuple[torch.Tensor, MemoryState]:
         """Fused-kernel dispatch: processes the WHOLE chunk layer-by-layer
         (like `mamba_ssm`'s own full-sequence backbone forward) instead of
         token-by-token. For the 43 layers never in `INJECTED_LAYERS`, one
@@ -1543,20 +1634,26 @@ class Model(nn.Module):
                         win = stream[:, w * window : (w + 1) * window, :]
                         q, k, v, eta, theta, alpha = self.front_end.observe(win)
                         q_w, k_w, v_w = q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
-                        o_win = state.neural_memory.read_windowed(q_w)                  # (W, B, mem_dim)
+                        o_win = state.neural_memory.read_windowed(q_w)  # (W, B, mem_dim)
                         surprise_win = state.neural_memory.surprise_windowed(k_w, v_w)  # (W, B)
                         for wt in range(window):
                             self._mem_stat_sums["surprise"] += surprise_win[wt].detach().mean()
-                            self._mem_stat_sums["o_t_norm"] += o_win[wt].detach().norm(dim=-1).mean()
+                            self._mem_stat_sums["o_t_norm"] += (
+                                o_win[wt].detach().norm(dim=-1).mean()
+                            )
                             self._mem_stat_tok_count += 1
                         _, grad_norm = state.neural_memory.write(
-                            k_w, v_w, eta.transpose(0, 1), theta.transpose(0, 1), alpha.transpose(0, 1)
+                            k_w,
+                            v_w,
+                            eta.transpose(0, 1),
+                            theta.transpose(0, 1),
+                            alpha.transpose(0, 1),
                         )
                         last_grad_norm_per_slot = grad_norm.detach()
                         self._mem_stat_sums["grad_norm"] += last_grad_norm_per_slot.mean()
                         self._accum_write_stats(state.neural_memory, alpha.transpose(0, 1))
                         self._mem_stat_write_count += 1
-                        o_parts.append(o_win.transpose(0, 1))        # (B, W, mem_dim)
+                        o_parts.append(o_win.transpose(0, 1))  # (B, W, mem_dim)
                         s_parts.append(surprise_win.transpose(0, 1))  # (B, W)
                     o_all = torch.cat(o_parts, dim=1)
                     s_all = torch.cat(s_parts, dim=1)
@@ -1633,11 +1730,13 @@ class Model(nn.Module):
                         # window), same as _forward_manual's per-token
                         # read()/surprise() calls -- write() (below) hasn't
                         # run yet for this window.
-                        o_win = state.neural_memory.read_windowed(q_w)              # (W, B, mem_dim)
+                        o_win = state.neural_memory.read_windowed(q_w)  # (W, B, mem_dim)
                         surprise_win = state.neural_memory.surprise_windowed(k_w, v_w)  # (W, B)
                         for wt in range(window):
                             self._mem_stat_sums["surprise"] += surprise_win[wt].detach().mean()
-                            self._mem_stat_sums["o_t_norm"] += o_win[wt].detach().norm(dim=-1).mean()
+                            self._mem_stat_sums["o_t_norm"] += (
+                                o_win[wt].detach().norm(dim=-1).mean()
+                            )
                             self._mem_stat_tok_count += 1
 
                         _, grad_norm = state.neural_memory.write(k_w, v_w, eta_w, theta_w, alpha_w)
@@ -1677,9 +1776,13 @@ class Model(nn.Module):
                     entry["surprise"] = last_surprise_per_slot[b].item()
                     entry["o_t_norm"] = last_o_t_norm_per_slot[b].item()
                     entry["grad_norm"] = (
-                        last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                        last_grad_norm_per_slot[b].item()
+                        if last_grad_norm_per_slot is not None
+                        else float("nan")
                     )
-                entry["ssm_norm"] = max(state.ssm_states[i][b].norm().item() for i in self.injected_layers)
+                entry["ssm_norm"] = max(
+                    state.ssm_states[i][b].norm().item() for i in self.injected_layers
+                )
                 entry["resid_norm"] = residual[b, -1].norm().item()
                 logs.append(entry)
             self._last_token_logs = logs
@@ -1690,7 +1793,9 @@ class Model(nn.Module):
                     "surprise": last_surprise_per_slot[b].item(),
                     "o_t_norm": last_o_t_norm_per_slot[b].item(),
                     "grad_norm": (
-                        last_grad_norm_per_slot[b].item() if last_grad_norm_per_slot is not None else float("nan")
+                        last_grad_norm_per_slot[b].item()
+                        if last_grad_norm_per_slot is not None
+                        else float("nan")
                     ),
                     "resid_norm": residual[b, -1].norm().item(),
                 }
@@ -1769,9 +1874,15 @@ class Model(nn.Module):
         nm = state.neural_memory
         bound1 = 1.0 / math.sqrt(self.mem_dim)
         bound2 = 1.0 / math.sqrt(self.mem_hidden)
-        nm.w1[slot_idx].copy_((torch.rand(self.mem_hidden, self.mem_dim, device=device, dtype=mem_dtype) * 2 - 1) * bound1)
+        nm.w1[slot_idx].copy_(
+            (torch.rand(self.mem_hidden, self.mem_dim, device=device, dtype=mem_dtype) * 2 - 1)
+            * bound1
+        )
         nm.b1[slot_idx].zero_()
-        nm.w2[slot_idx].copy_((torch.rand(self.mem_dim, self.mem_hidden, device=device, dtype=mem_dtype) * 2 - 1) * bound2)
+        nm.w2[slot_idx].copy_(
+            (torch.rand(self.mem_dim, self.mem_hidden, device=device, dtype=mem_dtype) * 2 - 1)
+            * bound2
+        )
         nm.b2[slot_idx].zero_()
         if not hasattr(nm, "w1_init"):
             nm.w1_init = nm.w1.detach().clone()
@@ -1802,7 +1913,11 @@ class Model(nn.Module):
     @staticmethod
     def _fresh_mem_stat_sums() -> dict[str, "float | torch.Tensor | None"]:
         return {
-            "beta": 0.0, "retain": 0.0, "surprise": 0.0, "o_t_norm": 0.0, "grad_norm": 0.0,
+            "beta": 0.0,
+            "retain": 0.0,
+            "surprise": 0.0,
+            "o_t_norm": 0.0,
+            "grad_norm": 0.0,
             # w1_abs_max/w2_abs_max track a running MAX (not a sum-to-average
             # like the others) across the accumulation window, since an
             # average would smooth out exactly the kind of outlier spike
@@ -1819,7 +1934,8 @@ class Model(nn.Module):
             # with a plain .item() at each write() call site (once per
             # memory-window close, not per token -- cheap enough that the
             # sync-avoidance reasoning above doesn't apply here).
-            "w1_abs_max": 0.0, "w2_abs_max": 0.0,
+            "w1_abs_max": 0.0,
+            "w2_abs_max": 0.0,
             # alpha is write()'s (1 - alpha) weight decay on M -- the one
             # knob that erases memory content directly (beta/retain gate the
             # ssm_state injection, not M itself), so it gets its own stat.
@@ -1833,11 +1949,13 @@ class Model(nn.Module):
             # ~0.011 for w1, ~0.0057 for w2). None = no sample yet this
             # window (reported as nan).
             "retain_min": None,
-            "w1_rms_min": None, "w2_rms_min": None,
+            "w1_rms_min": None,
+            "w2_rms_min": None,
             # Mean per-slot RMS distance of M's weights from their
             # per-example random init: how much has cumulatively been
             # written this example. Sum-to-average over write() calls.
-            "w1_drift": 0.0, "w2_drift": 0.0,
+            "w1_drift": 0.0,
+            "w2_drift": 0.0,
         }
 
     def _accum_write_stats(self, nm: _NeuralMemory, alphas: torch.Tensor) -> None:
@@ -1852,8 +1970,12 @@ class Model(nn.Module):
         sums["alpha"] += alphas.detach().mean().item()
         w1_rms = w1.pow(2).mean(dim=(1, 2)).sqrt().min().item()
         w2_rms = w2.pow(2).mean(dim=(1, 2)).sqrt().min().item()
-        sums["w1_rms_min"] = w1_rms if sums["w1_rms_min"] is None else min(sums["w1_rms_min"], w1_rms)
-        sums["w2_rms_min"] = w2_rms if sums["w2_rms_min"] is None else min(sums["w2_rms_min"], w2_rms)
+        sums["w1_rms_min"] = (
+            w1_rms if sums["w1_rms_min"] is None else min(sums["w1_rms_min"], w1_rms)
+        )
+        sums["w2_rms_min"] = (
+            w2_rms if sums["w2_rms_min"] is None else min(sums["w2_rms_min"], w2_rms)
+        )
         if not hasattr(nm, "w1_init"):
             nm.w1_init, nm.w2_init = w1.clone(), w2.clone()
         sums["w1_drift"] += (w1 - nm.w1_init).pow(2).mean(dim=(1, 2)).sqrt().mean().item()
@@ -1872,6 +1994,7 @@ class Model(nn.Module):
         params receive in preflight."""
         if self._mem_stat_tok_count == 0:
             return None
+
         # Single sync here for the whole accumulation window, instead of one
         # per injected layer per token (see the accumulation sites above).
         # _item: a sum a given integration mode never accumulates (e.g.
@@ -1888,7 +2011,9 @@ class Model(nn.Module):
             # grad_norm only gets a fresh value on tokens that close a
             # memory-window (see set_memory_window), so at memory_window > 1
             # there are fewer writes than tokens.
-            "grad_norm": _item(self._mem_stat_sums["grad_norm"] / max(self._mem_stat_write_count, 1)),
+            "grad_norm": _item(
+                self._mem_stat_sums["grad_norm"] / max(self._mem_stat_write_count, 1)
+            ),
             # Already plain Python floats (see _mem_stat_sums init) -- a
             # running max, not a sum-to-average, so no division here.
             "w1_abs_max": self._mem_stat_sums["w1_abs_max"],

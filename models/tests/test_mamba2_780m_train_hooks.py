@@ -27,14 +27,22 @@ from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 import models.mamba2_780m.model as M780
 import models.mamba2_780m.train_hooks as hooks
 
-pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a real GPU (Mamba2's fused norm path uses a Triton kernel, no CPU fallback)")
+pytestmark = pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="needs a real GPU (Mamba2's fused norm path uses a Triton kernel, no CPU fallback)",
+)
 
 DEVICE = "cuda"
 
 
 def _build_tiny_model(marker_ids=None):
     torch.manual_seed(0)
-    cfg = MambaConfig(d_model=64, n_layer=4, vocab_size=50, ssm_cfg=dict(layer="Mamba2", headdim=16, ngroups=1, d_state=16))
+    cfg = MambaConfig(
+        d_model=64,
+        n_layer=4,
+        vocab_size=50,
+        ssm_cfg=dict(layer="Mamba2", headdim=16, ngroups=1, d_state=16),
+    )
     mamba = MambaLMHeadModel(cfg, device=DEVICE, dtype=torch.float32)
     if marker_ids is not None:
         mamba.marker_token_ids = marker_ids  # what load_base/extend_embeddings stamps
@@ -59,7 +67,9 @@ def test_chunk_loss_weight_sum_counts_assistant_tokens_only():
     mask_slice = torch.zeros(10, dtype=torch.bool, device=DEVICE)
     mask_slice[3:] = True  # 7 assistant-turn positions
 
-    loss_sum, weight_sum, state = hooks.chunk_loss(model, ids, target_ids, mask_slice, None, eos_weight=1.0)
+    loss_sum, weight_sum, state = hooks.chunk_loss(
+        model, ids, target_ids, mask_slice, None, eos_weight=1.0
+    )
 
     assert weight_sum == 7
     assert torch.isfinite(loss_sum)
@@ -88,7 +98,9 @@ def test_chunk_loss_handles_the_batched_weight_mask_train_py_passes():
     weight_mask = torch.zeros(3, 8, device=DEVICE)
     weight_mask[:, 2:] = 1.0  # 6 trained positions per row
 
-    loss_sum, weight_sum, state = hooks.chunk_loss(model, ids, target_ids, weight_mask, None, eos_weight=3.0)
+    loss_sum, weight_sum, state = hooks.chunk_loss(
+        model, ids, target_ids, weight_mask, None, eos_weight=3.0
+    )
 
     assert weight_sum == 17 + 3.0  # 18 positions, one of them EOS at weight 3
     assert torch.isfinite(loss_sum)
@@ -109,9 +121,11 @@ def test_chunk_loss_state_threads_across_calls_and_gradients_flow_to_lora():
     for start in range(0, seqlen - 1, chunk_len):
         end = min(start + chunk_len, seqlen - 1)
         input_ids = ids[start:end].unsqueeze(0)
-        target_ids = ids[start + 1:end + 1].unsqueeze(0)
-        mask_slice = mask[start + 1:end + 1]
-        loss_sum, weight_sum, state = hooks.chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight=2.0)
+        target_ids = ids[start + 1 : end + 1].unsqueeze(0)
+        mask_slice = mask[start + 1 : end + 1]
+        loss_sum, weight_sum, state = hooks.chunk_loss(
+            model, input_ids, target_ids, mask_slice, state, eos_weight=2.0
+        )
         if weight_sum > 0:
             (loss_sum / weight_sum).backward()
         state = state.detach()
@@ -124,7 +138,11 @@ def test_chunk_loss_state_threads_across_calls_and_gradients_flow_to_lora():
     # lora_B gets gradient on the very first step; lora_A's gradient is
     # exactly zero until lora_B (zero-initialized) moves off zero -- expected
     # LoRA-init behavior, not a wiring bug, so only check lora_B here.
-    lora_b_grads = sum(1 for n, p in model.named_parameters() if "lora_B" in n and p.grad is not None and p.grad.abs().max() > 0)
+    lora_b_grads = sum(
+        1
+        for n, p in model.named_parameters()
+        if "lora_B" in n and p.grad is not None and p.grad.abs().max() > 0
+    )
     total_lora_b = sum(1 for n, p in model.named_parameters() if "lora_B" in n)
     assert lora_b_grads == total_lora_b and lora_b_grads > 0
 
@@ -161,7 +179,9 @@ def test_marker_delta_wired_into_forward_and_receives_gradient():
         model.marker_delta.delta.zero_()
     target_ids = torch.tensor([[48, 7, 49, 11, 2]], device=DEVICE)
     mask_slice = torch.ones(5, dtype=torch.bool, device=DEVICE)
-    loss_sum, weight_sum, _ = hooks.chunk_loss(model, ids, target_ids, mask_slice, None, eos_weight=1.0)
+    loss_sum, weight_sum, _ = hooks.chunk_loss(
+        model, ids, target_ids, mask_slice, None, eos_weight=1.0
+    )
     (loss_sum / weight_sum).backward()
     grad = model.marker_delta.delta.grad
     assert grad is not None and grad.abs().sum() > 0

@@ -107,7 +107,9 @@ def verdict(match_rate: float, mean_delta_nats: float) -> str:
     return "FAIL-DEAD"
 
 
-def report_transcript(text: str, decoded: str, facts: Sequence[Fact], turns: Sequence[Turn], n_tokens: int) -> None:
+def report_transcript(
+    text: str, decoded: str, facts: Sequence[Fact], turns: Sequence[Turn], n_tokens: int
+) -> None:
     """Structural invariants whose correct value is zero, plus decoded text
     around one fact and one filler join -- counts alone have shipped malformed
     transcripts before (root CLAUDE.md)."""
@@ -123,30 +125,80 @@ def report_transcript(text: str, decoded: str, facts: Sequence[Fact], turns: Seq
 
     at = decoded.find(facts[0].code)
     if at < 0:
-        print(f"[{ts()}]   sample around fact 0: NOT FOUND in the decoded transcript -- tokenization broke the code")
+        print(
+            f"[{ts()}]   sample around fact 0: NOT FOUND in the decoded transcript -- tokenization broke the code"
+        )
     else:
-        print(f"[{ts()}]   sample around fact 0:\n    ...{decoded[max(0, at - 200) : at + 200]!r}...")
+        print(
+            f"[{ts()}]   sample around fact 0:\n    ...{decoded[max(0, at - 200) : at + 200]!r}..."
+        )
     join = decoded.find(facts[1].entity) if len(facts) > 1 else -1
     if join > 0:
-        print(f"[{ts()}]   sample around the filler->fact join:\n    ...{decoded[max(0, join - 300) : join + 100]!r}...")
+        print(
+            f"[{ts()}]   sample around the filler->fact join:\n    ...{decoded[max(0, join - 300) : join + 100]!r}..."
+        )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--checkpoint", default=None, help="Checkpoint dir with trainable.pt to distil on top of (default: the base model)")
-    parser.add_argument("--n-facts", type=int, default=40, help="Facts in the wake transcript (default: %(default)s)")
-    parser.add_argument("--filler-tokens", type=int, default=200, help="Filler tokens between consecutive facts (default: %(default)s)")
-    parser.add_argument("--distill-steps", type=int, default=200, help="Optimizer steps; one step = one replay chunk (default: %(default)s)")
-    parser.add_argument("--lr", type=float, default=1e-4, help="AdamW learning rate (default: %(default)s)")
-    parser.add_argument("--kl-temp", type=float, default=1.0, help="Distillation temperature (default: %(default)s)")
-    parser.add_argument("--chunk-len", type=int, default=None, help="Tokens per forward chunk (default: the model's DEFAULT_CHUNK_LEN)")
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Checkpoint dir with trainable.pt to distil on top of (default: the base model)",
+    )
+    parser.add_argument(
+        "--n-facts",
+        type=int,
+        default=40,
+        help="Facts in the wake transcript (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--filler-tokens",
+        type=int,
+        default=200,
+        help="Filler tokens between consecutive facts (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--distill-steps",
+        type=int,
+        default=200,
+        help="Optimizer steps; one step = one replay chunk (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=1e-4, help="AdamW learning rate (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--kl-temp", type=float, default=1.0, help="Distillation temperature (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--chunk-len",
+        type=int,
+        default=None,
+        help="Tokens per forward chunk (default: the model's DEFAULT_CHUNK_LEN)",
+    )
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
-    parser.add_argument("--pass-k", type=int, default=10, help="Samples per fact for pass@k (default: %(default)s)")
-    parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature for pass@k (default: %(default)s)")
-    parser.add_argument("--gen-tokens", type=int, default=GEN_TOKENS, help="Tokens generated per probe (default: %(default)s)")
+    parser.add_argument(
+        "--pass-k", type=int, default=10, help="Samples per fact for pass@k (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Sampling temperature for pass@k (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--gen-tokens",
+        type=int,
+        default=GEN_TOKENS,
+        help="Tokens generated per probe (default: %(default)s)",
+    )
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--out", default="logs/consolidation_null.jsonl", help="Per-fact results jsonl (default: %(default)s)")
+    parser.add_argument(
+        "--out",
+        default="logs/consolidation_null.jsonl",
+        help="Per-fact results jsonl (default: %(default)s)",
+    )
     parser.add_argument(
         "--fresh-state-replay",
         action="store_true",
@@ -188,24 +240,33 @@ def main() -> None:
         load_checkpoint(model, Path(args.checkpoint))
     model.eval()
     has_memory = set_memory_injection(model, not args.no_memory)
-    print(f"[{ts()}] memory injection: {'absent' if not has_memory else ('off' if args.no_memory else 'on')}")
+    print(
+        f"[{ts()}] memory injection: {'absent' if not has_memory else ('off' if args.no_memory else 'on')}"
+    )
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN
     stops = (".", "\n", user_open, asst_open)
 
     def encode(text: str) -> torch.Tensor:
-        return torch.tensor([tokenizer(text, add_special_tokens=False)["input_ids"]], dtype=torch.long, device=device)
+        return torch.tensor(
+            [tokenizer(text, add_special_tokens=False)["input_ids"]],
+            dtype=torch.long,
+            device=device,
+        )
 
     rng = random.Random(args.seed)
     torch.manual_seed(args.seed)
     facts = build_facts(args.n_facts, rng)
+
     def token_len(s: str) -> int:
         return len(tokenizer(s, add_special_tokens=False)["input_ids"])
 
     turns = build_turns(facts, args.filler_tokens, token_len, rng)
     text = render_turns(turns, user_open, asst_open)
     transcript = encode(text)
-    report_transcript(text, tokenizer.decode(transcript[0].cpu()), facts, turns, transcript.shape[1])
+    report_transcript(
+        text, tokenizer.decode(transcript[0].cpu()), facts, turns, transcript.shape[1]
+    )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,29 +284,42 @@ def main() -> None:
     for i, fact in enumerate(facts):
         prompt = encode(cue_rungs(fact, user_open, asst_open)[0][0])
         target = encode(" " + fact.code)
-        in_ctx = tokenizer.decode(generate(model, prompt, copy.deepcopy(primed), args.gen_tokens, 0.0)[0].cpu())
+        in_ctx = tokenizer.decode(
+            generate(model, prompt, copy.deepcopy(primed), args.gen_tokens, 0.0)[0].cpu()
+        )
         fresh = tokenizer.decode(generate(model, prompt, None, args.gen_tokens, 0.0)[0].cpu())
         lp = target_logprob(model, prompt, target, None)
         n_ctx += exact_match(in_ctx, fact.code, stops)
         n_floor += exact_match(fresh, fact.code, stops)
         pre.append({"in_context": in_ctx, "fresh": fresh, "logprob": lp})
         record = {
-            "phase": "pre", "fact": fact.entity, "category": fact.category, "code": fact.code,
-            "in_context": in_ctx, "in_context_match": exact_match(in_ctx, fact.code, stops),
-            "fresh": fresh, "fresh_match": exact_match(fresh, fact.code, stops), "logprob": lp,
+            "phase": "pre",
+            "fact": fact.entity,
+            "category": fact.category,
+            "code": fact.code,
+            "in_context": in_ctx,
+            "in_context_match": exact_match(in_ctx, fact.code, stops),
+            "fresh": fresh,
+            "fresh_match": exact_match(fresh, fact.code, stops),
+            "logprob": lp,
         }
         emit(record)
         print(
             f"\r[{ts()}]  pre {i + 1}/{len(facts)} {fact.entity:<11} "
             f"in-context {n_ctx / (i + 1):.2f}  fresh-floor {n_floor / (i + 1):.2f}",
-            end="", flush=True,
+            end="",
+            flush=True,
         )
     print()
     ctx_rate, floor_rate = n_ctx / len(facts), n_floor / len(facts)
     pre_logprob = sum(float(p["logprob"]) for p in pre) / len(pre)
-    print(f"[{ts()}] IN-CONTEXT POSITIVE CONTROL: {ctx_rate:.3f} exact match "
-          f"({'ok' if ctx_rate >= 0.8 else 'LOW -- the harness, not the hypothesis, is what this measures'})")
-    print(f"[{ts()}] fresh-state floor: {floor_rate:.3f} exact match, mean code log-prob {pre_logprob:+.4f}")
+    print(
+        f"[{ts()}] IN-CONTEXT POSITIVE CONTROL: {ctx_rate:.3f} exact match "
+        f"({'ok' if ctx_rate >= 0.8 else 'LOW -- the harness, not the hypothesis, is what this measures'})"
+    )
+    print(
+        f"[{ts()}] fresh-state floor: {floor_rate:.3f} exact match, mean code log-prob {pre_logprob:+.4f}"
+    )
     del primed
     torch.cuda.empty_cache()
 
@@ -253,12 +327,16 @@ def main() -> None:
     # identity (lora_B is zero-init and a loaded --checkpoint is frozen at
     # this moment), so the same instance serves as frozen teacher and student.
     print(f"\n[{ts()}] === distillation ===")
-    _, ctx_state = run_chunks(model, transcript, None, chunk_len, "teacher context", keep_logits=False)
+    _, ctx_state = run_chunks(
+        model, transcript, None, chunk_len, "teacher context", keep_logits=False
+    )
     teacher_logits, _ = run_chunks(model, transcript, ctx_state, chunk_len, "teacher replay")
     del ctx_state
     torch.cuda.empty_cache()
-    print(f"[{ts()}] teacher logit cache: {tuple(teacher_logits.shape)} on cpu "
-          f"({teacher_logits.element_size() * teacher_logits.nelement() / 2**30:.2f} GiB)")
+    print(
+        f"[{ts()}] teacher logit cache: {tuple(teacher_logits.shape)} on cpu "
+        f"({teacher_logits.element_size() * teacher_logits.nelement() / 2**30:.2f} GiB)"
+    )
 
     # One step = one replay chunk. State is carried (detached) across chunks
     # within a pass and reset to None at each pass boundary, so the student
@@ -284,7 +362,8 @@ def main() -> None:
         print(
             f"\r[{ts()}]  distill step {step + 1}/{args.distill_steps} (pass {step // n_chunks + 1}) "
             f"kl {loss.item():.4f}  {rate:.2f} step/s  ETA {fmt_duration((args.distill_steps - step - 1) / rate)}",
-            end="", flush=True,
+            end="",
+            flush=True,
         )
     print()
     del teacher_logits, state
@@ -304,11 +383,16 @@ def main() -> None:
         matched = exact_match(greedy, fact.code, stops)
 
         batch = prompt.expand(args.pass_k, -1).contiguous()
-        samples = [tokenizer.decode(row.cpu()) for row in generate(model, batch, None, args.gen_tokens, args.temperature)]
+        samples = [
+            tokenizer.decode(row.cpu())
+            for row in generate(model, batch, None, args.gen_tokens, args.temperature)
+        ]
         pk = pass_at_k(samples, fact.code)
 
         def probe(rung: tuple[str, str], code: str = fact.code) -> bool:
-            gen = tokenizer.decode(generate(model, encode(rung[0]), None, args.gen_tokens, 0.0)[0].cpu())
+            gen = tokenizer.decode(
+                generate(model, encode(rung[0]), None, args.gen_tokens, 0.0)[0].cpu()
+            )
             return exact_match(rung[1] + gen, code, stops)
 
         # Rung 1 is the greedy probe already run above; reusing it keeps the
@@ -322,12 +406,23 @@ def main() -> None:
         pass_sum += pk
         rung_hits += rung > 0
         deltas.append(delta)
-        emit({
-            "phase": "post", "fact": fact.entity, "category": fact.category, "code": fact.code,
-            "greedy": greedy, "match": matched, "pass_at_k": pk, "k": args.pass_k,
-            "rung": rung, "logprob_pre": pre[i]["logprob"], "logprob_post": lp, "logprob_delta": delta,
-            "samples": samples,
-        })
+        emit(
+            {
+                "phase": "post",
+                "fact": fact.entity,
+                "category": fact.category,
+                "code": fact.code,
+                "greedy": greedy,
+                "match": matched,
+                "pass_at_k": pk,
+                "k": args.pass_k,
+                "rung": rung,
+                "logprob_pre": pre[i]["logprob"],
+                "logprob_post": lp,
+                "logprob_delta": delta,
+                "samples": samples,
+            }
+        )
         print(
             f"[{ts()}]  post {i + 1}/{len(facts)} {fact.entity:<11} "
             f"greedy {'HIT ' if matched else 'miss'}  pass@{args.pass_k} {pk:.2f}  rung {rung}  "
@@ -336,19 +431,33 @@ def main() -> None:
             flush=True,
         )
         if not matched and pk > 0:
-            print(f"[{ts()}]      sampled hit: {next(s for s in samples if contains_code(s, fact.code))!r}")
+            print(
+                f"[{ts()}]      sampled hit: {next(s for s in samples if contains_code(s, fact.code))!r}"
+            )
 
     match_rate = n_match / len(facts)
     mean_delta = sum(deltas) / len(deltas)
     result = verdict(match_rate, mean_delta)
     summary = {
-        "phase": "verdict", "verdict": result, "model": model_name, "checkpoint": args.checkpoint,
-        "n_facts": len(facts), "filler_tokens": args.filler_tokens, "transcript_tokens": transcript.shape[1],
-        "distill_steps": args.distill_steps, "lr": args.lr, "kl_temp": args.kl_temp, "seed": args.seed,
-        "in_context_match_rate": ctx_rate, "fresh_floor_match_rate": floor_rate,
-        "post_match_rate": match_rate, "post_pass_at_k": pass_sum / len(facts),
-        "any_rung_rate": rung_hits / len(facts), "mean_logprob_delta": mean_delta,
-        "pass_threshold": PASS_MATCH_RATE, "underpowered_threshold": UNDERPOWERED_DELTA_NATS,
+        "phase": "verdict",
+        "verdict": result,
+        "model": model_name,
+        "checkpoint": args.checkpoint,
+        "n_facts": len(facts),
+        "filler_tokens": args.filler_tokens,
+        "transcript_tokens": transcript.shape[1],
+        "distill_steps": args.distill_steps,
+        "lr": args.lr,
+        "kl_temp": args.kl_temp,
+        "seed": args.seed,
+        "in_context_match_rate": ctx_rate,
+        "fresh_floor_match_rate": floor_rate,
+        "post_match_rate": match_rate,
+        "post_pass_at_k": pass_sum / len(facts),
+        "any_rung_rate": rung_hits / len(facts),
+        "mean_logprob_delta": mean_delta,
+        "pass_threshold": PASS_MATCH_RATE,
+        "underpowered_threshold": UNDERPOWERED_DELTA_NATS,
         "memory_injection": has_memory and not args.no_memory,
         "fresh_state_replay": args.fresh_state_replay,
     }
@@ -361,9 +470,12 @@ def main() -> None:
     print(f"[{ts()}]   post greedy match  : {match_rate:.3f}  (pass threshold {PASS_MATCH_RATE})")
     print(f"[{ts()}]   post pass@{args.pass_k:<9}: {pass_sum / len(facts):.3f}")
     print(f"[{ts()}]   any cue rung       : {rung_hits / len(facts):.3f}")
-    print(f"[{ts()}]   mean logprob delta : {mean_delta:+.4f} nats/token "
-          f"(underpowered threshold {UNDERPOWERED_DELTA_NATS})")
+    print(
+        f"[{ts()}]   mean logprob delta : {mean_delta:+.4f} nats/token "
+        f"(underpowered threshold {UNDERPOWERED_DELTA_NATS})"
+    )
     print(f"[{ts()}] VERDICT: {result}   -> {out_path}")
+
 
 __all__ = [
     "CODE_DIGITS",

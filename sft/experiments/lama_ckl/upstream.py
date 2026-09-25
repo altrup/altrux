@@ -35,8 +35,13 @@ RELEASE_FILES: dict[str, dict[str, int | str]] = {
     },
 }
 REQUIRED_KEYS = {
-    "uuid", "relation_code", "subject", "object", "evidence",
-    "task_descriptive", "invariant",
+    "uuid",
+    "relation_code",
+    "subject",
+    "object",
+    "evidence",
+    "task_descriptive",
+    "invariant",
 }
 PUBLISHED_FINETUNE = {
     "top_accuracy": 0.115,
@@ -134,14 +139,26 @@ def verify_release(
             raise ValueError(f"{path} has {len(rows)} rows, expected {expected['rows']}")
         malformed = sum(
             not REQUIRED_KEYS <= row.keys()
-            or not all(isinstance(row.get(key), str) and row[key] for key in
-                       ("uuid", "relation_code", "subject", "object", "evidence", "task_descriptive"))
+            or not all(
+                isinstance(row.get(key), str) and row[key]
+                for key in (
+                    "uuid",
+                    "relation_code",
+                    "subject",
+                    "object",
+                    "evidence",
+                    "task_descriptive",
+                )
+            )
             for row in rows
         )
         duplicates = len(rows) - len({row.get("uuid") for row in rows})
         missing_bindings = sum(
             isinstance(row.get("evidence"), str)
-            and (row.get("subject") not in row["evidence"] or row.get("object") not in row["evidence"])
+            and (
+                row.get("subject") not in row["evidence"]
+                or row.get("object") not in row["evidence"]
+            )
             for row in rows
         )
         if malformed or duplicates or missing_bindings:
@@ -162,7 +179,9 @@ def verify_release(
     return report
 
 
-def reproduction_summary(curve: Sequence[Mapping[str, float | int]]) -> dict[str, float | int | bool]:
+def reproduction_summary(
+    curve: Sequence[Mapping[str, float | int]],
+) -> dict[str, float | int | bool]:
     """Return the official first-peak checkpoint metrics and gate verdict."""
     if not curve:
         raise ValueError("the reproduction curve is empty")
@@ -211,7 +230,9 @@ def main() -> None:
     adapt = subparsers.add_parser("adapt-single-gpu", help="emit the pinned launcher for one GPU")
     adapt.add_argument("root", type=Path, help="TAALM repository root")
     adapt.add_argument("--smoke", action="store_true")
-    prepare = subparsers.add_parser("prepare-single-gpu-smoke", help="build one-update smoke inputs")
+    prepare = subparsers.add_parser(
+        "prepare-single-gpu-smoke", help="build one-update smoke inputs"
+    )
     prepare.add_argument("root", type=Path, help="TAALM repository root")
     args = parser.parse_args()
     if args.command == "verify":
@@ -220,12 +241,16 @@ def main() -> None:
             sample = item["sample"]
             print(f"[{ts()}] {name}: rows={item['rows']} sha256={item['sha256']}")
             print(f"[{ts()}] invariants={json.dumps(item['invariants'], sort_keys=True)}")
-            print(f"[{ts()}] sample={sample['task_descriptive']!r} evidence={sample['evidence'][:300]!r}")
+            print(
+                f"[{ts()}] sample={sample['task_descriptive']!r} evidence={sample['evidence'][:300]!r}"
+            )
     elif args.command == "summarize":
         curve = load_official_result(args.result)
         for row in curve:
-            print(f"[{ts()}] epoch={row['epoch']} to_learn={row['to_learn_accuracy']:.6f} "
-                  f"not_to_forget={row['not_to_forget_accuracy']:.6f}")
+            print(
+                f"[{ts()}] epoch={row['epoch']} to_learn={row['to_learn_accuracy']:.6f} "
+                f"not_to_forget={row['not_to_forget_accuracy']:.6f}"
+            )
         summary = reproduction_summary(curve)
         print(f"[{ts()}] summary={json.dumps(summary, sort_keys=True)}")
         if not summary["passes_gate"]:
@@ -240,7 +265,9 @@ def main() -> None:
                 (args.root / "data" / "LAMA_ckl" / "gh200_smoke" / name).read_text().splitlines()[0]
             )
             print(f"[{ts()}] {name}: rows={count} malformed=0 duplicates=0 missing_bindings=0")
-            print(f"[{ts()}] sample={sample['task_descriptive']!r} evidence={sample['evidence'][:300]!r}")
+            print(
+                f"[{ts()}] sample={sample['task_descriptive']!r} evidence={sample['evidence'][:300]!r}"
+            )
 
 
 if __name__ == "__main__":

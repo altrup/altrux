@@ -49,7 +49,11 @@ def _worker_format(
 
 
 def format_conversation(
-    messages: list[dict], tokenizer, max_len: int, user_open: str, asst_open: str,
+    messages: list[dict],
+    tokenizer,
+    max_len: int,
+    user_open: str,
+    asst_open: str,
     eoc: str | None = None,
 ) -> tuple[list[int], list[bool], int | None]:
     """Returns (ids, mask, question_offset).
@@ -141,9 +145,11 @@ def recap_messages(messages: list[dict], rng: random.Random, n_pairs: int = 1) -
     teaches recall of ONE item; a dream needs to sweep the state, which is what
     the enumerating shape trains.
     """
-    pairs = [(messages[i]["content"], messages[i + 1]["content"])
-             for i in range(len(messages) - 1)
-             if messages[i]["role"] == "user" and messages[i + 1]["role"] == "assistant"]
+    pairs = [
+        (messages[i]["content"], messages[i + 1]["content"])
+        for i in range(len(messages) - 1)
+        if messages[i]["role"] == "user" and messages[i + 1]["role"] == "assistant"
+    ]
     if not pairs:
         return []
     # Only the head half is quotable: --max-len truncation drops a
@@ -167,8 +173,9 @@ def recap_messages(messages: list[dict], rng: random.Random, n_pairs: int = 1) -
     ]
 
 
-def pack_records(records: list[dict], rng: random.Random,
-                 recap_rate: float) -> list[list[tuple[str, list[dict]]]]:
+def pack_records(
+    records: list[dict], rng: random.Random, recap_rate: float
+) -> list[list[tuple[str, list[dict]]]]:
     """Group conversations into examples of 2-3, each element tagged `fresh`
     (an unrelated conversation) or `recap` (a mechanical recap of the one it
     follows). A recap does not consume a source record."""
@@ -198,9 +205,14 @@ def pack_records(records: list[dict], rng: random.Random,
     return groups
 
 
-def format_pack(group: list[tuple[str, list[dict]]], tokenizer, max_len: int,
-                user_open: str, asst_open: str,
-                eoc: str | None) -> tuple[list[int], list[bool], int | None, int]:
+def format_pack(
+    group: list[tuple[str, list[dict]]],
+    tokenizer,
+    max_len: int,
+    user_open: str,
+    asst_open: str,
+    eoc: str | None,
+) -> tuple[list[int], list[bool], int | None, int]:
     """One packed example: every conversation of `group` in order, each closed
     by `eoc`. `max_len` bounds the whole example, not each conversation, so a
     conversation with no budget left is dropped whole; the returned count is
@@ -212,7 +224,8 @@ def format_pack(group: list[tuple[str, list[dict]]], tokenizer, max_len: int,
     packed = 0
     for _kind, messages in group:
         part_ids, part_mask, qoff = format_conversation(
-            messages, tokenizer, max_len - len(ids), user_open, asst_open, eoc)
+            messages, tokenizer, max_len - len(ids), user_open, asst_open, eoc
+        )
         if not part_ids:
             break
         if qoff is not None and question_offset is None:
@@ -226,6 +239,7 @@ def format_pack(group: list[tuple[str, list[dict]]], tokenizer, max_len: int,
 def iter_records(args) -> list[dict]:
     if args.hf_dataset:
         from datasets import load_dataset
+
         ds = load_dataset(args.hf_dataset, split=args.hf_split)
         if args.max_examples:
             ds = ds.select(range(min(args.max_examples, len(ds))))
@@ -240,62 +254,100 @@ def iter_records(args) -> list[dict]:
         return records
 
 
-def report_packing(groups, packed_counts, all_ids, tokenizer, eoc: str | None,
-                   user_open: str) -> None:
+def report_packing(
+    groups, packed_counts, all_ids, tokenizer, eoc: str | None, user_open: str
+) -> None:
     """Structural invariants whose correct value is zero, plus decoded text
     either side of one boundary of each kind (root CLAUDE.md: counts confirm
     the generator did what it was told, never that what it was told was right)."""
     eoc_id = tokenizer.convert_tokens_to_ids(eoc)
     user_id = tokenizer.convert_tokens_to_ids(user_open)
     unterminated = sum(1 for ids in all_ids if not len(ids) or int(ids[-1]) != eoc_id)
-    miscounted = sum(1 for packed, ids in zip(packed_counts, all_ids, strict=True)
-                     if int((ids == eoc_id).sum()) != packed)
-    unopened = sum(1 for ids in all_ids
-                   for i in range(len(ids) - 1)
-                   if int(ids[i]) == eoc_id and int(ids[i + 1]) != user_id)
-    dropped = sum(len(group) - packed
-                  for group, packed in zip(groups, packed_counts, strict=True))
-    kinds = [kind for group, packed in zip(groups, packed_counts, strict=True)
-             for kind, _ in group[1:packed]]
-    print(f"[{ts()}] packing: {len(all_ids)} examples, {sum(packed_counts)} conversations, "
-          f"{len(kinds)} boundaries ({kinds.count('recap')} recap, {kinds.count('fresh')} fresh)")
+    miscounted = sum(
+        1
+        for packed, ids in zip(packed_counts, all_ids, strict=True)
+        if int((ids == eoc_id).sum()) != packed
+    )
+    unopened = sum(
+        1
+        for ids in all_ids
+        for i in range(len(ids) - 1)
+        if int(ids[i]) == eoc_id and int(ids[i + 1]) != user_id
+    )
+    dropped = sum(len(group) - packed for group, packed in zip(groups, packed_counts, strict=True))
+    kinds = [
+        kind
+        for group, packed in zip(groups, packed_counts, strict=True)
+        for kind, _ in group[1:packed]
+    ]
+    print(
+        f"[{ts()}] packing: {len(all_ids)} examples, {sum(packed_counts)} conversations, "
+        f"{len(kinds)} boundaries ({kinds.count('recap')} recap, {kinds.count('fresh')} fresh)"
+    )
     print(f"[{ts()}]   examples not ending at a boundary : {unterminated}  (must be 0)")
     print(f"[{ts()}]   boundaries != conversations packed: {miscounted}  (must be 0)")
     print(f"[{ts()}]   boundaries not opening a new turn : {unopened}  (must be 0)")
     print(f"[{ts()}]   conversations dropped by --max-len: {dropped}  (informational)")
 
     for want in ("fresh", "recap"):
-        found = next(((group[:packed], ids)
-                      for group, packed, ids in zip(groups, packed_counts, all_ids, strict=True)
-                      if want in [k for k, _ in group[1:packed]]), None)
+        found = next(
+            (
+                (group[:packed], ids)
+                for group, packed, ids in zip(groups, packed_counts, all_ids, strict=True)
+                if want in [k for k, _ in group[1:packed]]
+            ),
+            None,
+        )
         if found is None:
             print(f"[{ts()}]   no {want} boundary in this dataset")
             continue
         group, ids = found
         which = [k for k, _ in group[1:]].index(want)
         at = [i for i in range(len(ids)) if int(ids[i]) == eoc_id][which]
-        print(f"[{ts()}]   sample around a {want} boundary:\n"
-              f"    ...{tokenizer.decode(ids[max(0, at - 60) : at])!r} "
-              f">>{eoc}>> {tokenizer.decode(ids[at + 1 : at + 60])!r}...")
+        print(
+            f"[{ts()}]   sample around a {want} boundary:\n"
+            f"    ...{tokenizer.decode(ids[max(0, at - 60) : at])!r} "
+            f">>{eoc}>> {tokenizer.decode(ids[at + 1 : at + 60])!r}..."
+        )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tokenize conversation data for training")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--input", help="Local JSONL file")
-    group.add_argument("--hf-dataset", help="HuggingFace dataset ID (e.g. HuggingFaceH4/ultrachat_200k)")
-    parser.add_argument("--hf-split", default="train_sft", help="Dataset split (default: train_sft)")
-    parser.add_argument("--max-examples", type=int, default=None, help="Cap number of examples loaded")
+    group.add_argument(
+        "--hf-dataset", help="HuggingFace dataset ID (e.g. HuggingFaceH4/ultrachat_200k)"
+    )
+    parser.add_argument(
+        "--hf-split", default="train_sft", help="Dataset split (default: train_sft)"
+    )
+    parser.add_argument(
+        "--max-examples", type=int, default=None, help="Cap number of examples loaded"
+    )
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
-    parser.add_argument("--max-len", type=int, default=32768, help="Max tokens per example (whole-turn truncation; chunked training handles long examples, so this only guards pathological outliers)")
+    parser.add_argument(
+        "--max-len",
+        type=int,
+        default=32768,
+        help="Max tokens per example (whole-turn truncation; chunked training handles long examples, so this only guards pathological outliers)",
+    )
     parser.add_argument("--workers", type=int, default=4, help="Parallel tokenization workers")
-    parser.add_argument("--pack", action="store_true",
-                        help="Pack 2-3 conversations per example, each closed by the model's "
-                             "conversation-boundary token (DISCUSSION-20260808 sec 2.10.9)")
-    parser.add_argument("--recap-rate", type=float, default=1 / 3,
-                        help="Fraction of packed boundaries followed by a mechanical recap of the "
-                             "conversation just closed rather than an unrelated one (default: 1/3)")
-    parser.add_argument("--seed", type=int, default=0, help="Packing RNG seed (default: %(default)s)")
+    parser.add_argument(
+        "--pack",
+        action="store_true",
+        help="Pack 2-3 conversations per example, each closed by the model's "
+        "conversation-boundary token (DISCUSSION-20260808 sec 2.10.9)",
+    )
+    parser.add_argument(
+        "--recap-rate",
+        type=float,
+        default=1 / 3,
+        help="Fraction of packed boundaries followed by a mechanical recap of the "
+        "conversation just closed rather than an unrelated one (default: 1/3)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Packing RNG seed (default: %(default)s)"
+    )
     args = parser.parse_args()
 
     all_ids: list[torch.Tensor] = []
@@ -316,10 +368,15 @@ def main() -> None:
     model_mod = importlib.import_module(f"models.{model_name}")
     eoc = getattr(model_mod, "EOC", None)
     if args.pack and not eoc:
-        raise SystemExit(f"--pack needs a conversation-boundary token; models.{model_name} defines no EOC")
+        raise SystemExit(
+            f"--pack needs a conversation-boundary token; models.{model_name} defines no EOC"
+        )
 
-    groups = (pack_records(records, random.Random(args.seed), args.recap_rate) if args.pack
-              else [[("fresh", r.get("messages", []))] for r in records])
+    groups = (
+        pack_records(records, random.Random(args.seed), args.recap_rate)
+        if args.pack
+        else [[("fresh", r.get("messages", []))] for r in records]
+    )
     kept_groups: list[list[tuple[str, list[dict]]]] = []
     packed_counts: list[int] = []
     tokenizer = build_tokenizer(model_mod)
@@ -334,8 +391,9 @@ def main() -> None:
                 yield from pool.imap(_worker_format, groups)
         else:
             for group in groups:
-                yield format_pack(group, tokenizer, args.max_len,
-                                  model_mod.USER_OPEN, model_mod.ASST_OPEN, eoc)
+                yield format_pack(
+                    group, tokenizer, args.max_len, model_mod.USER_OPEN, model_mod.ASST_OPEN, eoc
+                )
 
     for i, (ids, mask, qoff, packed) in enumerate(formatted()):
         print(f"\r[{ts()}] {i + 1}/{len(groups)}", end="", flush=True)
@@ -353,8 +411,11 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"ids": all_ids, "masks": all_masks, "question_offsets": all_qoffs}, out)
     n_q = sum(q is not None for q in all_qoffs)
-    print(f"Saved {len(all_ids)} examples to {out} ({skipped} skipped — no assistant turns; "
-          f"{n_q} with question offsets)")
+    print(
+        f"Saved {len(all_ids)} examples to {out} ({skipped} skipped — no assistant turns; "
+        f"{n_q} with question offsets)"
+    )
+
 
 __all__ = [
     "RECAP_QUOTE_CHARS",

@@ -12,7 +12,9 @@ if TYPE_CHECKING:
     import torch
 
 
-def run_chunks(model, ids: torch.Tensor, state, chunk_len: int, label: str, keep_logits: bool = True):
+def run_chunks(
+    model, ids: torch.Tensor, state, chunk_len: int, label: str, keep_logits: bool = True
+):
     """Forward ``ids`` in chunks, threading and detaching state."""
     import torch
 
@@ -66,11 +68,17 @@ def replay_step(step: int, n_chunks: int, fresh_state_replay: bool) -> tuple[int
     return chunk, (fresh_state_replay or chunk == 0)
 
 
-def kl_loss(teacher_logits: torch.Tensor, student_logits: torch.Tensor, temp: float) -> torch.Tensor:
+def kl_loss(
+    teacher_logits: torch.Tensor, student_logits: torch.Tensor, temp: float
+) -> torch.Tensor:
     import torch.nn.functional as F
 
-    teacher = F.log_softmax(teacher_logits.reshape(-1, teacher_logits.shape[-1]).float() / temp, dim=-1)
-    student = F.log_softmax(student_logits.reshape(-1, student_logits.shape[-1]).float() / temp, dim=-1)
+    teacher = F.log_softmax(
+        teacher_logits.reshape(-1, teacher_logits.shape[-1]).float() / temp, dim=-1
+    )
+    student = F.log_softmax(
+        student_logits.reshape(-1, student_logits.shape[-1]).float() / temp, dim=-1
+    )
     return F.kl_div(student, teacher, log_target=True, reduction="batchmean") * temp**2
 
 

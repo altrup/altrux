@@ -24,8 +24,9 @@ EOC = "<|endofconversation|>"
 @pytest.fixture(scope="module")
 def tokenizer():
     return build_tokenizer(
-        SimpleNamespace(TOKENIZER_ID="EleutherAI/gpt-neox-20b",
-                        SPECIAL_TOKENS=[USER_OPEN, ASST_OPEN, EOC])
+        SimpleNamespace(
+            TOKENIZER_ID="EleutherAI/gpt-neox-20b", SPECIAL_TOKENS=[USER_OPEN, ASST_OPEN, EOC]
+        )
     )
 
 
@@ -65,11 +66,17 @@ def test_question_message_records_offset_with_identical_tokens(tokenizer):
     target = "garden"
     plain_ids, _, plain_qoff = format_conversation(
         [{"role": "user", "content": f"{doc}\n{q}"}, {"role": "assistant", "content": target}],
-        tokenizer, 4096, USER_OPEN, ASST_OPEN,
+        tokenizer,
+        4096,
+        USER_OPEN,
+        ASST_OPEN,
     )
     split_ids, split_mask, qoff = format_conversation(
         [{"role": "user", "content": doc, "question": q}, {"role": "assistant", "content": target}],
-        tokenizer, 4096, USER_OPEN, ASST_OPEN,
+        tokenizer,
+        4096,
+        USER_OPEN,
+        ASST_OPEN,
     )
 
     assert plain_qoff is None
@@ -86,9 +93,14 @@ def test_question_message_records_offset_with_identical_tokens(tokenizer):
 
 def test_question_dropped_by_max_len_truncation_yields_no_offset(tokenizer):
     ids, _, qoff = format_conversation(
-        [{"role": "user", "content": "word " * 100, "question": "Where?"},
-         {"role": "assistant", "content": "there"}],
-        tokenizer, 10, USER_OPEN, ASST_OPEN,
+        [
+            {"role": "user", "content": "word " * 100, "question": "Where?"},
+            {"role": "assistant", "content": "there"},
+        ],
+        tokenizer,
+        10,
+        USER_OPEN,
+        ASST_OPEN,
     )
     assert ids == []
     assert qoff is None
@@ -100,7 +112,10 @@ def test_batched_injected_turn_encoding_uses_special_ids(tokenizer):
     user_id = tokenizer.convert_tokens_to_ids(USER_OPEN)
     asst_id = tokenizer.convert_tokens_to_ids(ASST_OPEN)
     encoded = tokenizer(
-        [f"{USER_OPEN} What was the code for river?", f"{ASST_OPEN} The code for river is 4 8 2 1 3."],
+        [
+            f"{USER_OPEN} What was the code for river?",
+            f"{ASST_OPEN} The code for river is 4 8 2 1 3.",
+        ],
         add_special_tokens=False,
     )["input_ids"]
     assert encoded[0][0] == user_id

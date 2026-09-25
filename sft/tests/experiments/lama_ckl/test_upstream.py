@@ -23,7 +23,12 @@ def test_verify_release_checks_count_schema_and_hash(tmp_path):
         "invariant": False,
     }
     path.write_text(json.dumps(row) + "\n")
-    files = {"variant.jsonl": {"rows": 1, "sha256": __import__("hashlib").sha256(path.read_bytes()).hexdigest()}}
+    files = {
+        "variant.jsonl": {
+            "rows": 1,
+            "sha256": __import__("hashlib").sha256(path.read_bytes()).hexdigest(),
+        }
+    }
 
     report = verify_release(tmp_path, files)
 
@@ -98,15 +103,20 @@ def test_single_gpu_adapter_rejects_unexpected_upstream_topology():
 def test_prepare_single_gpu_smoke_uses_exactly_64_official_rows(tmp_path):
     source = tmp_path / "data" / "LAMA_ckl"
     source.mkdir(parents=True)
-    rows = [json.dumps({
-        "uuid": f"id-{index}",
-        "relation_code": "P1",
-        "subject": f"subject-{index}",
-        "object": f"object-{index}",
-        "evidence": f"subject-{index} maps to object-{index}.",
-        "task_descriptive": f"subject-{index} maps to object-{index}.",
-        "invariant": False,
-    }) for index in range(65)]
+    rows = [
+        json.dumps(
+            {
+                "uuid": f"id-{index}",
+                "relation_code": "P1",
+                "subject": f"subject-{index}",
+                "object": f"object-{index}",
+                "evidence": f"subject-{index} maps to object-{index}.",
+                "task_descriptive": f"subject-{index} maps to object-{index}.",
+                "invariant": False,
+            }
+        )
+        for index in range(65)
+    ]
     for name in ("variant.jsonl", "invariant_descriptive.jsonl"):
         (source / name).write_text("\n".join(rows) + "\n")
 

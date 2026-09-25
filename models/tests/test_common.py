@@ -71,7 +71,9 @@ def test_extend_embeddings_noop_when_already_large_enough():
 @pytest.fixture(scope="module")
 def gpt_neox_tokenizer():
     return build_tokenizer(
-        SimpleNamespace(TOKENIZER_ID="EleutherAI/gpt-neox-20b", SPECIAL_TOKENS=["[USER]", "[ASSISTANT]"])
+        SimpleNamespace(
+            TOKENIZER_ID="EleutherAI/gpt-neox-20b", SPECIAL_TOKENS=["[USER]", "[ASSISTANT]"]
+        )
     )
 
 
@@ -90,7 +92,9 @@ def test_extend_embeddings_inits_marker_rows_from_bpe_mean_when_growing(gpt_neox
     for marker in ("[USER]", "[ASSISTANT]"):
         row = model.backbone.embedding.weight[tok.convert_tokens_to_ids(marker)]
         assert torch.allclose(row, _bpe_mean(model, tok, marker))
-    assert model.marker_token_ids == [tok.convert_tokens_to_ids(m) for m in ("[USER]", "[ASSISTANT]")]
+    assert model.marker_token_ids == [
+        tok.convert_tokens_to_ids(m) for m in ("[USER]", "[ASSISTANT]")
+    ]
 
 
 def test_extend_embeddings_inits_marker_rows_inside_pretrained_padding(gpt_neox_tokenizer):

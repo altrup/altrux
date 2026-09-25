@@ -50,8 +50,12 @@ def test_bracket_mimicry_over_the_threshold_fails():
 
 def test_any_mojibake_fails_whatever_the_bracket_share():
     ids = [50277, 50278, 100]
-    result = acceptance(_spans(_Dream(ids, ["[USER]", "[ASSISTANT]", "caf�"])),
-                        user_id=50277, asst_id=50278, plain_id=62)
+    result = acceptance(
+        _spans(_Dream(ids, ["[USER]", "[ASSISTANT]", "caf�"])),
+        user_id=50277,
+        asst_id=50278,
+        plain_id=62,
+    )
 
     assert result["non_ascii"] == 1
     assert result["share"] == 0.0  # the bracket clause on its own would pass
@@ -63,8 +67,9 @@ def test_the_steer_prefix_is_not_scored():
     # the warm start taught.
     ids = [62, 62, 62, 50277, 100]
     texts = ["]", "]", "]", "[USER]", "x"]
-    result = acceptance(_spans(_Dream(ids, texts, prefix_len=3)),
-                        user_id=50277, asst_id=50278, plain_id=62)
+    result = acceptance(
+        _spans(_Dream(ids, texts, prefix_len=3)), user_id=50277, asst_id=50278, plain_id=62
+    )
 
     assert result["plain"] == 0
     assert result["markers"] == 1
@@ -74,8 +79,9 @@ def test_the_steer_prefix_is_not_scored():
 def test_no_marker_slot_emissions_at_all_is_not_a_pass():
     # Nothing to divide by: a dream that never opens a turn has not shown the
     # markers survived, so it cannot clear the clause by vacuous arithmetic.
-    result = acceptance(_spans(_Dream([100] * 30, ["x"] * 30)),
-                        user_id=50277, asst_id=50278, plain_id=62)
+    result = acceptance(
+        _spans(_Dream([100] * 30, ["x"] * 30)), user_id=50277, asst_id=50278, plain_id=62
+    )
 
     assert result["markers"] == 0
     assert result["plain"] == 0

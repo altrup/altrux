@@ -36,30 +36,59 @@ def _stub_encode(strings: list[str]) -> list[list[int]]:
 
 def _args(**overrides):
     defaults = dict(
-        min_budget=300, max_budget=300, min_wake=1, max_wake=2,
-        mid_sleep_rate=0.0, mid_sleep_min_len=60,
-        split_episode_rate=0.0, split_min_part=30,
-        split_qa_rate=None, split_gap_min=2, split_gap_max=2,
+        min_budget=300,
+        max_budget=300,
+        min_wake=1,
+        max_wake=2,
+        mid_sleep_rate=0.0,
+        mid_sleep_min_len=60,
+        split_episode_rate=0.0,
+        split_min_part=30,
+        split_qa_rate=None,
+        split_gap_min=2,
+        split_gap_max=2,
         sentence_sleep_rate=0.0,
-        fact_rate=1.0, min_facts=2, max_facts=4, min_queries=1, max_queries=3,
-        revise_rate=0.5, cross_sleep_bias=0.0, sleep_chain_rate=1.0, seed=0,
+        fact_rate=1.0,
+        min_facts=2,
+        max_facts=4,
+        min_queries=1,
+        max_queries=3,
+        revise_rate=0.5,
+        cross_sleep_bias=0.0,
+        sleep_chain_rate=1.0,
+        seed=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
 
-def _build(n_episodes=40, n_turns=6, turn_len=10, pool=None, sent_end_ids=None,
-           space_start_ids=None, pool_qoffs=None, **overrides):
+def _build(
+    n_episodes=40,
+    n_turns=6,
+    turn_len=10,
+    pool=None,
+    sent_end_ids=None,
+    space_start_ids=None,
+    pool_qoffs=None,
+    **overrides,
+):
     if pool is None:
         pool = [_episode(n_turns, turn_len) for _ in range(n_episodes)]
     labels = [f"lbl{i}" for i in range(64)]
     return build_chains(
-        [ids for ids, _ in pool], [m for _, m in pool],
-        encode=_stub_encode, labels=labels,
-        user_open=USER, asst_open=ASST, user_id=USER_ID, asst_id=ASST_ID,
+        [ids for ids, _ in pool],
+        [m for _, m in pool],
+        encode=_stub_encode,
+        labels=labels,
+        user_open=USER,
+        asst_open=ASST,
+        user_id=USER_ID,
+        asst_id=ASST_ID,
         args=_args(**overrides),
-        sent_end_ids=sent_end_ids, space_start_ids=space_start_ids,
-        pool_qoffs=pool_qoffs, sep_id=SEP_ID,
+        sent_end_ids=sent_end_ids,
+        space_start_ids=space_start_ids,
+        pool_qoffs=pool_qoffs,
+        sep_id=SEP_ID,
     )
 
 
@@ -119,9 +148,15 @@ def test_recall_masks_mark_exactly_the_spliced_answer_content():
 def test_split_episodes_conserve_content_and_sleep_on_boundaries():
     n_episodes, n_turns, turn_len = 20, 12, 10
     dataset, stats = _build(
-        n_episodes=n_episodes, n_turns=n_turns, turn_len=turn_len, fact_rate=0.0,
+        n_episodes=n_episodes,
+        n_turns=n_turns,
+        turn_len=turn_len,
+        fact_rate=0.0,
         split_episode_rate=1.0,
-        min_wake=4, max_wake=4, min_budget=500, max_budget=500,
+        min_wake=4,
+        max_wake=4,
+        min_budget=500,
+        max_budget=500,
     )
     assert stats["n_split"] > 0
     # Splitting reorders segments but never drops or duplicates tokens.
@@ -139,7 +174,9 @@ def test_split_episodes_conserve_content_and_sleep_on_boundaries():
 QOFF = 70  # question starts at token 70 of the 80-token user turn
 
 
-def _qa_episode(filler: int = 7, qfiller: int | None = None, afiller: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+def _qa_episode(
+    filler: int = 7, qfiller: int | None = None, afiller: int | None = None
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Two turns only: a long user document turn whose last 10 tokens are the
     question (starting at QOFF), then a long answer."""
     qfiller = filler if qfiller is None else qfiller
@@ -152,9 +189,15 @@ def _qa_episode(filler: int = 7, qfiller: int | None = None, afiller: int | None
 def test_split_qa_rate_splits_only_single_qa_episodes_with_metadata():
     pool = [_episode(6, 20) for _ in range(10)] + [_qa_episode() for _ in range(10)]
     dataset, stats = _build(
-        pool=pool, pool_qoffs=[None] * 10 + [QOFF] * 10, fact_rate=0.0,
-        split_episode_rate=0.0, split_qa_rate=1.0,
-        min_wake=4, max_wake=4, min_budget=10_000, max_budget=10_000,
+        pool=pool,
+        pool_qoffs=[None] * 10 + [QOFF] * 10,
+        fact_rate=0.0,
+        split_episode_rate=0.0,
+        split_qa_rate=1.0,
+        min_wake=4,
+        max_wake=4,
+        min_budget=10_000,
+        max_budget=10_000,
     )
     # Every question-bearing single-QA episode splits (cut at its question
     # start), no multi-turn episode does.
@@ -173,9 +216,15 @@ def test_split_qa_ignores_min_part_on_the_dataset_authored_tail():
     mask = torch.tensor([False] * 308 + [True] * 2)
     pool = [(torch.tensor(ids), mask) for _ in range(8)]
     _, stats = _build(
-        pool=pool, pool_qoffs=[300] * 8, fact_rate=0.0,
-        split_qa_rate=1.0, split_min_part=256, min_wake=4, max_wake=4,
-        min_budget=10_000, max_budget=10_000,
+        pool=pool,
+        pool_qoffs=[300] * 8,
+        fact_rate=0.0,
+        split_qa_rate=1.0,
+        split_min_part=256,
+        min_wake=4,
+        max_wake=4,
+        min_budget=10_000,
+        max_budget=10_000,
     )
     assert stats["n_split"] == stats["n_split_qa"] == 8
 
@@ -183,9 +232,14 @@ def test_split_qa_ignores_min_part_on_the_dataset_authored_tail():
 def test_qa_episodes_without_question_metadata_never_split():
     pool = [_qa_episode() for _ in range(10)]
     _, stats = _build(
-        pool=pool, fact_rate=0.0,
-        split_episode_rate=1.0, split_qa_rate=1.0,
-        min_wake=4, max_wake=4, min_budget=10_000, max_budget=10_000,
+        pool=pool,
+        fact_rate=0.0,
+        split_episode_rate=1.0,
+        split_qa_rate=1.0,
+        min_wake=4,
+        max_wake=4,
+        min_budget=10_000,
+        max_budget=10_000,
     )
     assert stats["n_split"] == 0
 
@@ -194,9 +248,14 @@ def test_split_qa_moves_question_to_tail_behind_fresh_marker():
     doc, qf, af = 42, 40, 41
     pool = [_qa_episode(filler=doc, qfiller=qf, afiller=af) for _ in range(8)]
     dataset, stats = _build(
-        pool=pool, pool_qoffs=[QOFF] * 8, fact_rate=0.0,
-        split_qa_rate=1.0, min_wake=4, max_wake=4,
-        min_budget=10_000, max_budget=10_000,
+        pool=pool,
+        pool_qoffs=[QOFF] * 8,
+        fact_rate=0.0,
+        split_qa_rate=1.0,
+        min_wake=4,
+        max_wake=4,
+        min_budget=10_000,
+        max_budget=10_000,
     )
     assert stats["n_split"] == stats["n_split_qa"] == 8
 
@@ -229,9 +288,14 @@ def test_split_qa_moves_question_to_tail_behind_fresh_marker():
 def test_validate_passes_on_split_qa_output():
     pool = [_qa_episode(filler=42, qfiller=40, afiller=41) for _ in range(8)]
     dataset, _ = _build(
-        pool=pool, pool_qoffs=[QOFF] * 8, fact_rate=0.0,
-        split_qa_rate=1.0, min_wake=4, max_wake=4,
-        min_budget=10_000, max_budget=10_000,
+        pool=pool,
+        pool_qoffs=[QOFF] * 8,
+        fact_rate=0.0,
+        split_qa_rate=1.0,
+        min_wake=4,
+        max_wake=4,
+        min_budget=10_000,
+        max_budget=10_000,
     )
     # Suspended heads create USER->USER adjacencies, every one sleep-marked --
     # legal suspensions, so validate reports zero malformed transitions.
@@ -247,9 +311,16 @@ def test_split_gap_controls_episodes_between_head_and_tail():
         ids = [USER_ID] + [101 + k] * 9 + [ASST_ID] + [101 + k] * 9
         pool.append((torch.tensor(ids), torch.tensor([False] * 20)))
     dataset, stats = _build(
-        pool=pool, pool_qoffs=[QOFF] + [None] * 30, fact_rate=0.0,
-        split_episode_rate=1.0, split_gap_min=3, split_gap_max=3,
-        min_wake=31, max_wake=31, min_budget=10_000, max_budget=10_000,
+        pool=pool,
+        pool_qoffs=[QOFF] + [None] * 30,
+        fact_rate=0.0,
+        split_episode_rate=1.0,
+        split_gap_min=3,
+        split_gap_max=3,
+        min_wake=31,
+        max_wake=31,
+        min_budget=10_000,
+        max_budget=10_000,
     )
     assert stats["n_split"] == 1
     ids = torch.cat(dataset["ids"])
@@ -275,10 +346,16 @@ def _single_qa_episode(n_sentences: int) -> tuple[torch.Tensor, torch.Tensor]:
 def test_sentence_sleeps_land_at_sentence_starts_inside_document_turns():
     pool = [_single_qa_episode(12) for _ in range(20)]
     dataset, stats = _build(
-        pool=pool, fact_rate=0.0,
-        sentence_sleep_rate=1.0, mid_sleep_min_len=100,
-        sent_end_ids={SENT_END}, space_start_ids={SPACE_START},
-        min_wake=4, max_wake=4, min_budget=500, max_budget=500,
+        pool=pool,
+        fact_rate=0.0,
+        sentence_sleep_rate=1.0,
+        mid_sleep_min_len=100,
+        sent_end_ids={SENT_END},
+        space_start_ids={SPACE_START},
+        min_wake=4,
+        max_wake=4,
+        min_budget=500,
+        max_budget=500,
     )
     assert stats["n_sentence_sleeps"] > 0
     found = 0
@@ -294,8 +371,10 @@ def test_sentence_sleeps_land_at_sentence_starts_inside_document_turns():
 def test_sentence_sleep_rate_zero_is_a_noop():
     pool = [_single_qa_episode(12) for _ in range(20)]
     dataset, stats = _build(
-        pool=pool, fact_rate=0.0,
-        sent_end_ids={SENT_END}, space_start_ids={SPACE_START},
+        pool=pool,
+        fact_rate=0.0,
+        sent_end_ids={SENT_END},
+        space_start_ids={SPACE_START},
     )
     assert stats["n_sentence_sleeps"] == 0
     for ids, sleeps in zip(dataset["ids"], dataset["sleep_positions"]):
@@ -313,8 +392,12 @@ class _FakeTokenizer:
     def convert_ids_to_tokens(self, token_id: int) -> str:
         return {USER_ID: USER, ASST_ID: ASST}[token_id]
 
-    def __call__(self, text: str, add_special_tokens: bool = True, split_special_tokens: bool = False):
-        assert split_special_tokens, "validate must bypass special-token matching to get the BPE spelling"
+    def __call__(
+        self, text: str, add_special_tokens: bool = True, split_special_tokens: bool = False
+    ):
+        assert split_special_tokens, (
+            "validate must bypass special-token matching to get the BPE spelling"
+        )
         return {"input_ids": self._bpe[text]}
 
     def decode(self, ids) -> str:
@@ -337,15 +420,27 @@ def test_validate_asserts_on_bpe_spelled_marker():
 
 def _all_machinery(**overrides):
     """Every sleep/split/fact knob on, in a pool where each is eligible."""
-    pool = ([_qa_episode() for _ in range(24)]
-            + [_episode(24, 10) for _ in range(24)]
-            + [_single_qa_episode(12) for _ in range(24)])
+    pool = (
+        [_qa_episode() for _ in range(24)]
+        + [_episode(24, 10) for _ in range(24)]
+        + [_single_qa_episode(12) for _ in range(24)]
+    )
     return _build(
-        pool=pool, pool_qoffs=[QOFF] * 24 + [None] * 48,
-        mid_sleep_rate=1.0, mid_sleep_min_len=100, sentence_sleep_rate=1.0,
-        sent_end_ids={SENT_END}, space_start_ids={SPACE_START},
-        split_episode_rate=1.0, split_qa_rate=1.0, split_min_part=30,
-        fact_rate=1.0, min_wake=1, max_wake=1, min_budget=500, max_budget=500,
+        pool=pool,
+        pool_qoffs=[QOFF] * 24 + [None] * 48,
+        mid_sleep_rate=1.0,
+        mid_sleep_min_len=100,
+        sentence_sleep_rate=1.0,
+        sent_end_ids={SENT_END},
+        space_start_ids={SPACE_START},
+        split_episode_rate=1.0,
+        split_qa_rate=1.0,
+        split_min_part=30,
+        fact_rate=1.0,
+        min_wake=1,
+        max_wake=1,
+        min_budget=500,
+        max_budget=500,
         **overrides,
     )
 
@@ -353,8 +448,12 @@ def _all_machinery(**overrides):
 def test_sleep_chain_rate_zero_leaves_plain_concatenations():
     dataset, stats = _all_machinery(sleep_chain_rate=0.0)
     assert stats["n_sleep_chains"] == 0
-    assert (stats["n_split"], stats["n_blocks"], stats["n_mid_sleeps"],
-            stats["n_sentence_sleeps"]) == (0, 0, 0, 0)
+    assert (
+        stats["n_split"],
+        stats["n_blocks"],
+        stats["n_mid_sleeps"],
+        stats["n_sentence_sleeps"],
+    ) == (0, 0, 0, 0)
     assert sum(stats["dist_counts"].values()) == 0
     assert all(len(s) == 0 for s in dataset["sleep_positions"])
     assert all(r is None for r in dataset["recall_masks"])
@@ -388,9 +487,16 @@ def test_sleep_chain_rate_gates_per_chain_and_is_reported():
 
 def test_mid_sleeps_appear_inside_long_episodes():
     dataset, _ = _build(
-        n_episodes=20, n_turns=12, turn_len=10, fact_rate=0.0,
-        mid_sleep_rate=1.0, mid_sleep_min_len=100,
-        min_wake=4, max_wake=4, min_budget=500, max_budget=500,
+        n_episodes=20,
+        n_turns=12,
+        turn_len=10,
+        fact_rate=0.0,
+        mid_sleep_rate=1.0,
+        mid_sleep_min_len=100,
+        min_wake=4,
+        max_wake=4,
+        min_budget=500,
+        max_budget=500,
     )
     ep_len = 12 * 10
     found_mid = False

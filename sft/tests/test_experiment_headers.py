@@ -12,7 +12,11 @@ def test_every_module_names_its_owning_experiment():
     for top in ("sft", "models"):
         for path in sorted((ROOT / top).rglob("*.py")):
             rel = path.relative_to(ROOT)
-            if {".venv", "tests"} & set(rel.parts) or path.name == "__init__.py" or str(rel) in protected:
+            if (
+                {".venv", "tests"} & set(rel.parts)
+                or path.name == "__init__.py"
+                or str(rel) in protected
+            ):
                 continue
             doc = ast.get_docstring(ast.parse(path.read_text())) or ""
             if not HEADER.fullmatch(doc.partition("\n")[0]):

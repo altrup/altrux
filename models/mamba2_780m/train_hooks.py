@@ -106,7 +106,9 @@ def chunk_loss(
         zero = torch.zeros((), device=input_ids.device)
         return zero, zero, state
     logits, state = model(input_ids, state=state)
-    loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
+    loss = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none"
+    )
     loss_mask = mask_slice.reshape(-1).float().clone()
     if eos_weight != 1.0:
         eos_positions = (target_ids.reshape(-1) == EOS_ID) & (loss_mask > 0)

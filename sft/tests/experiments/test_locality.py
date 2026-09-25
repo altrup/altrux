@@ -63,8 +63,10 @@ def test_load_or_build_battery_caches_to_disk(tmp_path):
 
 
 def test_score_battery_reports_flips_and_logprob_drops():
-    items = [{"prompt": "a", "answer": "yes", "logprob": -0.5},
-             {"prompt": "b", "answer": "yes", "logprob": -1.0}]
+    items = [
+        {"prompt": "a", "answer": "yes", "logprob": -0.5},
+        {"prompt": "b", "answer": "yes", "logprob": -1.0},
+    ]
     after = {"a": ("yes", -0.9), "b": ("no", -3.0)}
 
     scored = score_battery(items, lambda p: after[p])
@@ -93,7 +95,9 @@ def test_calibration_artifact_is_keyed_to_the_checkpoint_and_candidate_bank(tmp_
     assert artifact["items"][0]["answer"] == "yes"
 
     with pytest.raises(CalibrationError, match="checkpoint"):
-        calibrate_battery(path, [("a", "yes")], lambda prompt: ("yes", -0.5), checkpoint_sha="other")
+        calibrate_battery(
+            path, [("a", "yes")], lambda prompt: ("yes", -0.5), checkpoint_sha="other"
+        )
 
 
 def test_battery_calibration_uses_the_configured_batch_size(tmp_path):
@@ -104,8 +108,11 @@ def test_battery_calibration_uses_the_configured_batch_size(tmp_path):
         return [("yes", -0.5) for _ in items]
 
     items = load_or_build_battery_batched(
-        tmp_path / "battery.json", [(str(i), "yes") for i in range(5)], probe,
-        batch_size=2, checkpoint_sha="warm-start",
+        tmp_path / "battery.json",
+        [(str(i), "yes") for i in range(5)],
+        probe,
+        batch_size=2,
+        checkpoint_sha="warm-start",
     )
 
     assert len(items) == 5
@@ -113,10 +120,7 @@ def test_battery_calibration_uses_the_configured_batch_size(tmp_path):
 
 
 def test_battery_summary_reports_registered_lower_tail_change():
-    scored = [
-        {"correct": True, "logprob_delta": float(value)}
-        for value in range(-10, 0)
-    ]
+    scored = [{"correct": True, "logprob_delta": float(value)} for value in range(-10, 0)]
 
     assert battery_summary(scored)["p10_logprob_delta"] == pytest.approx(-9.1)
 
@@ -125,8 +129,9 @@ def test_batched_battery_scoring_matches_single_item_scoring():
     items = [{"prompt": prompt, "answer": "yes", "logprob": -1.0} for prompt in ("a", "b", "c")]
     answers = {"a": ("yes", -0.5), "b": ("no", -2.0), "c": ("yes", -0.75)}
 
-    assert score_battery_batched(items, lambda prompts: [answers[prompt] for prompt in prompts], 2) == \
-        score_battery(items, lambda prompt: answers[prompt])
+    assert score_battery_batched(
+        items, lambda prompts: [answers[prompt] for prompt in prompts], 2
+    ) == score_battery(items, lambda prompt: answers[prompt])
 
 
 def test_battery_validation_rejects_token_length_and_wake_collisions():

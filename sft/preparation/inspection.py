@@ -52,7 +52,9 @@ def pick_windows(n_tokens: int, recall, sleeps, n: int, width: int, seed: int):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--data", action="append", required=True, help="Artifact .pt; repeat per slice")
+    parser.add_argument(
+        "--data", action="append", required=True, help="Artifact .pt; repeat per slice"
+    )
     parser.add_argument("--samples", type=int, default=2, help="Decoded windows per artifact")
     parser.add_argument("--width", type=int, default=400, help="Window width in tokens")
     parser.add_argument("--seed", type=int, default=0)
@@ -77,13 +79,17 @@ def main() -> None:
         n_tok = sum(len(x) for x in ids_list)
         n_recall = sum(int(r.sum()) for r in recalls if r is not None)
         n_sleeps = sum(len(s) for s in sleeps_list if s is not None)
-        print(f"\n{_ts()} == {path}: {len(ids_list)} examples, {n_tok / 1e6:.1f}M tokens, "
-              f"{n_recall} recall-credited ({100 * n_recall / max(n_tok, 1):.2f}%), {n_sleeps} sleeps ==")
+        print(
+            f"\n{_ts()} == {path}: {len(ids_list)} examples, {n_tok / 1e6:.1f}M tokens, "
+            f"{n_recall} recall-credited ({100 * n_recall / max(n_tok, 1):.2f}%), {n_sleeps} sleeps =="
+        )
 
         rng = random.Random(args.seed)
         for si, ei in enumerate(rng.sample(range(len(ids_list)), min(args.samples, len(ids_list)))):
             ids, recall, sleeps = ids_list[ei], recalls[ei], sleeps_list[ei]
-            for lo, hi, kind in pick_windows(len(ids), recall, sleeps, 1, args.width, args.seed + si):
+            for lo, hi, kind in pick_windows(
+                len(ids), recall, sleeps, 1, args.width, args.seed + si
+            ):
                 text = tokenizer.decode(ids[lo:hi].tolist())
                 print(f"{_ts()}  [example {ei}, tokens {lo}:{hi}, around {kind}]\n    {text!r}")
 

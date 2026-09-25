@@ -69,8 +69,12 @@ def state_divergence(with_state: torch.Tensor, blank: torch.Tensor) -> torch.Ten
     return (p.exp() * (p - q)).sum(dim=-1)
 
 
-def gated_positions(divergence: torch.Tensor, threshold: float, prefix_len: int = 0,
-                    exclude: Sequence[bool] | None = None) -> list[int]:
+def gated_positions(
+    divergence: torch.Tensor,
+    threshold: float,
+    prefix_len: int = 0,
+    exclude: Sequence[bool] | None = None,
+) -> list[int]:
     """The positions whose queries a dream's eraser is built from.
 
     The steer prefix influences the dream through state only (sec 2.10.8) and
@@ -78,8 +82,11 @@ def gated_positions(divergence: torch.Tensor, threshold: float, prefix_len: int 
     basis.
     """
     skip = exclude or ()
-    return [t for t, d in enumerate(divergence.tolist())
-            if t >= prefix_len and not (t < len(skip) and skip[t]) and d >= threshold]
+    return [
+        t
+        for t, d in enumerate(divergence.tolist())
+        if t >= prefix_len and not (t < len(skip) and skip[t]) and d >= threshold
+    ]
 
 
 def address_budget(d_state: int, fraction: int = ADDRESS_BUDGET_FRACTION) -> int:
@@ -106,8 +113,9 @@ def rank_median(sigma: torch.Tensor, budget: int, c: float = MEDIAN_C) -> int:
     return max(1, min(sum(1 for x in s if x > threshold), budget, len(s)))
 
 
-def aggregate_basis(queries: Sequence[torch.Tensor],
-                    weights: Sequence[float] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+def aggregate_basis(
+    queries: Sequence[torch.Tensor], weights: Sequence[float] | None = None
+) -> tuple[torch.Tensor, torch.Tensor]:
     """One SVD over one dream's gated queries for one layer. Returns
     (V, sigma): V's rows are the right-singular directions, most energetic
     first, and sigma is that layer's spectrum (printed into the sidecar).
@@ -137,14 +145,15 @@ def orthonormalize(rows: torch.Tensor) -> torch.Tensor:
     return q.T[diag > 1e-6 * diag.max().clamp_min(1e-12)]
 
 
-def variant_basis(v_full: torch.Tensor, rank: int, variant: str,
-                  ssm_state: torch.Tensor | None = None) -> torch.Tensor:
+def variant_basis(
+    v_full: torch.Tensor, rank: int, variant: str, ssm_state: torch.Tensor | None = None
+) -> torch.Tensor:
     """One of sec 2.7's three post-processings of the SHARED per-layer SVD:
 
-      raw       -- V as-is.
-      deflated  -- each direction deflated against the state's own top singular
-                   direction, then re-orthonormalized.
-      qcm       -- v_1 dropped, the query-consensus direction (08-07 sec 6).
+    raw       -- V as-is.
+    deflated  -- each direction deflated against the state's own top singular
+                 direction, then re-orthonormalized.
+    qcm       -- v_1 dropped, the query-consensus direction (08-07 sec 6).
     """
     if variant not in VARIANTS:
         raise ValueError(f"unknown B4 variant {variant!r}; expected one of {VARIANTS}")

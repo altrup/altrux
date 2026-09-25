@@ -21,7 +21,9 @@ from datasets import load_dataset
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert RMT-team/babilong to messages-shaped JSONL")
+    parser = argparse.ArgumentParser(
+        description="Convert RMT-team/babilong to messages-shaped JSONL"
+    )
     parser.add_argument(
         "--configs",
         nargs="+",
@@ -34,7 +36,9 @@ def main() -> None:
         default=[f"qa{i}" for i in range(1, 11)],
         help="bAbI task splits within each config (qa1..qa10)",
     )
-    parser.add_argument("--max-per-split", type=int, default=100, help="Cap examples per (config, task) pair")
+    parser.add_argument(
+        "--max-per-split", type=int, default=100, help="Cap examples per (config, task) pair"
+    )
     parser.add_argument("--output", default="data/babilong_raw.jsonl", help="Output JSONL path")
     args = parser.parse_args()
 

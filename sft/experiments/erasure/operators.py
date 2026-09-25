@@ -84,7 +84,9 @@ def state_top_dirs(ssm_state: torch.Tensor, k: int) -> torch.Tensor:
             return hit
         del _TOP_DIRS_CACHE[key]
 
-    m = ssm_state.detach().float().reshape(ssm_state.shape[0], -1, ssm_state.shape[-1])  # (b, h*p, n)
+    m = (
+        ssm_state.detach().float().reshape(ssm_state.shape[0], -1, ssm_state.shape[-1])
+    )  # (b, h*p, n)
     _, _, vh = torch.linalg.svd(m, full_matrices=False)
     out = vh[:, :k]
 
@@ -121,8 +123,9 @@ def sigma_gammas(spectrum: Sequence[float], rank: int) -> list[float]:
     return [float(s) / float(top) for s in head]
 
 
-def erase_subspace_scaled(ssm_state: torch.Tensor, basis: torch.Tensor,
-                          gammas: Sequence[float]) -> torch.Tensor:
+def erase_subspace_scaled(
+    ssm_state: torch.Tensor, basis: torch.Tensor, gammas: Sequence[float]
+) -> torch.Tensor:
     """S(I - V^T diag(gamma) V): each direction removed in proportion to its
     own gamma rather than all-or-nothing.
 

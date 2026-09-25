@@ -96,41 +96,111 @@ T = TypeVar("T")
 UNBOUND_LOGPROB = -2.0
 FILLER_SPAN = 15
 
+
 def build_sweep(entities: list[str]) -> list[tuple[str, str]]:
     """Fixed address-space sweep battery: (class, question). `unrelated` and
     `numeric` should sit far from any code-erase direction; `paraphrase` asks
     for the erased facts by other words and is *expected* to score high."""
-    who = ["Alice", "Bertram", "Clara", "Dmitri", "Elena", "Farid", "Greta", "Hugo", "Ingrid", "Joaquin"]
-    where = ["Paris", "Lisbon", "Oslo", "Nagoya", "Cairo", "Toronto", "Perth", "Dublin", "Bergen", "Recife"]
-    thing = ["kettle", "satchel", "lantern", "ledger", "trellis", "compass", "awning", "cistern", "mandolin", "spatula"]
-    when = ["harvest", "regatta", "recital", "inspection", "handover", "vigil", "parade", "audit", "rehearsal", "banquet"]
-    org = ["Halverson", "Redmond", "Castellane", "Ophir", "Vantage", "Kirkwall", "Solvay", "Norbury", "Perreault", "Aldington"]
+    who = [
+        "Alice",
+        "Bertram",
+        "Clara",
+        "Dmitri",
+        "Elena",
+        "Farid",
+        "Greta",
+        "Hugo",
+        "Ingrid",
+        "Joaquin",
+    ]
+    where = [
+        "Paris",
+        "Lisbon",
+        "Oslo",
+        "Nagoya",
+        "Cairo",
+        "Toronto",
+        "Perth",
+        "Dublin",
+        "Bergen",
+        "Recife",
+    ]
+    thing = [
+        "kettle",
+        "satchel",
+        "lantern",
+        "ledger",
+        "trellis",
+        "compass",
+        "awning",
+        "cistern",
+        "mandolin",
+        "spatula",
+    ]
+    when = [
+        "harvest",
+        "regatta",
+        "recital",
+        "inspection",
+        "handover",
+        "vigil",
+        "parade",
+        "audit",
+        "rehearsal",
+        "banquet",
+    ]
+    org = [
+        "Halverson",
+        "Redmond",
+        "Castellane",
+        "Ophir",
+        "Vantage",
+        "Kirkwall",
+        "Solvay",
+        "Norbury",
+        "Perreault",
+        "Aldington",
+    ]
     out: list[tuple[str, str]] = []
     for i in range(10):
-        out += [("unrelated", q) for q in (
-            f"Where does {who[i]} live?",
-            f"What did {who[i]} say about the proposal?",
-            f"Is {where[i]} warmer than the coast in autumn?",
-            f"Who is responsible for the {when[i]}?",
-            f"What colour is the {thing[i]}?",
-            f"Why was the {when[i]} postponed?",
-            f"Which company took over {org[i]}?",
-            f"How would you describe the {thing[i]}?",
-            f"What language is spoken in {where[i]}?",
-            f"Did {who[i]} attend the {when[i]}?",
-            f"What is the {thing[i]} made of?",
-            f"Where is the nearest station to {where[i]}?",
-            f"Who owns the {thing[i]}?",
-            f"What season is best for visiting {where[i]}?",
-        )]
-    out += [("numeric", q) for i in range(10) for q in (
-        f"How many people were at the {when[i]}?",
-        f"What is the phone number for {org[i]}?",
-        f"How much does the {thing[i]} weigh?",
-    )]
-    para = ["What is the access number for the {e}?", "What's the {e}'s code?", "Tell me the code for the {e}.",
-            "Can you recall the {e} code?", "What code was assigned to the {e}?", "Remind me of the code for the {e}.",
-            "The code for the {e} is what?", "Do you remember the {e}'s access number?"]
+        out += [
+            ("unrelated", q)
+            for q in (
+                f"Where does {who[i]} live?",
+                f"What did {who[i]} say about the proposal?",
+                f"Is {where[i]} warmer than the coast in autumn?",
+                f"Who is responsible for the {when[i]}?",
+                f"What colour is the {thing[i]}?",
+                f"Why was the {when[i]} postponed?",
+                f"Which company took over {org[i]}?",
+                f"How would you describe the {thing[i]}?",
+                f"What language is spoken in {where[i]}?",
+                f"Did {who[i]} attend the {when[i]}?",
+                f"What is the {thing[i]} made of?",
+                f"Where is the nearest station to {where[i]}?",
+                f"Who owns the {thing[i]}?",
+                f"What season is best for visiting {where[i]}?",
+            )
+        ]
+    out += [
+        ("numeric", q)
+        for i in range(10)
+        for q in (
+            f"How many people were at the {when[i]}?",
+            f"What is the phone number for {org[i]}?",
+            f"How much does the {thing[i]} weigh?",
+        )
+    ]
+    para = [
+        "What is the access number for the {e}?",
+        "What's the {e}'s code?",
+        "Tell me the code for the {e}.",
+        "Can you recall the {e} code?",
+        "What code was assigned to the {e}?",
+        "Remind me of the code for the {e}.",
+        "The code for the {e} is what?",
+        "Do you remember the {e}'s access number?",
+    ]
     out += [("paraphrase", t.format(e=e)) for e in entities for t in para]
     return out
 
@@ -147,26 +217,62 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--n-facts", type=int, default=4)
     parser.add_argument("--filler-tokens", type=int, default=40)
-    parser.add_argument("--bystanders", type=int, default=5,
-                        help="Off-format facts (different relation templates) added to the transcript and probed, "
-                             "but never captured and never erased -- collateral outside the query cone (default: %(default)s)")
-    parser.add_argument("--nearcone", type=int, default=2,
-                        help="Numeric-but-off-relation bystanders (spaced digits, different relation) -- collateral "
-                             "just outside the code cone (default: %(default)s)")
-    parser.add_argument("--sweep", action="store_true", default=True, help="Run the address-space sweep battery")
+    parser.add_argument(
+        "--bystanders",
+        type=int,
+        default=5,
+        help="Off-format facts (different relation templates) added to the transcript and probed, "
+        "but never captured and never erased -- collateral outside the query cone (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--nearcone",
+        type=int,
+        default=2,
+        help="Numeric-but-off-relation bystanders (spaced digits, different relation) -- collateral "
+        "just outside the code cone (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--sweep", action="store_true", default=True, help="Run the address-space sweep battery"
+    )
     parser.add_argument("--no-sweep", dest="sweep", action="store_false")
-    parser.add_argument("--filler-spans", type=int, default=3,
-                        help="Filler continuation spans scored before/after each erase (default: %(default)s)")
-    parser.add_argument("--gammas", default="0.25,0.5,1.0", help="Comma-separated erase strengths (default: %(default)s)")
-    parser.add_argument("--span", choices=["answer", "question"], default="answer",
-                        help="Which positions' read queries address the erase: the answer span alone, or question+answer (default: %(default)s)")
-    parser.add_argument("--deflate", choices=["none", "state-svd", "others"], default="none",
-                        help="Orthogonalize each erase direction before applying it: against the state's own top "
-                             "singular directions (state-svd -- what a dream loop can compute), or against the other "
-                             "facts' mean queries (others -- the oracle upper bound). Default: %(default)s")
-    parser.add_argument("--deflate-k", type=int, default=1, help="Singular directions to deflate against for state-svd (default: %(default)s)")
+    parser.add_argument(
+        "--filler-spans",
+        type=int,
+        default=3,
+        help="Filler continuation spans scored before/after each erase (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--gammas",
+        default="0.25,0.5,1.0",
+        help="Comma-separated erase strengths (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--span",
+        choices=["answer", "question"],
+        default="answer",
+        help="Which positions' read queries address the erase: the answer span alone, or question+answer (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--deflate",
+        choices=["none", "state-svd", "others"],
+        default="none",
+        help="Orthogonalize each erase direction before applying it: against the state's own top "
+        "singular directions (state-svd -- what a dream loop can compute), or against the other "
+        "facts' mean queries (others -- the oracle upper bound). Default: %(default)s",
+    )
+    parser.add_argument(
+        "--deflate-k",
+        type=int,
+        default=1,
+        help="Singular directions to deflate against for state-svd (default: %(default)s)",
+    )
     parser.add_argument("--gen-tokens", type=int, default=GEN_TOKENS)
-    parser.add_argument("--chunk-len", type=int, default=None, help="Priming chunk length (default: the model's DEFAULT_CHUNK_LEN)")
+    parser.add_argument(
+        "--chunk-len",
+        type=int,
+        default=None,
+        help="Priming chunk length (default: the model's DEFAULT_CHUNK_LEN)",
+    )
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--out", default="logs/erase_probe.jsonl")
     args = parser.parse_args()
@@ -186,24 +292,33 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     chunk_len = args.chunk_len or getattr(train_hooks, "DEFAULT_CHUNK_LEN", 48)
     gammas = [float(g) for g in args.gammas.split(",")]
-    print(f"[{ts()}] model {model_name} on {device}, chunk_len {chunk_len}, seed {args.seed}, span {args.span}, gammas {gammas}")
+    print(
+        f"[{ts()}] model {model_name} on {device}, chunk_len {chunk_len}, seed {args.seed}, span {args.span}, gammas {gammas}"
+    )
 
     model = model_mod.load_inference(device)
     if getattr(model, "c_capture", "missing") == "missing":
-        raise SystemExit(f"model {model_name} has no c_capture hook -- this probe is for mamba2_780m")
+        raise SystemExit(
+            f"model {model_name} has no c_capture hook -- this probe is for mamba2_780m"
+        )
     model.eval()
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN
     stops = (".", "\n", user_open, asst_open)
 
     def encode(text: str) -> torch.Tensor:
-        return torch.tensor([tokenizer(text, add_special_tokens=False)["input_ids"]], dtype=torch.long, device=device)
+        return torch.tensor(
+            [tokenizer(text, add_special_tokens=False)["input_ids"]],
+            dtype=torch.long,
+            device=device,
+        )
 
     rng = random.Random(args.seed)
     torch.manual_seed(args.seed)
     facts = build_facts(args.n_facts, rng)
     bystanders = build_bystanders(args.bystanders, rng, user_open, asst_open)
     bystanders += build_nearcone(args.nearcone, rng, user_open, asst_open)
+
     def token_len(s: str) -> int:
         return len(tokenizer(s, add_special_tokens=False)["input_ids"])
 
@@ -220,22 +335,32 @@ def main() -> None:
     if bystanders:
         bad = sum(1 for b in bystanders if decoded.count(b.statement) != 1)
         collide = sum(1 for b in bystanders for f in facts if b.label == f.entity)
-        digit_collide = sum(1 for b in bystanders for f in facts if digits(b.answer) == digits(f.code))
-        print(f"[{ts()}]   bystanders: {len(bystanders)} "
-              f"({sum(b.cls == 'offformat' for b in bystanders)} offformat, {sum(b.cls == 'nearcone' for b in bystanders)} nearcone)"
-              f", statements not stated exactly once: {bad}  (must be 0)")
+        digit_collide = sum(
+            1 for b in bystanders for f in facts if digits(b.answer) == digits(f.code)
+        )
+        print(
+            f"[{ts()}]   bystanders: {len(bystanders)} "
+            f"({sum(b.cls == 'offformat' for b in bystanders)} offformat, {sum(b.cls == 'nearcone' for b in bystanders)} nearcone)"
+            f", statements not stated exactly once: {bad}  (must be 0)"
+        )
         print(f"[{ts()}]   bystander/fact label collisions: {collide}  (must be 0)")
-        print(f"[{ts()}]   duplicate bystander labels: {len(bystanders) - len({b.label for b in bystanders})}  (must be 0)")
-        print(f"[{ts()}]   bystander questions matching >1 statement: "
-              f"{sum(1 for b in bystanders if sum(o.question == b.question for o in bystanders) > 1)}  (must be 0)")
+        print(
+            f"[{ts()}]   duplicate bystander labels: {len(bystanders) - len({b.label for b in bystanders})}  (must be 0)"
+        )
+        print(
+            f"[{ts()}]   bystander questions matching >1 statement: "
+            f"{sum(1 for b in bystanders if sum(o.question == b.question for o in bystanders) > 1)}  (must be 0)"
+        )
         print(f"[{ts()}]   bystander/fact answer-digit collisions: {digit_collide}  (must be 0)")
         for cls in ("offformat", "nearcone"):
             first = next((b for b in bystanders if b.cls == cls), None)
             if first is None:
                 continue
             at = decoded.find(first.statement)
-            print(f"[{ts()}]   sample around first {cls} bystander ({first.label}):\n"
-                  f"    ...{decoded[max(0, at - 200) : at + 200]!r}...")
+            print(
+                f"[{ts()}]   sample around first {cls} bystander ({first.label}):\n"
+                f"    ...{decoded[max(0, at - 200) : at + 200]!r}..."
+            )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -255,28 +380,64 @@ def main() -> None:
         for fact in facts:
             prompt = encode(cue_rungs(fact, user_open, asst_open)[0][0])
             target = encode(" " + fact.code)
-            gen = tokenizer.decode(generate(model, prompt, copy.deepcopy(state), args.gen_tokens, 0.0)[0].cpu())
+            gen = tokenizer.decode(
+                generate(model, prompt, copy.deepcopy(state), args.gen_tokens, 0.0)[0].cpu()
+            )
             lp = target_logprob(model, prompt, target, copy.deepcopy(state))
-            results.append({"fact": fact.entity, "kind": "fact", "bclass": "fact", "code": fact.code, "greedy": gen,
-                            "match": exact_match(gen, fact.code, stops), "logprob": lp})
-            print(f"[{ts()}]   {label} {fact.entity:<11} {'HIT ' if results[-1]['match'] else 'miss'} "
-                  f"lp {lp:+.3f}  {gen[:60]!r}", flush=True)
+            results.append(
+                {
+                    "fact": fact.entity,
+                    "kind": "fact",
+                    "bclass": "fact",
+                    "code": fact.code,
+                    "greedy": gen,
+                    "match": exact_match(gen, fact.code, stops),
+                    "logprob": lp,
+                }
+            )
+            print(
+                f"[{ts()}]   {label} {fact.entity:<11} {'HIT ' if results[-1]['match'] else 'miss'} "
+                f"lp {lp:+.3f}  {gen[:60]!r}",
+                flush=True,
+            )
         for b in bystanders:
             prompt, target = encode(b.prompt), encode(b.answer)
-            gen = tokenizer.decode(generate(model, prompt, copy.deepcopy(state), args.gen_tokens, 0.0)[0].cpu())
+            gen = tokenizer.decode(
+                generate(model, prompt, copy.deepcopy(state), args.gen_tokens, 0.0)[0].cpu()
+            )
             lp = target_logprob(model, prompt, target, copy.deepcopy(state))
             ans, truth = extract_answer(gen, stops), normalize(b.answer)
             # The near-cone answer is the digits; greedy continues with the unit.
             match = ans == truth or ans.startswith(truth + " ")
-            results.append({"fact": b.label, "kind": "bystander", "bclass": b.cls, "code": b.answer.strip(), "greedy": gen,
-                            "match": match, "logprob": lp, "unbound": b.label in unbound})
-            print(f"[{ts()}]   {label} {b.label:<11} [{b.cls[:4]}] {'HIT ' if match else 'miss'} "
-                  f"lp {lp:+.3f}  {'[UNBOUND] ' if b.label in unbound else ''}{gen[:60]!r}", flush=True)
+            results.append(
+                {
+                    "fact": b.label,
+                    "kind": "bystander",
+                    "bclass": b.cls,
+                    "code": b.answer.strip(),
+                    "greedy": gen,
+                    "match": match,
+                    "logprob": lp,
+                    "unbound": b.label in unbound,
+                }
+            )
+            print(
+                f"[{ts()}]   {label} {b.label:<11} [{b.cls[:4]}] {'HIT ' if match else 'miss'} "
+                f"lp {lp:+.3f}  {'[UNBOUND] ' if b.label in unbound else ''}{gen[:60]!r}",
+                flush=True,
+            )
         return results
 
     def filler_logprobs(state) -> list[float]:
-        return [target_logprob(model, transcript[:, p - FILLER_SPAN : p], transcript[:, p : p + FILLER_SPAN],
-                               copy.deepcopy(state)) for p in spans]
+        return [
+            target_logprob(
+                model,
+                transcript[:, p - FILLER_SPAN : p],
+                transcript[:, p : p + FILLER_SPAN],
+                copy.deepcopy(state),
+            )
+            for p in spans
+        ]
 
     def capture_tokens(seq: torch.Tensor, state) -> list[list[torch.Tensor]]:
         """Drive `seq` one token at a time from a copy of `state`; return
@@ -299,11 +460,17 @@ def main() -> None:
         return per_token[start : seq.shape[1] - 1]
 
     def capture_queries(fact) -> list[list[torch.Tensor]]:
-        return capture_span(encode(cue_rungs(fact, user_open, asst_open)[0][0]), encode(" " + fact.code), primed)
+        return capture_span(
+            encode(cue_rungs(fact, user_open, asst_open)[0][0]), encode(" " + fact.code), primed
+        )
 
     def mean_layers(per_token: list[list[torch.Tensor]]) -> torch.Tensor:
         """(L, d_state): each layer's mean read query over the captured span."""
-        return torch.stack([torch.stack(layers).float() for layers in per_token]).mean(dim=0).squeeze(1)
+        return (
+            torch.stack([torch.stack(layers).float() for layers in per_token])
+            .mean(dim=0)
+            .squeeze(1)
+        )
 
     print(f"\n[{ts()}] === prime ===")
     _, primed = run_chunks(model, transcript, None, chunk_len, "prime", keep_logits=False)
@@ -311,8 +478,11 @@ def main() -> None:
     print(f"\n[{ts()}] === baseline (primed state, no erase) ===")
     baseline = probe_all(primed, "base")
     base_by_fact = {r["fact"]: r for r in baseline}
-    unbound |= {r["fact"] for r in baseline
-                if r["kind"] == "bystander" and not r["match"] and r["logprob"] < UNBOUND_LOGPROB}
+    unbound |= {
+        r["fact"]
+        for r in baseline
+        if r["kind"] == "bystander" and not r["match"] and r["logprob"] < UNBOUND_LOGPROB
+    }
     for r in baseline:
         emit({"phase": "baseline", **r, "unbound": r["fact"] in unbound})
     if bystanders:
@@ -321,15 +491,30 @@ def main() -> None:
             if not members:
                 continue
             bound = [b.label for b in members if b.label not in unbound]
-            print(f"[{ts()}] {cls} bystanders bound at baseline: {len(bound)}/{len(members)}"
-                  + (f"  unbound: {sorted(b.label for b in members if b.label in unbound)}" if len(bound) < len(members) else ""))
-            emit({"phase": "bound_counts", "bclass": cls, "bound": len(bound), "total": len(members),
-                  "unbound_labels": sorted(b.label for b in members if b.label in unbound)})
+            print(
+                f"[{ts()}] {cls} bystanders bound at baseline: {len(bound)}/{len(members)}"
+                + (
+                    f"  unbound: {sorted(b.label for b in members if b.label in unbound)}"
+                    if len(bound) < len(members)
+                    else ""
+                )
+            )
+            emit(
+                {
+                    "phase": "bound_counts",
+                    "bclass": cls,
+                    "bound": len(bound),
+                    "total": len(members),
+                    "unbound_labels": sorted(b.label for b in members if b.label in unbound),
+                }
+            )
         nc = next((b for b in bystanders if b.cls == "nearcone"), None)
         if nc is not None:
             r = next(r for r in baseline if r["fact"] == nc.label)
-            print(f"[{ts()}] nearcone sample: prompt {nc.prompt!r}\n"
-                  f"[{ts()}]   truth {nc.answer!r}  baseline greedy {r['greedy']!r}  match {r['match']}  lp {r['logprob']:+.3f}")
+            print(
+                f"[{ts()}] nearcone sample: prompt {nc.prompt!r}\n"
+                f"[{ts()}]   truth {nc.answer!r}  baseline greedy {r['greedy']!r}  match {r['match']}  lp {r['logprob']:+.3f}"
+            )
 
     # Filler-continuation panel: teacher-forced continuation of transcript
     # spans that are pure filler (no digits, no role marker in the window), so
@@ -350,16 +535,28 @@ def main() -> None:
     print(f"\n[{ts()}] === filler-continuation spans ({len(spans)} x {FILLER_SPAN} tokens) ===")
     base_filler = filler_logprobs(primed)
     for p, lp in zip(spans, base_filler, strict=True):
-        print(f"[{ts()}]   @{p:<6} lp {lp:+.3f}  prompt {tokenizer.decode(ids[p - FILLER_SPAN : p])!r}"
-              f" -> {tokenizer.decode(ids[p : p + FILLER_SPAN])!r}", flush=True)
-        emit({"phase": "filler_baseline", "pos": p, "logprob": lp,
-              "prompt": tokenizer.decode(ids[p - FILLER_SPAN : p]), "span": tokenizer.decode(ids[p : p + FILLER_SPAN])})
+        print(
+            f"[{ts()}]   @{p:<6} lp {lp:+.3f}  prompt {tokenizer.decode(ids[p - FILLER_SPAN : p])!r}"
+            f" -> {tokenizer.decode(ids[p : p + FILLER_SPAN])!r}",
+            flush=True,
+        )
+        emit(
+            {
+                "phase": "filler_baseline",
+                "pos": p,
+                "logprob": lp,
+                "prompt": tokenizer.decode(ids[p - FILLER_SPAN : p]),
+                "span": tokenizer.decode(ids[p : p + FILLER_SPAN]),
+            }
+        )
 
     print(f"\n[{ts()}] === capture read queries ({args.span} span) ===")
     queries = {}
     for fact in facts:
         queries[fact.entity] = capture_queries(fact)
-        print(f"[{ts()}]   {fact.entity:<11} {len(queries[fact.entity])} positions x {len(model.layers)} layers")
+        print(
+            f"[{ts()}]   {fact.entity:<11} {len(queries[fact.entity])} positions x {len(model.layers)} layers"
+        )
 
     # Key geometry: pairwise cosine of each fact's mean read query, averaged
     # over layers -- the direct measure of erase bluntness.
@@ -371,7 +568,12 @@ def main() -> None:
     for a in names:
         row = []
         for b in names:
-            cos = torch.nn.functional.cosine_similarity(mean_q[a], mean_q[b], dim=-1).abs().mean().item()
+            cos = (
+                torch.nn.functional.cosine_similarity(mean_q[a], mean_q[b], dim=-1)
+                .abs()
+                .mean()
+                .item()
+            )
             row.append(cos)
             overlaps[f"{a}|{b}"] = cos
         print(f"[{ts()}]   {a:<11} " + " ".join(f"{v:9.3f}" for v in row))
@@ -381,43 +583,80 @@ def main() -> None:
     # |cos| 0.77), so the panel is reported both raw and with the state's top
     # singular direction removed from both sides -- the geometry `--deflate
     # state-svd` actually erases along.
-    svd_basis = [state_top_dirs(primed.ssm_states[i], args.deflate_k) for i in range(len(model.layers))]
+    svd_basis = [
+        state_top_dirs(primed.ssm_states[i], args.deflate_k) for i in range(len(model.layers))
+    ]
 
     def defl(v: torch.Tensor, i: int) -> torch.Tensor:
         return deflate(v.unsqueeze(0), svd_basis[i])[0]
 
-    mean_qd = {e: torch.stack([defl(mean_q[e][i], i) for i in range(len(model.layers))]) for e in names}
+    mean_qd = {
+        e: torch.stack([defl(mean_q[e][i], i) for i in range(len(model.layers))]) for e in names
+    }
     variants = (("raw", mean_q, lambda v, i: v), ("deflated", mean_qd, defl))
 
     def cos_vs_facts(q: torch.Tensor, mq, tf) -> list[tuple[float, str, int]]:
         """|cos| of a (L, n) query bundle against every fact's erase direction,
         per layer -- (cos, fact, layer) for all pairs."""
-        return [(torch.nn.functional.cosine_similarity(tf(q[i], i), mq[e][i], dim=-1).abs().item(), e, i)
-                for e in names for i in range(len(model.layers))]
+        return [
+            (
+                torch.nn.functional.cosine_similarity(tf(q[i], i), mq[e][i], dim=-1).abs().item(),
+                e,
+                i,
+            )
+            for e in names
+            for i in range(len(model.layers))
+        ]
 
     def quantile(xs: list[float], p: float) -> float:
         s = sorted(xs)
         return s[min(len(s) - 1, int(p * len(s)))]
 
     if bystanders:
-        print(f"\n[{ts()}] === bystander query vs erase direction (|cos| over bystander x fact x layer) ===")
-        bqs = {b.label: mean_layers(capture_span(encode(b.prompt), encode(b.answer), primed)) for b in bystanders}
+        print(
+            f"\n[{ts()}] === bystander query vs erase direction (|cos| over bystander x fact x layer) ==="
+        )
+        bqs = {
+            b.label: mean_layers(capture_span(encode(b.prompt), encode(b.answer), primed))
+            for b in bystanders
+        }
         for vname, mq, tf in variants:
-            pairs = [(c, b.label, b.cls, e, i) for b in bystanders for c, e, i in cos_vs_facts(bqs[b.label], mq, tf)]
+            pairs = [
+                (c, b.label, b.cls, e, i)
+                for b in bystanders
+                for c, e, i in cos_vs_facts(bqs[b.label], mq, tf)
+            ]
             for cls in ("offformat", "nearcone"):
                 sub = [p for p in pairs if p[2] == cls]
                 if not sub:
                     continue
                 cs = [p[0] for p in sub]
                 top = max(sub)
-                print(f"[{ts()}]   {vname:<9} {cls:<10} n={len(cs)}  mean {sum(cs) / len(cs):.3f}  p95 {quantile(cs, 0.95):.3f}  "
-                      f"max {top[0]:.3f} ({top[1]} vs {top[3]}, layer {top[4]})", flush=True)
-                emit({"phase": "cos_bystander", "variant": vname, "bclass": cls, "n": len(cs), "mean": sum(cs) / len(cs),
-                      "p95": quantile(cs, 0.95), "max": top[0], "max_label": top[1], "max_fact": top[3], "max_layer": top[4]})
+                print(
+                    f"[{ts()}]   {vname:<9} {cls:<10} n={len(cs)}  mean {sum(cs) / len(cs):.3f}  p95 {quantile(cs, 0.95):.3f}  "
+                    f"max {top[0]:.3f} ({top[1]} vs {top[3]}, layer {top[4]})",
+                    flush=True,
+                )
+                emit(
+                    {
+                        "phase": "cos_bystander",
+                        "variant": vname,
+                        "bclass": cls,
+                        "n": len(cs),
+                        "mean": sum(cs) / len(cs),
+                        "p95": quantile(cs, 0.95),
+                        "max": top[0],
+                        "max_label": top[1],
+                        "max_fact": top[3],
+                        "max_layer": top[4],
+                    }
+                )
 
     if args.sweep:
         battery = build_sweep(names)
-        print(f"\n[{ts()}] === address-space sweep battery ({len(battery)} questions, fresh state) ===")
+        print(
+            f"\n[{ts()}] === address-space sweep battery ({len(battery)} questions, fresh state) ==="
+        )
         hits: dict[str, list[tuple[float, str, str, str, int]]] = {v[0]: [] for v in variants}
         for n_done, (cls, q) in enumerate(battery, 1):
             last = capture_tokens(encode(f"{user_open} {q}{asst_open}"), None)[-1]
@@ -426,21 +665,38 @@ def main() -> None:
                 c, e, i = max(cos_vs_facts(qv, mq, tf))
                 hits[vname].append((c, cls, q, e, i))
             if n_done % 20 == 0 or n_done == len(battery):
-                print(f"\r[{ts()}]   swept {n_done}/{len(battery)}  running max |cos| raw {max(h[0] for h in hits['raw']):.3f}"
-                      f" deflated {max(h[0] for h in hits['deflated']):.3f}",
-                      end="" if n_done < len(battery) else "\n", flush=True)
+                print(
+                    f"\r[{ts()}]   swept {n_done}/{len(battery)}  running max |cos| raw {max(h[0] for h in hits['raw']):.3f}"
+                    f" deflated {max(h[0] for h in hits['deflated']):.3f}",
+                    end="" if n_done < len(battery) else "\n",
+                    flush=True,
+                )
         for vname, _, _ in variants:
             for cls in ("unrelated", "numeric", "paraphrase"):
                 sub = sorted((h for h in hits[vname] if h[1] == cls), reverse=True)
                 cs = [h[0] for h in sub]
                 fracs = {t: sum(c > t for c in cs) / len(cs) for t in (0.3, 0.5, 0.7, 0.9)}
-                print(f"[{ts()}]   {vname:<9} {cls:<10} n={len(cs)}  mean {sum(cs) / len(cs):.3f}  max {cs[0]:.3f}  "
-                      + " ".join(f">{t}: {f:.3f}" for t, f in fracs.items()))
+                print(
+                    f"[{ts()}]   {vname:<9} {cls:<10} n={len(cs)}  mean {sum(cs) / len(cs):.3f}  max {cs[0]:.3f}  "
+                    + " ".join(f">{t}: {f:.3f}" for t, f in fracs.items())
+                )
                 for c, _, q, e, i in sub[:10]:
                     print(f"[{ts()}]       {c:.3f}  L{i:<3} vs {e:<10} {q!r}")
-                emit({"phase": "cos_sweep", "variant": vname, "class": cls, "n": len(cs), "mean": sum(cs) / len(cs),
-                      "max": cs[0], "fracs": {str(t): f for t, f in fracs.items()},
-                      "top10": [{"cos": c, "question": q, "fact": e, "layer": i} for c, _, q, e, i in sub[:10]]})
+                emit(
+                    {
+                        "phase": "cos_sweep",
+                        "variant": vname,
+                        "class": cls,
+                        "n": len(cs),
+                        "mean": sum(cs) / len(cs),
+                        "max": cs[0],
+                        "fracs": {str(t): f for t, f in fracs.items()},
+                        "top10": [
+                            {"cos": c, "question": q, "fact": e, "layer": i}
+                            for c, _, q, e, i in sub[:10]
+                        ],
+                    }
+                )
 
     # "others" deflation basis: per layer, the other facts' mean queries,
     # orthonormalized. The oracle -- a dream loop cannot know these.
@@ -475,39 +731,81 @@ def main() -> None:
                         cosv.append((raw.float() - c.float()).norm().item() / max(raw_n, 1e-8))
                     # A query living almost entirely in the deflated cone has no
                     # reliable discriminative direction left -- skip, don't erase noise.
-                    if args.deflate != "none" and c.float().norm() < 0.05 * per_layer[i].float().norm():
+                    if (
+                        args.deflate != "none"
+                        and c.float().norm() < 0.05 * per_layer[i].float().norm()
+                    ):
                         skipped += 1
                         continue
                     edited.ssm_states[i] = rank1_erase(edited.ssm_states[i], c, gamma)
             after_norms = [s.float().norm().item() for s in edited.ssm_states]
-            frob_frac = sum(1 - a / max(b, 1e-8) for a, b in zip(after_norms, before_norms, strict=True)) / len(before_norms)
-            print(f"\n[{ts()}] erase target={fact.entity} gamma={gamma}  "
-                  f"Frobenius removed {frob_frac:.4f} (mean over layers)"
-                  + (f"  resid |c_def|/|c| mean {sum(resid) / len(resid):.4f} min {min(resid):.4f}  "
-                     f"|cos(c,v)| mean {sum(cosv) / len(cosv):.4f} max {max(cosv):.4f}" if resid else ""))
-            emit({"phase": "diagnostics", "erased": fact.entity, "gamma": gamma, "deflate": args.deflate,
-                  "frob_fraction_removed": frob_frac, "n_directions": len(resid),
-                  "resid_mean": sum(resid) / len(resid) if resid else None,
-                  "resid_min": min(resid) if resid else None,
-                  "cos_mean": sum(cosv) / len(cosv) if cosv else None,
-                  "cos_max": max(cosv) if cosv else None})
+            frob_frac = sum(
+                1 - a / max(b, 1e-8) for a, b in zip(after_norms, before_norms, strict=True)
+            ) / len(before_norms)
+            print(
+                f"\n[{ts()}] erase target={fact.entity} gamma={gamma}  "
+                f"Frobenius removed {frob_frac:.4f} (mean over layers)"
+                + (
+                    f"  resid |c_def|/|c| mean {sum(resid) / len(resid):.4f} min {min(resid):.4f}  "
+                    f"|cos(c,v)| mean {sum(cosv) / len(cosv):.4f} max {max(cosv):.4f}"
+                    if resid
+                    else ""
+                )
+            )
+            emit(
+                {
+                    "phase": "diagnostics",
+                    "erased": fact.entity,
+                    "gamma": gamma,
+                    "deflate": args.deflate,
+                    "frob_fraction_removed": frob_frac,
+                    "n_directions": len(resid),
+                    "resid_mean": sum(resid) / len(resid) if resid else None,
+                    "resid_min": min(resid) if resid else None,
+                    "cos_mean": sum(cosv) / len(cosv) if cosv else None,
+                    "cos_max": max(cosv) if cosv else None,
+                }
+            )
             results = probe_all(edited, f"g={gamma}")
             for r in results:
                 base = base_by_fact[r["fact"]]
-                emit({
-                    "phase": "erase", "erased": fact.entity, "gamma": gamma, "span": args.span,
-                    "deflate": args.deflate, **r,
-                    "baseline_match": base["match"], "baseline_logprob": base["logprob"],
-                    "logprob_delta": r["logprob"] - base["logprob"],
-                    "is_target": r["fact"] == fact.entity,
-                })
+                emit(
+                    {
+                        "phase": "erase",
+                        "erased": fact.entity,
+                        "gamma": gamma,
+                        "span": args.span,
+                        "deflate": args.deflate,
+                        **r,
+                        "baseline_match": base["match"],
+                        "baseline_logprob": base["logprob"],
+                        "logprob_delta": r["logprob"] - base["logprob"],
+                        "is_target": r["fact"] == fact.entity,
+                    }
+                )
             edited_filler = filler_logprobs(edited)
             for p, lp, b in zip(spans, edited_filler, base_filler, strict=True):
-                emit({"phase": "filler", "erased": fact.entity, "gamma": gamma, "deflate": args.deflate,
-                      "pos": p, "logprob": lp, "baseline_logprob": b, "logprob_delta": lp - b})
+                emit(
+                    {
+                        "phase": "filler",
+                        "erased": fact.entity,
+                        "gamma": gamma,
+                        "deflate": args.deflate,
+                        "pos": p,
+                        "logprob": lp,
+                        "baseline_logprob": b,
+                        "logprob_delta": lp - b,
+                    }
+                )
             if spans:
-                print(f"[{ts()}]   filler dlogp " + " ".join(f"{lp - b:+.3f}" for lp, b in zip(edited_filler, base_filler, strict=True))
-                      + f"  mean {sum(lp - b for lp, b in zip(edited_filler, base_filler, strict=True)) / len(spans):+.3f}", flush=True)
+                print(
+                    f"[{ts()}]   filler dlogp "
+                    + " ".join(
+                        f"{lp - b:+.3f}" for lp, b in zip(edited_filler, base_filler, strict=True)
+                    )
+                    + f"  mean {sum(lp - b for lp, b in zip(edited_filler, base_filler, strict=True)) / len(spans):+.3f}",
+                    flush=True,
+                )
     if args.deflate != "none":
         print(f"[{ts()}] deflation skipped {skipped} near-cone erase directions")
 
@@ -531,26 +829,45 @@ def main() -> None:
         at = [r for r in records if r["gamma"] == gamma]
         tgt = [r for r in at if r["is_target"]]
         sib = [r for r in at if not r["is_target"] and r["kind"] == "fact"]
-        groups = {cls: [r for r in at if r.get("bclass") == cls and not r["unbound"]] for cls in ("offformat", "nearcone")}
+        groups = {
+            cls: [r for r in at if r.get("bclass") == cls and not r["unbound"]]
+            for cls in ("offformat", "nearcone")
+        }
         byu = [r["logprob_delta"] for r in at if r["kind"] == "bystander" and r["unbound"]]
         tgt_flips = sum(1 for r in at if r["is_target"] and r["baseline_match"] and not r["match"])
-        off_flips = sum(1 for r in at if not r["is_target"] and r["baseline_match"] and not r["match"])
+        off_flips = sum(
+            1 for r in at if not r["is_target"] and r["baseline_match"] and not r["match"]
+        )
         fil = [r for r in fillers if r["gamma"] == gamma]
         dg = [r for r in diags if r["gamma"] == gamma]
         ident = lambda r: f"{r['fact']} | erased {r['erased']}"
-        print(f"[{ts()}]   gamma {gamma:<5} target dlogp {mean([r['logprob_delta'] for r in tgt]):+7.3f} ({tgt_flips} flips)"
-              f"   worst {worst(tgt, ident)}")
-        print(f"[{ts()}]            sibling  dlogp {mean([r['logprob_delta'] for r in sib]):+7.3f} ({off_flips} off-target flips)"
-              f"   worst {worst(sib, ident)}")
+        print(
+            f"[{ts()}]   gamma {gamma:<5} target dlogp {mean([r['logprob_delta'] for r in tgt]):+7.3f} ({tgt_flips} flips)"
+            f"   worst {worst(tgt, ident)}"
+        )
+        print(
+            f"[{ts()}]            sibling  dlogp {mean([r['logprob_delta'] for r in sib]):+7.3f} ({off_flips} off-target flips)"
+            f"   worst {worst(sib, ident)}"
+        )
         for cls, rs in groups.items():
-            print(f"[{ts()}]            {cls:<10} (bound, n={len(rs)}) {mean([r['logprob_delta'] for r in rs]):+7.3f}"
-                  f"   worst {worst(rs, ident)}")
+            print(
+                f"[{ts()}]            {cls:<10} (bound, n={len(rs)}) {mean([r['logprob_delta'] for r in rs]):+7.3f}"
+                f"   worst {worst(rs, ident)}"
+            )
         print(f"[{ts()}]            bystander(unbound, n={len(byu)}) {mean(byu):+7.3f}")
-        print(f"[{ts()}]            filler   dlogp {mean([r['logprob_delta'] for r in fil]):+7.3f}"
-              f"   worst {worst(fil, lambda r: f'@{r['pos']} | erased {r['erased']}')}")
-        print(f"[{ts()}]            Frobenius removed {mean([d['frob_fraction_removed'] for d in dg]):.4f}"
-              + (f"   resid mean {mean([d['resid_mean'] for d in dg]):.4f} min {min(d['resid_min'] for d in dg):.4f}"
-                 f"   |cos| mean {mean([d['cos_mean'] for d in dg]):.4f}" if args.deflate != "none" else ""))
+        print(
+            f"[{ts()}]            filler   dlogp {mean([r['logprob_delta'] for r in fil]):+7.3f}"
+            f"   worst {worst(fil, lambda r: f'@{r['pos']} | erased {r['erased']}')}"
+        )
+        print(
+            f"[{ts()}]            Frobenius removed {mean([d['frob_fraction_removed'] for d in dg]):.4f}"
+            + (
+                f"   resid mean {mean([d['resid_mean'] for d in dg]):.4f} min {min(d['resid_min'] for d in dg):.4f}"
+                f"   |cos| mean {mean([d['cos_mean'] for d in dg]):.4f}"
+                if args.deflate != "none"
+                else ""
+            )
+        )
     out_file.close()
     print(f"[{ts()}] -> {out_path}")
 

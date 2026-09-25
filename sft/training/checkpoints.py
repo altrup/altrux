@@ -138,10 +138,7 @@ def save_checkpoint(
         lora_config["memory_window"] = memory_window
     (tmp / "lora_config.json").write_text(json.dumps(lora_config))
     torch.save(optimizer.state_dict(), tmp / "optimizer.pt")
-    slot_states = [
-        (s.example_idx, s.pos, s.sleep_i) if s is not None else None
-        for s in slots
-    ]
+    slot_states = [(s.example_idx, s.pos, s.sleep_i) if s is not None else None for s in slots]
     state_dict = {
         "epoch": epoch,
         "slot_states": slot_states,
@@ -175,8 +172,10 @@ def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
     current = dict(model.named_parameters()).get(key)
     if key in state and current is not None and state[key].shape[0] < current.shape[0]:
         rows = state[key].shape[0]
-        print(f"padding {key} {rows} -> {current.shape[0]} rows; "
-              f"rows past {rows} keep their zero (untrained) init")
+        print(
+            f"padding {key} {rows} -> {current.shape[0]} rows; "
+            f"rows past {rows} keep their zero (untrained) init"
+        )
         padded = torch.zeros_like(current.detach().cpu())
         padded[:rows] = state[key]
         state[key] = padded
@@ -194,4 +193,6 @@ def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
             f"(first: {result.unexpected_keys[0]}) -- wrong model variant/integration arm?"
         )
     if loaded == 0:
-        raise RuntimeError("load_checkpoint loaded 0 tensors -- checkpoint keys don't match model structure")
+        raise RuntimeError(
+            "load_checkpoint loaded 0 tensors -- checkpoint keys don't match model structure"
+        )

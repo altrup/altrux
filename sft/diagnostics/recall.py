@@ -133,14 +133,22 @@ def single_token_labels(tokenizer, n: int, skip: int = 0) -> list[str]:
 
 
 def build_probe_rows(
-    tokenizer, user_open: str, asst_open: str, n_probes: int, n_facts: int, gap_tokens: int, rng: random.Random
+    tokenizer,
+    user_open: str,
+    asst_open: str,
+    n_probes: int,
+    n_facts: int,
+    gap_tokens: int,
+    rng: random.Random,
 ):
     """Returns (prefix_ids, query_ids, target_ids), each (n_probes, L) --
     equal lengths across rows by construction: labels are shared across rows
     and single-token, codes are fixed-count single digits (random per row),
     and each row queries one of its labels at random."""
     labels = single_token_labels(tokenizer, n_facts)
-    codes = [[[rng.randrange(10) for _ in range(5)] for _ in range(n_facts)] for _ in range(n_probes)]
+    codes = [
+        [[rng.randrange(10) for _ in range(5)] for _ in range(n_facts)] for _ in range(n_probes)
+    ]
 
     fact_rows = []
     for r in range(n_probes):
@@ -148,7 +156,11 @@ def build_probe_rows(
         for f, label in enumerate(labels):
             cs = " " + " ".join(str(d) for d in codes[r][f])
             role = user_open if f % 2 == 0 else asst_open
-            ids.extend(tokenizer(f"{role} The code for {label} is{cs}.", add_special_tokens=False)["input_ids"])
+            ids.extend(
+                tokenizer(f"{role} The code for {label} is{cs}.", add_special_tokens=False)[
+                    "input_ids"
+                ]
+            )
         fact_rows.append(ids)
     assert len({len(r) for r in fact_rows}) == 1, "fact rows must tokenize to equal lengths"
 
@@ -157,7 +169,9 @@ def build_probe_rows(
     while len(filler_ids) < gap_tokens + CHUNK_LEN:
         role = user_open if i % 2 == 0 else asst_open
         filler_ids.extend(
-            tokenizer(f"{role} {FILLER_SENTENCES[i % len(FILLER_SENTENCES)]}", add_special_tokens=False)["input_ids"]
+            tokenizer(
+                f"{role} {FILLER_SENTENCES[i % len(FILLER_SENTENCES)]}", add_special_tokens=False
+            )["input_ids"]
         )
         i += 1
 
@@ -267,7 +281,9 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
         nw_abl = clone_state(mmod, state)
         ablate_memory(model, nw_abl, args, device)
         with ablation_scope(model, args):
-            per_token["no-wipe-ablated"] = score_continuation(model, cont, nw_abl, "no-wipe-ablated")
+            per_token["no-wipe-ablated"] = score_continuation(
+                model, cont, nw_abl, "no-wipe-ablated"
+            )
         del nw_abl
         torch.cuda.empty_cache()
 
@@ -280,7 +296,9 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
 
         # Fresh state over only the prefix's tail: the memory this builds is
         # what a pure "last few turns" buffer would hold at the wipe.
-        _, rstate = run_chunks(model, prefix[:, -recent_len:], None, "recent prefix", keep_logits=False)
+        _, rstate = run_chunks(
+            model, prefix[:, -recent_len:], None, "recent prefix", keep_logits=False
+        )
         for b in range(args.n_probes):
             model.sleep_slot(rstate, b)
         per_token["sleep-recent"] = score_continuation(model, cont, rstate, "sleep-recent")
@@ -342,8 +360,12 @@ def run_gist(args, model, mmod, tokenizer, user_id: int, asst_id: int, device) -
     print(f"  wipe cost    (no-wipe - intact): {delta('no-wipe', 'sleep-intact')}")
     print(f"  awake-mem    (no-wipe - no-wipe-ablated): {delta('no-wipe', 'no-wipe-ablated')}")
     if "dist-intact" in rows:
-        print(f"  dist-delta   (dist-intact - dist-ablated): {delta('dist-intact', 'dist-ablated')}")
-        dd = (rows["sleep-intact"] - rows["sleep-ablated"]) - (rows["dist-intact"] - rows["dist-ablated"])
+        print(
+            f"  dist-delta   (dist-intact - dist-ablated): {delta('dist-intact', 'dist-ablated')}"
+        )
+        dd = (rows["sleep-intact"] - rows["sleep-ablated"]) - (
+            rows["dist-intact"] - rows["dist-ablated"]
+        )
         print(
             f"  flush cost   (gist-delta - dist-delta):    "
             f"{dd.mean():+.4f} (SEM {dd.std() / math.sqrt(args.n_probes):.4f})"
@@ -416,7 +438,9 @@ def run_chunks(model, ids: torch.Tensor, state, label: str, keep_logits: bool = 
     for ci in range(n_chunks):
         chunk = ids[:, ci * CHUNK_LEN : (ci + 1) * CHUNK_LEN]
         if chunk.shape[1] % CHUNK_LEN != 0:  # pad tail; padded logits are discarded by the caller
-            pad = torch.zeros(ids.shape[0], CHUNK_LEN - chunk.shape[1], dtype=torch.long, device=ids.device)
+            pad = torch.zeros(
+                ids.shape[0], CHUNK_LEN - chunk.shape[1], dtype=torch.long, device=ids.device
+            )
             chunk = torch.cat([chunk, pad], dim=1)
         logits, state = model(chunk, state=state)
         state = state.detach()
@@ -429,7 +453,9 @@ def run_chunks(model, ids: torch.Tensor, state, label: str, keep_logits: bool = 
     return torch.cat(logits_parts, dim=1)[:, : ids.shape[1]], state
 
 
-def score_targets(model, query: torch.Tensor, target: torch.Tensor, state, label: str) -> torch.Tensor:
+def score_targets(
+    model, query: torch.Tensor, target: torch.Tensor, state, label: str
+) -> torch.Tensor:
     """Teacher-forced mean log-prob per target token, (n_probes,)."""
     seq = torch.cat([query, target], dim=1)
     logits, _ = run_chunks(model, seq, state, label)
@@ -445,14 +471,48 @@ def score_targets(model, query: torch.Tensor, target: torch.Tensor, state, label
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--gaps", default="1024", help="Comma-separated filler lengths in tokens")
-    parser.add_argument("--n-facts", default="64,128", help="Comma-separated fact counts per conversation (interference sweep)")
-    parser.add_argument("--n-probes", type=int, default=8, help="Probe conversations per gap (batched together)")
-    parser.add_argument("--sleep", action="store_true", help="Also score the cross-sleep conditions (backbone wiped after the prefix, memory kept vs replaced) -- see the module docstring")
-    parser.add_argument("--gist", default=None, help="Natural-continuation gist eval on real conversations from this preparation/conversations.py .pt file (replaces the fact/query probe; see the module docstring)")
-    parser.add_argument("--gist-prefix", type=int, default=6144, help="Pre-wipe prefix length in tokens (rounded down to a chunk multiple)")
-    parser.add_argument("--gist-cont", type=int, default=1536, help="Post-wipe continuation length in tokens to score")
-    parser.add_argument("--gist-recent", type=int, default=576, help="Suffix length for the sleep-recent recency control")
-    parser.add_argument("--gist-distractor", type=int, default=0, help="If > 0, add two interleaved-episode conditions: after the wipe, feed this many tokens of an unrelated conversation's opening, sleep again, then score the original continuation (dist-intact / dist-ablated). Measures whether the memory's gist survives THROUGH an intervening episode, or is flushed at episode boundaries.")
+    parser.add_argument(
+        "--n-facts",
+        default="64,128",
+        help="Comma-separated fact counts per conversation (interference sweep)",
+    )
+    parser.add_argument(
+        "--n-probes", type=int, default=8, help="Probe conversations per gap (batched together)"
+    )
+    parser.add_argument(
+        "--sleep",
+        action="store_true",
+        help="Also score the cross-sleep conditions (backbone wiped after the prefix, memory kept vs replaced) -- see the module docstring",
+    )
+    parser.add_argument(
+        "--gist",
+        default=None,
+        help="Natural-continuation gist eval on real conversations from this preparation/conversations.py .pt file (replaces the fact/query probe; see the module docstring)",
+    )
+    parser.add_argument(
+        "--gist-prefix",
+        type=int,
+        default=6144,
+        help="Pre-wipe prefix length in tokens (rounded down to a chunk multiple)",
+    )
+    parser.add_argument(
+        "--gist-cont",
+        type=int,
+        default=1536,
+        help="Post-wipe continuation length in tokens to score",
+    )
+    parser.add_argument(
+        "--gist-recent",
+        type=int,
+        default=576,
+        help="Suffix length for the sleep-recent recency control",
+    )
+    parser.add_argument(
+        "--gist-distractor",
+        type=int,
+        default=0,
+        help="If > 0, add two interleaved-episode conditions: after the wipe, feed this many tokens of an unrelated conversation's opening, sleep again, then score the original continuation (dist-intact / dist-ablated). Measures whether the memory's gist survives THROUGH an intervening episode, or is flushed at episode boundaries.",
+    )
     parser.add_argument(
         "--ablation",
         choices=["fresh-m", "none"],
@@ -465,7 +525,9 @@ def main() -> None:
     )
     parser.add_argument("--memory-window", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)")
+    parser.add_argument(
+        "--checkpoint", default=None, help="Checkpoint step dir to probe (default: latest)"
+    )
     args = parser.parse_args()
 
     import importlib
@@ -515,7 +577,10 @@ def main() -> None:
 
     if args.gist:
         run_gist(
-            args, model, mmod, tokenizer,
+            args,
+            model,
+            mmod,
+            tokenizer,
             tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN),
             tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN),
             device,
@@ -529,13 +594,23 @@ def main() -> None:
             for n_facts in (int(f) for f in args.n_facts.split(",")):
                 tag = f"gap {gap} x{n_facts}"
                 prefix, query, target = build_probe_rows(
-                    tokenizer, model_mod.USER_OPEN, model_mod.ASST_OPEN, args.n_probes, n_facts, gap, rng
+                    tokenizer,
+                    model_mod.USER_OPEN,
+                    model_mod.ASST_OPEN,
+                    args.n_probes,
+                    n_facts,
+                    gap,
+                    rng,
                 )
                 prefix, query, target = prefix.to(device), query.to(device), target.to(device)
-                print(f"{tag}: prefix {prefix.shape[1]} tokens ({n_facts} facts + {gap} filler), {args.n_probes} probes")
+                print(
+                    f"{tag}: prefix {prefix.shape[1]} tokens ({n_facts} facts + {gap} filler), {args.n_probes} probes"
+                )
 
                 _, state = run_chunks(model, prefix, None, f"{tag} prefix", keep_logits=False)
-                intact = score_targets(model, query, target, clone_state(mmod, state), f"{tag} intact")
+                intact = score_targets(
+                    model, query, target, clone_state(mmod, state), f"{tag} intact"
+                )
 
                 abl_state = clone_state(mmod, state)
                 ablate_memory(model, abl_state, args, device)
@@ -618,7 +693,7 @@ __all__ = [
     "clone_state",
     "run_chunks",
     "score_targets",
-    "main"
+    "main",
 ]
 
 

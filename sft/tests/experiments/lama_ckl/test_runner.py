@@ -7,10 +7,16 @@ from experiments.lama_ckl.runner import _write_cycle_result, compact_dream_paylo
 
 
 def test_compact_dream_payload_keeps_reconstruction_data_but_not_logits():
-    dreams = [SimpleNamespace(
-        dream_ids=[3, 4, 9], token_texts=["[U]", "[A]", "x"], prefix_len=2,
-        stop_reason="eoc", dream_sha="abc", teacher_logits=torch.zeros(3, 100),
-    )]
+    dreams = [
+        SimpleNamespace(
+            dream_ids=[3, 4, 9],
+            token_texts=["[U]", "[A]", "x"],
+            prefix_len=2,
+            stop_reason="eoc",
+            dream_sha="abc",
+            teacher_logits=torch.zeros(3, 100),
+        )
+    ]
 
     payload = compact_dream_payload(dreams, [1001], "teacher", {"unique_dreams": 1})
 

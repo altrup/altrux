@@ -25,8 +25,15 @@ def load_trainable(model, ckpt: Path) -> None:
 
 
 @torch.no_grad()
-def generate(model, state, n_tokens: int, first_token: torch.Tensor, temperature: float,
-             top_p: float, label: str) -> torch.Tensor:
+def generate(
+    model,
+    state,
+    n_tokens: int,
+    first_token: torch.Tensor,
+    temperature: float,
+    top_p: float,
+    label: str,
+) -> torch.Tensor:
     """Generate tokens from ``state`` with greedy or nucleus sampling."""
     out = []
     token = first_token
@@ -62,13 +69,24 @@ def overlap_with_prime(gen: torch.Tensor, prime: torch.Tensor, common: set[int])
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--checkpoint", required=True, help="Checkpoint dir with trainable.pt")
-    parser.add_argument("--data", default="data/train_memory_longalign.pt",
-                        help="Prepared dataset (default: data/train_memory_longalign.pt)")
+    parser.add_argument(
+        "--data",
+        default="data/train_memory_longalign.pt",
+        help="Prepared dataset (default: data/train_memory_longalign.pt)",
+    )
     parser.add_argument("--n-probes", type=int, default=4)
-    parser.add_argument("--prime", type=int, default=2048, help="Priming prefix tokens (default: %(default)s)")
-    parser.add_argument("--gen", type=int, default=128, help="Tokens to generate (default: %(default)s)")
-    parser.add_argument("--temperature", type=float, default=0.8,
-                        help="Sampling temperature; 0 = greedy (default: %(default)s)")
+    parser.add_argument(
+        "--prime", type=int, default=2048, help="Priming prefix tokens (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--gen", type=int, default=128, help="Tokens to generate (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.8,
+        help="Sampling temperature; 0 = greedy (default: %(default)s)",
+    )
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
@@ -100,10 +118,20 @@ def main() -> None:
     user_id = tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN)
     asst_id = tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN)
     prime_len = args.prime - args.prime % pr.CHUNK_LEN
-    prefix, _, _ = pr.build_gist_rows(args.data, user_id, asst_id, args.n_probes, prime_len, pr.CHUNK_LEN, random.Random(args.seed))
+    prefix, _, _ = pr.build_gist_rows(
+        args.data,
+        user_id,
+        asst_id,
+        args.n_probes,
+        prime_len,
+        pr.CHUNK_LEN,
+        random.Random(args.seed),
+    )
     prefix = prefix.to(device)
     prime_window = lora_cfg.get("memory_window", 1)
-    print(f"priming {args.n_probes} rows x {prime_len} tokens from {args.data} (window {prime_window}); generating {args.gen} each, temp {args.temperature}")
+    print(
+        f"priming {args.n_probes} rows x {prime_len} tokens from {args.data} (window {prime_window}); generating {args.gen} each, temp {args.temperature}"
+    )
 
     counts: dict[int, int] = {}
     for row in prefix.cpu().tolist():
@@ -121,21 +149,35 @@ def main() -> None:
         m_state = pr.clone_state(mmod, primed_state)
         for batch in range(args.n_probes):
             model.sleep_slot(m_state, batch)
-        gen_primed = generate(model, m_state, args.gen, seed_token, args.temperature, args.top_p, "M-primed")
+        gen_primed = generate(
+            model, m_state, args.gen, seed_token, args.temperature, args.top_p, "M-primed"
+        )
         r_state = pr.clone_state(mmod, primed_state)
         for batch in range(args.n_probes):
             model.sleep_slot(r_state, batch)
         r_state.neural_memory = model.front_end.init_memory(args.n_probes, device, mem_dtype)
-        gen_random = generate(model, r_state, args.gen, seed_token, args.temperature, args.top_p, "M-random")
+        gen_random = generate(
+            model, r_state, args.gen, seed_token, args.temperature, args.top_p, "M-random"
+        )
 
     print("\n=== overlap with priming text (Jaccard, corpus-common tokens excluded) ===")
-    overlap_primed = [overlap_with_prime(gen_primed[batch].cpu(), prefix[batch].cpu(), common) for batch in range(args.n_probes)]
-    overlap_random = [overlap_with_prime(gen_random[batch].cpu(), prefix[batch].cpu(), common) for batch in range(args.n_probes)]
+    overlap_primed = [
+        overlap_with_prime(gen_primed[batch].cpu(), prefix[batch].cpu(), common)
+        for batch in range(args.n_probes)
+    ]
+    overlap_random = [
+        overlap_with_prime(gen_random[batch].cpu(), prefix[batch].cpu(), common)
+        for batch in range(args.n_probes)
+    ]
     for batch in range(args.n_probes):
-        print(f"  row {batch}: M-primed {overlap_primed[batch]:.3f}  vs  M-random {overlap_random[batch]:.3f}   (delta {overlap_primed[batch] - overlap_random[batch]:+.3f})")
+        print(
+            f"  row {batch}: M-primed {overlap_primed[batch]:.3f}  vs  M-random {overlap_random[batch]:.3f}   (delta {overlap_primed[batch] - overlap_random[batch]:+.3f})"
+        )
     mean_primed = sum(overlap_primed) / len(overlap_primed)
     mean_random = sum(overlap_random) / len(overlap_random)
-    print(f"  mean:  M-primed {mean_primed:.3f}  vs  M-random {mean_random:.3f}   (delta {mean_primed - mean_random:+.3f})")
+    print(
+        f"  mean:  M-primed {mean_primed:.3f}  vs  M-random {mean_random:.3f}   (delta {mean_primed - mean_random:+.3f})"
+    )
     print("  (positive delta = M steers generation toward the primed content)")
 
     print("\n=== decoded samples ===")

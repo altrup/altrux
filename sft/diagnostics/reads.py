@@ -33,13 +33,30 @@ def percentiles(t: torch.Tensor) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--ckpt", required=True, help="Checkpoint dir with trainable.pt")
-    parser.add_argument("--data", default="data/train_memory_longalign.pt", help="Prepared dataset (default: %(default)s)")
-    parser.add_argument("--examples", type=int, default=4, help="How many examples to run (default: %(default)s)")
-    parser.add_argument("--tokens", type=int, default=4096, help="Tokens per example (default: %(default)s)")
-    parser.add_argument("--chunk-len", type=int, default=48, help="Tokens per forward call (default: %(default)s)")
-    parser.add_argument("--probe-layer", type=int, default=21, help="Injection-free layer to test against READ_LAYER (default: %(default)s)")
+    parser.add_argument(
+        "--data",
+        default="data/train_memory_longalign.pt",
+        help="Prepared dataset (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--examples", type=int, default=4, help="How many examples to run (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--tokens", type=int, default=4096, help="Tokens per example (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--chunk-len", type=int, default=48, help="Tokens per forward call (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--probe-layer",
+        type=int,
+        default=21,
+        help="Injection-free layer to test against READ_LAYER (default: %(default)s)",
+    )
     parser.add_argument("--save", default=None, help="Optional .pt path to dump raw captures")
     args = parser.parse_args()
 
@@ -104,7 +121,11 @@ def main() -> None:
                 _, state = model(ids[:, start : start + args.chunk_len], state=state)
                 state = state.detach()
                 done = min(start + args.chunk_len, ids.shape[1])
-                print(f"\r  example {index}: token {done:>5}/{ids.shape[1]}  o_norm {o_norms[-1]:.2f}", end="", flush=True)
+                print(
+                    f"\r  example {index}: token {done:>5}/{ids.shape[1]}  o_norm {o_norms[-1]:.2f}",
+                    end="",
+                    flush=True,
+                )
         print()
 
     total = sum(example_lens)
@@ -113,9 +134,19 @@ def main() -> None:
     )
     o_t, sup = torch.tensor(o_norms), torch.tensor(surprises)
     if args.save:
-        torch.save({"o_norm": o_t, "surprise": sup, "example_lens": example_lens, "ids": all_ids,
-                    "res_probe": torch.stack(res_probe), "res_read": torch.stack(res_read),
-                    "probe_layer": args.probe_layer, "ckpt": args.ckpt}, args.save)
+        torch.save(
+            {
+                "o_norm": o_t,
+                "surprise": sup,
+                "example_lens": example_lens,
+                "ids": all_ids,
+                "res_probe": torch.stack(res_probe),
+                "res_read": torch.stack(res_read),
+                "probe_layer": args.probe_layer,
+                "ckpt": args.ckpt,
+            },
+            args.save,
+        )
         print(f"raw captures saved to {args.save}")
 
     print(f"\n=== per-token read signal over {total} tokens ({n_examples} examples) ===")
@@ -131,7 +162,10 @@ def main() -> None:
         positions = positions[length:]
     window_positions = torch.cat(offsets)
     by_pos = [o_t[window_positions == position].mean().item() for position in range(memory_window)]
-    print(f"mean ||o_t|| by window position 0..{memory_window - 1}: " + "  ".join(f"{value:.2f}" for value in by_pos))
+    print(
+        f"mean ||o_t|| by window position 0..{memory_window - 1}: "
+        + "  ".join(f"{value:.2f}" for value in by_pos)
+    )
 
     tokenizer = None
     try:
@@ -153,7 +187,13 @@ def main() -> None:
         print("\ntop ||o_t|| tokens in context (marked with >><<):")
         for index in top.tolist():
             lo, hi = max(0, index - 12), min(total, index + 4)
-            context = tokenizer.decode(flat_ids[lo:index]) + " >>" + tokenizer.decode(flat_ids[index:index + 1]) + "<< " + tokenizer.decode(flat_ids[index + 1:hi])
+            context = (
+                tokenizer.decode(flat_ids[lo:index])
+                + " >>"
+                + tokenizer.decode(flat_ids[index : index + 1])
+                + "<< "
+                + tokenizer.decode(flat_ids[index + 1 : hi])
+            )
             print(f"  [{index}] o_norm {o_t[index]:.2f}: {context!r}")
 
     print(f"\n=== ridge regression: layer {args.probe_layer} -> layer {mm.READ_LAYER} residual ===")
@@ -169,7 +209,9 @@ def main() -> None:
     y_hat, y_true = (x[test_i] - xm) @ weights + ym, y[test_i]
     ss_res = (y_true - y_hat).pow(2).sum()
     ss_tot = (y_true - y[train_i].mean(0)).pow(2).sum()
-    print(f"held-out residual R^2: {1 - ss_res / ss_tot:.4f}  ({len(train_i)} train / {n_test} test tokens)")
+    print(
+        f"held-out residual R^2: {1 - ss_res / ss_tot:.4f}  ({len(train_i)} train / {n_test} test tokens)"
+    )
     front_end = model.front_end
     for name in ("q_proj", "k_proj", "v_proj"):
         proj = getattr(front_end, name).to("cpu").float()
@@ -179,10 +221,18 @@ def main() -> None:
         cosine = torch.nn.functional.cosine_similarity(true_p, pred_p, dim=-1)
         cosine_shuffled = torch.nn.functional.cosine_similarity(true_p, shuffled, dim=-1)
         mean = true_p.mean(0, keepdim=True)
-        cosine_centered = torch.nn.functional.cosine_similarity(true_p - mean, pred_p - mean, dim=-1)
-        cosine_centered_shuffled = torch.nn.functional.cosine_similarity(true_p - mean, shuffled - mean, dim=-1)
-        print(f"{name} cosine(true, predicted): {percentiles(cosine)}   [shuffled-control mean {cosine_shuffled.mean():.3f}]")
-        print(f"{name}   centered:              {percentiles(cosine_centered)}   [shuffled-control mean {cosine_centered_shuffled.mean():.3f}]")
+        cosine_centered = torch.nn.functional.cosine_similarity(
+            true_p - mean, pred_p - mean, dim=-1
+        )
+        cosine_centered_shuffled = torch.nn.functional.cosine_similarity(
+            true_p - mean, shuffled - mean, dim=-1
+        )
+        print(
+            f"{name} cosine(true, predicted): {percentiles(cosine)}   [shuffled-control mean {cosine_shuffled.mean():.3f}]"
+        )
+        print(
+            f"{name}   centered:              {percentiles(cosine_centered)}   [shuffled-control mean {cosine_centered_shuffled.mean():.3f}]"
+        )
 
 
 __all__ = ["MODEL_NAME", "load_trainable", "main", "percentiles"]

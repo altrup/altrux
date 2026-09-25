@@ -44,7 +44,14 @@ def _tiny_model(dtype: torch.dtype) -> M780.Model:
         d_model=64,
         n_layer=4,
         vocab_size=VOCAB,
-        ssm_cfg={"layer": "Mamba2", "headdim": 16, "d_state": 16, "expand": 2, "ngroups": 1, "chunk_size": 8},
+        ssm_cfg={
+            "layer": "Mamba2",
+            "headdim": 16,
+            "d_state": 16,
+            "expand": 2,
+            "ngroups": 1,
+            "chunk_size": 8,
+        },
         rms_norm=True,
         fused_add_norm=False,
         tie_embeddings=True,
@@ -117,7 +124,9 @@ def test_fused_lora_gradients_match_loop():
         loss = F.cross_entropy(logits.reshape(-1, VOCAB), target.reshape(-1))
         return torch.autograd.grad(loss, [p for _, p in named], allow_unused=True)
 
-    for (name, _), loop_grad, fused_grad in zip(named, grads(model._forward_tokens), grads(model._forward_chunk)):
+    for (name, _), loop_grad, fused_grad in zip(
+        named, grads(model._forward_tokens), grads(model._forward_chunk)
+    ):
         assert (loop_grad is None) == (fused_grad is None), name
         if loop_grad is not None:
             assert torch.allclose(loop_grad, fused_grad, atol=1e-4, rtol=1e-3), name
@@ -136,6 +145,8 @@ def test_fused_logits_track_loop_in_bf16():
 
 def test_single_token_forward_stays_on_the_loop(monkeypatch):
     model = _tiny_model(torch.float32)
-    monkeypatch.setattr(model, "_forward_chunk", lambda *a, **k: pytest.fail("decode must use the per-token path"))
+    monkeypatch.setattr(
+        model, "_forward_chunk", lambda *a, **k: pytest.fail("decode must use the per-token path")
+    )
     with torch.no_grad():
         model(_ids()[:, :1], state=_state(model, torch.float32))

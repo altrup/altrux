@@ -26,12 +26,25 @@ def test_points_at_the_27b_backbone_not_the_780m_one():
 
 def test_special_tokens_include_eoc_in_marker_order():
     assert M.SPECIAL_TOKENS == [M.USER_OPEN, M.ASST_OPEN, M.EOC]
-    assert all(t == t.strip() for t in M.SPECIAL_TOKENS), "markers are bare -- callers add the separator"
+    assert all(t == t.strip() for t in M.SPECIAL_TOKENS), (
+        "markers are bare -- callers add the separator"
+    )
     assert M.SPECIAL_TOKENS == M780.SPECIAL_TOKENS
 
 
 def test_package_reexports_the_model_interface():
-    for name in ("MODEL_ID", "TOKENIZER_ID", "TARGET_LORA_MODULES", "USER_OPEN", "ASST_OPEN", "EOC", "SPECIAL_TOKENS", "Model", "load_base", "load_inference"):
+    for name in (
+        "MODEL_ID",
+        "TOKENIZER_ID",
+        "TARGET_LORA_MODULES",
+        "USER_OPEN",
+        "ASST_OPEN",
+        "EOC",
+        "SPECIAL_TOKENS",
+        "Model",
+        "load_base",
+        "load_inference",
+    ):
         assert getattr(pkg, name, None) is getattr(M, name), name
 
 

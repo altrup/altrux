@@ -12,7 +12,9 @@ import torch
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Merge multiple preparation/conversations.py .pt outputs into one")
+    parser = argparse.ArgumentParser(
+        description="Merge multiple preparation/conversations.py .pt outputs into one"
+    )
     parser.add_argument("inputs", nargs="+", help="Input .pt files to merge")
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
     args = parser.parse_args()

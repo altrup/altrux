@@ -162,10 +162,18 @@ def test_collisions_names_every_overlapping_string():
 
 def test_dialogue_slice_skips_conversations_that_collide():
     records = [
-        {"messages": [{"role": "user", "content": "Where is the Louvre?"},
-                      {"role": "assistant", "content": "It is in Paris."}]},
-        {"messages": [{"role": "user", "content": "How do I store bread?"},
-                      {"role": "assistant", "content": "Keep it in a cloth bag."}]},
+        {
+            "messages": [
+                {"role": "user", "content": "Where is the Louvre?"},
+                {"role": "assistant", "content": "It is in Paris."},
+            ]
+        },
+        {
+            "messages": [
+                {"role": "user", "content": "How do I store bread?"},
+                {"role": "assistant", "content": "Keep it in a cloth bag."},
+            ]
+        },
     ]
     items = build_dialogue(records, 1, random.Random(0), USER, ASST, FACTS, BATTERY)
 
@@ -176,19 +184,39 @@ def test_dialogue_slice_skips_conversations_that_collide():
 
 
 def test_the_dialogue_slice_refuses_rather_than_under_deliver():
-    records = [{"messages": [{"role": "user", "content": "Where is the Louvre?"},
-                             {"role": "assistant", "content": "It is in Paris."}]}]
+    records = [
+        {
+            "messages": [
+                {"role": "user", "content": "Where is the Louvre?"},
+                {"role": "assistant", "content": "It is in Paris."},
+            ]
+        }
+    ]
     with pytest.raises(SystemExit):
         build_dialogue(records, 1, random.Random(0), USER, ASST, FACTS, BATTERY)
 
 
 def test_wake_items_carry_facts_and_distractors_and_never_collide():
-    records = [{"messages": [{"role": "user", "content": f"How do I store bread {i}?"},
-                             {"role": "assistant", "content": f"Keep it in a cloth bag {i}."}]}
-               for i in range(20)]
+    records = [
+        {
+            "messages": [
+                {"role": "user", "content": f"How do I store bread {i}?"},
+                {"role": "assistant", "content": f"Keep it in a cloth bag {i}."},
+            ]
+        }
+        for i in range(20)
+    ]
     items, distractors = build_wake_items(
-        FACTS, bystanders=3, nearcone=2, dialogue=2, dialogue_records=records,
-        rng=random.Random(0), user_open=USER, asst_open=ASST, battery_answers=BATTERY)
+        FACTS,
+        bystanders=3,
+        nearcone=2,
+        dialogue=2,
+        dialogue_records=records,
+        rng=random.Random(0),
+        user_open=USER,
+        asst_open=ASST,
+        battery_answers=BATTERY,
+    )
 
     assert len(items) == len(FACTS) + 7
     assert len(distractors) == 7

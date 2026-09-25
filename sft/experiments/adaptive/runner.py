@@ -24,8 +24,9 @@ from experiments.adaptive.manifest import (
 )
 
 
-def run_registered_experiment(manifest: ExperimentManifest, seed: int,
-                              backend: RuntimeBackend) -> dict[str, object]:
+def run_registered_experiment(
+    manifest: ExperimentManifest, seed: int, backend: RuntimeBackend
+) -> dict[str, object]:
     output_root = Path(manifest.output_root)
     stream_path = output_root / f"seed-{seed}.jsonl"
     final_path = Path(manifest.output_root) / f"seed-{seed}.json"
@@ -33,8 +34,12 @@ def run_registered_experiment(manifest: ExperimentManifest, seed: int,
     if final_path.exists():
         loaded = json.loads(final_path.read_text())
         execution = loaded.get("execution") if isinstance(loaded, dict) else None
-        if (isinstance(loaded, dict) and loaded.get("seed") == seed and isinstance(execution, dict)
-                and execution.get("manifest_sha256") == manifest_sha(manifest)):
+        if (
+            isinstance(loaded, dict)
+            and loaded.get("seed") == seed
+            and isinstance(execution, dict)
+            and execution.get("manifest_sha256") == manifest_sha(manifest)
+        ):
             return loaded
         raise RuntimeError(f"completed seed result is invalid: {final_path}")
     if stream_path.exists():
@@ -46,16 +51,30 @@ def run_registered_experiment(manifest: ExperimentManifest, seed: int,
 
     def probe(arm: str, wake: int, state: object, artifact: dict[str, object]) -> dict[str, object]:
         details = backend.probe(arm, wake, state, artifact)
-        stream.write(json.dumps({"seed": seed, "arm": arm, "wake": wake,
-                                 "artifact_sha256": artifact.get("artifact_sha256"),
-                                 "transcript_token_sha256": artifact.get("transcript_token_sha256"),
-                                 "state_sha256": artifact.get("state_sha256"), **details}) + "\n")
+        stream.write(
+            json.dumps(
+                {
+                    "seed": seed,
+                    "arm": arm,
+                    "wake": wake,
+                    "artifact_sha256": artifact.get("artifact_sha256"),
+                    "transcript_token_sha256": artifact.get("transcript_token_sha256"),
+                    "state_sha256": artifact.get("state_sha256"),
+                    **details,
+                }
+            )
+            + "\n"
+        )
         stream.flush()
         return details
 
     runtime = ExperimentRuntime(
-        manifest, initial_state=backend.initial_state, fork_state=backend.fork_state,
-        wake=backend.wake, sleep=backend.sleep, probe=probe,
+        manifest,
+        initial_state=backend.initial_state,
+        fork_state=backend.fork_state,
+        wake=backend.wake,
+        sleep=backend.sleep,
+        probe=probe,
     )
     try:
         result = runtime.run(seed=seed)
@@ -65,21 +84,31 @@ def run_registered_experiment(manifest: ExperimentManifest, seed: int,
     if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
         raise RuntimeError("experiment backend returned malformed records")
     wake_one = [record for record in records if record.get("wake") == 1]
-    if (len(wake_one) != 3
-            or len({record.get("transcript_token_sha256") for record in wake_one}) != 1
-            or len({record.get("state_sha256") for record in wake_one}) != 1
-            or any(record.get("transcript_token_sha256") is None or record.get("state_sha256") is None
-                   for record in wake_one)):
+    if (
+        len(wake_one) != 3
+        or len({record.get("transcript_token_sha256") for record in wake_one}) != 1
+        or len({record.get("state_sha256") for record in wake_one}) != 1
+        or any(
+            record.get("transcript_token_sha256") is None or record.get("state_sha256") is None
+            for record in wake_one
+        )
+    ):
         raise RuntimeError("Wake 1 transcript tokens and state must be identical across all arms")
     corrected = floor_correct_records(records)
     metadata = backend.execution_metadata()
     expected_manifest = manifest_sha(manifest)
     if metadata.get("manifest_sha256") not in (None, expected_manifest):
         raise RuntimeError("backend manifest SHA does not match the registered manifest")
-    result = {"seed": seed, "records": corrected,
-              "retention": retention_summary(corrected, manifest.config.wakes),
-              "execution": {"batch_sizes": manifest.batch_sizes, **metadata,
-                            "manifest_sha256": expected_manifest}}
+    result = {
+        "seed": seed,
+        "records": corrected,
+        "retention": retention_summary(corrected, manifest.config.wakes),
+        "execution": {
+            "batch_sizes": manifest.batch_sizes,
+            **metadata,
+            "manifest_sha256": expected_manifest,
+        },
+    }
     path = final_path
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(result, indent=1, sort_keys=True) + "\n"
@@ -93,11 +122,16 @@ def run_registered_experiment(manifest: ExperimentManifest, seed: int,
 def generator() -> None:
     request = json.load(sys.stdin)
     session = request.get("session_id")
-    print(json.dumps({
-        "message": str(request["goal"]),
-        "session_id": session or f"fake-{request['scenario']}-{request['turn']}",
-        "resume_status": "resumed" if session else "started",
-    }))
+    print(
+        json.dumps(
+            {
+                "message": str(request["goal"]),
+                "session_id": session or f"fake-{request['scenario']}-{request['turn']}",
+                "resume_status": "resumed" if session else "started",
+            }
+        )
+    )
+
 
 class FakeState:
     def __init__(self, batch: int):
@@ -143,8 +177,12 @@ class FakeTokenizer:
         if isinstance(ids, torch.Tensor):
             ids = ids.flatten().tolist()
         inverse = {value: key for key, value in self.markers.items()}
-        return "".join("" if skip_special_tokens and token in inverse else
-                       inverse.get(token, chr(32 + (int(token) - 10) % 95)) for token in ids)
+        return "".join(
+            ""
+            if skip_special_tokens and token in inverse
+            else inverse.get(token, chr(32 + (int(token) - 10) % 95))
+            for token in ids
+        )
 
 
 class FakeModel(torch.nn.Module):
@@ -179,7 +217,9 @@ def fake_backend(manifest: ExperimentManifest, out: Path) -> DreamSleepBackend:
     from experiments.dreams.cli import build_distractors
     from experiments.facts import Fact
 
-    def fake_distill_set(model, optimizer, dreams, state, variant, epochs, temperature, on_step, on_boundary):
+    def fake_distill_set(
+        model, optimizer, dreams, state, variant, epochs, temperature, on_step, on_boundary
+    ):
         assert len(dreams) == 300 and epochs == 1
         on_step(0, 0.0)
         return sum(len(dream.dream_ids) for dream in dreams)
@@ -203,13 +243,19 @@ def fake_backend(manifest: ExperimentManifest, out: Path) -> DreamSleepBackend:
     backend.contexts = {}
     for arm in manifest.config.arms:
         model = copy.deepcopy(base)
-        backend.contexts[arm] = SimpleNamespace(model=model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-4))
+        backend.contexts[arm] = SimpleNamespace(
+            model=model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-4)
+        )
     backend.adapter_sha = "f" * 64
     backend.initial_full_sha = backend._model_hash(base)
     backend.output = out / "seed-1"
     backend.output.mkdir(parents=True, exist_ok=True)
     backend.manifest_sha = manifest_sha(manifest)
-    backend.topology, backend.effective_batches, backend._batch_locked = [], dict(manifest.batch_sizes), set()
+    backend.topology, backend.effective_batches, backend._batch_locked = (
+        [],
+        dict(manifest.batch_sizes),
+        set(),
+    )
     backend.dream_seconds = backend.dreams_generated = backend.retries = backend._peak_vram = 0
     backend._probe_verified, backend.treatments = set(), {}
 
@@ -217,17 +263,28 @@ def fake_backend(manifest: ExperimentManifest, out: Path) -> DreamSleepBackend:
         return [("a", -1.0, -float(targets.shape[1])) for _ in range(prompts.shape[0])]
 
     backend._score_tensor_batch = MethodType(fake_score, backend)
-    all_facts = [Fact(entity, "entity", code) for spec in manifest.wakes for entity, code in spec.facts]
+    all_facts = [
+        Fact(entity, "entity", code) for spec in manifest.wakes for entity, code in spec.facts
+    ]
     backend.facts = {fact.entity: fact for fact in all_facts}
-    backend.fact_waves = {entity: wake for wake, spec in enumerate(manifest.wakes, 1) for entity, _ in spec.facts}
+    backend.fact_waves = {
+        entity: wake for wake, spec in enumerate(manifest.wakes, 1) for entity, _ in spec.facts
+    }
     backend.distractors = build_distractors(all_facts, 1)
     backend.heldout = backend._encode("held out text for fake perplexity")
     from experiments.locality import perplexity
+
     backend.base_ppl = perplexity(base, backend.heldout, 64, "fake heldout baseline")
-    baseline = backend._probe_pairs("replay", [(f"battery {index:03d}", "a") for index in range(100)],
-                                    manifest.batch_sizes["battery"], "battery-calibration")
-    backend.battery = [{"prompt": f"battery {index:03d}", "answer": "a", "logprob": score[1],
-                        "greedy": score[0]} for index, score in enumerate(baseline)]
+    baseline = backend._probe_pairs(
+        "replay",
+        [(f"battery {index:03d}", "a") for index in range(100)],
+        manifest.batch_sizes["battery"],
+        "battery-calibration",
+    )
+    backend.battery = [
+        {"prompt": f"battery {index:03d}", "answer": "a", "logprob": score[1], "greedy": score[0]}
+        for index, score in enumerate(baseline)
+    ]
     return backend
 
 
@@ -242,23 +299,53 @@ def smoke_main() -> None:
     if not args.out:
         raise SystemExit("--out is required for the smoke run")
     out = Path(args.out)
-    config = ExperimentConfig.from_dict({"arms": ["replay", "nosleep", "sft-ref"],
-                                         "wakes": 6, "seeds": [1, 2, 3]})
-    plan = WakePlan.from_dict({"turn_count": 4, "injection_turns": [1, 2, 3, 4],
-                               "turn_goals": ["open", "develop", "complicate", "close"]})
-    wakes = tuple(WakeSpec(
-        f"scenario-{wake}", tuple((f"entity_{wake}_{index}", f"{wake} {index} 0 0 0")
-                                  for index in range(1, 5)), plan,
-    ) for wake in range(1, 7))
-    runtime = {"model": "fake", "warm_start": "fake", "warm_start_sha256": "f" * 64,
-               "lora_rank": 1, "lora_alpha": 1, "learning_rate": 1e-4, "chunk_len": 64,
-               "dream_count": 300, "dream_tokens": 12, "dream_temperature": 1.0,
-               "reply_tokens": 2, "reply_temperature": 0.0, "probe_tokens": 1,
-               "kl_temperature": 1.0, "battery": str(out / "battery.json")}
+    config = ExperimentConfig.from_dict(
+        {"arms": ["replay", "nosleep", "sft-ref"], "wakes": 6, "seeds": [1, 2, 3]}
+    )
+    plan = WakePlan.from_dict(
+        {
+            "turn_count": 4,
+            "injection_turns": [1, 2, 3, 4],
+            "turn_goals": ["open", "develop", "complicate", "close"],
+        }
+    )
+    wakes = tuple(
+        WakeSpec(
+            f"scenario-{wake}",
+            tuple((f"entity_{wake}_{index}", f"{wake} {index} 0 0 0") for index in range(1, 5)),
+            plan,
+        )
+        for wake in range(1, 7)
+    )
+    runtime = {
+        "model": "fake",
+        "warm_start": "fake",
+        "warm_start_sha256": "f" * 64,
+        "lora_rank": 1,
+        "lora_alpha": 1,
+        "learning_rate": 1e-4,
+        "chunk_len": 64,
+        "dream_count": 300,
+        "dream_tokens": 12,
+        "dream_temperature": 1.0,
+        "reply_tokens": 2,
+        "reply_temperature": 0.0,
+        "probe_tokens": 1,
+        "kl_temperature": 1.0,
+        "battery": str(out / "battery.json"),
+    }
     manifest = ExperimentManifest(
-        config, wakes, {"command": [sys.executable, "-m", "experiments.adaptive.runner", "--generator"],
-                        "provider": "fake", "model": "fake", "version": "1"},
-        str(out), {"dream": 50, "probe": 32, "battery": 32}, runtime,
+        config,
+        wakes,
+        {
+            "command": [sys.executable, "-m", "experiments.adaptive.runner", "--generator"],
+            "provider": "fake",
+            "model": "fake",
+            "version": "1",
+        },
+        str(out),
+        {"dream": 50, "probe": 32, "battery": 32},
+        runtime,
     )
     run_registered_experiment(manifest, 1, fake_backend(manifest, out))
 

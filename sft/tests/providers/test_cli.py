@@ -34,27 +34,60 @@ def _fake_cli(tmp_path):
     return path
 
 
-@pytest.mark.parametrize("provider,message,session", [
-    ("claude", "user from claude", "claude-session"),
-    ("codex", "user from codex", "codex-thread"),
-])
+@pytest.mark.parametrize(
+    "provider,message,session",
+    [
+        ("claude", "user from claude", "claude-session"),
+        ("codex", "user from codex", "codex-thread"),
+    ],
+)
 def test_cli_adapter_starts_and_resumes_native_sessions(tmp_path, provider, message, session):
     fake = _fake_cli(tmp_path)
     work_dir = tmp_path / "stable-work"
-    command = [sys.executable, "-m", "providers.user_generator", "--provider", provider,
-               "--model", "fake-model", "--executable", str(fake), "--work-dir", str(work_dir)]
+    command = [
+        sys.executable,
+        "-m",
+        "providers.user_generator",
+        "--provider",
+        provider,
+        "--model",
+        "fake-model",
+        "--executable",
+        str(fake),
+        "--work-dir",
+        str(work_dir),
+    ]
 
-    started = subprocess.run(command, input=json.dumps({"scenario": "s", "goal": "g", "turn": 1,
-                                                        "latest_assistant_reply": ""}),
-                             text=True, capture_output=True, check=True)
+    started = subprocess.run(
+        command,
+        input=json.dumps({"scenario": "s", "goal": "g", "turn": 1, "latest_assistant_reply": ""}),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
     first = json.loads(started.stdout)
-    resumed = subprocess.run(command, input=json.dumps({"scenario": "s", "goal": "g2", "turn": 2,
-                                                        "latest_assistant_reply": "reply",
-                                                        "session_id": first["session_id"]}),
-                             text=True, capture_output=True, check=True)
+    resumed = subprocess.run(
+        command,
+        input=json.dumps(
+            {
+                "scenario": "s",
+                "goal": "g2",
+                "turn": 2,
+                "latest_assistant_reply": "reply",
+                "session_id": first["session_id"],
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
     second = json.loads(resumed.stdout)
 
-    assert (first["message"], first["session_id"], first["resume_status"]) == (message, session, "started")
+    assert (first["message"], first["session_id"], first["resume_status"]) == (
+        message,
+        session,
+        "started",
+    )
     assert (second["session_id"], second["resume_status"]) == (session, "resumed")
     assert second["provider"] == provider and second["model"] == "fake-model"
     assert second["version"] == "fake 1.2.3" and second["token_usage"]
@@ -63,14 +96,25 @@ def test_cli_adapter_starts_and_resumes_native_sessions(tmp_path, provider, mess
 
 def test_cli_adapter_propagates_native_failure(tmp_path):
     path = tmp_path / "bad-cli"
-    path.write_text("#!/bin/sh\n[ \"$1\" = --version ] && { echo bad-1; exit 0; }; exit 7\n")
+    path.write_text('#!/bin/sh\n[ "$1" = --version ] && { echo bad-1; exit 0; }; exit 7\n')
     os.chmod(path, 0o755)
 
     completed = subprocess.run(
-        [sys.executable, "-m", "providers.user_generator", "--provider", "claude", "--model", "m",
-         "--executable", str(path)],
+        [
+            sys.executable,
+            "-m",
+            "providers.user_generator",
+            "--provider",
+            "claude",
+            "--model",
+            "m",
+            "--executable",
+            str(path),
+        ],
         input=json.dumps({"scenario": "s", "goal": "g", "turn": 1, "latest_assistant_reply": ""}),
-        text=True, capture_output=True, check=False,
+        text=True,
+        capture_output=True,
+        check=False,
     )
 
     assert completed.returncode != 0

@@ -40,16 +40,30 @@ class WakePlan:
             raise AdaptiveWakeError("wake plan requires turn_count")
         if "injection_turns" not in value:
             raise AdaptiveWakeError("wake plan requires injection_turns")
-        turn_count, turns, goals = value["turn_count"], value["injection_turns"], value.get("turn_goals")
+        turn_count, turns, goals = (
+            value["turn_count"],
+            value["injection_turns"],
+            value.get("turn_goals"),
+        )
         if not isinstance(turn_count, int) or turn_count < 4:
             raise AdaptiveWakeError("turn_count must be an integer of at least four")
         if not isinstance(turns, list) or len(turns) != 4:
             raise AdaptiveWakeError("wake plan requires four injection turns")
-        if (any(not isinstance(turn, int) for turn in turns) or sorted(turns) != turns
-                or len(set(turns)) != len(turns) or turns[0] < 1 or turns[-1] > turn_count):
-            raise AdaptiveWakeError("injection turns must be distinct, sorted, and inside turn_count")
-        if (not isinstance(goals, list) or len(goals) != turn_count
-                or any(not isinstance(goal, str) or not goal.strip() for goal in goals)):
+        if (
+            any(not isinstance(turn, int) for turn in turns)
+            or sorted(turns) != turns
+            or len(set(turns)) != len(turns)
+            or turns[0] < 1
+            or turns[-1] > turn_count
+        ):
+            raise AdaptiveWakeError(
+                "injection turns must be distinct, sorted, and inside turn_count"
+            )
+        if (
+            not isinstance(goals, list)
+            or len(goals) != turn_count
+            or any(not isinstance(goal, str) or not goal.strip() for goal in goals)
+        ):
             raise AdaptiveWakeError("turn_goals must contain one non-empty goal per turn")
         return cls(turn_count, tuple(turns), tuple(goals))
 
@@ -67,7 +81,11 @@ class ExperimentConfig:
             raise AdaptiveWakeError("registered arms are replay, nosleep, and sft-ref")
         if wakes != 6:
             raise AdaptiveWakeError("registered experiment requires six wakes")
-        if not isinstance(seeds, list) or len(seeds) != 3 or any(not isinstance(seed, int) for seed in seeds):
+        if (
+            not isinstance(seeds, list)
+            or len(seeds) != 3
+            or any(not isinstance(seed, int) for seed in seeds)
+        ):
             raise AdaptiveWakeError("registered experiment requires three integer seeds")
         if len(set(seeds)) != len(seeds):
             raise AdaptiveWakeError("registered experiment seeds must be distinct")
@@ -125,7 +143,11 @@ def load_experiment_manifest(path: str | Path) -> ExperimentManifest:
             raise AdaptiveWakeError(f"wake {index} requires four facts")
         parsed: list[tuple[str, str]] = []
         for fact in facts:
-            if not isinstance(fact, dict) or not isinstance(fact.get("entity"), str) or not isinstance(fact.get("code"), str):
+            if (
+                not isinstance(fact, dict)
+                or not isinstance(fact.get("entity"), str)
+                or not isinstance(fact.get("code"), str)
+            ):
                 raise AdaptiveWakeError(f"wake {index} facts require entity and code strings")
             if fact["entity"] in entities:
                 raise AdaptiveWakeError(f"wake {index} repeats entity {fact['entity']}")
@@ -143,25 +165,40 @@ def load_experiment_manifest(path: str | Path) -> ExperimentManifest:
         raise AdaptiveWakeError("experiment manifest requires generator")
     command = generator.get("command")
     required = ("provider", "model", "version")
-    if (not isinstance(command, list) or not command or any(not isinstance(item, str) or not item for item in command)
-            or any(not isinstance(generator.get(key), str) or not generator[key] for key in required)):
+    if (
+        not isinstance(command, list)
+        or not command
+        or any(not isinstance(item, str) or not item for item in command)
+        or any(not isinstance(generator.get(key), str) or not generator[key] for key in required)
+    ):
         raise AdaptiveWakeError("generator requires command, provider, model, and version")
     output_root = value.get("output_root")
     if not isinstance(output_root, str) or not output_root:
         raise AdaptiveWakeError("experiment manifest requires output_root")
     batch_sizes = value.get("batch_sizes")
     required_batches = ("dream", "probe", "battery")
-    if (not isinstance(batch_sizes, dict) or any(not isinstance(batch_sizes.get(key), int) or batch_sizes[key] < 1
-                                                 for key in required_batches)):
+    if not isinstance(batch_sizes, dict) or any(
+        not isinstance(batch_sizes.get(key), int) or batch_sizes[key] < 1
+        for key in required_batches
+    ):
         raise AdaptiveWakeError("batch_sizes requires positive dream, probe, and battery values")
     runtime = value.get("runtime")
     required_runtime = {
-        "model": str, "warm_start": str, "warm_start_sha256": str,
-        "lora_rank": int, "lora_alpha": (int, float), "learning_rate": (int, float),
-        "chunk_len": int, "dream_count": int, "dream_tokens": int,
-        "dream_temperature": (int, float), "reply_tokens": int,
-        "reply_temperature": (int, float), "probe_tokens": int,
-        "kl_temperature": (int, float), "battery": str,
+        "model": str,
+        "warm_start": str,
+        "warm_start_sha256": str,
+        "lora_rank": int,
+        "lora_alpha": (int, float),
+        "learning_rate": (int, float),
+        "chunk_len": int,
+        "dream_count": int,
+        "dream_tokens": int,
+        "dream_temperature": (int, float),
+        "reply_tokens": int,
+        "reply_temperature": (int, float),
+        "probe_tokens": int,
+        "kl_temperature": (int, float),
+        "battery": str,
     }
     if not isinstance(runtime, dict):
         raise AdaptiveWakeError("experiment manifest requires runtime")
@@ -180,11 +217,14 @@ def load_experiment_manifest(path: str | Path) -> ExperimentManifest:
             raise AdaptiveWakeError(f"runtime {key} must be positive")
     if float(runtime["reply_temperature"]) < 0:
         raise AdaptiveWakeError("runtime reply_temperature cannot be negative")
-    return ExperimentManifest(config, tuple(wakes), dict(generator), output_root, dict(batch_sizes), dict(runtime))
+    return ExperimentManifest(
+        config, tuple(wakes), dict(generator), output_root, dict(batch_sizes), dict(runtime)
+    )
 
 
-def counterbalanced_facts(facts: Sequence[tuple[str, str]], seed_index: int,
-                          wake: int) -> list[tuple[str, str]]:
+def counterbalanced_facts(
+    facts: Sequence[tuple[str, str]], seed_index: int, wake: int
+) -> list[tuple[str, str]]:
     ordered = list(facts)
     offset = (seed_index + wake - 1) % len(ordered)
     return ordered[offset:] + ordered[:offset]

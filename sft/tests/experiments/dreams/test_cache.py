@@ -257,14 +257,17 @@ def test_dream_bases_share_one_svd_per_layer_across_all_three_variants():
     state = FakeState([torch.randn(1, 2, 2, 16) for _ in range(2)])
     queries = [[torch.randn(1, 16) for _ in range(2)] for _ in range(6)]
 
-    spectra, ranks, bases = dream_bases(queries, gate=[0, 2, 4], wake_state=state,
-                                        rank_rule="ratio-gap")
+    spectra, ranks, bases = dream_bases(
+        queries, gate=[0, 2, 4], wake_state=state, rank_rule="ratio-gap"
+    )
 
     assert len(spectra) == 2 and set(ranks) == {"ratio-gap", "median"}
     assert all(len(r) == 2 for r in ranks.values())
     for variant in ("raw", "deflated", "qcm"):
         for basis in bases[variant]:
-            torch.testing.assert_close(basis @ basis.T, torch.eye(basis.shape[0]), atol=1e-5, rtol=0)
+            torch.testing.assert_close(
+                basis @ basis.T, torch.eye(basis.shape[0]), atol=1e-5, rtol=0
+            )
 
 
 def test_the_rank_rule_flag_picks_which_rule_truncates():
@@ -310,9 +313,15 @@ def test_the_set_report_prints_the_artifact_and_passes_a_bound_set(capsys):
     report_dream_set(_bound_set(), min_dreams=2, rank_rule="ratio-gap")
     out = capsys.readouterr().out
 
-    for expected in ("termination reasons", "within-dream repeats", "gate vs binding scan",
-                     "cross-dream V-overlap", ">>PREFIX>>", ">>FREE>>",
-                     "aggregate binding gate PASSED"):
+    for expected in (
+        "termination reasons",
+        "within-dream repeats",
+        "gate vs binding scan",
+        "cross-dream V-overlap",
+        ">>PREFIX>>",
+        ">>FREE>>",
+        "aggregate binding gate PASSED",
+    ):
         assert expected in out
 
 
@@ -358,8 +367,10 @@ def test_copy_fraction_separates_a_quoting_dream_from_an_original_one():
     copying needs its own number."""
     from experiments.dreams.cache import copy_fraction
 
-    transcript = ("the lighthouse keeper kept meticulous logs of every passing storm "
-                  "the bakery on the corner sells out of rye bread before noon").split()
+    transcript = (
+        "the lighthouse keeper kept meticulous logs of every passing storm "
+        "the bakery on the corner sells out of rye bread before noon"
+    ).split()
     verbatim = transcript[:14]
     original = "what is the code for the clove i think it was mentioned earlier today".split()
 
@@ -409,9 +420,13 @@ def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
     from experiments.dreams.probes import longest_verbatim_run
 
     transcript = [i for i in range(200)]
-    wholesale = transcript[10:150]                       # one long replay
-    scattered = (transcript[0:13] + [900 + i for i in range(40)]
-                 + transcript[50:63] + [800 + i for i in range(40)])
+    wholesale = transcript[10:150]  # one long replay
+    scattered = (
+        transcript[0:13]
+        + [900 + i for i in range(40)]
+        + transcript[50:63]
+        + [800 + i for i in range(40)]
+    )
 
     assert longest_verbatim_run(wholesale, transcript) == len(wholesale)
     assert longest_verbatim_run(scattered, transcript) == 13
@@ -422,18 +437,35 @@ def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
 def _set_cache(seed, transcript, dreams, **over):
     from experiments.dreams.types import DreamSetCache
 
-    fields = dict(seed=seed, transcript_ids=transcript, wake_state=None, dreams=dreams,
-                  distractors={"clove": "9 9 9"}, facts=[("clove", "spice", "1 2 3")],
-                  dream_prompt="", generator="abc123")
+    fields = dict(
+        seed=seed,
+        transcript_ids=transcript,
+        wake_state=None,
+        dreams=dreams,
+        distractors={"clove": "9 9 9"},
+        facts=[("clove", "spice", "1 2 3")],
+        dream_prompt="",
+        generator="abc123",
+    )
     fields.update(over)
     return DreamSetCache(**fields)
 
 
 def _dream(ids):
-    return CachedDream(dream_ids=list(ids), token_texts=[str(i) for i in ids],
-                       teacher_logits=torch.zeros(len(ids), 4), cue_flags=[False] * len(ids),
-                       prefix_len=0, stop_reason="eoc", divergence=[0.0] * len(ids),
-                       gate_positions=[], queries=[], spectra=[], ranks={}, bases={})
+    return CachedDream(
+        dream_ids=list(ids),
+        token_texts=[str(i) for i in ids],
+        teacher_logits=torch.zeros(len(ids), 4),
+        cue_flags=[False] * len(ids),
+        prefix_len=0,
+        stop_reason="eoc",
+        divergence=[0.0] * len(ids),
+        gate_positions=[],
+        queries=[],
+        spectra=[],
+        ranks={},
+        bases={},
+    )
 
 
 def test_merging_sets_concatenates_dreams_and_rehashes():
@@ -515,8 +547,9 @@ def test_weighted_gating_changes_the_basis_and_is_recorded():
     divergence = [0.05, 0.05, 0.05, 0.05, 0.05, 6.0]
 
     _, _, plain = dream_bases(queries, gate, state, "ratio-gap")
-    _, _, weighted = dream_bases(queries, gate, state, "ratio-gap",
-                                 scheme_weights([divergence[t] for t in gate], "weighted"))
+    _, _, weighted = dream_bases(
+        queries, gate, state, "ratio-gap", scheme_weights([divergence[t] for t in gate], "weighted")
+    )
 
     assert not torch.allclose(plain["raw"][0], weighted["raw"][0])
 
@@ -542,8 +575,7 @@ def test_rebasing_recomputes_erasers_without_touching_the_dreams():
         d.queries = [[torch.randn(1, 16)] for _ in range(2)]
         d.bases = {"raw": [torch.zeros(1, 16)]}
         dreams.append(d)
-    cache = _set_cache(1234, [1, 2, 3], dreams,
-                       wake_state=FakeState([torch.randn(1, 2, 2, 16)]))
+    cache = _set_cache(1234, [1, 2, 3], dreams, wake_state=FakeState([torch.randn(1, 2, 2, 16)]))
     before_shas = [d.dream_sha for d in cache.dreams]
     before_set = cache.set_sha
 

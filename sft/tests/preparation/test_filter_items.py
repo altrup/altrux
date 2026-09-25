@@ -49,7 +49,9 @@ class _Scorer:
         return out
 
 
-def _block(entity: str = "Zorblat", stray: str = "") -> tuple[torch.Tensor, torch.Tensor, list[dict]]:
+def _block(
+    entity: str = "Zorblat", stray: str = ""
+) -> tuple[torch.Tensor, torch.Tensor, list[dict]]:
     src = f"The capital is {entity} in the north."
     cue = "The capital is ____ in the north."
     filler = "Unrelated sediment and weather text. " + stray
@@ -60,14 +62,22 @@ def _block(entity: str = "Zorblat", stray: str = "") -> tuple[torch.Tensor, torc
     answer_start = cue_start + len(cue)
     span_start = answer_start + 2 + src.index(entity)
     recall = torch.zeros(len(ids), dtype=torch.bool)
-    recall[span_start:span_start + len(entity)] = True
+    recall[span_start : span_start + len(entity)] = True
     item = {
-        "gap": 40, "target_gap": 40, "ceiling": 448,
-        "source_start": source_start, "source_end": source_start + len(src),
-        "cue_start": cue_start, "cue_end": cue_start + len(cue),
+        "gap": 40,
+        "target_gap": 40,
+        "ceiling": 448,
+        "source_start": source_start,
+        "source_end": source_start + len(src),
+        "cue_start": cue_start,
+        "cue_end": cue_start + len(cue),
         "answer_start": answer_start,
-        "span_start": span_start, "span_end": span_start + len(entity),
-        "credit_text": entity, "entity": entity, "entity_type": "LOC", "article": "art0",
+        "span_start": span_start,
+        "span_end": span_start + len(entity),
+        "credit_text": entity,
+        "entity": entity,
+        "entity_type": "LOC",
+        "article": "art0",
     }
     return ids, recall, [item]
 
@@ -144,11 +154,14 @@ def test_an_entity_visible_in_the_interference_is_dropped_without_scoring():
 def test_the_interference_stream_drops_every_item_source():
     ids, _, items = _block()
     stream, remap = interference_stream(ids, items)
-    before_cue = _Tok().decode(stream[:remap(items[0]["cue_start"])])
+    before_cue = _Tok().decode(stream[: remap(items[0]["cue_start"])])
     assert "The capital is Zorblat in the north." not in before_cue
     assert "Unrelated sediment" in before_cue
     assert len(stream) == len(ids) - (items[0]["source_end"] - items[0]["source_start"])
-    assert _Tok().decode(stream[remap(items[0]["span_start"]):remap(items[0]["span_end"])]) == "Zorblat"
+    assert (
+        _Tok().decode(stream[remap(items[0]["span_start"]) : remap(items[0]["span_end"])])
+        == "Zorblat"
+    )
 
 
 def test_scores_are_taken_from_three_distinct_contexts():
@@ -161,12 +174,26 @@ def test_scores_are_taken_from_three_distinct_contexts():
 def test_discard_composition_is_reported_per_test():
     blocks = [_block("Zorblat"), _block("Quovix")]
     dataset = _dataset(*blocks)
-    scorer = _Scorer({("A", "Zorblat"): -0.2, ("B", "Zorblat"): -3.0, ("C", "Zorblat"): -2.6,
-                      ("A", "Quovix"): -2.0, ("B", "Quovix"): -3.0, ("C", "Quovix"): -2.6})
+    scorer = _Scorer(
+        {
+            ("A", "Zorblat"): -0.2,
+            ("B", "Zorblat"): -3.0,
+            ("C", "Zorblat"): -2.6,
+            ("A", "Quovix"): -2.0,
+            ("B", "Quovix"): -3.0,
+            ("C", "Quovix"): -2.6,
+        }
+    )
     stats = filter_dataset(dataset, scorer, _Tok(), _args())
     assert stats["n_items"] == 2
-    assert stats["verdicts"] == {"pass": 1, "fail_a": 1, "fail_b": 0, "fail_c": 0,
-                                 "fail_margin": 0, "fail_leak": 0}
+    assert stats["verdicts"] == {
+        "pass": 1,
+        "fail_a": 1,
+        "fail_b": 0,
+        "fail_c": 0,
+        "fail_margin": 0,
+        "fail_leak": 0,
+    }
     assert stats["discard_rate"] == 0.5
 
 
@@ -178,7 +205,7 @@ def test_rescore_reverdicts_from_stored_scores_and_rebuilds_credit():
 
     stats = rescore_dataset(dataset, _args(a_min=-2.0, min_margin=4.0))
     assert item["filter"]["verdict"] == "pass"
-    assert dataset["recall_masks"][0][item["span_start"]:item["span_end"]].all()
+    assert dataset["recall_masks"][0][item["span_start"] : item["span_end"]].all()
     assert stats["verdicts"]["pass"] == 1
 
 
@@ -189,7 +216,7 @@ def test_rescore_can_also_revoke_credit_and_never_scores():
 
     stats = rescore_dataset(dataset, _args(min_margin=20.0))
     assert item["filter"]["verdict"] == "fail_margin"
-    assert not dataset["recall_masks"][0][item["span_start"]:item["span_end"]].any()
+    assert not dataset["recall_masks"][0][item["span_start"] : item["span_end"]].any()
     assert stats["verdicts"]["pass"] == 0
 
 
@@ -200,7 +227,7 @@ def test_rescore_leaves_leak_verdicts_alone():
 
     rescore_dataset(dataset, _args(a_min=-99.0, b_max=99.0, c_max=99.0, min_margin=-99.0))
     assert item["filter"]["verdict"] == "fail_leak"
-    assert not dataset["recall_masks"][0][item["span_start"]:item["span_end"]].any()
+    assert not dataset["recall_masks"][0][item["span_start"] : item["span_end"]].any()
 
 
 def test_leak_only_keeps_unleaked_items_without_scoring():
@@ -208,8 +235,14 @@ def test_leak_only_keeps_unleaked_items_without_scoring():
     scorer = _Scorer({})
     stats = filter_dataset(dataset, scorer, _Tok(), _args(leak_only=True))
     assert scorer.calls == []
-    assert stats["verdicts"] == {"pass": 1, "fail_a": 0, "fail_b": 0, "fail_c": 0,
-                                 "fail_margin": 0, "fail_leak": 1}
+    assert stats["verdicts"] == {
+        "pass": 1,
+        "fail_a": 0,
+        "fail_b": 0,
+        "fail_c": 0,
+        "fail_margin": 0,
+        "fail_leak": 1,
+    }
     assert dataset["items"][0][0]["filter"]["verdict"] == "pass"
     assert dataset["recall_masks"][0].any()
     assert not dataset["recall_masks"][1].any()
@@ -222,21 +255,31 @@ def test_rescore_leak_only_reinstates_scored_failures():
 
     rescore_dataset(dataset, _args(leak_only=True))
     assert item["filter"]["verdict"] == "pass"
-    assert dataset["recall_masks"][0][item["span_start"]:item["span_end"]].all()
+    assert dataset["recall_masks"][0][item["span_start"] : item["span_end"]].all()
 
 
 def test_the_a_contexts_of_several_blocks_are_scored_in_one_batch():
     dataset = _dataset(_block("Zorblat"), _block("Quovix"))
-    scorer = _Scorer({(t, e): v for t, v in {"A": -0.2, "B": -3.0, "C": -2.6}.items()
-                      for e in ("Zorblat", "Quovix")})
+    scorer = _Scorer(
+        {
+            (t, e): v
+            for t, v in {"A": -0.2, "B": -3.0, "C": -2.6}.items()
+            for e in ("Zorblat", "Quovix")
+        }
+    )
     filter_dataset(dataset, scorer, _Tok(), _args(score_batch=8))
     assert dict(scorer.batches) == {"A": 2, "B": 2, "C": 2}
 
 
 def test_score_batch_1_scores_every_row_on_its_own():
     dataset = _dataset(_block("Zorblat"), _block("Quovix"))
-    scorer = _Scorer({(t, e): v for t, v in {"A": -0.2, "B": -3.0, "C": -2.6}.items()
-                      for e in ("Zorblat", "Quovix")})
+    scorer = _Scorer(
+        {
+            (t, e): v
+            for t, v in {"A": -0.2, "B": -3.0, "C": -2.6}.items()
+            for e in ("Zorblat", "Quovix")
+        }
+    )
     filter_dataset(dataset, scorer, _Tok(), _args(score_batch=1))
     assert {n for _, n in scorer.batches} == {1}
 
@@ -257,8 +300,9 @@ def test_length_batches_handles_no_rows():
 
 
 def test_pad_rows_right_pads_to_the_batch_max_and_reports_true_lengths():
-    padded, lens = pad_rows([(torch.tensor([1, 2, 3]), [(1, 3)]),
-                             (torch.tensor([4, 5]), [(1, 2)])], "cpu")
+    padded, lens = pad_rows(
+        [(torch.tensor([1, 2, 3]), [(1, 3)]), (torch.tensor([4, 5]), [(1, 2)])], "cpu"
+    )
     assert lens == [3, 2]
     assert padded.shape == (2, 3)
     assert padded[1].tolist() == [4, 5, 0]
@@ -314,23 +358,32 @@ class _FakeLM(torch.nn.Module):
         outs = []
         for t in range(T):
             acc = acc * 1.1 + input_ids[:, t].float()
-            outs.append(torch.sin(acc.view(B, 1) * 0.37 + (pos + t) * 0.11
-                                  + torch.arange(self.V).view(1, self.V) * 0.53))
+            outs.append(
+                torch.sin(
+                    acc.view(B, 1) * 0.37
+                    + (pos + t) * 0.11
+                    + torch.arange(self.V).view(1, self.V) * 0.53
+                )
+            )
         return torch.stack(outs, dim=1), _FakeState(pos + T, acc)
 
 
 def test_batched_span_scoring_reads_the_same_values_as_row_by_row_scoring():
     """Rows of different lengths, spans inside a chunk, spans crossing a chunk
     boundary, and spans starting exactly on one (the carried-logits path)."""
-    rows = [(torch.tensor([3, 1, 4, 1, 5, 9]), [(1, 3), (3, 6)]),
-            (torch.tensor([2, 7, 1, 8, 2, 8, 1, 8, 2, 8, 4]), [(4, 5), (7, 11)]),
-            (torch.tensor([6, 6, 6, 5]), [(2, 4)])]
+    rows = [
+        (torch.tensor([3, 1, 4, 1, 5, 9]), [(1, 3), (3, 6)]),
+        (torch.tensor([2, 7, 1, 8, 2, 8, 1, 8, 2, 8, 4]), [(4, 5), (7, 11)]),
+        (torch.tensor([6, 6, 6, 5]), [(2, 4)]),
+    ]
     scorer = BackboneScorer(_FakeLM(), "cpu", chunk_len=4)
 
     batched = scorer.span_logprobs(rows, "A")
     serial = [scorer.span_logprobs([r], "A")[0] for r in rows]
     assert [len(r) for r in batched] == [len(r) for r in serial]
-    assert [v for r in batched for v in r] == pytest.approx([v for r in serial for v in r], abs=1e-9)
+    assert [v for r in batched for v in r] == pytest.approx(
+        [v for r in serial for v in r], abs=1e-9
+    )
 
 
 def test_a_span_scores_its_own_tokens_against_the_preceding_positions_logits():
@@ -354,6 +407,8 @@ def test_a_source_shared_by_two_items_is_cut_once_and_remapped_once():
     it = items[0]
     stream, remap = interference_stream(ids, [it, dict(it)])
     assert len(stream) == len(ids) - (it["source_end"] - it["source_start"])
-    assert _Tok().decode(stream[remap(it["span_start"]):remap(it["span_end"])]) == "Zorblat"
-    assert _Tok().decode(stream[remap(it["cue_start"]):remap(it["cue_end"])]) == \
-        "The capital is ____ in the north."
+    assert _Tok().decode(stream[remap(it["span_start"]) : remap(it["span_end"])]) == "Zorblat"
+    assert (
+        _Tok().decode(stream[remap(it["cue_start"]) : remap(it["cue_end"])])
+        == "The capital is ____ in the north."
+    )

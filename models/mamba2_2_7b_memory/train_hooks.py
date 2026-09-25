@@ -87,7 +87,9 @@ def chunk_loss(
     sft/training/loop.py owns chunking, accumulation, checkpointing, and live
     progress display across calls."""
     logits, state = model(input_ids, state=state)
-    loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
+    loss = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none"
+    )
     weight = torch.ones_like(loss)
     if eos_weight != 1.0:
         weight[target_ids.reshape(-1) == EOS_ID] = eos_weight

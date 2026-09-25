@@ -189,4 +189,6 @@ def test_marker_delta_wired_into_memory_forward():
         logits_zero, _ = m(ids)
         m.marker_delta.delta += 0.1
         logits_moved, _ = m(ids)
-    assert not torch.equal(logits_zero, logits_moved), "delta does not reach the memory forward path"
+    assert not torch.equal(logits_zero, logits_moved), (
+        "delta does not reach the memory forward path"
+    )

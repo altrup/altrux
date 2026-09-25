@@ -28,7 +28,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from preparation.cram import add_block_args, build_blocks, emit, load_wikipedia_passages, split_articles
+from preparation.cram import (
+    add_block_args,
+    build_blocks,
+    emit,
+    load_wikipedia_passages,
+    split_articles,
+)
 
 
 def babilong_items(records: list[dict], task: str) -> list[dict]:
@@ -40,13 +46,15 @@ def babilong_items(records: list[dict], task: str) -> list[dict]:
         story, question, target = r["input"].strip(), r["question"].strip(), r["target"].strip()
         if not target or target in question or target not in story:
             continue
-        items.append({
-            "source": story,
-            "cue": question,
-            "answer": target,
-            "span": (0, len(target)),
-            "meta": {"article": f"babilong-{task}-{i}", "entity": target, "entity_type": task},
-        })
+        items.append(
+            {
+                "source": story,
+                "cue": question,
+                "answer": target,
+                "span": (0, len(target)),
+                "meta": {"article": f"babilong-{task}-{i}", "entity": target, "entity_type": task},
+            }
+        )
     return items
 
 
@@ -68,10 +76,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--output", default="data/train_needles.pt")
     parser.add_argument("--heldout-output", default="data/eval_needles.pt")
-    parser.add_argument("--config", default="0k", help="babilong context config; 0k is the bare task text")
+    parser.add_argument(
+        "--config", default="0k", help="babilong context config; 0k is the bare task text"
+    )
     parser.add_argument("--tasks", nargs="+", default=[f"qa{i}" for i in range(1, 11)])
     parser.add_argument("--max-per-task", type=int, default=400)
-    parser.add_argument("--articles", type=int, default=3000, help="Wikipedia articles streamed for filler")
+    parser.add_argument(
+        "--articles", type=int, default=3000, help="Wikipedia articles streamed for filler"
+    )
     parser.add_argument("--wiki-dataset", default="wikimedia/wikipedia")
     parser.add_argument("--wiki-config", default="20231101.en")
     parser.add_argument("--passages-per-article", type=int, default=3)
@@ -99,12 +111,18 @@ def main() -> None:
     asst_id = tokenizer.convert_tokens_to_ids(model_mod.ASST_OPEN)
     sep = tokenizer.encode(" ", add_special_tokens=False)
     nl = tokenizer.encode("\n", add_special_tokens=False)
-    assert len(sep) == 1 and len(nl) == 1, f'expected " " and "\\n" to be single tokens, got {sep} {nl}'
+    assert len(sep) == 1 and len(nl) == 1, (
+        f'expected " " and "\\n" to be single tokens, got {sep} {nl}'
+    )
 
     items = load_babilong(args)
     passages = load_wikipedia_passages(args)
-    train_titles, heldout_titles = split_articles([p["article"] for p in passages], args.heldout_frac, args.seed)
-    train_ids, heldout_ids = split_articles([it["meta"]["article"] for it in items], args.heldout_frac, args.seed)
+    train_titles, heldout_titles = split_articles(
+        [p["article"] for p in passages], args.heldout_frac, args.seed
+    )
+    train_ids, heldout_ids = split_articles(
+        [it["meta"]["article"] for it in items], args.heldout_frac, args.seed
+    )
 
     def encode(strings: list[str]) -> list[list[int]]:
         return tokenizer(strings, add_special_tokens=False)["input_ids"]
@@ -118,13 +136,30 @@ def main() -> None:
         print(f"\n== {name}: {len(sel)} needles, {len(fillers)} filler passages ==")
         # One bAbI story answers one question, so every group is a singleton and
         # the items-per-source density knob is inert on this slice.
-        dataset, stats = build_blocks([[it] for it in sel], fillers, encode,
-                                      user_id=user_id, asst_id=asst_id,
-                                      sep_id=sep[0], nl_id=nl[0], args=args)
+        dataset, stats = build_blocks(
+            [[it] for it in sel],
+            fillers,
+            encode,
+            user_id=user_id,
+            asst_id=asst_id,
+            sep_id=sep[0],
+            nl_id=nl[0],
+            args=args,
+        )
         # Both halves of the reservation: held-out needles and the held-out
         # articles their filler comes from.
-        emit(dataset, stats, path, tokenizer, user_id, asst_id, name,
-             sorted(heldout_titles | heldout_ids), args)
+        emit(
+            dataset,
+            stats,
+            path,
+            tokenizer,
+            user_id,
+            asst_id,
+            name,
+            sorted(heldout_titles | heldout_ids),
+            args,
+        )
+
 
 __all__ = [
     "add_block_args",

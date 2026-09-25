@@ -61,7 +61,6 @@ if TYPE_CHECKING:
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
-
 @dataclass
 class PilotDream:
     """One dream, unfiltered: the gate has not run on any of this."""
@@ -112,8 +111,11 @@ def auc(positive: Sequence[float], negative: Sequence[float]) -> float:
 def eligible_positions(dream: PilotDream) -> list[int]:
     """Everything a gate could ever keep: the prefix conditions through state
     only and spliced cue text is not a read the dream performed."""
-    return [t for t in range(len(dream.token_texts))
-            if t >= dream.prefix_len and not (t < len(dream.cue_flags) and dream.cue_flags[t])]
+    return [
+        t
+        for t in range(len(dream.token_texts))
+        if t >= dream.prefix_len and not (t < len(dream.cue_flags) and dream.cue_flags[t])
+    ]
 
 
 def oracle_positions(dream: PilotDream, facts) -> tuple[dict[str, list[int]], list[int]]:
@@ -141,12 +143,21 @@ def separability(capture: PilotCapture) -> dict[str, object]:
         pooled_pos += positive
         pooled_neg += negative
         per_dream.append(auc(positive, negative))
-        print(f"[{ts()}]  dream {i}: {len(positive)} fact-read positions vs {len(negative)} others, "
-              f"AUC {per_dream[-1]:.3f}", flush=True)
-    result = {"per_dream": per_dream, "pooled": auc(pooled_pos, pooled_neg),
-              "fact_positions": len(pooled_pos), "other_positions": len(pooled_neg)}
-    print(f"[{ts()}] pooled AUC {result['pooled']:.3f} over {len(pooled_pos)} fact-read and "
-          f"{len(pooled_neg)} other positions")
+        print(
+            f"[{ts()}]  dream {i}: {len(positive)} fact-read positions vs {len(negative)} others, "
+            f"AUC {per_dream[-1]:.3f}",
+            flush=True,
+        )
+    result = {
+        "per_dream": per_dream,
+        "pooled": auc(pooled_pos, pooled_neg),
+        "fact_positions": len(pooled_pos),
+        "other_positions": len(pooled_neg),
+    }
+    print(
+        f"[{ts()}] pooled AUC {result['pooled']:.3f} over {len(pooled_pos)} fact-read and "
+        f"{len(pooled_neg)} other positions"
+    )
     return result
 
 
@@ -224,8 +235,9 @@ def _mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
-def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
-                 variant: str, rank_rule: str) -> dict[str, object]:
+def score_scheme(
+    capture: PilotCapture, name: str, tau: float, family: str, variant: str, rank_rule: str
+) -> dict[str, object]:
     """One row of sec 2.10.7's table: build every dream's per-layer V under this
     scheme, through the same primitives prod uses, and score the plane."""
     import torch
@@ -235,7 +247,9 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
     from experiments.facts import Fact
 
     facts = [Fact(*f) for f in capture.facts]
-    battery = [per_layer for positions in capture.battery_queries.values() for per_layer in positions]
+    battery = [
+        per_layer for positions in capture.battery_queries.values() for per_layer in positions
+    ]
     target: list[float] = []
     context: list[float] = []
     batt: list[float] = []
@@ -247,7 +261,9 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
     per_dream_bases: list[list[torch.Tensor]] = []
     with_reads = 0
     for dream in capture.dreams:
-        gate = gated_positions(torch.tensor(dream.divergence), tau, dream.prefix_len, dream.cue_flags)
+        gate = gated_positions(
+            torch.tensor(dream.divergence), tau, dream.prefix_len, dream.cue_flags
+        )
         # An empty gate is an empty eraser, not a scheme failure -- the dream
         # contributes nothing at this tau (mirrors the builder's semantics).
         if not gate:
@@ -258,13 +274,24 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
         reads, fact_pos = oracle_positions(dream, facts)
         weights = scheme_weights([dream.divergence[t] for t in gate], family)
         try:
-            _, chosen, bases = dream_bases(dream.queries, gate, capture.wake_state, rank_rule, weights)
-            oracle = (dream_bases(dream.queries, fact_pos, capture.wake_state, rank_rule)[2]
-                      if fact_pos else None)
+            _, chosen, bases = dream_bases(
+                dream.queries, gate, capture.wake_state, rank_rule, weights
+            )
+            oracle = (
+                dream_bases(dream.queries, fact_pos, capture.wake_state, rank_rule)[2]
+                if fact_pos
+                else None
+            )
         except SystemExit as failure:  # an empty or non-orthonormal basis is a scheme failure here
-            return {"scheme": name, "family": family, "tau": tau, "ok": False,
-                    "why": str(failure).split("--")[0].strip(),
-                    "target_removed": 0.0, "collateral_removed": 0.0}
+            return {
+                "scheme": name,
+                "family": family,
+                "tau": tau,
+                "ok": False,
+                "why": str(failure).split("--")[0].strip(),
+                "target_removed": 0.0,
+                "collateral_removed": 0.0,
+            }
         basis = bases[variant]
         per_dream_bases.append(basis)
         with_reads += bool(fact_pos)
@@ -284,24 +311,47 @@ def score_scheme(capture: PilotCapture, name: str, tau: float, family: str,
             recall.append(float(agreement["recall"]))
         gated.append(len(gate))
     if not per_dream_bases:
-        return {"scheme": name, "family": family, "tau": tau, "ok": False,
-                "why": "no gated positions at this tau anywhere in the capture",
-                "target_removed": 0.0, "collateral_removed": 0.0}
+        return {
+            "scheme": name,
+            "family": family,
+            "tau": tau,
+            "ok": False,
+            "why": "no gated positions at this tau anywhere in the capture",
+            "target_removed": 0.0,
+            "collateral_removed": 0.0,
+        }
     if not target:
-        return {"scheme": name, "family": family, "tau": tau, "ok": False,
-                "why": "no fact read anywhere in the capture -- the plane's target axis is unmeasurable",
-                "target_removed": 0.0, "collateral_removed": 0.0}
-    stability = [_basis_overlap(a[layer], b[layer])
-                 for a, b in zip(per_dream_bases, per_dream_bases[1:], strict=False)
-                 for layer in range(len(a))]
+        return {
+            "scheme": name,
+            "family": family,
+            "tau": tau,
+            "ok": False,
+            "why": "no fact read anywhere in the capture -- the plane's target axis is unmeasurable",
+            "target_removed": 0.0,
+            "collateral_removed": 0.0,
+        }
+    stability = [
+        _basis_overlap(a[layer], b[layer])
+        for a, b in zip(per_dream_bases, per_dream_bases[1:], strict=False)
+        for layer in range(len(a))
+    ]
     return {
-        "scheme": name, "family": family, "tau": tau, "ok": True, "why": "",
-        "gated_positions": _mean(gated), "precision": _mean(precision), "recall": _mean(recall),
-        "oracle_overlap": _mean(overlaps), "stability": _mean(stability),
-        "dreams_scored": len(per_dream_bases), "dreams_with_reads": with_reads,
+        "scheme": name,
+        "family": family,
+        "tau": tau,
+        "ok": True,
+        "why": "",
+        "gated_positions": _mean(gated),
+        "precision": _mean(precision),
+        "recall": _mean(recall),
+        "oracle_overlap": _mean(overlaps),
+        "stability": _mean(stability),
+        "dreams_scored": len(per_dream_bases),
+        "dreams_with_reads": with_reads,
         "target_removed": _mean(target) or 0.0,
         "collateral_removed": _mean(context + batt) or 0.0,
-        "context_removed": _mean(context), "battery_removed": _mean(batt),
+        "context_removed": _mean(context),
+        "battery_removed": _mean(batt),
         "ranks": {rule: [min(rs), max(rs)] for rule, rs in ranks.items()},
         "rank_rules_disagree": ranks[RANK_RULES[0]] != ranks[RANK_RULES[1]],
     }
@@ -320,19 +370,29 @@ def recommend(rows: Sequence[dict[str, object]]) -> dict[str, object] | None:
     # nothing beats: a nonempty Pareto front always exists, so the weaker
     # reading would answer from iteration order and step (iii) would be dead.
     for row in live:
-        if all(o["target_removed"] <= row["target_removed"]
-               and o["collateral_removed"] >= row["collateral_removed"]
-               for o in live if o is not row):
+        if all(
+            o["target_removed"] <= row["target_removed"]
+            and o["collateral_removed"] >= row["collateral_removed"]
+            for o in live
+            if o is not row
+        ):
             return row
     knee = statistics.median(float(r["collateral_removed"]) for r in live)
     under = [r for r in live if float(r["collateral_removed"]) <= knee] or live
-    return min(under, key=lambda r: (-round(float(r["target_removed"]), 3),
-                                     FAMILIES.index(str(r["family"])),
-                                     float(r["collateral_removed"])))
+    return min(
+        under,
+        key=lambda r: (
+            -round(float(r["target_removed"]), 3),
+            FAMILIES.index(str(r["family"])),
+            float(r["collateral_removed"]),
+        ),
+    )
 
 
-HEADER = (f"{'scheme':18} {'AUC':>6} {'prec':>5} {'rec':>5} {'oracle':>6} {'stab':>5} "
-          f"{'target':>7} {'collat':>7} {'ctx':>6} {'batt':>6} {'gated':>6} {'rank':>10}")
+HEADER = (
+    f"{'scheme':18} {'AUC':>6} {'prec':>5} {'rec':>5} {'oracle':>6} {'stab':>5} "
+    f"{'target':>7} {'collat':>7} {'ctx':>6} {'batt':>6} {'gated':>6} {'rank':>10}"
+)
 
 
 def format_row(row: dict[str, object], pooled_auc: float) -> str:
@@ -343,16 +403,23 @@ def format_row(row: dict[str, object], pooled_auc: float) -> str:
     span = f"{ranks['ratio-gap'][0]}-{ranks['ratio-gap'][1]}"
     if row["rank_rules_disagree"]:
         span += f"/{ranks['median'][0]}-{ranks['median'][1]}"
-    return (f"{str(row['scheme']):18} {pooled_auc:6.3f} {fmt(row['precision'])[1:]} "
-            f"{fmt(row['recall'])[1:]} {fmt(row['oracle_overlap'])} {fmt(row['stability'])[1:]} "
-            f"{float(row['target_removed']):7.3f} {float(row['collateral_removed']):7.3f} "
-            f"{fmt(row['context_removed'])} {fmt(row['battery_removed'])} "
-            f"{float(row['gated_positions']):6.1f} {span:>10}")
+    return (
+        f"{str(row['scheme']):18} {pooled_auc:6.3f} {fmt(row['precision'])[1:]} "
+        f"{fmt(row['recall'])[1:]} {fmt(row['oracle_overlap'])} {fmt(row['stability'])[1:]} "
+        f"{float(row['target_removed']):7.3f} {float(row['collateral_removed']):7.3f} "
+        f"{fmt(row['context_removed'])} {fmt(row['battery_removed'])} "
+        f"{float(row['gated_positions']):6.1f} {span:>10}"
+    )
 
 
-def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
-         min_auc: float = MIN_AUC, out: str | None = None,
-         families: Sequence[str] = FAMILIES) -> None:
+def main(
+    capture_path: str,
+    variant: str = "raw",
+    rank_rule: str = "ratio-gap",
+    min_auc: float = MIN_AUC,
+    out: str | None = None,
+    families: Sequence[str] = FAMILIES,
+) -> None:
     import torch
 
     from progress import ts
@@ -363,8 +430,10 @@ def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
     capture = torch.load(path, map_location="cpu", weights_only=False)
     stem = out or str(path.with_name(path.name.replace(".pilot.pt", "") + ".gate_pilot"))
     table_path, rows_path = Path(stem + ".txt"), Path(stem + ".jsonl")
-    print(f"[{ts()}] === gate pilot: {path} -- {len(capture.dreams)} dreams, set_sha "
-          f"{capture.set_sha[:12]}, variant {variant}, rank rule {rank_rule} ===")
+    print(
+        f"[{ts()}] === gate pilot: {path} -- {len(capture.dreams)} dreams, set_sha "
+        f"{capture.set_sha[:12]}, variant {variant}, rank rule {rank_rule} ==="
+    )
 
     print(f"\n[{ts()}] --- test 1: does D_t separate fact reads from everything else? ---")
     sep = separability(capture)
@@ -376,15 +445,23 @@ def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
             f"against this capture."
         )
 
-    print(f"\n[{ts()}] --- test 2: the bake-off (sec 2.10.6's plane; rows stream as they finish) ---")
-    pooled = [d for dream in capture.dreams for t, d in enumerate(dream.divergence)
-              if t in set(eligible_positions(dream))]
+    print(
+        f"\n[{ts()}] --- test 2: the bake-off (sec 2.10.6's plane; rows stream as they finish) ---"
+    )
+    pooled = [
+        d
+        for dream in capture.dreams
+        for t, d in enumerate(dream.divergence)
+        if t in set(eligible_positions(dream))
+    ]
     print(HEADER, flush=True)
     rows = []
     for q in QUANTILES:
         tau = quantile(pooled, q)
         for family in families:
-            row = score_scheme(capture, f"{family}@q{int(q * 100)}", tau, family, variant, rank_rule)
+            row = score_scheme(
+                capture, f"{family}@q{int(q * 100)}", tau, family, variant, rank_rule
+            )
             row["quantile"] = q
             rows.append(row)
             print(f"[{ts()}] " + format_row(row, float(sep["pooled"])), flush=True)
@@ -406,40 +483,74 @@ def main(capture_path: str, variant: str = "raw", rank_rule: str = "ratio-gap",
         *(format_row(r, float(sep["pooled"])) for r in rows),
         "",
         f"The tool RECOMMENDS {choice['scheme'] if choice else 'nothing -- every scheme failed'}"
-        + (f" (target {float(choice['target_removed']):.3f}, collateral "
-           f"{float(choice['collateral_removed']):.3f})" if choice else "")
+        + (
+            f" (target {float(choice['target_removed']):.3f}, collateral "
+            f"{float(choice['collateral_removed']):.3f})"
+            if choice
+            else ""
+        )
         + " by sec 2.10.6's lexicographic procedure.",
         "The freeze is a HUMAN decision: the experimenter proposes, the team ratifies at a",
         "check-in, and only then is it frozen for the box.",
     ]
     table_path.write_text("\n".join(lines) + "\n")
     with rows_path.open("w") as handle:
-        handle.write(json.dumps({"separability": sep, "capture": str(path),
-                                 "variant": variant, "rank_rule": rank_rule}) + "\n")
+        handle.write(
+            json.dumps(
+                {
+                    "separability": sep,
+                    "capture": str(path),
+                    "variant": variant,
+                    "rank_rule": rank_rule,
+                }
+            )
+            + "\n"
+        )
         for row in rows:
             handle.write(json.dumps(row) + "\n")
     print("\n".join(lines[-3:]))
     print(f"\n[{ts()}] wrote {table_path} and {rows_path}")
 
 
-
 def cli_main() -> None:
     from experiments.erasure.gating import RANK_RULES, VARIANTS
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("capture", help="a --pilot-capture artifact (data/dream_set_s<seed>.pilot.pt)")
-    parser.add_argument("--variant", choices=VARIANTS, default="raw",
-                        help="Which post-processing of the shared SVD each scheme's basis uses "
-                             "(default: %(default)s)")
-    parser.add_argument("--rank-rule", choices=RANK_RULES, default="ratio-gap",
-                        help="Which rank rule truncates; both are reported (default: %(default)s)")
-    parser.add_argument("--min-auc", type=float, default=MIN_AUC,
-                        help="Sec 2.10.7's kill condition on test 1 (default: %(default)s)")
-    parser.add_argument("--families", nargs="+", default=list(FAMILIES), choices=list(FAMILIES),
-                        help="Weighting families to score (default: all). A subset lets an "
-                             "expensive sweep be split across processes.")
-    parser.add_argument("--out", default=None,
-                        help="Path stem for the table; .txt and .jsonl are appended (default: beside the capture)")
+    parser.add_argument(
+        "capture", help="a --pilot-capture artifact (data/dream_set_s<seed>.pilot.pt)"
+    )
+    parser.add_argument(
+        "--variant",
+        choices=VARIANTS,
+        default="raw",
+        help="Which post-processing of the shared SVD each scheme's basis uses "
+        "(default: %(default)s)",
+    )
+    parser.add_argument(
+        "--rank-rule",
+        choices=RANK_RULES,
+        default="ratio-gap",
+        help="Which rank rule truncates; both are reported (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--min-auc",
+        type=float,
+        default=MIN_AUC,
+        help="Sec 2.10.7's kill condition on test 1 (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--families",
+        nargs="+",
+        default=list(FAMILIES),
+        choices=list(FAMILIES),
+        help="Weighting families to score (default: all). A subset lets an "
+        "expensive sweep be split across processes.",
+    )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Path stem for the table; .txt and .jsonl are appended (default: beside the capture)",
+    )
     args = parser.parse_args()
     main(args.capture, args.variant, args.rank_rule, args.min_auc, args.out, args.families)
 
@@ -448,4 +559,24 @@ if __name__ == "__main__":
     cli_main()
 
 
-__all__ = ["PilotDream","PilotCapture","QUANTILES","FAMILIES","MIN_AUC","CLIP_QUANTILE","auc","eligible_positions","oracle_positions","separability","scheme_weights","quantile","readout_removals","_mean","score_scheme","recommend","HEADER","format_row","main"]
+__all__ = [
+    "PilotDream",
+    "PilotCapture",
+    "QUANTILES",
+    "FAMILIES",
+    "MIN_AUC",
+    "CLIP_QUANTILE",
+    "auc",
+    "eligible_positions",
+    "oracle_positions",
+    "separability",
+    "scheme_weights",
+    "quantile",
+    "readout_removals",
+    "_mean",
+    "score_scheme",
+    "recommend",
+    "HEADER",
+    "format_row",
+    "main",
+]

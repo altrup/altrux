@@ -51,7 +51,9 @@ def build_tokenizer(model_mod) -> PreTrainedTokenizerBase:
     return tokenizer
 
 
-def extend_embeddings(model: nn.Module, new_vocab_size: int, tokenizer: PreTrainedTokenizerBase | None = None) -> None:
+def extend_embeddings(
+    model: nn.Module, new_vocab_size: int, tokenizer: PreTrainedTokenizerBase | None = None
+) -> None:
     """Grow model.backbone.embedding and model.lm_head to new_vocab_size in place.
 
     MambaLMHeadModel is a plain nn.Module, not a HF PreTrainedModel, so there is
@@ -99,20 +101,26 @@ def extend_embeddings(model: nn.Module, new_vocab_size: int, tokenizer: PreTrain
         return
 
     # transformers v5 renamed additional_special_tokens -> extra_special_tokens.
-    markers = getattr(tokenizer, "additional_special_tokens", None) or getattr(tokenizer, "extra_special_tokens", [])
+    markers = getattr(tokenizer, "additional_special_tokens", None) or getattr(
+        tokenizer, "extra_special_tokens", []
+    )
     marker_ids: list[int] = []
     with torch.no_grad():
         for token in markers:
             tid = tokenizer.convert_tokens_to_ids(token)
             marker_ids.append(tid)
             try:
-                spelled = tokenizer(token, add_special_tokens=False, split_special_tokens=True)["input_ids"]
+                spelled = tokenizer(token, add_special_tokens=False, split_special_tokens=True)[
+                    "input_ids"
+                ]
             except Exception:
                 spelled = []
             spelled = [i for i in spelled if i < old_vocab_size and i != tid]
             if not spelled:
                 continue  # fallback: keep the normal_-initialized row
-            model.backbone.embedding.weight[tid] = model.backbone.embedding.weight[spelled].mean(dim=0)
+            model.backbone.embedding.weight[tid] = model.backbone.embedding.weight[spelled].mean(
+                dim=0
+            )
             if not tied:
                 model.lm_head.weight[tid] = model.lm_head.weight[spelled].mean(dim=0)
     model.marker_token_ids = marker_ids
@@ -135,7 +143,9 @@ class MarkerDelta(nn.Module):
     def __init__(self, marker_ids: list[int], d_model: int, device=None, dtype=None):
         super().__init__()
         self.register_buffer(
-            "marker_ids", torch.tensor(marker_ids, dtype=torch.long, device=device), persistent=False
+            "marker_ids",
+            torch.tensor(marker_ids, dtype=torch.long, device=device),
+            persistent=False,
         )
         self.delta = nn.Parameter(torch.zeros(len(marker_ids), d_model, device=device, dtype=dtype))
 

@@ -21,21 +21,35 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
         "optimizer_parameters": 1_000_000,
     }
     runs = [
-        {"arm": "frozen", "seed": 42,
-         "settings": settings | {"optimizer_parameters": 0},
-         "curve": [
-             {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-             {"cycle": 1, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-         ]},
-        {"arm": "altrux", "seed": 42,
-         "settings": settings,
-         "curve": [
-             {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-             {"cycle": 1, "to_learn_accuracy": 0.2, "not_to_forget_accuracy": 0.9,
-              "source_tokens": 400, "wake_tokens": 500,
-              "treatment": {"review_tokens": 100, "token_gradients": 300,
-                            "generated_tokens": 200}},
-         ]},
+        {
+            "arm": "frozen",
+            "seed": 42,
+            "settings": settings | {"optimizer_parameters": 0},
+            "curve": [
+                {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+                {"cycle": 1, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+            ],
+        },
+        {
+            "arm": "altrux",
+            "seed": 42,
+            "settings": settings,
+            "curve": [
+                {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+                {
+                    "cycle": 1,
+                    "to_learn_accuracy": 0.2,
+                    "not_to_forget_accuracy": 0.9,
+                    "source_tokens": 400,
+                    "wake_tokens": 500,
+                    "treatment": {
+                        "review_tokens": 100,
+                        "token_gradients": 300,
+                        "generated_tokens": 200,
+                    },
+                },
+            ],
+        },
     ]
 
     report = aggregate_runs(runs)
@@ -53,27 +67,55 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
 
 
 def test_aggregate_runs_rejects_smokes_and_mixed_splits():
-    run = {"arm": "frozen", "seed": 42, "curve": [
-        {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-    ]}
+    run = {
+        "arm": "frozen",
+        "seed": 42,
+        "curve": [
+            {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+        ],
+    }
 
     with pytest.raises(ValueError, match="engineering-only"):
-        aggregate_runs([{**run, "settings": {"cycles": 0, "engineering_only": True,
-                                               "eval_batch_size": 16,
-                                               "requested_dream_batch_size": 8,
-                                               "split_manifest_sha256": "x"}}])
+        aggregate_runs(
+            [
+                {
+                    **run,
+                    "settings": {
+                        "cycles": 0,
+                        "engineering_only": True,
+                        "eval_batch_size": 16,
+                        "requested_dream_batch_size": 8,
+                        "split_manifest_sha256": "x",
+                    },
+                }
+            ]
+        )
     with pytest.raises(ValueError, match="split"):
-        aggregate_runs([
-            {**run, "settings": {"cycles": 0, "engineering_only": False,
-                                   "eval_batch_size": 16,
-                                   "requested_dream_batch_size": 8,
-                                   "split_manifest_sha256": "x"}},
-            {**run, "seed": 43,
-             "settings": {"cycles": 0, "engineering_only": False,
-                           "eval_batch_size": 16,
-                           "requested_dream_batch_size": 8,
-                           "split_manifest_sha256": "y"}},
-        ])
+        aggregate_runs(
+            [
+                {
+                    **run,
+                    "settings": {
+                        "cycles": 0,
+                        "engineering_only": False,
+                        "eval_batch_size": 16,
+                        "requested_dream_batch_size": 8,
+                        "split_manifest_sha256": "x",
+                    },
+                },
+                {
+                    **run,
+                    "seed": 43,
+                    "settings": {
+                        "cycles": 0,
+                        "engineering_only": False,
+                        "eval_batch_size": 16,
+                        "requested_dream_batch_size": 8,
+                        "split_manifest_sha256": "y",
+                    },
+                },
+            ]
+        )
 
 
 @pytest.mark.parametrize("cycles", [[0, 1], [0, 2]])
@@ -106,8 +148,12 @@ def test_aggregate_runs_rejects_mixed_batch_settings(key: str):
     }
     runs = [
         {"arm": "frozen", "seed": 42, "settings": settings, "curve": [{"cycle": 0}]},
-        {"arm": "lora", "seed": 42, "settings": settings | {key: settings[key] * 2},
-         "curve": [{"cycle": 0}]},
+        {
+            "arm": "lora",
+            "seed": 42,
+            "settings": settings | {key: settings[key] * 2},
+            "curve": [{"cycle": 0}],
+        },
     ]
 
     with pytest.raises(ValueError, match=key):

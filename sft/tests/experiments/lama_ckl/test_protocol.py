@@ -33,8 +33,9 @@ class Tokenizer:
 
     def decode(self, ids, skip_special_tokens=False):
         inverse = {value: key for key, value in self.markers.items()}
-        return "".join(inverse[int(token)] if int(token) in inverse else chr(int(token) - 10)
-                       for token in ids)
+        return "".join(
+            inverse[int(token)] if int(token) in inverse else chr(int(token) - 10) for token in ids
+        )
 
 
 class State:
@@ -64,8 +65,15 @@ def test_conversational_wake_keeps_one_state_and_closes_once():
     tokenizer = Tokenizer()
 
     artifact, state = run_conversational_wake(
-        Model(), tokenizer, ["Ada in Rome", "Bob in Oslo"], None,
-        "[USER]", "[ASSISTANT]", "<EOC>", reply_tokens=4, evidence_tokens=512,
+        Model(),
+        tokenizer,
+        ["Ada in Rome", "Bob in Oslo"],
+        None,
+        "[USER]",
+        "[ASSISTANT]",
+        "<EOC>",
+        reply_tokens=4,
+        evidence_tokens=512,
     )
 
     assert state.calls == 5
@@ -83,8 +91,15 @@ def test_conversational_wake_keeps_one_state_and_closes_once():
 def test_conversational_wake_rejects_internal_eoc():
     with pytest.raises(RuntimeError, match="EOC inside wake"):
         run_conversational_wake(
-            Model(next_token=5), Tokenizer(), ["Ada in Rome"], None,
-            "[USER]", "[ASSISTANT]", "<EOC>", reply_tokens=4, evidence_tokens=512,
+            Model(next_token=5),
+            Tokenizer(),
+            ["Ada in Rome"],
+            None,
+            "[USER]",
+            "[ASSISTANT]",
+            "<EOC>",
+            reply_tokens=4,
+            evidence_tokens=512,
         )
 
 
@@ -104,10 +119,20 @@ def test_lama_dream_diagnostics_reports_bindings_misbindings_and_copies():
         {"subject": "Bob", "object": "Oslo"},
     ]
     dreams = [
-        SimpleNamespace(token_texts=["Ada remembers Rome. Bob remembers Rome."],
-                        dream_ids=[1, 2, 3, 4], prefix_len=0, stop_reason="eoc", dream_sha="a"),
-        SimpleNamespace(token_texts=["Bob remembers Oslo."], dream_ids=[9, 8],
-                        prefix_len=0, stop_reason="max-tokens", dream_sha="b"),
+        SimpleNamespace(
+            token_texts=["Ada remembers Rome. Bob remembers Rome."],
+            dream_ids=[1, 2, 3, 4],
+            prefix_len=0,
+            stop_reason="eoc",
+            dream_sha="a",
+        ),
+        SimpleNamespace(
+            token_texts=["Bob remembers Oslo."],
+            dream_ids=[9, 8],
+            prefix_len=0,
+            stop_reason="max-tokens",
+            dream_sha="b",
+        ),
     ]
 
     result = lama_dream_diagnostics(dreams, rows, [1, 2, 3, 7])

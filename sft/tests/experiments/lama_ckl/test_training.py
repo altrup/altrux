@@ -28,8 +28,13 @@ def test_train_document_epoch_masks_padding_and_updates_once_per_batch():
     before = model.output.weight.detach().clone()
 
     result = train_document_epoch(
-        model, optimizer, [[1, 2, 3], [4, 5], [6, 7, 8, 9]],
-        [[0, 1], [2]], pad_id=0, device="cpu", label="test",
+        model,
+        optimizer,
+        [[1, 2, 3], [4, 5], [6, 7, 8, 9]],
+        [[0, 1], [2]],
+        pad_id=0,
+        device="cpu",
+        label="test",
     )
 
     assert result["optimizer_steps"] == 2

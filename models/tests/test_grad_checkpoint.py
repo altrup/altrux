@@ -103,7 +103,9 @@ def _loss_and_grads(model, ids, state0, names_params):
     target = (ids + 1) % VOCAB
     loss = F.cross_entropy(logits.reshape(-1, VOCAB), target.reshape(-1))
     grads = torch.autograd.grad(loss, [p for _, p in names_params], allow_unused=True)
-    return loss.detach(), {n: (g.detach() if g is not None else None) for (n, _), g in zip(names_params, grads)}
+    return loss.detach(), {
+        n: (g.detach() if g is not None else None) for (n, _), g in zip(names_params, grads)
+    }
 
 
 def _fresh_state(model, proto):
@@ -148,7 +150,11 @@ def test_memory_subsystem_actually_receives_gradient():
     torch.manual_seed(3)
     proto = model._init_state(BATCH, DEVICE, torch.float32)
     _, grads = _loss_and_grads(model, _ids(), _fresh_state(model, proto), names_params)
-    for name in ("front_end.k_proj.weight", "front_end.v_proj.weight", "front_end.knob_proj.weight"):
+    for name in (
+        "front_end.k_proj.weight",
+        "front_end.v_proj.weight",
+        "front_end.knob_proj.weight",
+    ):
         g = grads[name]
         assert g is not None and g.abs().max() > 0, name
 
@@ -178,10 +184,12 @@ def test_analytic_write_gradient_matches_autograd():
 
     torch.testing.assert_close(loss_analytic, loss_autograd)
     for i, (ga, gr) in enumerate(zip(grads_analytic, grads_autograd)):
-        torch.testing.assert_close(ga, gr, rtol=1e-5, atol=1e-5, msg=lambda m, i=i: f"grad {i}: {m}")
+        torch.testing.assert_close(
+            ga, gr, rtol=1e-5, atol=1e-5, msg=lambda m, i=i: f"grad {i}: {m}"
+        )
 
-    probe_a = torch.autograd.grad(sum((g ** 2).sum() for g in grads_analytic), ks)[0]
-    probe_r = torch.autograd.grad(sum((g ** 2).sum() for g in grads_autograd), ks)[0]
+    probe_a = torch.autograd.grad(sum((g**2).sum() for g in grads_analytic), ks)[0]
+    probe_r = torch.autograd.grad(sum((g**2).sum() for g in grads_autograd), ks)[0]
     torch.testing.assert_close(probe_a, probe_r, rtol=1e-4, atol=1e-4)
 
 
@@ -212,7 +220,9 @@ def test_write_gradient_path_survives_recompute(monkeypatch):
     _, grads_first_order = _loss_and_grads(model, ids, _fresh_state(model, proto), names_params)
 
     for name in ("front_end.k_proj.weight", "front_end.v_proj.weight"):
-        assert not torch.allclose(grads_second_order[name], grads_first_order[name], rtol=1e-3, atol=1e-6), name
+        assert not torch.allclose(
+            grads_second_order[name], grads_first_order[name], rtol=1e-3, atol=1e-6
+        ), name
 
 
 def test_backward_recomputes_every_block():
@@ -277,4 +287,6 @@ def test_grad_checkpoint_matches_uncheckpointed_plain_model():
         gr, gc = grads_ref[name], grads_ckpt[name]
         assert (gr is None) == (gc is None), name
         if gr is not None:
-            torch.testing.assert_close(gc, gr, rtol=2e-4, atol=1e-5, msg=lambda m, n=name: f"{n}: {m}")
+            torch.testing.assert_close(
+                gc, gr, rtol=2e-4, atol=1e-5, msg=lambda m, n=name: f"{n}: {m}"
+            )

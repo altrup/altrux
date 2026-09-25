@@ -36,7 +36,14 @@ def _tiny_model() -> M780.Model:
         d_model=64,
         n_layer=3,
         vocab_size=VOCAB,
-        ssm_cfg={"layer": "Mamba2", "headdim": 16, "d_state": 16, "expand": 2, "ngroups": 1, "chunk_size": 8},
+        ssm_cfg={
+            "layer": "Mamba2",
+            "headdim": 16,
+            "d_state": 16,
+            "expand": 2,
+            "ngroups": 1,
+            "chunk_size": 8,
+        },
         rms_norm=True,
         fused_add_norm=False,
         tie_embeddings=True,
@@ -99,6 +106,10 @@ def test_a_set_hook_keeps_a_multi_token_forward_on_the_per_token_path(monkeypatc
     """The hook is per-token by construction (like c_capture); the fused
     chunk-scan has no place to interleave it."""
     model, ids = _tiny_model(), _ids()
-    monkeypatch.setattr(model, "_forward_chunk", lambda *a, **k: pytest.fail("erase hook must use the per-token path"))
+    monkeypatch.setattr(
+        model,
+        "_forward_chunk",
+        lambda *a, **k: pytest.fail("erase hook must use the per-token path"),
+    )
     model.erase_hook = lambda i, ssm, c: ssm
     _run(model, ids)

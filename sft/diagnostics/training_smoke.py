@@ -50,11 +50,30 @@ from training import cli, loop
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fast real-model gradient-wiring smoke test")
-    parser.add_argument("--length", type=int, default=None, help="Per-example synthetic sequence length in tokens -- defaults to accum_steps * chunk_len + 1 (accum_steps derived from --accum-tokens), so batch_size slots finish together after exactly one optimizer step")
-    parser.add_argument("--chunk-len", type=int, default=None, help="Defaults to the model's own DEFAULT_CHUNK_LEN")
-    parser.add_argument("--memory-window", type=int, default=None, help="Same meaning as training/cli.py's --memory-window -- no-op for models without set_memory_window")
-    parser.add_argument("--batch-size", type=int, default=6, help="Same meaning as training/cli.py's --batch-size")
-    parser.add_argument("--accum-tokens", type=int, default=256, help="Same meaning as training/cli.py's --accum-tokens")
+    parser.add_argument(
+        "--length",
+        type=int,
+        default=None,
+        help="Per-example synthetic sequence length in tokens -- defaults to accum_steps * chunk_len + 1 (accum_steps derived from --accum-tokens), so batch_size slots finish together after exactly one optimizer step",
+    )
+    parser.add_argument(
+        "--chunk-len", type=int, default=None, help="Defaults to the model's own DEFAULT_CHUNK_LEN"
+    )
+    parser.add_argument(
+        "--memory-window",
+        type=int,
+        default=None,
+        help="Same meaning as training/cli.py's --memory-window -- no-op for models without set_memory_window",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=6, help="Same meaning as training/cli.py's --batch-size"
+    )
+    parser.add_argument(
+        "--accum-tokens",
+        type=int,
+        default=256,
+        help="Same meaning as training/cli.py's --accum-tokens",
+    )
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--eos-weight", type=float, default=5.0)
     parser.add_argument("--lora-rank", type=int, default=16)
@@ -70,7 +89,9 @@ def main() -> None:
     print(f"device: {device}")
 
     print(f"loading {model_id} ...")
-    model, trainable_params = hooks.setup_training(device, args.lora_rank, args.lora_alpha, args.lora_dropout)
+    model, trainable_params = hooks.setup_training(
+        device, args.lora_rank, args.lora_alpha, args.lora_dropout
+    )
     optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=0.01)
 
     chunk_len = args.chunk_len or hooks.DEFAULT_CHUNK_LEN
@@ -78,7 +99,9 @@ def main() -> None:
     # `length` actually produces one optimizer step's worth of chunks.
     accum_steps = max(1, round(args.accum_tokens / chunk_len))
     length = args.length if args.length is not None else accum_steps * chunk_len + 1
-    print(f"chunk_len: {chunk_len}  batch_size: {args.batch_size}  accum_tokens: {args.accum_tokens} (accum_steps: {accum_steps})  length: {length} ({length / chunk_len:.1f} chunks/example)")
+    print(
+        f"chunk_len: {chunk_len}  batch_size: {args.batch_size}  accum_tokens: {args.accum_tokens} (accum_steps: {accum_steps})  length: {length} ({length / chunk_len:.1f} chunks/example)"
+    )
 
     # Small ids are safe for any of this project's tokenizers (vocab sizes
     # are all in the tens of thousands) -- no need to know the real vocab size.
@@ -133,10 +156,25 @@ def main() -> None:
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
             loop.run_training(
-                Path(tmp_dir), MODEL_NAME, hooks, model, optimizer, trainable_params, train_ids, train_masks,
-                [None] * len(train_ids), [None] * len(train_ids), device, run_args,
-                start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-                start_total_tokens=0.0, start_last_ckpt_tokens=0.0, start_full_state=None,
+                Path(tmp_dir),
+                MODEL_NAME,
+                hooks,
+                model,
+                optimizer,
+                trainable_params,
+                train_ids,
+                train_masks,
+                [None] * len(train_ids),
+                [None] * len(train_ids),
+                device,
+                run_args,
+                start_epoch=0,
+                start_slot_states=None,
+                start_next_ptr=0,
+                start_step=0,
+                start_total_tokens=0.0,
+                start_last_ckpt_tokens=0.0,
+                start_full_state=None,
             )
     finally:
         for h in handles:
@@ -146,8 +184,12 @@ def main() -> None:
     other_ok = grad_seen["other"]
     assert lora_ok or other_ok, "smoke test: 0 trainable params received gradients"
     assert lora_total == 0 or lora_ok, "smoke test: 0 LoRA params received gradients"
-    assert other_total == 0 or other_ok, "smoke test: 0 non-LoRA trainable params received gradients"
-    print(f"smoke test OK -- LoRA params received gradients: {lora_ok} ({lora_total} params), other trainable params received gradients: {other_ok} ({other_total} params)")
+    assert other_total == 0 or other_ok, (
+        "smoke test: 0 non-LoRA trainable params received gradients"
+    )
+    print(
+        f"smoke test OK -- LoRA params received gradients: {lora_ok} ({lora_total} params), other trainable params received gradients: {other_ok} ({other_total} params)"
+    )
 
 
 __all__ = ["main"]

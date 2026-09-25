@@ -13,7 +13,9 @@ def test_prefers_windows_around_recall_credit():
     ids = torch.arange(1000)
     recall = torch.zeros(1000, dtype=torch.bool)
     recall[600:605] = True
-    wins = pick_windows(n_tokens=1000, recall=recall, sleeps=torch.tensor([300]), n=1, width=100, seed=0)
+    wins = pick_windows(
+        n_tokens=1000, recall=recall, sleeps=torch.tensor([300]), n=1, width=100, seed=0
+    )
     lo, hi, kind = wins[0]
     assert kind == "recall"
     assert lo <= 600 and hi >= 605
@@ -21,7 +23,9 @@ def test_prefers_windows_around_recall_credit():
 
 
 def test_falls_back_to_sleeps_then_random():
-    sleep_wins = pick_windows(n_tokens=1000, recall=None, sleeps=torch.tensor([300]), n=1, width=100, seed=0)
+    sleep_wins = pick_windows(
+        n_tokens=1000, recall=None, sleeps=torch.tensor([300]), n=1, width=100, seed=0
+    )
     assert sleep_wins[0][2] == "sleep"
     lo, hi, _ = sleep_wins[0]
     assert lo <= 300 <= hi

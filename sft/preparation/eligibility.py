@@ -39,7 +39,9 @@ def main() -> None:
 
     lens = sorted(len(ids) for ids in data["ids"])
     n = len(lens)
-    print(f"{args.data}: {n} conversations; len median {lens[n // 2]}, p90 {lens[int(n * 0.9)]}, max {lens[-1]}")
+    print(
+        f"{args.data}: {n} conversations; len median {lens[n // 2]}, p90 {lens[int(n * 0.9)]}, max {lens[-1]}"
+    )
 
     counts = {(p, c): 0 for p in prefixes for c in conts}
     for i, ids in enumerate(data["ids"]):

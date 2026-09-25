@@ -68,7 +68,9 @@ def parse_grid(spec: str) -> list[tuple[int, int]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--grid", default=DEFAULT_GRID, help="n_facts x filler_tokens cells (default: %(default)s)")
+    parser.add_argument(
+        "--grid", default=DEFAULT_GRID, help="n_facts x filler_tokens cells (default: %(default)s)"
+    )
     parser.add_argument("--chunk-len", type=int, default=None)
     parser.add_argument("--gen-tokens", type=int, default=16)
     parser.add_argument("--seed", type=int, default=1234)
@@ -105,13 +107,19 @@ def main() -> None:
     model, _ = train_hooks.setup_training(device, 16, 32.0, 0.0)
     model.eval()
     has_memory = set_memory_injection(model, not args.no_memory)
-    print(f"[{ts()}] memory injection: {'absent' if not has_memory else ('off' if args.no_memory else 'on')}")
+    print(
+        f"[{ts()}] memory injection: {'absent' if not has_memory else ('off' if args.no_memory else 'on')}"
+    )
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN
     stops = (".", "\n", user_open, asst_open)
 
     def encode(text: str) -> torch.Tensor:
-        return torch.tensor([tokenizer(text, add_special_tokens=False)["input_ids"]], dtype=torch.long, device=device)
+        return torch.tensor(
+            [tokenizer(text, add_special_tokens=False)["input_ids"]],
+            dtype=torch.long,
+            device=device,
+        )
 
     def token_len(s: str) -> int:
         return len(tokenizer(s, add_special_tokens=False)["input_ids"])
@@ -129,8 +137,10 @@ def main() -> None:
         transcript = encode(render_turns(turns, user_open, asst_open))
         n_tokens = transcript.shape[1]
         violations = role_adjacency_violations(turns)
-        print(f"\n[{ts()}] === {n_facts} facts x {filler} filler -> {n_tokens} tokens "
-              f"(role violations {violations}, must be 0) ===")
+        print(
+            f"\n[{ts()}] === {n_facts} facts x {filler} filler -> {n_tokens} tokens "
+            f"(role violations {violations}, must be 0) ==="
+        )
 
         _, primed = run_chunks(model, transcript, None, chunk_len, "prime", keep_logits=False)
 
@@ -140,18 +150,35 @@ def main() -> None:
         hit_positions: list[int] = []
         for i, fact in enumerate(facts):
             prompt = encode(cue_rungs(fact, user_open, asst_open)[0][0])
-            gen = tokenizer.decode(generate(model, prompt, copy.deepcopy(primed), args.gen_tokens, 0.0)[0].cpu())
+            gen = tokenizer.decode(
+                generate(model, prompt, copy.deepcopy(primed), args.gen_tokens, 0.0)[0].cpu()
+            )
             hit = exact_match(gen, fact.code, stops)
             n_hit += hit
             if hit:
                 hit_positions.append(i)
-            out_file.write(json.dumps({
-                "n_facts": n_facts, "filler_tokens": filler, "transcript_tokens": n_tokens,
-                "index": i, "fact": fact.entity, "code": fact.code, "gen": gen, "match": hit,
-            }) + "\n")
+            out_file.write(
+                json.dumps(
+                    {
+                        "n_facts": n_facts,
+                        "filler_tokens": filler,
+                        "transcript_tokens": n_tokens,
+                        "index": i,
+                        "fact": fact.entity,
+                        "code": fact.code,
+                        "gen": gen,
+                        "match": hit,
+                    }
+                )
+                + "\n"
+            )
             out_file.flush()
-            print(f"\r[{ts()}]  probe {i + 1}/{n_facts} {fact.entity:<11} "
-                  f"{'HIT ' if hit else 'miss'}  running {n_hit / (i + 1):.2f}", end="", flush=True)
+            print(
+                f"\r[{ts()}]  probe {i + 1}/{n_facts} {fact.entity:<11} "
+                f"{'HIT ' if hit else 'miss'}  running {n_hit / (i + 1):.2f}",
+                end="",
+                flush=True,
+            )
         print()
 
         rate = n_hit / n_facts
@@ -160,12 +187,19 @@ def main() -> None:
         late = [p for p in hit_positions if p >= n_facts / 2]
         late_rate = len(late) / max(1, n_facts - n_facts // 2)
         verdict = "OK" if rate >= CONTROL_THRESHOLD else "BELOW CONTROL THRESHOLD"
-        print(f"[{ts()}] {n_facts}x{filler}: in-context {rate:.3f} ({n_hit}/{n_facts})  "
-              f"late-half {late_rate:.3f}  hit indices {hit_positions}  -> {verdict}")
+        print(
+            f"[{ts()}] {n_facts}x{filler}: in-context {rate:.3f} ({n_hit}/{n_facts})  "
+            f"late-half {late_rate:.3f}  hit indices {hit_positions}  -> {verdict}"
+        )
         record = {
-            "n_facts": n_facts, "filler_tokens": filler, "transcript_tokens": n_tokens,
-            "in_context_rate": rate, "late_half_rate": late_rate,
-            "hit_indices": hit_positions, "threshold": CONTROL_THRESHOLD, "phase": "cell",
+            "n_facts": n_facts,
+            "filler_tokens": filler,
+            "transcript_tokens": n_tokens,
+            "in_context_rate": rate,
+            "late_half_rate": late_rate,
+            "hit_indices": hit_positions,
+            "threshold": CONTROL_THRESHOLD,
+            "phase": "cell",
             "memory_injection": has_memory and not args.no_memory,
         }
         results.append(record)
@@ -179,15 +213,21 @@ def main() -> None:
     print(f"[{ts()}]   {'cell':<12} {'tokens':>7}  {'rate':>6}  {'late':>6}")
     for r in results:
         cell = f"{r['n_facts']}x{r['filler_tokens']}"
-        print(f"[{ts()}]   {cell:<12} {r['transcript_tokens']:>7}  "
-              f"{float(r['in_context_rate']):>6.3f}  {float(r['late_half_rate']):>6.3f}")
+        print(
+            f"[{ts()}]   {cell:<12} {r['transcript_tokens']:>7}  "
+            f"{float(r['in_context_rate']):>6.3f}  {float(r['late_half_rate']):>6.3f}"
+        )
     passing = [r for r in results if float(r["in_context_rate"]) >= CONTROL_THRESHOLD]
     if passing:
         best = max(passing, key=lambda r: int(r["n_facts"]))
-        print(f"[{ts()}] largest n_facts clearing {CONTROL_THRESHOLD}: "
-              f"{best['n_facts']} (filler {best['filler_tokens']}) -- run the null there")
+        print(
+            f"[{ts()}] largest n_facts clearing {CONTROL_THRESHOLD}: "
+            f"{best['n_facts']} (filler {best['filler_tokens']}) -- run the null there"
+        )
     else:
-        print(f"[{ts()}] NO cell cleared {CONTROL_THRESHOLD} -- the null has no valid operating point on this grid")
+        print(
+            f"[{ts()}] NO cell cleared {CONTROL_THRESHOLD} -- the null has no valid operating point on this grid"
+        )
     print(f"[{ts()}] -> {out_path}")
 
 

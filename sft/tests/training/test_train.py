@@ -53,7 +53,9 @@ class FakeHooks:
     @staticmethod
     def chunk_loss(model, input_ids, target_ids, mask_slice, state, eos_weight):
         logits, state = model(input_ids, state=state)
-        loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none")
+        loss = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1), reduction="none"
+        )
         weight = mask_slice.reshape(-1).float() if mask_slice is not None else torch.ones_like(loss)
         return (loss * weight).sum(), weight.sum(), state
 
@@ -66,6 +68,7 @@ def _ids(n, seed=0):
 # ---------------------------------------------------------------------------
 # dataset_fingerprint -- lets resume detect a --data swap
 # ---------------------------------------------------------------------------
+
 
 def test_dataset_fingerprint_differs_for_different_paths_or_sizes(tmp_path):
     a = tmp_path / "a.pt"
@@ -81,9 +84,17 @@ def test_save_checkpoint_stores_given_dataset_fingerprint(monkeypatch, tmp_path)
     slots = [loop._Slot(0, 0, _ids(5), None)]
     fp = datasets.dataset_fingerprint("some/train.pt", 42)
 
-    path = checkpoints.save_checkpoint(tmp_path,
-        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=1.0, lora_rank=4, lora_alpha=8.0,
+    path = checkpoints.save_checkpoint(
+        tmp_path,
+        model,
+        optimizer,
+        step=1,
+        epoch=0,
+        slots=slots,
+        next_ptr=1,
+        total_tokens=1.0,
+        lora_rank=4,
+        lora_alpha=8.0,
         dataset_fingerprint=fp,
     )
 
@@ -95,15 +106,24 @@ def test_save_checkpoint_stores_given_dataset_fingerprint(monkeypatch, tmp_path)
 # save_checkpoint / load_checkpoint round trip with slot_states + token counters
 # ---------------------------------------------------------------------------
 
+
 def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch, tmp_path):
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     slots = [loop._Slot(0, 12, _ids(5), None)]
     slots[0].pos = 8
 
-    path = checkpoints.save_checkpoint(tmp_path,
-        model, optimizer, step=5, epoch=0, slots=slots, next_ptr=13,
-        total_tokens=123.0, lora_rank=4, lora_alpha=8.0,
+    path = checkpoints.save_checkpoint(
+        tmp_path,
+        model,
+        optimizer,
+        step=5,
+        epoch=0,
+        slots=slots,
+        next_ptr=13,
+        total_tokens=123.0,
+        lora_rank=4,
+        lora_alpha=8.0,
     )
 
     state = torch.load(path / "state.pt", weights_only=True)
@@ -112,9 +132,12 @@ def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch
     # a record of whatever the caller's baseline was before this save (see
     # save_checkpoint's docstring for why that distinction matters).
     assert state == {
-        "epoch": 0, "slot_states": [(12, 8, 0)], "next_ptr": 13,
+        "epoch": 0,
+        "slot_states": [(12, 8, 0)],
+        "next_ptr": 13,
         "dataset_fingerprint": None,
-        "total_tokens": 123.0, "last_ckpt_tokens": 123.0,
+        "total_tokens": 123.0,
+        "last_ckpt_tokens": 123.0,
     }
 
 
@@ -122,15 +145,24 @@ def test_checkpoint_state_round_trips_slot_states_and_token_counters(monkeypatch
 # save_checkpoint / rotate_full_state -- optional full internal state
 # ---------------------------------------------------------------------------
 
+
 def test_save_checkpoint_writes_mem_state_when_batched_state_given(monkeypatch, tmp_path):
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     slots = [loop._Slot(0, 3, _ids(5), None)]
     slots[0].pos = 2
 
-    path = checkpoints.save_checkpoint(tmp_path,
-        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
+    path = checkpoints.save_checkpoint(
+        tmp_path,
+        model,
+        optimizer,
+        step=1,
+        epoch=0,
+        slots=slots,
+        next_ptr=1,
+        total_tokens=10.0,
+        lora_rank=4,
+        lora_alpha=8.0,
         batched_state=torch.tensor([1.0, 2.0]),
     )
 
@@ -144,9 +176,17 @@ def test_save_checkpoint_omits_mem_state_when_batched_state_is_none(monkeypatch,
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     slots = [loop._Slot(0, 3, _ids(5), None)]
 
-    path = checkpoints.save_checkpoint(tmp_path,
-        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
+    path = checkpoints.save_checkpoint(
+        tmp_path,
+        model,
+        optimizer,
+        step=1,
+        epoch=0,
+        slots=slots,
+        next_ptr=1,
+        total_tokens=10.0,
+        lora_rank=4,
+        lora_alpha=8.0,
     )
 
     assert not (path / "mem_state.pt").exists()
@@ -158,9 +198,17 @@ def test_save_checkpoint_crashing_mid_save_leaves_previous_checkpoint_newest(mon
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     slots = [loop._Slot(0, 3, _ids(5), None)]
-    good = checkpoints.save_checkpoint(tmp_path,
-        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=10.0, lora_rank=4, lora_alpha=8.0,
+    good = checkpoints.save_checkpoint(
+        tmp_path,
+        model,
+        optimizer,
+        step=1,
+        epoch=0,
+        slots=slots,
+        next_ptr=1,
+        total_tokens=10.0,
+        lora_rank=4,
+        lora_alpha=8.0,
     )
 
     real_save = torch.save
@@ -173,9 +221,17 @@ def test_save_checkpoint_crashing_mid_save_leaves_previous_checkpoint_newest(mon
     monkeypatch.setattr(checkpoints.torch, "save", fail_writing_state)
 
     with pytest.raises(RuntimeError):
-        checkpoints.save_checkpoint(tmp_path,
-            model, optimizer, step=2, epoch=0, slots=slots, next_ptr=1,
-            total_tokens=20.0, lora_rank=4, lora_alpha=8.0,
+        checkpoints.save_checkpoint(
+            tmp_path,
+            model,
+            optimizer,
+            step=2,
+            epoch=0,
+            slots=slots,
+            next_ptr=1,
+            total_tokens=20.0,
+            lora_rank=4,
+            lora_alpha=8.0,
         )
 
     assert [s for s, _ in checkpoints.iter_checkpoints(tmp_path)] == [1]
@@ -187,9 +243,17 @@ def test_rotate_full_state_keeps_mem_state_only_in_newest_n(monkeypatch, tmp_pat
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     slots = [loop._Slot(0, 0, _ids(5), None)]
     paths = [
-        checkpoints.save_checkpoint(tmp_path,
-            model, optimizer, step=step, epoch=0, slots=slots, next_ptr=1,
-            total_tokens=float(step), lora_rank=4, lora_alpha=8.0,
+        checkpoints.save_checkpoint(
+            tmp_path,
+            model,
+            optimizer,
+            step=step,
+            epoch=0,
+            slots=slots,
+            next_ptr=1,
+            total_tokens=float(step),
+            lora_rank=4,
+            lora_alpha=8.0,
             batched_state=torch.tensor([1.0]),
         )
         for step in (1, 2, 3)
@@ -208,9 +272,17 @@ def test_rotate_full_state_zero_removes_all(monkeypatch, tmp_path):
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     slots = [loop._Slot(0, 0, _ids(5), None)]
-    path = checkpoints.save_checkpoint(tmp_path,
-        model, optimizer, step=1, epoch=0, slots=slots, next_ptr=1,
-        total_tokens=1.0, lora_rank=4, lora_alpha=8.0,
+    path = checkpoints.save_checkpoint(
+        tmp_path,
+        model,
+        optimizer,
+        step=1,
+        epoch=0,
+        slots=slots,
+        next_ptr=1,
+        total_tokens=1.0,
+        lora_rank=4,
+        lora_alpha=8.0,
         batched_state=torch.tensor([1.0]),
     )
 
@@ -223,25 +295,41 @@ def test_rotate_full_state_zero_removes_all(monkeypatch, tmp_path):
 # main training loop: token-based checkpoint cadence, mid-example resume
 # ---------------------------------------------------------------------------
 
+
 def _make_args(**overrides):
     defaults = dict(
         # accum_tokens=4 with chunk_len=4 derives to accum_steps=1 (see
         # run_training's accum_tokens -> accum_steps derivation), matching
         # the old accum_steps=1 default these tests were written against.
-        epochs=1, eos_weight=1.0, recall_weight=1.0, head_weight=1.0, head_tokens=1024,
-        accum_tokens=4, chunk_len=4,
-        ckpt_every_tokens=8, keep_ckpts=5, keep_full_state=5, lora_rank=4, lora_alpha=8.0,
-        max_len=float("inf"), batch_size=1, data="fake_dataset.pt",
+        epochs=1,
+        eos_weight=1.0,
+        recall_weight=1.0,
+        head_weight=1.0,
+        head_tokens=1024,
+        accum_tokens=4,
+        chunk_len=4,
+        ckpt_every_tokens=8,
+        keep_ckpts=5,
+        keep_full_state=5,
+        lora_rank=4,
+        lora_alpha=8.0,
+        max_len=float("inf"),
+        batch_size=1,
+        data="fake_dataset.pt",
         # warmup_steps=0 disables warmup so these tests keep the constant
         # --lr they were written against.
-        warmup_steps=0, lr=1e-3,
+        warmup_steps=0,
+        lr=1e-3,
     )
     defaults.update(overrides)
     from types import SimpleNamespace
+
     return SimpleNamespace(**defaults)
 
 
-def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(monkeypatch, tmp_path):
+def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
+    monkeypatch, tmp_path
+):
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -253,10 +341,25 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     train_masks = [None]
     args = _make_args(ckpt_every_tokens=8)  # 8 tokens = 2 chunks in
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
-        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model,
+        optimizer,
+        trainable_params,
+        train_ids,
+        train_masks,
+        [None] * len(train_ids),
+        [None] * len(train_ids),
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
 
     ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
@@ -268,7 +371,9 @@ def test_run_training_checkpoints_mid_example_and_resume_continues_same_example(
     assert example_idx == 0
 
 
-def test_run_training_resume_from_mid_example_checkpoint_continues_without_crashing(monkeypatch, tmp_path):
+def test_run_training_resume_from_mid_example_checkpoint_continues_without_crashing(
+    monkeypatch, tmp_path
+):
     torch.manual_seed(0)
     model = FakeStatefulModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -278,10 +383,25 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     train_masks = [None]
     args = _make_args(ckpt_every_tokens=8)
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model, optimizer, trainable_params, train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
-        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model,
+        optimizer,
+        trainable_params,
+        train_ids,
+        train_masks,
+        [None] * len(train_ids),
+        [None] * len(train_ids),
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
     ckpt = checkpoints.latest_checkpoint(tmp_path)
     saved_state = torch.load(ckpt / "state.pt", weights_only=True)
@@ -291,20 +411,37 @@ def test_run_training_resume_from_mid_example_checkpoint_continues_without_crash
     checkpoints.load_checkpoint(model2, ckpt)
     optimizer2 = torch.optim.AdamW(model2.parameters(), lr=1e-3)
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model2, optimizer2, list(model2.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
-        start_epoch=saved_state["epoch"], start_slot_states=saved_state["slot_states"],
-        start_next_ptr=saved_state["next_ptr"], start_step=0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model2,
+        optimizer2,
+        list(model2.parameters()),
+        train_ids,
+        train_masks,
+        [None] * len(train_ids),
+        [None] * len(train_ids),
+        "cpu",
+        args,
+        start_epoch=saved_state["epoch"],
+        start_slot_states=saved_state["slot_states"],
+        start_next_ptr=saved_state["next_ptr"],
+        start_step=0,
         start_total_tokens=saved_state["total_tokens"],
         start_last_ckpt_tokens=saved_state["last_ckpt_tokens"],
     )
 
     final_ckpt = checkpoints.latest_checkpoint(tmp_path)
     final_state = torch.load(final_ckpt / "state.pt", weights_only=True)
-    assert final_state["total_tokens"] >= 27  # whole 28-token example (27 targets) eventually trained on
+    assert (
+        final_state["total_tokens"] >= 27
+    )  # whole 28-token example (27 targets) eventually trained on
 
 
-def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_zero(monkeypatch, tmp_path):
+def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_zero(
+    monkeypatch, tmp_path
+):
     """Regression: with no saved internal state (start_full_state=None), a
     slot that was mid-example at checkpoint time must restart that example
     from position 0 rather than continuing from its saved position --
@@ -320,10 +457,25 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     # one before we can inspect it.
     args = _make_args(ckpt_every_tokens=4, keep_ckpts=99)
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
-        start_epoch=0, start_slot_states=[(0, 12)], start_next_ptr=0, start_step=0,
-        start_total_tokens=12.0, start_last_ckpt_tokens=12.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        train_masks,
+        [None] * len(train_ids),
+        [None] * len(train_ids),
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=[(0, 12)],
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=12.0,
+        start_last_ckpt_tokens=12.0,
     )
 
     ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
@@ -331,7 +483,9 @@ def test_run_training_resume_without_saved_state_restarts_mid_example_slot_from_
     state = torch.load(first_ckpt_path / "state.pt", weights_only=True)
     example_idx, pos, _ = state["slot_states"][0]
     assert example_idx == 0
-    assert pos == 4, "should restart from 0 (then advance one chunk), not continue from the saved pos 12"
+    assert pos == 4, (
+        "should restart from 0 (then advance one chunk), not continue from the saved pos 12"
+    )
 
 
 def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monkeypatch, tmp_path):
@@ -347,10 +501,25 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
     # the slot back to None, which isn't the boundary this test is about.
     args = _make_args(ckpt_every_tokens=12)
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, train_masks, [None] * len(train_ids), [None] * len(train_ids), "cpu", args,
-        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        train_masks,
+        [None] * len(train_ids),
+        [None] * len(train_ids),
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
 
     ckpts = sorted(checkpoints.iter_checkpoints(tmp_path))
@@ -365,6 +534,7 @@ def test_run_training_resume_at_example_boundary_starts_next_example_fresh(monke
 # ---------------------------------------------------------------------------
 # per-token loss weighting: --recall-weight / --head-weight
 # ---------------------------------------------------------------------------
+
 
 class _RecordingHooks(FakeHooks):
     """FakeHooks that records every weight tensor passed to chunk_loss."""
@@ -386,10 +556,25 @@ def _run_with_weights(tmp_path, monkeypatch, recall, args):
     class Hooks(_RecordingHooks):
         recorded = []
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [recall], [None], "cpu", args,
-        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None],
+        [recall],
+        [None],
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
     # (n_chunks, chunk_len) weights for the single slot, target positions 1..12
     return torch.cat([w[0] for w in Hooks.recorded])
@@ -424,10 +609,25 @@ def test_train_mask_zeroes_weights_of_untrainable_target_tokens(monkeypatch, tmp
     class Hooks(_RecordingHooks):
         recorded = []
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), [_ids(13, seed=3)], [mask], [None], [None], "cpu",
-        _make_args(), start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        [_ids(13, seed=3)],
+        [mask],
+        [None],
+        [None],
+        "cpu",
+        _make_args(),
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
     weights = torch.cat([w[0] for w in Hooks.recorded])
     # weight index i covers target token at absolute position i + 1
@@ -437,6 +637,7 @@ def test_train_mask_zeroes_weights_of_untrainable_target_tokens(monkeypatch, tmp
 # ---------------------------------------------------------------------------
 # sleep_positions: mid-example backbone resets (episodic chains)
 # ---------------------------------------------------------------------------
+
 
 class _SleepRecordingHooks(_RecordingHooks):
     """Adds a sleep_slot hook that records each firing as (slot_idx, chunks
@@ -460,10 +661,25 @@ def _run_with_sleeps(tmp_path, monkeypatch, sleeps, args, n_tokens=13):
         recorded = []
         fired = []
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None], [sleeps], "cpu", args,
-        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=0,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None],
+        [None],
+        [sleeps],
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=0,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
     return Hooks
 
@@ -499,11 +715,26 @@ def test_resume_does_not_refire_sleeps_already_reflected_in_saved_state(monkeypa
         recorded = []
         fired = []
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), train_ids, [None], [None],
-        [torch.tensor([6])], "cpu", _make_args(),
-        start_epoch=0, start_slot_states=[(0, 8, 1)], start_next_ptr=1, start_step=0,
-        start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None],
+        [None],
+        [torch.tensor([6])],
+        "cpu",
+        _make_args(),
+        start_epoch=0,
+        start_slot_states=[(0, 8, 1)],
+        start_next_ptr=1,
+        start_step=0,
+        start_total_tokens=8.0,
+        start_last_ckpt_tokens=8.0,
+        start_full_state=full_state,
     )
     assert Hooks.fired == []
 
@@ -521,11 +752,26 @@ def test_resume_fires_a_sleep_reached_but_not_yet_fired_at_save_time(monkeypatch
         recorded = []
         fired = []
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), [_ids(13, seed=3)], [None], [None],
-        [torch.tensor([6])], "cpu", _make_args(),
-        start_epoch=0, start_slot_states=[(0, 8, 0)], start_next_ptr=1, start_step=0,
-        start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        [_ids(13, seed=3)],
+        [None],
+        [None],
+        [torch.tensor([6])],
+        "cpu",
+        _make_args(),
+        start_epoch=0,
+        start_slot_states=[(0, 8, 0)],
+        start_next_ptr=1,
+        start_step=0,
+        start_total_tokens=8.0,
+        start_last_ckpt_tokens=8.0,
+        start_full_state=full_state,
     )
     assert Hooks.fired == [(0, 0)]
 
@@ -543,11 +789,26 @@ def test_resume_trains_every_example_after_the_in_flight_one(monkeypatch, tmp_pa
     class Hooks(_RecordingHooks):
         recorded = []
 
-    loop.run_training(tmp_path, "test",
-        Hooks, model, optimizer, list(model.parameters()), train_ids, [None] * 3, [None] * 3,
-        [None] * 3, "cpu", _make_args(ckpt_every_tokens=10**9),
-        start_epoch=0, start_slot_states=[(0, 8, 0)], start_next_ptr=1, start_step=0,
-        start_total_tokens=8.0, start_last_ckpt_tokens=8.0, start_full_state=full_state,
+    loop.run_training(
+        tmp_path,
+        "test",
+        Hooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None] * 3,
+        [None] * 3,
+        [None] * 3,
+        "cpu",
+        _make_args(ckpt_every_tokens=10**9),
+        start_epoch=0,
+        start_slot_states=[(0, 8, 0)],
+        start_next_ptr=1,
+        start_step=0,
+        start_total_tokens=8.0,
+        start_last_ckpt_tokens=8.0,
+        start_full_state=full_state,
     )
     assert len(Hooks.recorded) == 7
 
@@ -555,6 +816,7 @@ def test_resume_trains_every_example_after_the_in_flight_one(monkeypatch, tmp_pa
 # ---------------------------------------------------------------------------
 # --max-steps: stop after N optimizer steps
 # ---------------------------------------------------------------------------
+
 
 def _run_to_max_steps(monkeypatch, tmp_path, max_steps, start_step=0):
     torch.manual_seed(0)
@@ -564,11 +826,25 @@ def _run_to_max_steps(monkeypatch, tmp_path, max_steps, start_step=0):
     train_ids = [_ids(41, seed=i) for i in range(10)]
     args = _make_args(max_steps=max_steps, ckpt_every_tokens=10**9)
 
-    loop.run_training(tmp_path, "test",
-        FakeHooks, model, optimizer, list(model.parameters()), train_ids, [None] * 10,
-        [None] * 10, [None] * 10, "cpu", args,
-        start_epoch=0, start_slot_states=None, start_next_ptr=0, start_step=start_step,
-        start_total_tokens=0.0, start_last_ckpt_tokens=0.0,
+    loop.run_training(
+        tmp_path,
+        "test",
+        FakeHooks,
+        model,
+        optimizer,
+        list(model.parameters()),
+        train_ids,
+        [None] * 10,
+        [None] * 10,
+        [None] * 10,
+        "cpu",
+        args,
+        start_epoch=0,
+        start_slot_states=None,
+        start_next_ptr=0,
+        start_step=start_step,
+        start_total_tokens=0.0,
+        start_last_ckpt_tokens=0.0,
     )
     return max(step for step, _ in checkpoints.iter_checkpoints(tmp_path))
 
@@ -586,6 +862,7 @@ def test_max_steps_counts_global_step_so_a_resumed_run_finishes_the_budget(monke
 # ---------------------------------------------------------------------------
 # load_checkpoint -- marker_delta rows grown by a new special token
 # ---------------------------------------------------------------------------
+
 
 class _MarkerHolder(torch.nn.Module):
     def __init__(self, rows: int):

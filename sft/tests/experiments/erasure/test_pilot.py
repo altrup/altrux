@@ -27,9 +27,29 @@ FACTS = [Fact("osprey", "bird", "5 9 7 9 7")]
 N = 32
 LAYERS = 2
 # " 5 9 7 9 7" is the only token the binding scan will land on, twice per dream.
-TEXTS = ["The", " code", " for", " the", " osprey", " is", " 5 9 7 9 7", ".",
-         "The", " code", " for", " the", " osprey", " is", " 5 9 7 9 7", ".",
-         " Then", " something", " else", " entirely", "."]
+TEXTS = [
+    "The",
+    " code",
+    " for",
+    " the",
+    " osprey",
+    " is",
+    " 5 9 7 9 7",
+    ".",
+    "The",
+    " code",
+    " for",
+    " the",
+    " osprey",
+    " is",
+    " 5 9 7 9 7",
+    ".",
+    " Then",
+    " something",
+    " else",
+    " entirely",
+    ".",
+]
 FACT_AT = (6, 14)
 
 
@@ -56,9 +76,15 @@ def _dream(seed: int, separable: bool = True) -> PilotDream:
         # Non-separable: the state moved every prediction the same amount, so
         # D_t knows nothing about which position was a memory read.
         divergence.append((5.0 if fact else 0.1) if separable else 1.0)
-    return PilotDream(dream_sha=f"sha{seed}", token_texts=list(TEXTS), divergence=divergence,
-                      queries=queries, cue_flags=[False] * len(TEXTS), prefix_len=1,
-                      stop_reason="eoc")
+    return PilotDream(
+        dream_sha=f"sha{seed}",
+        token_texts=list(TEXTS),
+        divergence=divergence,
+        queries=queries,
+        cue_flags=[False] * len(TEXTS),
+        prefix_len=1,
+        stop_reason="eoc",
+    )
 
 
 def _capture(separable: bool = True, battery: bool = True) -> PilotCapture:
@@ -67,10 +93,16 @@ def _capture(separable: bool = True, battery: bool = True) -> PilotCapture:
     batt = torch.zeros(1, N)
     batt[0, 1] = 1.0
     return PilotCapture(
-        seed=1234, facts=[(f.entity, f.category, f.code) for f in FACTS], wake_state=state,
+        seed=1234,
+        facts=[(f.entity, f.category, f.code) for f in FACTS],
+        wake_state=state,
         dreams=[_dream(1, separable), _dream(2, separable)],
-        battery_queries={"who wrote it?": [[batt.half() for _ in range(LAYERS)]]} if battery else {},
-        gate_threshold=1.0, rank_rule="ratio-gap", set_sha="set",
+        battery_queries={"who wrote it?": [[batt.half() for _ in range(LAYERS)]]}
+        if battery
+        else {},
+        gate_threshold=1.0,
+        rank_rule="ratio-gap",
+        set_sha="set",
     )
 
 
@@ -137,8 +169,12 @@ def test_battery_queries_join_the_collateral_pool_when_the_capture_has_them():
     row = _score(tau=1.0)
 
     assert row["battery_removed"] is not None
-    assert score_scheme(_capture(battery=False), "hard@t1.0", 1.0, "hard", "raw",
-                        "ratio-gap")["battery_removed"] is None
+    assert (
+        score_scheme(_capture(battery=False), "hard@t1.0", 1.0, "hard", "raw", "ratio-gap")[
+            "battery_removed"
+        ]
+        is None
+    )
 
 
 def test_the_weighted_families_weight_the_queries_entering_the_svd():
@@ -153,8 +189,13 @@ def test_the_weighted_families_weight_the_queries_entering_the_svd():
 
 
 def _row(scheme, target, collateral, family="hard", ok=True):
-    return {"scheme": scheme, "family": family, "target_removed": target,
-            "collateral_removed": collateral, "ok": ok}
+    return {
+        "scheme": scheme,
+        "family": family,
+        "target_removed": target,
+        "collateral_removed": collateral,
+        "ok": ok,
+    }
 
 
 def test_a_pareto_front_with_no_dominator_falls_through_to_the_knee():
@@ -170,8 +211,12 @@ def test_a_pareto_front_with_no_dominator_falls_through_to_the_knee():
 
 
 def test_a_scheme_that_dominates_every_other_wins_at_step_two():
-    front = [_row("mid", 0.80, 0.10), _row("greedy", 0.90, 0.20), _row("timid", 0.70, 0.05),
-             _row("dominator", 0.95, 0.05)]
+    front = [
+        _row("mid", 0.80, 0.10),
+        _row("greedy", 0.90, 0.20),
+        _row("timid", 0.70, 0.05),
+        _row("dominator", 0.95, 0.05),
+    ]
 
     assert recommend(front)["scheme"] == "dominator"
 
@@ -311,10 +356,12 @@ def test_expmed_is_scale_invariant_where_a_bare_exponential_is_not():
         return [x / total for x in w]
 
     assert shape(scheme_weights(d, "expmed")) == pytest.approx(
-        shape(scheme_weights(scaled, "expmed")), abs=1e-9)
+        shape(scheme_weights(scaled, "expmed")), abs=1e-9
+    )
     # the power families share that property; a bare exp would not
     assert shape(scheme_weights(d, "power3")) == pytest.approx(
-        shape(scheme_weights(scaled, "power3")), abs=1e-9)
+        shape(scheme_weights(scaled, "power3")), abs=1e-9
+    )
 
 
 def test_expmed_sits_between_the_power_families_in_steepness():
