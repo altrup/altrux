@@ -1,5 +1,11 @@
 # Notes index
 
+## Status (2026-09-25)
+
+- **Active:** continual learning under the LAMA-CKL wake/dream protocol. This is the only governing direction.
+- **Retired:** the neural-memory model (M, erase-on-read, state/token-mix integration). Its notes are historical record, not roadmap. See the known-bugs list before reviving any of it.
+- **Side interest, not scheduled:** internal thinking by recurrent depth with KL-convergence exit (open idea in the [2026-07-23 discussion](discussion/DISCUSSION-20260723-780m-integration-screen.md)). Nothing built; no run planned.
+
 ## Current reading path
 
 Read [the rented-GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu-handoff.md), [the LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md), then [the modern LLM CL evaluation review](research/RESEARCH-20260823-modern-llm-continual-learning-evaluations.md), [the benchmark selection review](research/RESEARCH-20260821-continual-knowledge-benchmark-selection.md), and [the dream-distillation prior-art review](research/RESEARCH-20260805-dream-distillation-prior-art.md). The [earlier six-wake design](discussion/DISCUSSION-20260811-multisleep-adaptive-wake-and-agent-migration.md) is retained as engineering evidence, not the next science target. The [2026-08-14 generalizability discussion](discussion/DISCUSSION-20260814-generalizable-cl-evaluation-design.md) records a rejected bespoke benchmark proposal and is not governing direction. Open older notes only when one of these documents links a decision or a live question needs its source.
