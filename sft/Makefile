@@ -25,6 +25,12 @@ sync:
 		echo "No CUDA (non-ROCm) GPU detected -- skipping causal-conv1d (broken on this project's ROCm gfx1102 dev box, see root CLAUDE.md); models fall back to the manual per-token loop"; \
 	fi
 
+fmt:
+	uv run --no-sync ruff format . ../models ../scripts
+
+lint:
+	uv run --no-sync ruff format --check . ../models ../scripts
+
 test:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest tests ../models/tests
 
