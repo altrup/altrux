@@ -110,17 +110,23 @@ compare only update treatments on that split.
    multi-seed result. Then use a separately frozen Mamba-conditioned official
    split for frozen, native LoRA, Mix-Review, and Altrux arms. This is the first
    controlled test, not the final claim.
-2. **CITB.** Run one published CITB stream unchanged after the factual method
+2. **CKL.** Run the released CC-RecentNews stream and the four probe sets
+   unchanged, scored by exact match, and report FUAR beside the per-epoch
+   curves. This is the first real-stream test with an updating axis and six
+   published baselines. Its new-knowledge window is 2020 to 2021, so the base
+   model's cutoff must be checked first. See the
+   [2026-09-26 note](RESEARCH-20260926-ckl-benchmark-as-stage-two.md).
+3. **CITB.** Run one published CITB stream unchanged after the factual method
    and budget are frozen. Report the benchmark task matrix, task-valid scores,
    BWT, FWT where defined, and all replay or generated-data storage. This tests
    whether the method preserves heterogeneous supervised abilities. It is not
    a factual-consolidation reproduction.
-3. **TemporalWiki.** Run the released Diffset and probe artifacts unchanged.
+4. **TemporalWiki.** Run the released Diffset and probe artifacts unchanged.
    This adds repeated temporal corpus updates, Changed and Unchanged facts, and
    a larger source-token budget. Keep retrieval off at probe time. Report the
    full update curve, source and replay tokens, compute, and the published
    perplexity measures. Do not replace it with a local fact stream.
-4. **Continual pre-training.** TiC-LM is the strongest modern public target
+5. **Continual pre-training.** TiC-LM is the strongest modern public target
    found, but its main configurations require hundreds of billions of training
    tokens. Select a published configuration only when that scale is feasible;
    do not create an unvalidated local subset. Earlier archival tests such as
@@ -129,13 +135,13 @@ compare only update treatments on that split.
    but their old stacks and weaker release packages make them poor default
    reproductions. This stage tests unlabeled corpus adaptation separately from
    instruction tuning.
-5. **Aligned-behavior check.** TRACE is a useful public, non-bespoke
+6. **Aligned-behavior check.** TRACE is a useful public, non-bespoke
    supplementary check, but label it as a preprint and do not make it the sole
    safety claim. Pin its official data and judge configuration. Report target
    tasks, BWT, general-ability change, instruction-following change, and safety
    change separately. Prefer an archival public continual-alignment benchmark
    if one becomes available before this stage.
-6. **Optional inference-memory branch.** Use OAKS only if Altrux exposes a
+7. **Optional inference-memory branch.** Use OAKS only if Altrux exposes a
    context, retrieval, or persistent-state system at inference. Report it as
    online state tracking, not as weight consolidation, and do not combine its
    scores with the parametric roadmap.
