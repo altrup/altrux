@@ -29,9 +29,18 @@ def dream_instruction_ids(tokenizer, user_open: str, asst_open: str, device):
     return torch.tensor([_encode(tokenizer, text)], dtype=torch.long, device=device)
 
 
-def run_conversational_wake(model, tokenizer, documents: Sequence[str], state,
-                            user_open: str, asst_open: str, eoc: str, *,
-                            reply_tokens: int, evidence_tokens: int) -> tuple[dict[str, object], object]:
+def run_conversational_wake(
+    model,
+    tokenizer,
+    documents: Sequence[str],
+    state,
+    user_open: str,
+    asst_open: str,
+    eoc: str,
+    *,
+    reply_tokens: int,
+    evidence_tokens: int,
+) -> tuple[dict[str, object], object]:
     """Feed one document per user turn and greedily generate each assistant turn."""
     import torch
 
@@ -56,8 +65,11 @@ def run_conversational_wake(model, tokenizer, documents: Sequence[str], state,
                 + [int(token) for token in evidence]
                 + _encode(tokenizer, f"{asst_open} ")
             )
-            prompt = torch.tensor([prompt_ids], dtype=torch.long,
-                                  device=next(model.parameters()).device if hasattr(model, "parameters") else "cpu")
+            prompt = torch.tensor(
+                [prompt_ids],
+                dtype=torch.long,
+                device=next(model.parameters()).device if hasattr(model, "parameters") else "cpu",
+            )
             logits, state = model(prompt, state=state)
             reply: list[int] = []
             for _ in range(reply_tokens):
@@ -74,22 +86,33 @@ def run_conversational_wake(model, tokenizer, documents: Sequence[str], state,
                     f"assistant turn {index + 1} exhausted {reply_tokens} tokens before EOS"
                 )
             transcript.extend(prompt_ids + reply)
-            turns.append({
-                "document": document,
-                "prompt_token_ids": prompt_ids,
-                "assistant_token_ids": reply,
-                "assistant": tokenizer.decode(reply[:-1], skip_special_tokens=True),
-            })
+            turns.append(
+                {
+                    "document": document,
+                    "prompt_token_ids": prompt_ids,
+                    "assistant_token_ids": reply,
+                    "assistant": tokenizer.decode(reply[:-1], skip_special_tokens=True),
+                }
+            )
             count = index + 1
             elapsed = time.time() - started
             if count <= 3:
-                print(f"[{ts()}] wake sample {count}: document={document[:300]!r} "
-                      f"assistant={turns[-1]['assistant']!r}", flush=True)
+                print(
+                    f"[{ts()}] wake sample {count}: document={document[:300]!r} "
+                    f"assistant={turns[-1]['assistant']!r}",
+                    flush=True,
+                )
             if count % 10 == 0 or count == len(documents):
-                print(f"[{ts()}] wake {count}/{len(documents)} {count / elapsed:.2f} turn/s ETA "
-                      f"{fmt_duration(elapsed / count * (len(documents) - count))}", flush=True)
-        closing = torch.tensor([[eoc_id]], dtype=torch.long,
-                               device=next(model.parameters()).device if hasattr(model, "parameters") else "cpu")
+                print(
+                    f"[{ts()}] wake {count}/{len(documents)} {count / elapsed:.2f} turn/s ETA "
+                    f"{fmt_duration(elapsed / count * (len(documents) - count))}",
+                    flush=True,
+                )
+        closing = torch.tensor(
+            [[eoc_id]],
+            dtype=torch.long,
+            device=next(model.parameters()).device if hasattr(model, "parameters") else "cpu",
+        )
         _, state = model(closing, state=state)
     transcript.append(eoc_id)
     state = state.detach()
@@ -101,15 +124,18 @@ def run_conversational_wake(model, tokenizer, documents: Sequence[str], state,
         ).hexdigest(),
         "invariants": {
             "turns": len(turns),
-            "missing_assistant_eos": sum(turn["assistant_token_ids"][-1] != eos_id for turn in turns),
+            "missing_assistant_eos": sum(
+                turn["assistant_token_ids"][-1] != eos_id for turn in turns
+            ),
             "internal_eoc": sum(eoc_id in turn["assistant_token_ids"] for turn in turns),
             "closing_eoc": int(transcript[-1] == eoc_id and transcript.count(eoc_id) == 1),
         },
     }, state
 
 
-def lama_dream_diagnostics(dreams, rows: Sequence[dict[str, object]],
-                           transcript_ids: Sequence[int]) -> dict[str, object]:
+def lama_dream_diagnostics(
+    dreams, rows: Sequence[dict[str, object]], transcript_ids: Sequence[int]
+) -> dict[str, object]:
     """Measure dream bindings and copying without changing generation or training."""
     correct = misbound = 0
     subjects = [str(row["subject"]) for row in rows]
@@ -134,7 +160,7 @@ def lama_dream_diagnostics(dreams, rows: Sequence[dict[str, object]],
                 elif present_objects - {index}:
                     misbound += 1
         correct += len(bound)
-        generated = dream.dream_ids[dream.prefix_len:]
+        generated = dream.dream_ids[dream.prefix_len :]
         copy_fractions.append(copy_fraction(generated, transcript_ids))
         longest.append(longest_verbatim_run(generated, transcript_ids, n=1))
         lengths.append(len(generated))

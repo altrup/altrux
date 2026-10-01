@@ -8,12 +8,38 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 
-INVARIANT_RELATIONS = frozenset({
-    "P19", "P20", "P279", "P37", "P449", "P47", "P138", "P364", "P527",
-    "P176", "P27", "P407", "P30", "P178", "P1376", "P131", "P1412", "P17",
-    "P276", "P937", "P140", "P103", "P190", "P1001", "P495", "P36", "P740",
-    "P361",
-})
+INVARIANT_RELATIONS = frozenset(
+    {
+        "P19",
+        "P20",
+        "P279",
+        "P37",
+        "P449",
+        "P47",
+        "P138",
+        "P364",
+        "P527",
+        "P176",
+        "P27",
+        "P407",
+        "P30",
+        "P178",
+        "P1376",
+        "P131",
+        "P1412",
+        "P17",
+        "P276",
+        "P937",
+        "P140",
+        "P103",
+        "P190",
+        "P1001",
+        "P495",
+        "P36",
+        "P740",
+        "P361",
+    }
+)
 
 
 def _read_jsonl(path: Path) -> Iterator[dict[str, object]]:
@@ -33,8 +59,11 @@ def build_candidates(lama_root: str | Path) -> Iterator[dict[str, object]]:
             if not isinstance(evidences, list) or not evidences:
                 continue
             masked = max(
-                (str(item["masked_sentence"]) for item in evidences if isinstance(item, dict)
-                 and isinstance(item.get("masked_sentence"), str)),
+                (
+                    str(item["masked_sentence"])
+                    for item in evidences
+                    if isinstance(item, dict) and isinstance(item.get("masked_sentence"), str)
+                ),
                 key=len,
                 default="",
             )
@@ -81,7 +110,9 @@ def select_split(
             continue
         if row.get("invariant") is True and float(descriptive) == 1.0:
             retained.append(row)
-        elif row.get("invariant") is False and float(descriptive) == 0.0 and float(schematic) == 0.0:
+        elif (
+            row.get("invariant") is False and float(descriptive) == 0.0 and float(schematic) == 0.0
+        ):
             if row.get("relation_code") == "P530":
                 p530 += 1
                 if p530 > 130:
@@ -100,4 +131,3 @@ def write_jsonl(path: str | Path, rows: Sequence[dict[str, object]]) -> None:
 
 
 __all__ = ["INVARIANT_RELATIONS", "build_candidates", "select_split", "write_jsonl"]
-

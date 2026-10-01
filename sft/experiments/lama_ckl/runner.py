@@ -47,8 +47,9 @@ def file_sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def compact_dream_payload(dreams, generation_seeds: Sequence[int], teacher_sha: str,
-                          diagnostics: Mapping[str, object]) -> dict[str, object]:
+def compact_dream_payload(
+    dreams, generation_seeds: Sequence[int], teacher_sha: str, diagnostics: Mapping[str, object]
+) -> dict[str, object]:
     """Keep enough to reconstruct a dream cache without retaining full logits."""
     logit_bytes = sum(
         dream.teacher_logits.nelement() * dream.teacher_logits.element_size() for dream in dreams
@@ -59,13 +60,16 @@ def compact_dream_payload(dreams, generation_seeds: Sequence[int], teacher_sha: 
         "generation_seeds": list(generation_seeds),
         "ephemeral_teacher_logit_bytes": logit_bytes,
         "diagnostics": dict(diagnostics),
-        "dreams": [{
-            "sha256": dream.dream_sha,
-            "token_ids": dream.dream_ids,
-            "text": "".join(dream.token_texts),
-            "prefix_tokens": dream.prefix_len,
-            "stop_reason": dream.stop_reason,
-        } for dream in dreams],
+        "dreams": [
+            {
+                "sha256": dream.dream_sha,
+                "token_ids": dream.dream_ids,
+                "text": "".join(dream.token_texts),
+                "prefix_tokens": dream.prefix_len,
+                "stop_reason": dream.stop_reason,
+            }
+            for dream in dreams
+        ],
     }
 
 
@@ -100,7 +104,9 @@ def _write_cycle_result(directory: Path, result: dict[str, object]) -> None:
         result["artifact_bytes"] = artifact_bytes
 
 
-def _load_split(root: Path) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+def _load_split(
+    root: Path,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
     manifest = json.loads((root / "manifest.json").read_text())
     rows = []
     for name in ("variant.jsonl", "invariant_descriptive.jsonl"):
@@ -119,27 +125,42 @@ def _encode_documents(tokenizer, rows: Sequence[dict[str, object]]) -> list[list
     documents: list[list[int]] = []
     for row in rows:
         encoded = tokenizer(
-            str(row["evidence"]), add_special_tokens=True, truncation=True,
+            str(row["evidence"]),
+            add_special_tokens=True,
+            truncation=True,
             max_length=EVIDENCE_TOKENS,
         )["input_ids"]
         documents.append([int(token) for token in encoded])
     return documents
 
 
-def _evaluate(model, tokenizer, learned: Sequence[dict[str, object]],
-              retained: Sequence[dict[str, object]], batch_size: int, device,
-              cycle: int) -> dict[str, object]:
+def _evaluate(
+    model,
+    tokenizer,
+    learned: Sequence[dict[str, object]],
+    retained: Sequence[dict[str, object]],
+    batch_size: int,
+    device,
+    cycle: int,
+) -> dict[str, object]:
     started = time.time()
     learned_scores = score_records(
-        model, tokenizer, learned, "task_descriptive", batch_size, EVIDENCE_TOKENS, device)
+        model, tokenizer, learned, "task_descriptive", batch_size, EVIDENCE_TOKENS, device
+    )
     retained_scores = score_records(
-        model, tokenizer, retained, "task_descriptive", batch_size, EVIDENCE_TOKENS, device)
-    for label, rows, scores in (("to-learn", learned, learned_scores),
-                                ("not-to-forget", retained, retained_scores)):
+        model, tokenizer, retained, "task_descriptive", batch_size, EVIDENCE_TOKENS, device
+    )
+    for label, rows, scores in (
+        ("to-learn", learned, learned_scores),
+        ("not-to-forget", retained, retained_scores),
+    ):
         for index in range(min(3, len(rows))):
-            print(f"[{ts()}] cycle {cycle} {label} sample {index + 1}: "
-                  f"task={rows[index]['task_descriptive']!r} object={rows[index]['object']!r} "
-                  f"token_accuracy={scores[index]:.6f}", flush=True)
+            print(
+                f"[{ts()}] cycle {cycle} {label} sample {index + 1}: "
+                f"task={rows[index]['task_descriptive']!r} object={rows[index]['object']!r} "
+                f"token_accuracy={scores[index]:.6f}",
+                flush=True,
+            )
     result = {
         "cycle": cycle,
         "to_learn_accuracy": sum(learned_scores) / len(learned_scores),
@@ -148,24 +169,38 @@ def _evaluate(model, tokenizer, learned: Sequence[dict[str, object]],
         "not_to_forget_scores": retained_scores,
         "evaluation_seconds": time.time() - started,
     }
-    print(f"[{ts()}] cycle {cycle}: to-learn {result['to_learn_accuracy']:.6f}, "
-          f"not-to-forget {result['not_to_forget_accuracy']:.6f}", flush=True)
+    print(
+        f"[{ts()}] cycle {cycle}: to-learn {result['to_learn_accuracy']:.6f}, "
+        f"not-to-forget {result['not_to_forget_accuracy']:.6f}",
+        flush=True,
+    )
     return result
 
 
 def _save_trainable(model, path: Path, rank: int, alpha: float) -> str:
     import torch
 
-    state = {name: value.detach().cpu() for name, value in model.named_parameters()
-             if value.requires_grad}
+    state = {
+        name: value.detach().cpu()
+        for name, value in model.named_parameters()
+        if value.requires_grad
+    }
     torch.save(state, path)
     (path.parent / "lora_config.json").write_text(json.dumps({"rank": rank, "alpha": alpha}))
     return file_sha(path)
 
 
-def _save_cycle(directory: Path, model, optimizer, state, result: dict[str, object],
-                wake: dict[str, object] | None, dream: dict[str, object] | None,
-                rank: int, alpha: float) -> None:
+def _save_cycle(
+    directory: Path,
+    model,
+    optimizer,
+    state,
+    result: dict[str, object],
+    wake: dict[str, object] | None,
+    dream: dict[str, object] | None,
+    rank: int,
+    alpha: float,
+) -> None:
     import torch
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -191,17 +226,24 @@ def _completed_cycles(output: Path) -> list[Path]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arm", choices=ARMS, required=True)
-    parser.add_argument("--split", type=Path,
-                        default=Path("../.cache/lama_ckl/mamba2_2_7b_recap050"))
+    parser.add_argument(
+        "--split", type=Path, default=Path("../.cache/lama_ckl/mamba2_2_7b_recap050")
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--model-name", default="mamba2_2_7b")
-    parser.add_argument("--init-adapter", type=Path, default=Path(
-        "../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800"))
+    parser.add_argument(
+        "--init-adapter",
+        type=Path,
+        default=Path("../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800"),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dream-batch-size", type=int, default=8)
     parser.add_argument("--eval-batch-size", type=int, default=16)
-    parser.add_argument("--smoke", action="store_true",
-                        help="engineering-only one-cycle, two-document, two-dream gate")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="engineering-only one-cycle, two-document, two-dream gate",
+    )
     return parser
 
 
@@ -221,7 +263,8 @@ def main() -> None:
         learned, retained = learned[:2], retained[:2]
         cycles, dream_count, dream_tokens = 1, 2, 32
     output = args.output or Path("../.cache/lama_ckl/runs") / (
-        f"{args.arm}-seed-{args.seed}{'-smoke' if args.smoke else ''}")
+        f"{args.arm}-seed-{args.seed}{'-smoke' if args.smoke else ''}"
+    )
     output.mkdir(parents=True, exist_ok=True)
     (output / "work").mkdir(exist_ok=True)
 
@@ -261,8 +304,11 @@ def main() -> None:
     load_checkpoint(model, args.init_adapter)
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open, eoc = model_mod.USER_OPEN, model_mod.ASST_OPEN, model_mod.EOC
-    optimizer = (None if args.arm == "frozen"
-                 else torch.optim.AdamW(trainable, lr=LEARNING_RATE, weight_decay=0.01))
+    optimizer = (
+        None
+        if args.arm == "frozen"
+        else torch.optim.AdamW(trainable, lr=LEARNING_RATE, weight_decay=0.01)
+    )
     if hasattr(model, "set_grad_checkpoint"):
         model.set_grad_checkpoint(True, 64)
     documents = [str(row["evidence"]) for row in learned]
@@ -270,19 +316,21 @@ def main() -> None:
     retained_tokens = _encode_documents(tokenizer, retained)
     source_token_count = sum(map(len, learned_tokens))
     review_token_count = sum(map(len, retained_tokens))
-    settings.update({
-        "gpu_model": torch.cuda.get_device_name(device),
-        "gpu_count": 1,
-        "visible_gpu_count": torch.cuda.device_count(),
-        "lora_rank": rank,
-        "lora_alpha": alpha,
-        "total_parameters": sum(parameter.numel() for parameter in model.parameters()),
-        "optimizer_parameters": (
-            0 if optimizer is None else sum(parameter.numel() for parameter in trainable)
-        ),
-        "source_document_tokens": source_token_count,
-        "review_document_tokens": review_token_count,
-    })
+    settings.update(
+        {
+            "gpu_model": torch.cuda.get_device_name(device),
+            "gpu_count": 1,
+            "visible_gpu_count": torch.cuda.device_count(),
+            "lora_rank": rank,
+            "lora_alpha": alpha,
+            "total_parameters": sum(parameter.numel() for parameter in model.parameters()),
+            "optimizer_parameters": (
+                0 if optimizer is None else sum(parameter.numel() for parameter in trainable)
+            ),
+            "source_document_tokens": source_token_count,
+            "review_document_tokens": review_token_count,
+        }
+    )
     manifest_path = output / "run.json"
     serialized_settings = json.dumps(settings, indent=1, sort_keys=True) + "\n"
     if manifest_path.exists() and manifest_path.read_text() != serialized_settings:
@@ -300,22 +348,28 @@ def main() -> None:
         last = completed[-1]
         load_checkpoint(model, last)
         if optimizer is not None:
-            optimizer.load_state_dict(torch.load(last / "optimizer.pt", map_location="cpu", weights_only=True))
-        state = state_to(torch.load(last / "state.pt", map_location="cpu", weights_only=False), device)
+            optimizer.load_state_dict(
+                torch.load(last / "optimizer.pt", map_location="cpu", weights_only=True)
+            )
+        state = state_to(
+            torch.load(last / "state.pt", map_location="cpu", weights_only=False), device
+        )
         start_cycle = int(curve[-1]["cycle"]) + 1
         print(f"[{ts()}] resumed after cycle {start_cycle - 1} from {last}", flush=True)
     else:
         initial = _evaluate(model, tokenizer, learned, retained, args.eval_batch_size, device, 0)
         work = Path(tempfile.mkdtemp(prefix="cycle-00.", dir=output / "work"))
-        initial.update({
-            "arm": args.arm,
-            "seed": args.seed,
-            "source_tokens": 0,
-            "wake_tokens": 0,
-            "treatment": {"kind": "initial", "review_tokens": 0},
-            "cycle_seconds": time.time() - run_started,
-            "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
-        })
+        initial.update(
+            {
+                "arm": args.arm,
+                "seed": args.seed,
+                "source_tokens": 0,
+                "wake_tokens": 0,
+                "treatment": {"kind": "initial", "review_tokens": 0},
+                "cycle_seconds": time.time() - run_started,
+                "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
+            }
+        )
         _save_cycle(work, model, optimizer, None, initial, None, None, rank, alpha)
         os.replace(work, output / "cycle-00")
         curve.append(initial)
@@ -329,20 +383,31 @@ def main() -> None:
         work = Path(tempfile.mkdtemp(prefix=f"cycle-{cycle:02d}.", dir=output / "work"))
         wake_started = time.time()
         wake, state = run_conversational_wake(
-            model, tokenizer, documents, state, user_open, asst_open, eoc,
-            reply_tokens=REPLY_TOKENS, evidence_tokens=EVIDENCE_TOKENS,
+            model,
+            tokenizer,
+            documents,
+            state,
+            user_open,
+            asst_open,
+            eoc,
+            reply_tokens=REPLY_TOKENS,
+            evidence_tokens=EVIDENCE_TOKENS,
         )
         wake_seconds = time.time() - wake_started
         if wake["invariants"] != {
-            "turns": len(documents), "missing_assistant_eos": 0,
-            "internal_eoc": 0, "closing_eoc": 1,
+            "turns": len(documents),
+            "missing_assistant_eos": 0,
+            "internal_eoc": 0,
+            "closing_eoc": 1,
         }:
             raise RuntimeError(f"wake structural invariants failed: {wake['invariants']}")
         treatment: dict[str, object]
         dream_payload = None
         if args.arm == "frozen":
             treatment = {
-                "kind": "frozen", "optimizer_steps": 0, "token_gradients": 0,
+                "kind": "frozen",
+                "optimizer_steps": 0,
+                "token_gradients": 0,
                 "review_tokens": 0,
             }
         elif args.arm in ("lora", "mix-review"):
@@ -352,13 +417,19 @@ def main() -> None:
             else:
                 training_documents = learned_tokens + retained_tokens
                 offset = len(learned_tokens)
-                batches = [learn + [offset + index for index in review]
-                           for learn, review in zip(learned_batches, review_batches, strict=True)]
+                batches = [
+                    learn + [offset + index for index in review]
+                    for learn, review in zip(learned_batches, review_batches, strict=True)
+                ]
             treatment = {
                 "kind": args.arm,
                 **train_document_epoch(
-                    model, optimizer, training_documents, batches,
-                    pad_id=int(tokenizer.pad_token_id), device=device,
+                    model,
+                    optimizer,
+                    training_documents,
+                    batches,
+                    pad_id=int(tokenizer.pad_token_id),
+                    device=device,
                     label=f"{args.arm} cycle {cycle}",
                 ),
                 "raw_documents": len(training_documents),
@@ -368,40 +439,61 @@ def main() -> None:
             teacher_sha = warm_sha if cycle == 1 else str(curve[-1]["adapter_sha256"])
             generation_seed = args.seed * 100 + cycle
             dreams, topology = generate_replay_dreams(
-                model, state, dream_instruction_ids(tokenizer, user_open, asst_open, device),
-                count=dream_count, batch_size=args.dream_batch_size, seed=generation_seed,
-                n_tokens=dream_tokens, temperature=DREAM_TEMPERATURE,
+                model,
+                state,
+                dream_instruction_ids(tokenizer, user_open, asst_open, device),
+                count=dream_count,
+                batch_size=args.dream_batch_size,
+                seed=generation_seed,
+                n_tokens=dream_tokens,
+                temperature=DREAM_TEMPERATURE,
                 decode_token=lambda token: tokenizer.decode([token]),
                 stop_id=int(tokenizer.convert_tokens_to_ids(eoc)),
                 turn_id=int(tokenizer.eos_token_id),
             )
             if len({dream.dream_sha for dream in dreams}) != len(dreams):
-                raise RuntimeError("the fixed dream set contains duplicate dreams; refusing to train")
+                raise RuntimeError(
+                    "the fixed dream set contains duplicate dreams; refusing to train"
+                )
             diagnostics = lama_dream_diagnostics(dreams, learned, wake["transcript_token_ids"])
-            seeds = [dream_generation_seed(generation_seed, index, 0) for index in range(dream_count)]
+            seeds = [
+                dream_generation_seed(generation_seed, index, 0) for index in range(dream_count)
+            ]
             dream_payload = compact_dream_payload(dreams, seeds, teacher_sha, diagnostics)
             dream_payload["batch_topology"] = topology
             dream_payload["decoded_samples"] = ["".join(dream.token_texts) for dream in dreams[:3]]
             _write_json(work / "dreams.json", dream_payload)
             for index, sample in enumerate(dream_payload["decoded_samples"], start=1):
                 print(f"[{ts()}] cycle {cycle} dream sample {index}: {sample[:1000]!r}", flush=True)
-            print(f"[{ts()}] cycle {cycle} dream diagnostics "
-                  f"{json.dumps(diagnostics, sort_keys=True)}", flush=True)
+            print(
+                f"[{ts()}] cycle {cycle} dream diagnostics "
+                f"{json.dumps(diagnostics, sort_keys=True)}",
+                flush=True,
+            )
             training_started = time.time()
             from experiments.dreams.distillation import distill_dream_set
 
             token_gradients = distill_dream_set(
-                model, optimizer, dreams, state, None, 1, KL_TEMPERATURE,
+                model,
+                optimizer,
+                dreams,
+                state,
+                None,
+                1,
+                KL_TEMPERATURE,
                 lambda step, loss: print(
-                    f"[{ts()}] altrux cycle {cycle} dream {step + 1}/{len(dreams)} "
-                    f"loss {loss:.4f}", flush=True),
+                    f"[{ts()}] altrux cycle {cycle} dream {step + 1}/{len(dreams)} loss {loss:.4f}",
+                    flush=True,
+                ),
                 lambda index, epoch, step: None,
             )
             treatment = {
                 "kind": "altrux",
                 "optimizer_steps": len(dreams),
                 "token_gradients": token_gradients,
-                "generated_tokens": sum(len(dream.dream_ids) - dream.prefix_len for dream in dreams),
+                "generated_tokens": sum(
+                    len(dream.dream_ids) - dream.prefix_len for dream in dreams
+                ),
                 "review_tokens": 0,
                 "dreams": len(dreams),
                 "set_sha256": dream_payload["set_sha256"],
@@ -411,35 +503,51 @@ def main() -> None:
             }
             del dreams
             gc.collect()
-        evaluated = _evaluate(model, tokenizer, learned, retained, args.eval_batch_size, device, cycle)
-        evaluated.update({
-            "arm": args.arm,
-            "seed": args.seed,
-            "wake_sha256": wake["transcript_sha256"],
-            "wake_seconds": wake_seconds,
-            "source_tokens": source_token_count,
-            "wake_tokens": len(wake["transcript_token_ids"]),
-            "treatment": treatment,
-            "cycle_seconds": time.time() - cycle_started,
-            "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
-        })
+        evaluated = _evaluate(
+            model, tokenizer, learned, retained, args.eval_batch_size, device, cycle
+        )
+        evaluated.update(
+            {
+                "arm": args.arm,
+                "seed": args.seed,
+                "wake_sha256": wake["transcript_sha256"],
+                "wake_seconds": wake_seconds,
+                "source_tokens": source_token_count,
+                "wake_tokens": len(wake["transcript_token_ids"]),
+                "treatment": treatment,
+                "cycle_seconds": time.time() - cycle_started,
+                "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
+            }
+        )
         _save_cycle(work, model, optimizer, state, evaluated, wake, None, rank, alpha)
         os.replace(work, output / f"cycle-{cycle:02d}")
         curve.append(evaluated)
-        summary = {"arm": args.arm, "seed": args.seed, "settings": settings,
-                   "curve": curve, "checkpoint": curve_summary(curve)}
+        summary = {
+            "arm": args.arm,
+            "seed": args.seed,
+            "settings": settings,
+            "curve": curve,
+            "checkpoint": curve_summary(curve),
+        }
         _write_json(output / "summary.json", summary)
-        print(f"[{ts()}] completed cycle {cycle}/{cycles}: "
-              f"{json.dumps(summary['checkpoint'], sort_keys=True)}", flush=True)
-    final_curve = [json.loads((path / "result.json").read_text())
-                   for path in _completed_cycles(output)]
-    _write_json(output / "summary.json", {
-        "arm": args.arm,
-        "seed": args.seed,
-        "settings": settings,
-        "curve": final_curve,
-        "checkpoint": curve_summary(final_curve),
-    })
+        print(
+            f"[{ts()}] completed cycle {cycle}/{cycles}: "
+            f"{json.dumps(summary['checkpoint'], sort_keys=True)}",
+            flush=True,
+        )
+    final_curve = [
+        json.loads((path / "result.json").read_text()) for path in _completed_cycles(output)
+    ]
+    _write_json(
+        output / "summary.json",
+        {
+            "arm": args.arm,
+            "seed": args.seed,
+            "settings": settings,
+            "curve": final_curve,
+            "checkpoint": curve_summary(final_curve),
+        },
+    )
 
 
 if __name__ == "__main__":

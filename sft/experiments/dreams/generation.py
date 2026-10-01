@@ -52,8 +52,9 @@ def sample_next(logits: torch.Tensor, temperature: float, generator=None) -> tor
     last = logits.float().clone()
     if temperature <= 0:
         return last.argmax(dim=-1, keepdim=True)
-    return torch.multinomial(torch.softmax(last / temperature, dim=-1), num_samples=1,
-                             generator=generator)
+    return torch.multinomial(
+        torch.softmax(last / temperature, dim=-1), num_samples=1, generator=generator
+    )
 
 
 def copy_state(state):
@@ -78,7 +79,9 @@ def dream_seed_text(asst_open: str, prompt: str) -> str:
     return f"{asst_open} {prompt}" if prompt else f"{asst_open} "
 
 
-def rehearsal_fraction(token_texts: Sequence[str], needles: Sequence[str]) -> tuple[float, dict[str, int]]:
+def rehearsal_fraction(
+    token_texts: Sequence[str], needles: Sequence[str]
+) -> tuple[float, dict[str, int]]:
     """Measure token spans that overlap an entity or code occurrence."""
     text = "".join(token_texts).lower()
     starts, pos = [], 0
@@ -178,9 +181,12 @@ def teacher_dream(
             if (t + 1) % PRINT_EVERY == 0 or t + 1 == n_tokens or stop_reason != "max-tokens":
                 frac, _ = rehearsal_fraction(texts, needles)
                 rate = (t + 1) / (time.time() - started)
-                print(f"[{ts()}]  dream {t + 1}/{n_tokens} rehearsal {frac:.2f} {rate:.1f} tok/s "
-                      f"ETA {fmt_duration((n_tokens - t - 1) / rate)} | "
-                      f"{''.join(texts[-PRINT_EVERY:])!r}", flush=True)
+                print(
+                    f"[{ts()}]  dream {t + 1}/{n_tokens} rehearsal {frac:.2f} {rate:.1f} tok/s "
+                    f"ETA {fmt_duration((n_tokens - t - 1) / rate)} | "
+                    f"{''.join(texts[-PRINT_EVERY:])!r}",
+                    flush=True,
+                )
             if stop_reason != "max-tokens":
                 print(f"[{ts()}]  dream ended after {len(texts)} tokens: {stop_reason}", flush=True)
                 break
@@ -205,14 +211,25 @@ def _repeat_state(state, batch_size: int):
             tensors = getattr(state, attr)
             if any(tensor.shape[0] != 1 for tensor in tensors):
                 raise ValueError("dream batching requires a single-row wake state")
-            setattr(repeated, attr, [tensor.repeat(batch_size, *([1] * (tensor.dim() - 1)))
-                                     for tensor in tensors])
+            setattr(
+                repeated,
+                attr,
+                [tensor.repeat(batch_size, *([1] * (tensor.dim() - 1))) for tensor in tensors],
+            )
     return repeated
 
 
-def _teacher_dream_batch(model, wake_state, seed_ids, seeds: Sequence[int], n_tokens: int,
-                         temperature: float, decode_token, stop_id: int | None,
-                         turn_id: int | None) -> list[Dream]:
+def _teacher_dream_batch(
+    model,
+    wake_state,
+    seed_ids,
+    seeds: Sequence[int],
+    n_tokens: int,
+    temperature: float,
+    decode_token,
+    stop_id: int | None,
+    turn_id: int | None,
+) -> list[Dream]:
     """Generate independent uncued dreams in one model batch."""
     import torch
 
@@ -230,8 +247,10 @@ def _teacher_dream_batch(model, wake_state, seed_ids, seeds: Sequence[int], n_to
     model.c_capture = None
     with torch.no_grad():
         for position in range(n_tokens):
-            tokens = [row[position] if not finished and position < len(row) else filler
-                      for row, finished in zip(ids, done, strict=True)]
+            tokens = [
+                row[position] if not finished and position < len(row) else filler
+                for row, finished in zip(ids, done, strict=True)
+            ]
             token = torch.tensor(tokens, dtype=torch.long, device=seed_ids.device).unsqueeze(1)
             batch_logits, state = model(token, state=state)
             for row in range(batch_size):
@@ -245,8 +264,11 @@ def _teacher_dream_batch(model, wake_state, seed_ids, seeds: Sequence[int], n_to
                 if temperature <= 0:
                     sampled = int(last.argmax())
                 else:
-                    sampled = int(torch.multinomial(torch.softmax(last / temperature, dim=-1), 1,
-                                                    generator=generators[row]))
+                    sampled = int(
+                        torch.multinomial(
+                            torch.softmax(last / temperature, dim=-1), 1, generator=generators[row]
+                        )
+                    )
                 if sampled == stop_id:
                     done[row], reasons[row] = True, "eoc"
                 else:
@@ -257,12 +279,20 @@ def _teacher_dream_batch(model, wake_state, seed_ids, seeds: Sequence[int], n_to
                         ids[row].append(sampled)
             if all(done):
                 break
-    return [Dream(
-        tokens=torch.tensor([row[:len(row_logits)]], dtype=torch.long, device=seed_ids.device),
-        logits=torch.stack(row_logits), queries=[], final_state=None, token_texts=row_texts,
-        skipped_cone=0, cue_flags=[False] * len(row_logits), stop_reason=reason,
-        prefix_len=len(prefix),
-    ) for row, row_logits, row_texts, reason in zip(ids, logits, texts, reasons, strict=True)]
+    return [
+        Dream(
+            tokens=torch.tensor([row[: len(row_logits)]], dtype=torch.long, device=seed_ids.device),
+            logits=torch.stack(row_logits),
+            queries=[],
+            final_state=None,
+            token_texts=row_texts,
+            skipped_cone=0,
+            cue_flags=[False] * len(row_logits),
+            stop_reason=reason,
+            prefix_len=len(prefix),
+        )
+        for row, row_logits, row_texts, reason in zip(ids, logits, texts, reasons, strict=True)
+    ]
 
 
 def dream_generation_seed(seed: int, index: int, attempt: int, offset: int = 0) -> int:
@@ -270,9 +300,20 @@ def dream_generation_seed(seed: int, index: int, attempt: int, offset: int = 0) 
     return seed * 1000 + offset + index + 1_000_000 * attempt
 
 
-def generate_replay_dreams(model, wake_state, seed_ids, *, count: int, batch_size: int, seed: int,
-                           n_tokens: int, temperature: float, decode_token,
-                           stop_id: int | None, turn_id: int | None) -> tuple[list[CachedDream], list[int]]:
+def generate_replay_dreams(
+    model,
+    wake_state,
+    seed_ids,
+    *,
+    count: int,
+    batch_size: int,
+    seed: int,
+    n_tokens: int,
+    temperature: float,
+    decode_token,
+    stop_id: int | None,
+    turn_id: int | None,
+) -> tuple[list[CachedDream], list[int]]:
     """Generate the fixed replay set before training, batched across dreams."""
     if count < 1 or batch_size < 1:
         raise ValueError("dream count and batch size must be positive")
@@ -283,21 +324,40 @@ def generate_replay_dreams(model, wake_state, seed_ids, *, count: int, batch_siz
         width = min(batch_size, count - start)
         topology.append(width)
         dreams = _teacher_dream_batch(
-            model, wake_state, seed_ids,
+            model,
+            wake_state,
+            seed_ids,
             [dream_generation_seed(seed, index, 0) for index in range(start, start + width)],
-            n_tokens, temperature, decode_token, stop_id, turn_id,
+            n_tokens,
+            temperature,
+            decode_token,
+            stop_id,
+            turn_id,
         )
         for dream in dreams:
-            cached.append(CachedDream(
-                dream_ids=[int(token) for token in dream.tokens[0].tolist()], token_texts=dream.token_texts,
-                teacher_logits=dream.logits, cue_flags=dream.cue_flags, prefix_len=dream.prefix_len,
-                stop_reason=dream.stop_reason, divergence=[], gate_positions=[], queries=[], spectra=[],
-                ranks={}, bases={},
-            ))
+            cached.append(
+                CachedDream(
+                    dream_ids=[int(token) for token in dream.tokens[0].tolist()],
+                    token_texts=dream.token_texts,
+                    teacher_logits=dream.logits,
+                    cue_flags=dream.cue_flags,
+                    prefix_len=dream.prefix_len,
+                    stop_reason=dream.stop_reason,
+                    divergence=[],
+                    gate_positions=[],
+                    queries=[],
+                    spectra=[],
+                    ranks={},
+                    bases={},
+                )
+            )
         elapsed = time.time() - started
-        print(f"[{ts()}] replay dreams {len(cached)}/{count}, batch {width}, "
-              f"{len(cached) / elapsed:.2f} dream/s, ETA "
-              f"{fmt_duration(elapsed / len(cached) * (count - len(cached)))}", flush=True)
+        print(
+            f"[{ts()}] replay dreams {len(cached)}/{count}, batch {width}, "
+            f"{len(cached) / elapsed:.2f} dream/s, ETA "
+            f"{fmt_duration(elapsed / len(cached) * (count - len(cached)))}",
+            flush=True,
+        )
     return cached, topology
 
 

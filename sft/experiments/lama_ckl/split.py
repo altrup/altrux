@@ -44,8 +44,12 @@ def _write_once(path: Path, text: str) -> None:
         path.write_text(text)
 
 
-def freeze_split(output: str | Path, learned: Sequence[dict[str, object]],
-                 retained: Sequence[dict[str, object]], metadata: dict[str, object]) -> dict[str, object]:
+def freeze_split(
+    output: str | Path,
+    learned: Sequence[dict[str, object]],
+    retained: Sequence[dict[str, object]],
+    metadata: dict[str, object],
+) -> dict[str, object]:
     """Write immutable split files and their manifest."""
     output = Path(output)
     artifacts: dict[str, dict[str, object]] = {}
@@ -73,12 +77,21 @@ def freeze_split(output: str | Path, learned: Sequence[dict[str, object]],
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lama-root", type=Path, required=True,
-                        help="unpacked official LAMA data directory containing relations.jsonl and TREx/")
-    parser.add_argument("--output", type=Path, default=Path("../.cache/lama_ckl/mamba2_2_7b_recap050"))
+    parser.add_argument(
+        "--lama-root",
+        type=Path,
+        required=True,
+        help="unpacked official LAMA data directory containing relations.jsonl and TREx/",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("../.cache/lama_ckl/mamba2_2_7b_recap050")
+    )
     parser.add_argument("--model-name", default="mamba2_2_7b")
-    parser.add_argument("--init-adapter", type=Path, default=Path(
-        "../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800"))
+    parser.add_argument(
+        "--init-adapter",
+        type=Path,
+        default=Path("../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800"),
+    )
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--seed", type=int, default=42)
@@ -105,8 +118,10 @@ def main() -> None:
     if not candidates:
         raise SystemExit("the official-notebook source filter produced no candidates")
     print(f"[{ts()}] source candidates {len(candidates)}, sha256 {source_sha}")
-    print(f"[{ts()}] candidate sample task={candidates[0]['task_descriptive']!r} "
-          f"evidence={str(candidates[0]['evidence'])[:500]!r}")
+    print(
+        f"[{ts()}] candidate sample task={candidates[0]['task_descriptive']!r} "
+        f"evidence={str(candidates[0]['evidence'])[:500]!r}"
+    )
 
     device = torch.device("cuda")
     model_mod = importlib.import_module(f"models.{args.model_name}")
@@ -120,33 +135,44 @@ def main() -> None:
     tokenizer = build_tokenizer(model_mod)
     print(f"[{ts()}] warm start {args.init_adapter}, sha256 {adapter_sha}")
     descriptive = score_records(
-        model, tokenizer, candidates, "task_descriptive", args.batch_size, args.max_length, device)
+        model, tokenizer, candidates, "task_descriptive", args.batch_size, args.max_length, device
+    )
     schematic = score_records(
-        model, tokenizer, candidates, "task_schematic", args.batch_size, args.max_length, device)
+        model, tokenizer, candidates, "task_schematic", args.batch_size, args.max_length, device
+    )
     for row, desc, schem in zip(candidates, descriptive, schematic, strict=True):
         row["scores"] = {"descriptive": desc, "schematic": schem}
     learned, retained = select_split(candidates, args.size, random.Random(args.seed))
-    manifest = freeze_split(args.output, learned, retained, {
-        "source": "facebookresearch/LAMA T-REx",
-        "source_sha256": source_sha,
-        "pipeline": "TAALM LAMA_ckl_pipeline.ipynb",
-        "taalm_commit": "b12f344a9dbae555c239635b1c192c555bed001b",
-        "model_name": args.model_name,
-        "model_id": model_mod.MODEL_ID,
-        "tokenizer_id": model_mod.TOKENIZER_ID,
-        "warmstart_sha256": adapter_sha,
-        "metric_alignment": "last object character span",
-        "max_length": args.max_length,
-        "seed": args.seed,
-        "candidate_count": len(candidates),
-    })
+    manifest = freeze_split(
+        args.output,
+        learned,
+        retained,
+        {
+            "source": "facebookresearch/LAMA T-REx",
+            "source_sha256": source_sha,
+            "pipeline": "TAALM LAMA_ckl_pipeline.ipynb",
+            "taalm_commit": "b12f344a9dbae555c239635b1c192c555bed001b",
+            "model_name": args.model_name,
+            "model_id": model_mod.MODEL_ID,
+            "tokenizer_id": model_mod.TOKENIZER_ID,
+            "warmstart_sha256": adapter_sha,
+            "metric_alignment": "last object character span",
+            "max_length": args.max_length,
+            "seed": args.seed,
+            "candidate_count": len(candidates),
+        },
+    )
     for name, artifact in manifest["artifacts"].items():
-        print(f"[{ts()}] wrote {args.output / name}: rows={artifact['rows']} "
-              f"sha256={artifact['sha256']}")
+        print(
+            f"[{ts()}] wrote {args.output / name}: rows={artifact['rows']} "
+            f"sha256={artifact['sha256']}"
+        )
         print(f"[{ts()}] invariants={json.dumps(artifact['invariants'], sort_keys=True)}")
         sample = artifact["sample"]
-        print(f"[{ts()}] sample task={sample['task_descriptive']!r} "
-              f"evidence={str(sample['evidence'])[:500]!r}")
+        print(
+            f"[{ts()}] sample task={sample['task_descriptive']!r} "
+            f"evidence={str(sample['evidence'])[:500]!r}"
+        )
 
 
 if __name__ == "__main__":
