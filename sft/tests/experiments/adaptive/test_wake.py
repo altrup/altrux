@@ -202,9 +202,11 @@ def test_live_wake_preserves_consumed_token_ids_including_assistant_eos(tmp_path
 
 
 def test_sleep_transcript_uses_stored_ids_without_decoding_or_retokenizing(monkeypatch):
-    import torch
     from types import SimpleNamespace
-    from experiments.adaptive.backend import artifact_transcript_ids, DreamSleepBackend
+
+    import torch
+
+    from experiments.adaptive.backend import DreamSleepBackend, artifact_transcript_ids
     from experiments.dreams import distillation
 
     artifact = {
@@ -239,8 +241,10 @@ def test_sleep_transcript_uses_stored_ids_without_decoding_or_retokenizing(monke
 
 
 def test_local_wake_reply_refuses_an_in_wake_eoc():
-    import torch
     from types import SimpleNamespace
+
+    import torch
+
     from experiments.adaptive.backend import DreamSleepBackend
 
     class State:
@@ -271,8 +275,10 @@ def test_local_wake_reply_refuses_an_in_wake_eoc():
 
 
 def test_local_wake_reply_refuses_max_token_truncation():
-    import torch
     from types import SimpleNamespace
+
+    import torch
+
     from experiments.adaptive.backend import DreamSleepBackend
 
     class State:
@@ -303,8 +309,10 @@ def test_local_wake_reply_refuses_max_token_truncation():
 
 
 def test_reply_sampling_is_turn_scoped_across_interruption_resume():
-    import torch
     from types import SimpleNamespace
+
+    import torch
+
     from experiments.adaptive.backend import DreamSleepBackend
 
     class State:
@@ -749,8 +757,8 @@ def test_floor_correction_fails_closed_without_each_matched_nosleep_fact():
 
 
 def test_production_entrypoint_runs_backend_and_writes_corrected_seed_output(tmp_path):
-    from experiments.adaptive.runner import run_registered_experiment
     from experiments.adaptive.manifest import load_experiment_manifest
+    from experiments.adaptive.runner import run_registered_experiment
 
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
@@ -846,8 +854,8 @@ def test_production_entrypoint_runs_backend_and_writes_corrected_seed_output(tmp
 
 @pytest.mark.parametrize("failure", ["wake", "sleep"])
 def test_interrupted_seed_restarts_from_base_and_preserves_numbered_logs(tmp_path, failure):
-    from experiments.adaptive.runner import run_registered_experiment
     from experiments.adaptive.manifest import ExperimentConfig, ExperimentManifest, WakeSpec
+    from experiments.adaptive.runner import run_registered_experiment
 
     config = ExperimentConfig.from_dict(
         {"arms": ["replay", "nosleep", "sft-ref"], "wakes": 6, "seeds": [1, 2, 3]}
@@ -1163,6 +1171,7 @@ def test_battery_collision_terms_cover_registered_wake_inputs(tmp_path):
 
 def test_teacher_hash_tracks_only_current_trainable_weights():
     import torch
+
     from experiments.adaptive.backend import DreamSleepBackend
 
     model = torch.nn.Sequential(torch.nn.Linear(2, 2), torch.nn.Linear(2, 2))
@@ -1184,6 +1193,7 @@ def test_teacher_hash_tracks_only_current_trainable_weights():
 
 def test_later_dream_rehearsal_counts_include_earlier_facts():
     from types import SimpleNamespace
+
     from experiments.adaptive.backend import bound_rehearsal_counts
     from experiments.facts import Fact
 

@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 
 from experiments.erasure.operators import deflate, state_top_dirs
 
-
 if TYPE_CHECKING:
     import torch
 

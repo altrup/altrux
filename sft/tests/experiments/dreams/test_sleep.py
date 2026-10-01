@@ -6,19 +6,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from experiments.facts import Fact
-from experiments.dreams.types import CachedDream
-from experiments.dreams.cli import ARM_CARRY, paraphrase_prompts, teacher_dream
-from experiments.dreams.distillation import (
-    distill_dream_set,
-    distill_counterfactual,
-    distill_live,
-    distill_replay,
-    distill_sft,
-    erase_ssm,
-    erased_start,
-    erase_state,
-)
+from adapters.lora import LoRALinear
 from experiments.dreams.cache import (
     fact_read_positions,
     gate_agreement,
@@ -26,9 +14,21 @@ from experiments.dreams.cache import (
     pilot_path,
     sidecar_path,
 )
+from experiments.dreams.cli import ARM_CARRY, paraphrase_prompts, teacher_dream
+from experiments.dreams.distillation import (
+    distill_counterfactual,
+    distill_dream_set,
+    distill_live,
+    distill_replay,
+    distill_sft,
+    erase_ssm,
+    erase_state,
+    erased_start,
+)
 from experiments.dreams.generation import frozen_teacher, rehearsal_fraction, sample_next
+from experiments.dreams.types import CachedDream
 from experiments.erasure.operators import deflate, state_top_dirs
-from adapters.lora import LoRALinear
+from experiments.facts import Fact
 
 USER, ASST = "[USER]", "[ASSISTANT]"
 

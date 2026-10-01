@@ -14,7 +14,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-
 from preparation.cram import (
     add_block_args,
     build_blocks,

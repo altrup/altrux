@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 import torch
-
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
 from ..mamba2_780m.model import (  # noqa: F401 -- re-exported interface

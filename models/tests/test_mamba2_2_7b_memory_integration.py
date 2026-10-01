@@ -19,10 +19,10 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import models  # noqa: F401  (installs the selective_scan_cuda stub -- see models/__init__.py)
+from models.mamba2_2_7b_memory.model import Model
+
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
-
-from models.mamba2_2_7b_memory.model import Model
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="mixer path needs Triton norm kernels (any working GPU)"

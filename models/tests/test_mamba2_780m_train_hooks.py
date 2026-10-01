@@ -20,12 +20,13 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "sft"))
 
-from adapters.lora import apply_lora
+import models.mamba2_780m.model as M780
+import models.mamba2_780m.train_hooks as hooks
+
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
-import models.mamba2_780m.model as M780
-import models.mamba2_780m.train_hooks as hooks
+from adapters.lora import apply_lora
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(),

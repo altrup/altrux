@@ -12,15 +12,13 @@ other model tests -- mamba_ssm's norm path needs a working GPU.
 import sys
 from pathlib import Path
 
+import models  # noqa: F401  (installs the selective_scan_cuda stub)
+import models.mamba2_780m.model as M780
+
 import pytest
 import torch
-
-
-import models  # noqa: F401  (installs the selective_scan_cuda stub)
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
-
-import models.mamba2_780m.model as M780
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="mixer path needs Triton norm kernels (any working GPU)"

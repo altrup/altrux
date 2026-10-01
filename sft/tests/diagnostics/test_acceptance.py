@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 from diagnostics.acceptance import MARKER_SHARE_MAX, acceptance
 
 

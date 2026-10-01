@@ -4,10 +4,11 @@ Minimal causal-LM document training used by LAMA-CKL baseline arms.
 """
 
 import time
+from collections.abc import Sequence
+
 import torch
 import torch.nn.functional as F
 
-from collections.abc import Sequence
 from progress import fmt_duration, ts
 
 

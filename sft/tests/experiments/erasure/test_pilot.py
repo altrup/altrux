@@ -11,7 +11,6 @@ plane sec 2.10.6 decides on.
 import pytest
 import torch
 
-from experiments.facts import Fact
 from experiments.erasure.pilot import (
     MIN_AUC,
     PilotCapture,
@@ -22,6 +21,7 @@ from experiments.erasure.pilot import (
     score_scheme,
     separability,
 )
+from experiments.facts import Fact
 
 FACTS = [Fact("osprey", "bird", "5 9 7 9 7")]
 N = 32

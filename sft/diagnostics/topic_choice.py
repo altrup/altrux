@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import sys
 
-
 OPENERS = (
     "{user} What is the code for the",
     "{user} Can you provide me with the code for the",
@@ -37,6 +36,8 @@ def main() -> None:
     import importlib
     import os
 
+    from models.common import build_tokenizer
+
     import torch
     from dotenv import load_dotenv
 
@@ -46,7 +47,6 @@ def main() -> None:
     from experiments.dreams.generation import state_to
     from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache
     from experiments.facts import Fact
-    from models.common import build_tokenizer
     from progress import ts
 
     load_dotenv()

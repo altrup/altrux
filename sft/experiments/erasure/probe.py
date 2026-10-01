@@ -53,18 +53,11 @@ if TYPE_CHECKING:
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.facts import (
-    Fact,
-    build_facts,
-    build_turns,
-    cue_rungs,
-    digits,
-    exact_match,
-    extract_answer,
-    normalize,
-    render_turns,
+from experiments.consolidation.null import (
+    GEN_TOKENS,
+    report_transcript,
+    ts,
 )
-from experiments.inference import generate, run_chunks, target_logprob
 from experiments.erasure.operators import (
     clear_state_top_dirs_cache,
     deflate,
@@ -82,11 +75,18 @@ from experiments.erasure.wake_items import (
     collisions,
     report_distractors,
 )
-from experiments.consolidation.null import (
-    GEN_TOKENS,
-    report_transcript,
-    ts,
+from experiments.facts import (
+    Fact,
+    build_facts,
+    build_turns,
+    cue_rungs,
+    digits,
+    exact_match,
+    extract_answer,
+    normalize,
+    render_turns,
 )
+from experiments.inference import generate, run_chunks, target_logprob
 
 T = TypeVar("T")
 
@@ -857,7 +857,7 @@ def main() -> None:
         print(f"[{ts()}]            bystander(unbound, n={len(byu)}) {mean(byu):+7.3f}")
         print(
             f"[{ts()}]            filler   dlogp {mean([r['logprob_delta'] for r in fil]):+7.3f}"
-            f"   worst {worst(fil, lambda r: f'@{r['pos']} | erased {r['erased']}')}"
+            f"   worst {worst(fil, lambda r: f'@{r["pos"]} | erased {r["erased"]}')}"
         )
         print(
             f"[{ts()}]            Frobenius removed {mean([d['frob_fraction_removed'] for d in dg]):.4f}"

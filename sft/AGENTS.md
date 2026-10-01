@@ -10,6 +10,15 @@ Whenever you add, rename, or remove an environment variable, also update `sft/.e
 
 The first line of each module docstring under `sft/` and `models/` (not tests, not `__init__.py`) is `Experiment: <slug>`, with slug one of `lama-ckl`, `state-erasure`, `memory-model`, `shared`. `shared` means more than one experiment, or generic training/preparation infra, reaches the module. The header records ownership only: `notes/README.md` decides which experiments are live. `tests/test_experiment_headers.py` enforces it and skips `PROTECTED_PATHS` files, whose headers the person adds by hand.
 
+## Import order is load-bearing for `models`
+
+`models/__init__.py` installs the `selective_scan_cuda` stub that every
+`mamba_ssm` import on this box depends on, so `import models` must come before
+any `mamba_ssm` import in a file. `make fmt` sorts imports with ruff, and
+`pyproject.toml` gives `models` its own isort section ahead of third-party so
+the sorter keeps that order instead of breaking it. Don't move `models` back
+into first-party.
+
 ## Cache policy
 
 HuggingFace cache is shared at the repo root (`../.cache/huggingface`), not inside this folder. The Makefile sets `HF_HOME=$(CURDIR)/../.cache/huggingface` on every relevant target. See the root `AGENTS.md` for the full policy.

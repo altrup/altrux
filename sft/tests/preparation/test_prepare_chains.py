@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-
 from preparation.chains import build_chains, validate
 
 USER, ASST = "[U]", "[A]"

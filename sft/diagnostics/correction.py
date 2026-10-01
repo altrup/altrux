@@ -105,8 +105,9 @@ def build_query(tokenizer, markers: tuple[str, str], device) -> torch.Tensor:
 
 
 def main() -> None:
-    from diagnostics import recall as pr
     from models.common import build_tokenizer
+
+    from diagnostics import recall as pr
     from training.checkpoints import latest_checkpoint, load_checkpoint
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])

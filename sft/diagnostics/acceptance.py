@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 from typing import Protocol, Sequence
 
-
 # Plain-bracket tokens may be at most this share of marker-slot emissions in
 # the free-running spans (§2.1, re-specified from the 08-08 run's request).
 MARKER_SHARE_MAX = 0.35
@@ -71,10 +70,11 @@ def main() -> None:
     import importlib
     import os
 
+    from models.common import build_tokenizer
+
     from dotenv import load_dotenv
 
     from experiments.dreams.cache import load_dream_cache
-    from models.common import build_tokenizer
     from progress import ts
 
     load_dotenv()

@@ -11,12 +11,11 @@ Usage: python eligibility_check.py data/eval_ultrachat.pt [--prefixes 1024,2048,
 """
 
 import argparse
+import sys
+from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
-
-import sys
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

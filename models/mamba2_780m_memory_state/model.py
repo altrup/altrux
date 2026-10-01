@@ -17,7 +17,6 @@ from the backbone; this module only binds the 780M layer indices.
 import os
 
 import torch
-
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
 from ..mamba2_2_7b_memory.model import (  # noqa: F401  (re-exported for probe/tooling parity)

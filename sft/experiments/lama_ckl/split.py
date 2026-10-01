@@ -7,13 +7,12 @@ import hashlib
 import importlib
 import json
 import random
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
 
 from experiments.lama_ckl.data import build_candidates, select_split
 from experiments.lama_ckl.evaluation import score_records
 from progress import ts
-
 
 WARMSTART_SHA256 = "226e95765f9e2c0a9fa335d5f70af8fb1d63bbf0f30c4427097b116375a11f3c"
 
@@ -129,6 +128,7 @@ def main() -> None:
     config = json.loads((args.init_adapter / "lora_config.json").read_text())
     model, _ = hooks.setup_training(device, int(config["rank"]), float(config["alpha"]), 0.0)
     from models.common import build_tokenizer
+
     from training.checkpoints import load_checkpoint
 
     load_checkpoint(model, args.init_adapter)

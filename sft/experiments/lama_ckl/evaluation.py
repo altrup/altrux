@@ -4,8 +4,8 @@ Scorer for LAMA-CKL object-token metric
 """
 
 import time
-from typing import Protocol
 from collections.abc import Mapping, Sequence
+from typing import Protocol
 
 import torch
 

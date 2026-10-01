@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
 
 from experiments.dreams.cache import (
     binding_coverage,
@@ -27,12 +27,12 @@ from experiments.dreams.distillation import (
     distill_replay,
     distill_sft,
     dream_from_cached,
+    erase_state,
     erased_start,
     erased_start_scaled,
-    erase_state,
     scored_keep,
-    spine_states,
     sft_steps,
+    spine_states,
 )
 from experiments.dreams.generation import (
     copy_state,
@@ -56,7 +56,6 @@ from experiments.erasure.probe import group_by_layer
 from experiments.facts import Fact, build_distractors
 from experiments.inference import run_chunks
 from progress import fmt_duration, ts
-
 
 USER_CUE = "{user} What is the code for the {entity}?"
 DREAM_RETRIES = 2

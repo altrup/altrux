@@ -10,10 +10,8 @@ from pathlib import Path
 import pytest
 import torch
 
-
-from training import checkpoints, datasets, loop
 from tests.training.test_train import FakeHooks, FakeStatefulModel, _ids, _make_args
-
+from training import checkpoints, datasets, loop
 
 # ---------------------------------------------------------------------------
 # recall-weight ramp (pure function)

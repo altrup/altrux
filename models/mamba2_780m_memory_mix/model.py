@@ -16,7 +16,6 @@ notes/discussion/DISCUSSION-20260723-780m-integration-screen.md).
 """
 
 import torch
-
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
 from ..mamba2_2_7b_memory.model import (  # noqa: F401  (re-exported for probe/tooling parity)

@@ -10,10 +10,10 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from models.common import build_tokenizer
+
 import pytest
 
-
-from models.common import build_tokenizer
 from preparation.conversations import format_conversation, format_pack, pack_records, recap_messages
 
 USER_OPEN = "[USER]"

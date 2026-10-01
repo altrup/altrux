@@ -2,7 +2,7 @@
 name = "sft"
 version = "0.1.0"
 description = "Mamba2 training and continual-learning experiments"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "transformers>=4.51.0",
     "datasets>=3.0",
@@ -33,6 +33,12 @@ dev = [
 [tool.ruff]
 line-length = 100
 extend-exclude = [".venv"]
+src = [".", ".."]
+
+[tool.ruff.lint.isort]
+# `models` installs the selective_scan_cuda stub at import, so it must precede mamba_ssm.
+section-order = ["future", "standard-library", "models", "third-party", "first-party", "local-folder"]
+sections = { models = ["models"] }
 
 [tool.ruff.format]
 indent-style = "space"

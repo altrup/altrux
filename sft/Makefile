@@ -26,9 +26,11 @@ sync:
 	fi
 
 fmt:
+	uv run --no-sync ruff check --select I --fix . ../models ../scripts
 	uv run --no-sync ruff format . ../models ../scripts
 
 lint:
+	uv run --no-sync ruff check --select I . ../models ../scripts
 	uv run --no-sync ruff format --check . ../models ../scripts
 
 hooks:

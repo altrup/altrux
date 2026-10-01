@@ -130,7 +130,6 @@ import random
 
 import pytest
 
-from experiments.facts import Fact
 from experiments.erasure.wake_items import (
     build_bystanders,
     build_dialogue,
@@ -138,6 +137,7 @@ from experiments.erasure.wake_items import (
     build_wake_items,
     collisions,
 )
+from experiments.facts import Fact
 
 USER, ASST = "[USER]", "[ASSISTANT]"
 FACTS = [Fact("osprey", "bird", "1 2 3 4 5"), Fact("heron", "bird", "5 9 7 9 7")]

@@ -16,17 +16,16 @@ kernel's own internal chunk-to-chunk state passing is exercised too.
 import sys
 from pathlib import Path
 
+import models  # noqa: F401  (installs the selective_scan_cuda stub)
+import models.mamba2_780m.model as M780
+
 import pytest
 import torch
 import torch.nn.functional as F
-
-
-import models  # noqa: F401  (installs the selective_scan_cuda stub)
-from adapters.lora import apply_lora
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 
-import models.mamba2_780m.model as M780
+from adapters.lora import apply_lora
 
 pytestmark = pytest.mark.skipif(
     not (torch.cuda.is_available() and torch.version.hip is None),

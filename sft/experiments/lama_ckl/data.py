@@ -7,7 +7,6 @@ import random
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-
 INVARIANT_RELATIONS = frozenset(
     {
         "P19",

@@ -10,8 +10,8 @@ import json
 import os
 import tempfile
 import time
-from pathlib import Path
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from experiments.dreams.generation import (
     copy_state,
@@ -28,7 +28,6 @@ from experiments.lama_ckl.protocol import (
 )
 from experiments.lama_ckl.training import epoch_batches, train_document_epoch
 from progress import ts
-
 
 ARMS = ("frozen", "lora", "mix-review", "altrux")
 WARMSTART_SHA256 = "226e95765f9e2c0a9fa335d5f70af8fb1d63bbf0f30c4427097b116375a11f3c"
@@ -299,6 +298,7 @@ def main() -> None:
     rank, alpha = int(config["rank"]), float(config["alpha"])
     model, trainable = hooks.setup_training(device, rank, alpha, 0.0)
     from models.common import build_tokenizer
+
     from training.checkpoints import load_checkpoint
 
     load_checkpoint(model, args.init_adapter)

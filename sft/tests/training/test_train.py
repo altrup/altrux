@@ -14,9 +14,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-
 from training import checkpoints, datasets, loop
-
 
 VOCAB = 8
 

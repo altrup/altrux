@@ -5,7 +5,6 @@ from pathlib import Path
 
 import torch
 
-
 from preparation.inspection import pick_windows
 
 

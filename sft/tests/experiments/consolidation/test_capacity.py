@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 
-
 from experiments.consolidation.capacity import parse_grid
 
 

@@ -211,9 +211,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
 
-    from diagnostics.recall import single_token_labels
     import models.mamba2_2_7b_memory as model_mod
     from models.common import build_tokenizer
+
+    from diagnostics.recall import single_token_labels
 
     tokenizer = build_tokenizer(model_mod)
     user_open, asst_open = model_mod.USER_OPEN, model_mod.ASST_OPEN

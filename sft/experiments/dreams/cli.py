@@ -16,17 +16,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import torch
 
-from experiments.facts import (
-    Fact,
-    build_distractors,
-    build_facts,
-    build_turns,
-    cue_rungs,
-    exact_match,
-    render_turns,
-)
-from experiments.inference import generate, run_chunks, target_logprob
-from experiments.dreams.types import Dream, DreamSetCache, token_sha
+from adapters.lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
+from experiments.consolidation.null import GEN_TOKENS, report_transcript
 from experiments.dreams.cache import (
     default_cache_path,
     load_dream_cache,
@@ -36,9 +27,10 @@ from experiments.dreams.cache import (
     sidecar_path,
     write_dream_set_sidecar,
 )
-from experiments.dreams.generation import state_to, teacher_dream as _teacher_dream
-from experiments.dreams.probes import probe_leakage, report_dream_set
 from experiments.dreams.distillation import erase_state, scored_keep, target_keep_mask
+from experiments.dreams.generation import state_to
+from experiments.dreams.generation import teacher_dream as _teacher_dream
+from experiments.dreams.probes import probe_leakage, report_dream_set
 from experiments.dreams.runner import (
     build_cache,
     build_dream_set,
@@ -49,12 +41,20 @@ from experiments.dreams.runner import (
     validate_live_wake_args,
     validate_wave_args,
 )
-from experiments.consolidation.null import GEN_TOKENS, report_transcript
-from progress import ts
+from experiments.dreams.types import Dream, DreamSetCache, token_sha
 from experiments.erasure.gating import RANK_RULES, VARIANTS
 from experiments.erasure.operators import erase_state_subspace
 from experiments.erasure.wake_items import build_mixed_turns, build_wake_items, report_distractors
-from adapters.lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
+from experiments.facts import (
+    Fact,
+    build_distractors,
+    build_facts,
+    build_turns,
+    cue_rungs,
+    exact_match,
+    render_turns,
+)
+from experiments.inference import generate, run_chunks, target_logprob
 from experiments.locality import (
     BATTERY_CANDIDATES,
     HELDOUT_TEXT,
@@ -66,6 +66,7 @@ from experiments.locality import (
     score_battery_batched,
     validate_battery_candidates,
 )
+from progress import ts
 
 GAMMA = 1.0
 DEFLATE_K = 1
@@ -1142,7 +1143,7 @@ def main() -> None:
                 + "  ".join("     ." if m is None else f"{m:+8.3f}" for m in row)
             )
         print(
-            f"[{ts()}] BWT {'n/a' if summary['bwt'] is None else f'{summary['bwt']:+.3f}'}   "
+            f"[{ts()}] BWT {'n/a' if summary['bwt'] is None else f'{summary["bwt"]:+.3f}'}   "
             f"installs {summary['installs_final']} of a peak {summary['installs_peak']}"
         )
         emit(

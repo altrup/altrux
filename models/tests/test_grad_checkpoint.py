@@ -24,15 +24,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "sft"))
 
 import models  # noqa: F401  (installs the selective_scan_cuda stub)
-from adapters.lora import apply_lora
-from mamba_ssm.models.config_mamba import MambaConfig
-from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
-
 import models.mamba2_780m.model as M780
 import models.mamba2_780m.train_hooks as hooks780
 import models.mamba2_780m_memory_mix.train_hooks as hooks_mix
 from models.mamba2_2_7b_memory.model import Model as MemoryModel
 from models.mamba2_2_7b_memory.model import _NeuralMemory
+
+from mamba_ssm.models.config_mamba import MambaConfig
+from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
+
+from adapters.lora import apply_lora
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="mixer path needs Triton norm kernels (any working GPU)"

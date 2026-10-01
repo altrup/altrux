@@ -12,7 +12,6 @@ from experiments.adaptive.analysis import aggregate_seed_results
 from experiments.adaptive.backend import DreamSleepBackend, manifest_sha
 from experiments.adaptive.manifest import load_experiment_manifest
 
-
 PARSER_OPTIONS = ("--manifest", "--seed", "--aggregate-only")
 
 

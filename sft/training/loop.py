@@ -24,7 +24,6 @@ from training.datasets import (
     resolve_share,
 )
 
-
 DatasetFingerprint = dict[str, str | int] | list[dict[str, str | int]]
 
 

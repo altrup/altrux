@@ -12,7 +12,6 @@ from experiments.dreams.generation import sample_next
 from experiments.dreams.probes import longest_verbatim_run
 from progress import fmt_duration, ts
 
-
 DREAM_INSTRUCTION = (
     "Dream about the preceding experience. Rehearse what matters without copying it verbatim."
 )

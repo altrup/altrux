@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-
 from preparation.filtering import (
     BackboneScorer,
     filter_dataset,

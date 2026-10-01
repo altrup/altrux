@@ -5,7 +5,6 @@
 import sys
 from pathlib import Path
 
-
 from preparation.needles import babilong_items
 
 STORY = "Mary went to the bathroom. John moved to the garden. Sandra picked up the apple."

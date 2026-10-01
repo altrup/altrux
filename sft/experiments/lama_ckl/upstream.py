@@ -13,7 +13,6 @@ from pathlib import Path
 
 from progress import ts
 
-
 TAALM_REPOSITORY = "https://github.com/ybseo-ac/TAALM.git"
 TAALM_COMMIT = "b12f344a9dbae555c239635b1c192c555bed001b"
 RELEASE_FILES: dict[str, dict[str, int | str]] = {

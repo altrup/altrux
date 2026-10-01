@@ -138,8 +138,14 @@ class DreamSleepBackend:
 
     def __init__(self, manifest: ExperimentManifest, seed: int):
         import importlib
-        import torch
+
         from models.common import build_tokenizer
+
+        import torch
+
+        from adapters.lora import DEFAULT_DROPOUT
+        from experiments.dreams.cli import build_distractors, load_init_adapter
+        from experiments.facts import Fact
         from experiments.locality import (
             BATTERY_CANDIDATES,
             HELDOUT_TEXT,
@@ -147,9 +153,6 @@ class DreamSleepBackend:
             perplexity,
             validate_battery_candidates,
         )
-        from adapters.lora import DEFAULT_DROPOUT
-        from experiments.dreams.cli import build_distractors, load_init_adapter
-        from experiments.facts import Fact
 
         if seed not in manifest.config.seeds:
             raise RuntimeError(f"seed {seed} is not registered in the manifest")
@@ -925,8 +928,8 @@ class DreamSleepBackend:
     def probe(
         self, arm: str, wake: int, state: object, artifact: dict[str, object]
     ) -> dict[str, object]:
-        from experiments.facts import exact_match
         from experiments.dreams.cli import paraphrase_prompts
+        from experiments.facts import exact_match
         from experiments.locality import battery_summary, perplexity, score_battery_batched
 
         facts = self._wake_facts(wake)

@@ -534,6 +534,7 @@ def main() -> None:
     import os
 
     from models.common import build_tokenizer
+
     from training.checkpoints import latest_checkpoint, load_checkpoint
     from training.cli import default_model_name
 

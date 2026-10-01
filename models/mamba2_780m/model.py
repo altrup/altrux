@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 

@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from experiments.facts import FILLER_SENTENCES, Fact
 from progress import ts
 
-
 # Off-format bystanders: same transcript, different relation templates, no
 # digits (the transcript's digit-free-filler invariant is what makes the code
 # probes meaningful). Disjoint from consolidation_null's ENTITY_POOL.

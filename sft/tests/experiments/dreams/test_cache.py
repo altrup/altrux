@@ -9,23 +9,22 @@ across arms" invariant the 08-06 grid lost in the harness->driver composition.
 import pytest
 import torch
 
-from experiments.facts import Fact
-from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache, token_sha
 from experiments.dreams.cache import (
     aggregate_binding,
     assert_aggregate_binding,
-    dream_bases,
     binding_coverage,
+    dream_bases,
     dream_sidecar_text,
     load_dream_cache,
     save_dream_cache,
-    write_dream_set_sidecar,
     sidecar_path,
+    write_dream_set_sidecar,
 )
 from experiments.dreams.distillation import scored_keep, target_keep_mask
-from experiments.facts import build_distractors
 from experiments.dreams.generation import dream_seed_text
 from experiments.dreams.probes import report_dream_set
+from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache, token_sha
+from experiments.facts import Fact, build_distractors
 
 FACTS = [Fact("osprey", "bird", "5 9 7 9 7"), Fact("heron", "bird", "1 2 3 4 5")]
 

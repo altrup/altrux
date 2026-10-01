@@ -24,7 +24,6 @@ from training.datasets import (
     parse_data_spec,
 )
 
-
 warnings.filterwarnings("ignore", message=r".*_check_is_size.*", category=FutureWarning)
 sys.path.insert(0, str(Path(__file__).parents[2]))
 

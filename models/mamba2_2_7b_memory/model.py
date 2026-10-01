@@ -45,14 +45,14 @@ except ImportError:
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
-from ..common import MarkerDelta, blockwise_checkpoint
-
 # Importing this is always safe even where causal_conv1d/Triton are broken
 # (this repo's ROCm dev box, see root CLAUDE.md) -- it only hangs/segfaults
 # if actually *called*, and `_fused_path_available` gates every call site.
 # ssd_combined.py itself guards its own `from causal_conv1d import
 # causal_conv1d_fn` the same try/except way this module does.
 from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+
+from ..common import MarkerDelta, blockwise_checkpoint
 
 MODEL_ID = "state-spaces/mamba2-2.7b"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"

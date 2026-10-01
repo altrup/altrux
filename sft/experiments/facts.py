@@ -9,7 +9,6 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TypeVar
 
-
 CODE_DIGITS = 5
 DISTRACTOR_SALT = 0x5EED
 

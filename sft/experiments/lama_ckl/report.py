@@ -13,7 +13,6 @@ from pathlib import Path
 from experiments.lama_ckl.runner import ARMS, curve_summary
 from progress import ts
 
-
 SEEDS = (42, 43, 44)
 
 
