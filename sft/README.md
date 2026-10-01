@@ -26,7 +26,9 @@ Two overrides for machines where the defaults don't fit:
   compile OOMs on a low-memory box.
 
 `make fmt` formats `sft/`, `models/`, and `scripts/` with ruff (spaces, 100
-columns); `make lint` checks without writing. `make test` runs the whole
+columns); `make lint` checks without writing. `make hooks` installs a
+pre-commit hook that runs `make lint`, so an unformatted commit fails until
+you run `make fmt` and restage. `make test` runs the whole
 suite; for one file use `uv run --no-sync pytest tests/<path>` with the same
 `HF_HOME` and `PYTHONPATH` the Makefile sets.
 

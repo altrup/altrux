@@ -31,6 +31,9 @@ fmt:
 lint:
 	uv run --no-sync ruff format --check . ../models ../scripts
 
+hooks:
+	git config core.hooksPath scripts/git-hooks
+
 test:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync pytest tests ../models/tests
 

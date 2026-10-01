@@ -1,0 +1,3 @@
+#!/bin/sh
+# Enable with `make -C sft hooks`.
+exec make -C "$(git rev-parse --show-toplevel)/sft" lint
