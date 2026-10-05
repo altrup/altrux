@@ -16,6 +16,7 @@ Read [the rented-GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu
 
 ## Discussion notes
 
+- [2026-10-05 — scratch capacity and consolidation targets](discussion/DISCUSSION-20261005-scratch-capacity-and-consolidation-targets.md): Records three unscheduled candidate arms (importance-masked distillation, merge-and-reset LoRA, gated expert) and the reasoning on finite free capacity; none runs before the four-arm baseline.
 - [2026-08-23 — LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md): Freezes the trusted benchmark, 30-cycle wake/sleep mapping, EOC-plus-instruction dream transition, secondary dream diagnostics, and implementation docket.
 - [2026-07-20 — gist eval](discussion/DISCUSSION-20260720-gist-eval.md): Reframes the failed exact-code probe as a possible gist mismatch and specifies a continuous-text cross-sleep gist evaluation.
 - [2026-07-21 — peak reproducibility](discussion/DISCUSSION-20260721-peak-reproducibility.md): Establishes step 435 as a reproducible episodic-gist checkpoint and orders tests for generalization, reproduction, and continuous improvement.
