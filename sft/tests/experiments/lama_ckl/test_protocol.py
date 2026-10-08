@@ -4,8 +4,8 @@ import pytest
 import torch
 
 from experiments.lama_ckl.protocol import (
-    DREAM_INSTRUCTION,
-    dream_instruction_ids,
+    apply_dream_prompt,
+    dream_prompt_ids,
     lama_dream_diagnostics,
     run_conversational_wake,
 )
@@ -14,7 +14,7 @@ from experiments.lama_ckl.protocol import (
 class Tokenizer:
     eos_token_id = 2
     pad_token_id = 0
-    markers = {"[USER]": 3, "[ASSISTANT]": 4, "<EOC>": 5}
+    markers = {"[USER]": 3, "[ASSISTANT]": 4, "<EOC>": 5, "<EOS>": 2}
 
     def convert_tokens_to_ids(self, token):
         return self.markers[token]
@@ -49,11 +49,13 @@ class State:
 class Model:
     def __init__(self, next_token=2):
         self.next_token = next_token
+        self.fed = []
 
     def eval(self):
         return self
 
     def __call__(self, ids, state=None):
+        self.fed.append(ids.tolist())
         state = State() if state is None else state
         state.calls += 1
         logits = torch.zeros(ids.shape[0], ids.shape[1], 128)
@@ -61,7 +63,7 @@ class Model:
         return logits, state
 
 
-def test_conversational_wake_keeps_one_state_and_closes_once():
+def test_conversational_wake_keeps_one_state_and_leaves_it_open():
     tokenizer = Tokenizer()
 
     artifact, state = run_conversational_wake(
@@ -74,22 +76,22 @@ def test_conversational_wake_keeps_one_state_and_closes_once():
         "<EOC>",
         reply_tokens=4,
         evidence_tokens=512,
+        device="cpu",
     )
 
-    assert state.calls == 5
+    assert state.calls == 4
     assert len(artifact["turns"]) == 2
     assert all(turn["assistant_token_ids"] == [2] for turn in artifact["turns"])
-    assert artifact["transcript_token_ids"][-1] == 5
+    assert 5 not in artifact["transcript_token_ids"]
     assert artifact["invariants"] == {
         "turns": 2,
         "missing_assistant_eos": 0,
         "internal_eoc": 0,
-        "closing_eoc": 1,
     }
 
 
 def test_conversational_wake_rejects_internal_eoc():
-    with pytest.raises(RuntimeError, match="EOC inside wake"):
+    with pytest.raises(RuntimeError, match="(?i)eoc"):
         run_conversational_wake(
             Model(next_token=5),
             Tokenizer(),
@@ -100,17 +102,28 @@ def test_conversational_wake_rejects_internal_eoc():
             "<EOC>",
             reply_tokens=4,
             evidence_tokens=512,
+            device="cpu",
         )
 
 
-def test_dream_instruction_is_a_user_turn_after_the_wake_boundary():
-    tokenizer = Tokenizer()
+def test_dream_prompt_is_the_wake_boundary_alone():
+    ids = dream_prompt_ids(Tokenizer(), "[USER]", "[ASSISTANT]", "<EOC>", "cpu")
 
-    ids = dream_instruction_ids(tokenizer, "[USER]", "[ASSISTANT]", "cpu")
+    assert ids.tolist() == [[5]]
+    assert ids.dtype == torch.long
 
-    assert ids[0, 0].item() == 3
-    assert ids[0, -2].item() == 4
-    assert tokenizer.decode(ids[0].tolist()).startswith("[USER] " + DREAM_INSTRUCTION)
+
+def test_apply_dream_prompt_feeds_the_prompt_and_leaves_the_open_state_untouched():
+    model = Model()
+    open_state = State(calls=4)
+
+    closed = apply_dream_prompt(
+        model, Tokenizer(), open_state, "[USER]", "[ASSISTANT]", "<EOC>", "cpu"
+    )
+
+    assert model.fed == [[[5]]]
+    assert closed.calls == 5
+    assert open_state.calls == 4
 
 
 def test_lama_dream_diagnostics_reports_bindings_misbindings_and_copies():

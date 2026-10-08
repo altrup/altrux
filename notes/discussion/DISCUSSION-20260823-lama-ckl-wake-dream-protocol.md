@@ -56,25 +56,48 @@ official frozen order. Render each document as one user turn and let the arm's
 current model generate its assistant turn greedily, with a 64-token backstop.
 The reply must emit the tokenizer EOS before that backstop and must not emit
 `<|endofconversation|>` inside the wake. Preserve the recurrent state across
-all 500 exchanges. Append one `<|endofconversation|>` token only after the
-complete wake to close it. Record every prompt and generated token exactly;
+all 500 exchanges. The wake itself ends open, after the last assistant EOS.
+Record every prompt and generated token exactly;
 the official evidence is the controlled source exposure, while the reply is a
 model process measurement and can differ after the arms' weights diverge.
 
-Dream generation runs from copies of the intact post-wake state. It does not
+Dream generation runs from copies of the open post-wake state. It does not
 consume or replace the state carried to the next wake. Each dream starts from
-the same post-wake state and this fixed, content-free transition:
+the same open state and a one-token prompt:
 
 ```text
 <|endofconversation|>
-[USER] Dream about the preceding experience. Rehearse what matters without copying it verbatim.
-[ASSISTANT]
 ```
 
-The first `<|endofconversation|>` in this display is the wake-closing token.
-The role markers and their literal spaces use the model's registered chat
-format. Generation stops when the model emits `<|endofconversation|>` or when
-it reaches the fixed token limit.
+The model writes everything after it, the `[USER]` turn included. Generation
+stops when the model emits a second `<|endofconversation|>` or when it reaches
+the fixed token limit.
+
+The state carried to the next wake is the open state plus one
+`<|endofconversation|>`, fed with the pre-treatment weights for every arm. So
+the carried state of the frozen, LoRA, and Mix-Review arms is the same as with
+a wake that closes itself.
+
+**Amended 2026-10-05 (altrup).** The first version of this section closed the
+wake with `<|endofconversation|>` and started each dream with a fixed
+instruction turn, `[USER] Dream about the preceding experience. Rehearse what
+matters without copying it verbatim.[ASSISTANT] `. The instruction is removed
+before any box run used it. Reasons:
+
+- The recap-0.5 warm start was trained so that about half of the
+  `<|endofconversation|>` boundaries lead to a recap of the conversation
+  before them. The boundary token alone is thus an in-distribution way to
+  start a rehearsal. The instruction sentence was never in the training
+  corpus.
+- The earlier `<|eoc|>`-prompt failures
+  ([2026-08-10 23:15](../experiments/EXPERIMENT_NOTES-20260810-231500.md),
+  23:45 UTC) were on the recap-⅓ adapter, with 20 dreams per candidate, which
+  the same note calls noise. They do not apply to this adapter.
+
+Known cost: about half the dreams are expected to be unrelated new
+conversations. The dream diagnostics show the split. If coverage is poor, the
+instruction turn is the registered fallback arm, with 100 or more dreams per
+candidate.
 
 Use the existing 300-distinct-dream treatment as the initial Altrux arm: no cue
 splicing, fact-aware prompt, content filter, coverage target, or regeneration
@@ -96,16 +119,11 @@ batch topology, and metrics. These values and the saved teacher checkpoint can
 reconstruct the logits. This keeps a 30-cycle seed from retaining about 660 GiB
 of redundant full-logit caches.
 
-`<|endofconversation|>` and the instruction have separate purposes. The token
-closes waking. The instruction selects dream generation. The warm start also
-learned that `<|endofconversation|>` can lead to an unrelated conversation, so
-the boundary token alone does not specify the required mode.
-
 Do not add a `[DREAM]` token in this experiment. An untrained token has no
 meaning. Training it would require supervised dream examples, add a bespoke
 dream policy, change the starting checkpoint, and require a new benchmark
-split. Reconsider it only if the fixed instruction fails as an invocation
-mechanism.
+split. Reconsider it only if both the boundary token and the fallback
+instruction fail as invocation mechanisms.
 
 ## 3. Dream quality as a continual-learning observable
 
@@ -128,9 +146,10 @@ changes the model's ability to produce useful replay. The decisive utility test
 is still downstream: whether distilling the realized dreams improves the next
 official LAMA-CKL acquisition/retention measurement.
 
-Do not change the instruction after viewing a benchmark score. Do not choose a
-checkpoint from dream diagnostics. Any later comparison with no instruction or
-with `[DREAM]` is a preregistered ablation, not an adaptive repair to this run.
+Do not change the dream prompt after viewing a benchmark score. Do not choose
+a checkpoint from dream diagnostics. Any later comparison with the instruction
+turn or with `[DREAM]` is a preregistered ablation, not an adaptive repair to
+this run.
 
 ## 4. Comparison and claim boundary
 
@@ -171,8 +190,9 @@ Implement and commit these slices in order:
    artifact manifest; do not apply it to the upstream Llama reproduction.
 4. Add the evidence-document wake path and verify its exact decoded structure
    and recurrent-state continuity.
-5. Add the wake-closing `<|endofconversation|>` plus fixed dream instruction,
-   generated-token masking, stopping, caching, and technical-failure rules.
+5. Add the `<|endofconversation|>` dream prompt and the separate wake-closing
+   step, generated-token masking, stopping, caching, and technical-failure
+   rules.
 6. Generalize existing dream diagnostics from synthetic code bindings to the
    official LAMA subject/object records. Keep them read-only with respect to
    generation and training.
