@@ -1,3 +1,12 @@
 {
-  "python.terminal.activateEnvironment": false
+  "python.terminal.activateEnvironment": false,
+  "python.defaultInterpreterPath": "sft/.venv/bin/python",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.configuration": "sft/pyproject.toml",
+  "ruff.importStrategy": "fromEnvironment"
 }
