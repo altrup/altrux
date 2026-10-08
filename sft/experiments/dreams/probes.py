@@ -5,7 +5,7 @@ Dream acceptance, leakage, and artifact diagnostics."""
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 
 from experiments.dreams.cache import (
     aggregate_binding,
@@ -70,8 +70,8 @@ def probe_leakage(
     return logprobs
 
 
-def longest_verbatim_run(
-    dream_tokens: Sequence[str], transcript_tokens: Sequence[str], n: int = 12
+def longest_verbatim_run[Token: Hashable](
+    dream_tokens: Sequence[Token], transcript_tokens: Sequence[Token], n: int = 12
 ) -> int:
     """Return the longest contiguous transcript run in a dream."""
     if not dream_tokens or not transcript_tokens or n <= 0:

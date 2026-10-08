@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -91,9 +91,9 @@ def binding_coverage(text: str, facts: Sequence[Fact]) -> tuple[dict[str, int], 
     return bound, misbound
 
 
-def copy_fraction(
-    dream_tokens: Sequence[str],
-    transcript_tokens: Sequence[str],
+def copy_fraction[Token: Hashable](
+    dream_tokens: Sequence[Token],
+    transcript_tokens: Sequence[Token],
     n: int = 12,
     cue_flags: Sequence[bool] | None = None,
 ) -> float:
