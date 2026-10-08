@@ -33,7 +33,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 extend-exclude = [".venv"]
-src = [".", ".."]
+# "sft" is for the VS Code extension, which resolves these from the repo root.
+src = [".", "..", "sft"]
 
 [tool.ruff.lint.isort]
 # `models` installs the selective_scan_cuda stub at import, so it must precede mamba_ssm.
