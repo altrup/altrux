@@ -319,6 +319,17 @@ evidence a pull carried something. Read it; don't assume. Therefore:
   worked. Whenever you finish your LAST writes before going quiet, touch
   scripts/.watchdog-delay once more so nothing is written and then
   immediately lost.
+- IF THE PULLS STOP (a `.watchdog-fetch` gets no fresh receipt within ~10
+  minutes), the teammate's machine is down and the branch is the only route
+  home. Keep working through the plan; nothing about the run changes. What
+  changes is the record: `git add -f` each result jsonl and log under
+  `sft/logs/` as it is produced (50 MB per file, 1 GB total) and push; log
+  every artifact too big for git as UNRETRIEVED with its size; keep touching
+  `scripts/.watchdog-delay` so a watchdog that reconnects does not read the
+  run as idle. When a fresh receipt appears, normal operation resumes. Touch
+  `.watchdog-terminate` only when the plan is done, as always; if it does not
+  take within 15 minutes, idle and keep checking for a receipt. Do not invent
+  work to fill billed time.
 
 ## Monitoring
 
