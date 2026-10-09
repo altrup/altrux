@@ -214,7 +214,7 @@ def _repeat_state(state, batch_size: int):
             setattr(
                 repeated,
                 attr,
-                [tensor.repeat(batch_size, *([1] * (tensor.dim() - 1))) for tensor in tensors],
+                [tensor.repeat_interleave(batch_size, dim=0) for tensor in tensors],
             )
     return repeated
 
@@ -256,11 +256,11 @@ def _teacher_dream_batch(
             for row in range(batch_size):
                 if done[row]:
                     continue
-                logits[row].append(batch_logits[row, -1].float().cpu())
+                last = batch_logits[row, -1].float().cpu()
+                logits[row].append(last)
                 texts[row].append(decode_token(tokens[row]))
                 if position + 1 < len(ids[row]):
                     continue
-                last = batch_logits[row, -1].float().cpu()
                 if temperature <= 0:
                     sampled = int(last.argmax())
                 else:
