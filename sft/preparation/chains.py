@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Builds episodic-chain training data for the three-tier memory design
+"""Builds episodic-chain training data for the three-tier memory design
 (docs/superpowers/specs/2026-07-17-episodic-chains-design.md).
 
 A chain is one long training example: a shuffled sequence of episodes

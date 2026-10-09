@@ -1,6 +1,4 @@
-"""Experiment: state-erasure
-
-Model-backed adaptive experiment backend."""
+"""Model-backed adaptive experiment backend."""
 
 from __future__ import annotations
 

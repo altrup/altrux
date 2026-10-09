@@ -1,6 +1,4 @@
-"""Experiment: state-erasure
-
-Run the registered adaptive six-wake experiment from one frozen manifest."""
+"""Run the registered adaptive six-wake experiment from one frozen manifest."""
 
 from __future__ import annotations
 

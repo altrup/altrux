@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Model-agnostic chunk execution, generation, scoring, and KL helpers."""
+"""Model-agnostic chunk execution, generation, scoring, and KL helpers."""
 
 from __future__ import annotations
 

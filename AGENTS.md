@@ -91,13 +91,19 @@ cover, claims that are disputed or time-sensitive, or source verification that
 the task requires. Update the relevant note and index when new research changes
 or extends the repository's standing knowledge.
 
-## Delete retired experiments
+## One experiment per folder
 
-When `notes/README.md` marks an experiment retired, delete its code, tests,
-and diagnostics in the same change, or in the next one. Record what it found
-in its note first; git history and the note are the archive. Shared helpers
-it owned move to the module that still uses them. Keep the SFT pipeline
-(`training/`, `preparation/`) even when idle, since the fine-tune may rerun.
+Each folder under `sft/experiments/` is one experiment, and the folder is the
+only record of which experiment a module belongs to. Code that two or more
+experiments use is a shared helper: it lives in a module at the top of
+`sft/experiments/` (`inference.py` is the pattern) or in the generic
+`training/`, `preparation/`, `diagnostics/`-style folders, and holds only the
+functions they share. An experiment folder never imports from another
+experiment folder; `sft/tests/test_experiment_boundaries.py` enforces this.
+When an experiment splits or retires, move the shared parts out in the same
+change. Retired code stays in its own folder, with its note as the record.
+Keep the SFT pipeline (`training/`, `preparation/`) even when idle, since the
+fine-tune may rerun.
 
 ## Keep AGENTS.md files current
 

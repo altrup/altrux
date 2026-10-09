@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Wikipedia IMR cram blocks: the 35% retention slice of the next run
+"""Wikipedia IMR cram blocks: the 35% retention slice of the next run
 (notes/discussion/DISCUSSION-20260724-next-run-plan.md 1.3).
 
 A cram block is one long training example of alternating turns:

@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Wake-item and bystander construction for erasure experiments."""
+"""Wake-item and bystander construction for erasure experiments."""
 
 from __future__ import annotations
 

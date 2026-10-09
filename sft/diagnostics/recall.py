@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Recall probe: measures whether the Titans neural memory actually carries
+"""Recall probe: measures whether the Titans neural memory actually carries
 information across long token gaps, or is decorative.
 
 Builds synthetic conversations in the training format: a user turn stating a

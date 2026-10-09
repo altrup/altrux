@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Shared tensor and state-direction operations for erasure experiments."""
+"""Shared tensor and state-direction operations for erasure experiments."""
 
 from __future__ import annotations
 

@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Training hooks for mamba2_780m_memory_state -- same training contract as
+"""Training hooks for mamba2_780m_memory_state -- same training contract as
 mamba2_2_7b_memory (stateful chunked forward, loss on every real token; see
 that module's docstring). Everything except setup_training (which binds this
 package's load_base) and DEFAULT_CHUNK_LEN is reused from the 2.7B hooks:

@@ -1,6 +1,4 @@
-"""Experiment: state-erasure
-
-Registered adaptive experiment persistence and execution."""
+"""Registered adaptive experiment persistence and execution."""
 
 from __future__ import annotations
 

@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Training hooks for mamba2_2_7b_memory, called by sft/training/loop.py's generic
+"""Training hooks for mamba2_2_7b_memory, called by sft/training/loop.py's generic
 training loop. Contrast with models/mamba2_780m/train_hooks.py: this model's
 Model.forward(input_ids, state) is stateful, so sft/training/loop.py processes
 examples in --chunk-len chunks with `state` carried (and detached) across

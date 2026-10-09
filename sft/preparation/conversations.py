@@ -1,5 +1,3 @@
-"""Experiment: shared"""
-
 import argparse
 import importlib
 import json

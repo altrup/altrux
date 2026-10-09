@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Count gist-eval-eligible conversations in a preparation/conversations.py .pt file.
+"""Count gist-eval-eligible conversations in a preparation/conversations.py .pt file.
 
 A conversation is eligible for (prefix P, cont C) when some turn-boundary
 token (USER_OPEN/ASST_OPEN) has >= P tokens before it and >= C after —

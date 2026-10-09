@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Converts RMT-team/babilong (a long-context recall QA benchmark, schema
+"""Converts RMT-team/babilong (a long-context recall QA benchmark, schema
 {input, question, target}) into the {messages: [{role, content}]} JSONL shape
 preparation/conversations.py expects from --input. Kept separate from preparation/conversations.py
 because babilong's schema is benchmark-specific, not a chat dataset --

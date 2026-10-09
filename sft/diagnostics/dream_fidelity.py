@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Dream-fidelity probe for the trained neural memory."""
+"""Dream-fidelity probe for the trained neural memory."""
 
 from __future__ import annotations
 

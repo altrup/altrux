@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Training command-line setup and resume orchestration."""
+"""Training command-line setup and resume orchestration."""
 
 import argparse
 import importlib

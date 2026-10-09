@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Per-token read diagnostic for the memory subsystem."""
+"""Per-token read diagnostic for the memory subsystem."""
 
 from __future__ import annotations
 

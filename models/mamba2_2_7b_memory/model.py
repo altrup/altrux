@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Mamba2-2.7B backbone (frozen) + a trainable long-term memory subsystem.
+"""Mamba2-2.7B backbone (frozen) + a trainable long-term memory subsystem.
 
 The memory is a single Titans-style fast-weight MLP that is test-time-trained,
 feeding a per-layer gated-delta rule that's merged directly into a sparse

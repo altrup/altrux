@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Transcript-consolidation null: can a brief LoRA distillation pass install
+"""Transcript-consolidation null: can a brief LoRA distillation pass install
 facts that were held losslessly in context into the *weights*, such that the
 model generates them later from a fresh state with no context at all?
 

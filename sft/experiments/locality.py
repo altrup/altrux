@@ -1,6 +1,4 @@
-"""Experiment: state-erasure
-
-Locality probes shared by the CL A/B arms: a self-calibrated knowledge
+"""Locality probes shared by the CL A/B arms: a self-calibrated knowledge
 battery and a fixed held-out perplexity slice.
 
 Both measure catastrophic forgetting rather than installation (see

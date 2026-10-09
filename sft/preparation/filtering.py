@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Three-test solvability filter for the cram/needle slices
+"""Three-test solvability filter for the cram/needle slices
 (notes/discussion/DISCUSSION-20260725-cl-sleep-analysis-and-filter-testc.md 6-7).
 
 Every recall item is scored teacher-forced on its credited span with the

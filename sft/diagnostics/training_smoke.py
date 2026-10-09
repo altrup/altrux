@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Fast real-model sanity check: loads the actual model (paying the real
+"""Fast real-model sanity check: loads the actual model (paying the real
 load/quantize cost) and drives it through training/loop.py's real run_training loop
 -- same slot-based batching, same gradient-accumulation counting, same
 --batch-size/--accum-tokens defaults as `make train` -- on a synthetic dataset

@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Synthetic fact, transcript, cue, and answer primitives."""
+"""Synthetic fact, transcript, cue, and answer primitives."""
 
 import itertools
 import random

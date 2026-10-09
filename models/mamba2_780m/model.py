@@ -1,5 +1,3 @@
-"""Experiment: shared"""
-
 import functools
 from collections.abc import Callable
 

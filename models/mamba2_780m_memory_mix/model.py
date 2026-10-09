@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Mamba2-780M + the Titans memory subsystem, TOKEN-MIX arm -- the gated
+"""Mamba2-780M + the Titans memory subsystem, TOKEN-MIX arm -- the gated
 read is ADDED to the residual stream entering layer 16 (the layer-21/22-
 boundary analog, 1/3 depth), same token, no ssm_state injections anywhere
 (_TokenMixInjection in the shared implementation).

@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Dependency-free progress formatting shared across SFT domains."""
+"""Dependency-free progress formatting shared across SFT domains."""
 
 from datetime import datetime
 

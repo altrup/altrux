@@ -1,6 +1,4 @@
-"""Experiment: lama-ckl
-
-Aggregate completed LAMA-CKL arms without selecting checkpoints by dream quality."""
+"""Aggregate completed LAMA-CKL arms without selecting checkpoints by dream quality."""
 
 from __future__ import annotations
 

@@ -1,6 +1,4 @@
-"""Experiment: state-erasure
-
-Inspect which fact a wake state selects as its next topic."""
+"""Inspect which fact a wake state selects as its next topic."""
 
 from __future__ import annotations
 

@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Identity, validation, and filesystem operations for dream caches."""
+"""Identity, validation, and filesystem operations for dream caches."""
 
 from __future__ import annotations
 

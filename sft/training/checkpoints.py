@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Training checkpoint discovery, persistence, and loading."""
+"""Training checkpoint discovery, persistence, and loading."""
 
 import json
 import os

@@ -1,6 +1,4 @@
-"""Experiment: shared
-
-Training slots, execution loop, and live progress."""
+"""Training slots, execution loop, and live progress."""
 
 import gc
 import math

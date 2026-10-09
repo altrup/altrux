@@ -1,6 +1,4 @@
-"""Experiment: memory-model
-
-Training hooks for mamba2_780m_memory_mix -- same training contract as
+"""Training hooks for mamba2_780m_memory_mix -- same training contract as
 mamba2_2_7b_memory (stateful chunked forward, loss on every real token; see
 that module's docstring). Local pieces: setup_training (binds this package's
 load_base) and the logging hooks (the mix arm's log fields differ from the
