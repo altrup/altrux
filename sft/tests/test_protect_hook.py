@@ -1,10 +1,13 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 HOOK = Path(__file__).resolve().parents[2] / ".claude" / "hooks" / "protect_paths.py"
+
+pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="the rented box has no git")
 
 
 def _git(repo: Path, *args: str) -> None:
