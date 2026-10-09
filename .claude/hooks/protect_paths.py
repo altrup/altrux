@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """PreToolUse hook: refuse any `git commit` that would carry a file in PROTECTED_PATHS.
 
-Agents may edit the protected files; the person reviews and commits them. The
-hook also refuses Edit/Write on itself, its wiring, and the list.
+Agents may edit the protected files; the person reviews and commits them. On a
+`box/` run branch the commit is allowed: the branch reaches main only through
+the person. The hook also refuses Edit/Write on itself, its wiring, and the list.
 """
 
 import json
@@ -21,6 +22,17 @@ COMMIT = re.compile(r"\bgit\b(?:\s+-\S+)*\s+commit\b")
 def protected() -> set[Path]:
     listed = (ROOT / "PROTECTED_PATHS").read_text().split()
     return {ROOT / p for p in listed + list(SELF_PROTECTED) if not p.startswith("#")}
+
+
+def on_run_branch(cwd: Path) -> bool:
+    head = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    return head.startswith("box/")
 
 
 def git_paths(cwd: Path, *args: str) -> set[Path]:
@@ -60,6 +72,8 @@ def main() -> int:
             return 2
         return 0
     if tool != "Bash" or not COMMIT.search(tool_input.get("command", "")):
+        return 0
+    if on_run_branch(cwd):
         return 0
     hit = sorted(
         p.relative_to(ROOT) for p in commit_paths(tool_input["command"], cwd) & protected()

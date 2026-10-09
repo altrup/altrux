@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Configures a freshly-launched Lambda Cloud GPU instance for a training run:
-# keep a pristine copy of the rsync-uploaded repo, `make sync` (+ verify CUDA
-# torch), and install the selected agent CLI so an experimenter session can
-# take over. There is no git on the instance: code changes come home as
-# patches (scripts/box_patch.sh) that a person applies and commits locally. Data prep is
-# deliberately NOT done here — which data (and with what flags) is an
-# experimental decision the experimenter makes from the notes.
+# turn the rsync-uploaded repo into a git checkout of this run's `box/<UTC>`
+# branch (the experimenter commits and pushes code and notes there), `make
+# sync` (+ verify CUDA torch), and install the selected agent CLI so an
+# experimenter session can take over. Data prep is deliberately NOT done
+# here — which data (and with what flags) is an experimental decision the
+# experimenter makes from the notes.
 #
 # Runs ON the instance (not the local machine — it holds no Lambda API key and
 # needs none). Either run it by hand after ssh-ing in, or let lambda_launch.sh
@@ -19,6 +19,10 @@
 #   TORCH_BACKEND          passed to `make sync` (e.g. cu128 for GH200)
 #   MAX_JOBS               parallel compile jobs for `make sync`
 #   EXPERIMENTER_AGENT     claude or codex (default: claude)
+#   BOX_BRANCH             this run's branch, pushed to origin by launch
+#   GITHUB_TOKEN           pushes to that branch; stored in the repo's git
+#                          config only (never global, never in the shell)
+#   LAMBDA_REPO_URL        origin (default: https://github.com/altrup/altrux.git)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,12 +53,34 @@ if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
     || echo "export CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}" >> "$HOME/.bashrc"
 fi
 
-step "Repo: $REPO_DIR (uploaded by rsync, no git)"
+step "Repo: $REPO_DIR on branch $BOX_BRANCH"
 [[ -f "$REPO_DIR/.upload-rev" ]] || { echo "error: $REPO_DIR was not uploaded by lambda_launch.sh (no .upload-rev)" >&2; exit 1; }
+[[ -n "${BOX_BRANCH:-}" && -n "${GITHUB_TOKEN:-}" ]] || { echo "error: BOX_BRANCH and GITHUB_TOKEN are required (lambda_launch.sh forwards them)" >&2; exit 1; }
 echo "local revision: $(cat "$REPO_DIR/.upload-rev")"
-rm -rf "$REPO_DIR/.git" "$HOME/pristine"
-# The untouched code: box_patch.sh diffs the working tree against this copy.
-cp -a "$REPO_DIR" "$HOME/pristine"
+command -v git >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git
+REPO_URL="${LAMBDA_REPO_URL:-https://github.com/altrup/altrux.git}"
+if [[ ! -d "$REPO_DIR/.git" ]]; then
+  # The rsynced tree is the working tree; the branch launch pushed is its
+  # index, so `git status` shows exactly the uncommitted edits that came up.
+  git -C "$REPO_DIR" init -q
+  git -C "$REPO_DIR" remote add origin "$REPO_URL"
+  git -C "$REPO_DIR" config "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" "https://github.com/"
+  git -C "$REPO_DIR" config user.name "altrux box"
+  git -C "$REPO_DIR" config user.email "box@altrux.invalid"
+  git -C "$REPO_DIR" config core.hooksPath scripts/git-hooks
+  git -C "$REPO_DIR" fetch -q --depth=1 origin "+refs/heads/$BOX_BRANCH:refs/remotes/origin/$BOX_BRANCH"
+  git -C "$REPO_DIR" reset -q "origin/$BOX_BRANCH"
+  git -C "$REPO_DIR" branch -q -m "$BOX_BRANCH"
+  git -C "$REPO_DIR" branch -q -u "origin/$BOX_BRANCH"
+  rm -f "$REPO_DIR/.upload-rev"
+  if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
+    git -C "$REPO_DIR" add -A
+    git -C "$REPO_DIR" -c core.hooksPath=/dev/null commit -q -m "box: uncommitted local changes as uploaded"
+    git -C "$REPO_DIR" push -q origin "$BOX_BRANCH"
+    echo "committed and pushed the uploaded working-tree changes"
+  fi
+fi
+echo "branch: $(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD) at $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 
 step "Stage uploaded checkpoints + data artifacts"
 # lambda_launch.sh uploads both path-preserving (repo-relative), so staging
@@ -133,8 +159,6 @@ if os.environ.get("CLAUDE_MODEL"):
 if os.environ.get("CLAUDE_EFFORT"):
     s["effortLevel"] = os.environ["CLAUDE_EFFORT"]
 s["skipDangerousModePermissionPrompt"] = True
-# The repo's protect-paths hook is a local rule; the box's exception is governed by the skill.
-s.setdefault("env", {})["ALTRUX_PROTECT_OFF"] = "1"
 if (home / ".claude/statusline.sh").exists():
     s["statusLine"] = {"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 1}
 p.parent.mkdir(exist_ok=True)

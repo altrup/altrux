@@ -40,6 +40,7 @@ and a local session never compensates by starting box work itself.
 | Stop training | `tmux send-keys -t train C-c` |
 | Check it's alive | `tmux capture-pane -t train -p \| tail` or tail newest `sft/logs/train-*.log` |
 | Hold off the watchdog | `touch scripts/.watchdog-delay` (at least every 25 min while training is stopped) |
+| Save code or notes | `git add <files> && git commit -m '<what>' && git push` (this run's `box/` branch) |
 | Pull artifacts home now | `touch scripts/.watchdog-fetch`, then read `scripts/.pull-receipt` |
 | End the run (irreversible) | `touch scripts/.watchdog-terminate` — only after the shutdown checklist |
 
@@ -248,8 +249,10 @@ complete, going nowhere, unfixable crash). In order:
 2. Write the closing section of this run's notes file: what you tried, what
    you learned, what you'd want to discuss (for a success: what worked and
    why).
-3. Write the patch file for any code change (see PERSISTENCE) — code
-   survives ONLY as a patch the pull carries home.
+3. Commit and push this run's notes file and any code change (see
+   PERSISTENCE). Then `git add -f` the run's result jsonls and logs under
+   `sft/logs/` that are under 50 MB each and 1 GB in total, commit, push.
+   Never checkpoints or `.pt` caches; those go by the pull only.
 4. VERIFY THE ARTIFACTS ARE HOME: `touch scripts/.watchdog-fetch`, then wait
    ~2 min (touch `.watchdog-delay` while you wait) for a fresh
    `scripts/.pull-receipt` — the teammate's pull writes it back after every
@@ -262,9 +265,9 @@ complete, going nowhere, unfixable crash). In order:
    timestamp: touch `.watchdog-fetch` once more and re-check; still missing
    → step 5.
 5. Record everything still missing from the receipt as UNRETRIEVED, with
-   sizes, in the notes, then touch `.watchdog-fetch` one last time and wait
-   for the receipt to list the notes file. There is no git on this instance
-   and no other route home: the pull is the only one.
+   sizes, in the notes, commit and push the notes once more, then touch
+   `.watchdog-fetch` one last time. The branch holds the record even when
+   the artifacts never arrive.
 6. `touch scripts/.watchdog-terminate` — the watchdog's next probe (within
    ~1 min) does a final pull (retried twice), terminates regardless, and
    leaves a `PULL-FAILED-<timestamp>` file on the teammate's machine if the
@@ -286,27 +289,27 @@ out the remaining idle window.
 
 ## Persistence
 
-Everything on this instance is DESTROYED at termination. One thing survives:
-what your teammate's machine rsyncs down via scripts/lambda_pull.sh
-(sft/logs/, models/*/checkpoints/, notes/, the sft/data/ artifacts). THERE IS
-NO GIT ON THIS INSTANCE: the repo arrived by rsync, has no `.git`, and holds
-no GitHub credential. Never install, initialise, or authenticate git here.
-You cannot see their disk — `scripts/.pull-receipt`,
-which every successful pull writes back onto this instance (timestamp + the
-size of each file as it landed there), is the ONLY evidence a pull carried
-something. Read it; don't assume. Therefore:
+Everything on this instance is DESTROYED at termination. Two things survive:
+what you push to this run's git branch, and what your teammate's machine
+rsyncs down via scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/,
+notes/, the sft/data/ artifacts). The repo is checked out on `box/<UTC>`,
+created at launch; push there and only there. `main` is protected on GitHub
+and your teammate merges the branch after review, so a commit here never
+changes `main` by itself. Never create other branches, never force-push,
+never touch the token in `.git/config`. You cannot see their disk —
+`scripts/.pull-receipt`, which every successful pull writes back onto this
+instance (timestamp + the size of each file as it landed there), is the ONLY
+evidence a pull carried something. Read it; don't assume. Therefore:
 
-- Any code change: write it home as a patch, promptly. `~/pristine/` holds
-  the tree exactly as uploaded; after editing, run
-  `scripts/box_patch.sh <name>`, which diffs the working tree against it into
-  `notes/experiments/patches/<UTC>-<name>.patch` (one patch per fix; a later
-  patch supersedes an earlier one, say so in the notes). Patches ride the
-  notes pull; your teammate applies and commits them after review. A fix that
-  exists only in the working tree is lost at termination.
+- Any code change: commit and push promptly, with a message that says what
+  and why. The lint pre-commit hook runs; fix what it reports rather than
+  skipping it. A fix that exists only in the working tree is lost at
+  termination.
 - Write observations (health checks, anomalies, fixes, open questions) to
   this run's notes file (`notes/experiments/EXPERIMENT_NOTES-<timestamp>.md`, created
-  above) as you go, not at the end. The rsync pull carries notes/ to your
-  teammate's machine, where it gets committed after the run.
+  above) as you go, not at the end, and commit and push it each time you
+  write to it. The rsync pull also carries notes/ home; the commit is the
+  durable copy.
 - The teammate's watchdog pulls every ~5 minutes, so anything you write needs
   the instance alive that much longer to survive. You can also ask for a pull
   RIGHT NOW — `touch scripts/.watchdog-fetch` — and should, whenever you've
@@ -407,7 +410,7 @@ re-reading the whole file costs more than never delegating.
 ## If training crashes
 
 1. Diagnose from the traceback and log tail before restarting.
-2. Clean fix -> apply, write the patch (see PERSISTENCE), then restart
+2. Clean fix -> apply, commit and push (see PERSISTENCE), then restart
    training in the `train` tmux session with the args you're currently
    running (the baseline command above if you haven't changed them).
 3. Same failure twice after a fix attempt, or you're guessing: stop and run
@@ -424,10 +427,11 @@ and cycle runner. Your teammate reviews and commits every change to them (root
 - Never `sft/experiments/lama_ckl/evaluation.py`, `split.py`, or `data.py`. A
   bug there means stop the run and write it up; a mid-run fix to verdict code
   makes the verdict unreviewable.
-- Write the patch immediately (PERSISTENCE), and open a `PROTECTED EDIT`
-  heading in this run's notes naming the file, the traceback, and the change.
+- Commit it on its own, immediately, with `PROTECTED EDIT` in the message,
+  and open a `PROTECTED EDIT` heading in this run's notes naming the file,
+  the traceback, and the change.
 - Mark every result produced after the edit PROVISIONAL in the notes. It
-  stands only once your teammate accepts the patch.
+  stands only once your teammate accepts the commit into `main`.
 
 ## No Lambda credentials
 

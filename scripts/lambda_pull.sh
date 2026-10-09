@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Pulls training artifacts down from a running Lambda Cloud instance to this
 # machine, via rsync over ssh: sft/logs/, every models/*/checkpoints/,
-# notes/ (the experimenter session's observations — committed to git only
-# from this machine after a run; rsync is how they travel off the
-# instance), the sft/data/ artifacts listed in lambda_data_artifacts.sh,
+# notes/ (the experimenter session's observations; the box also commits
+# them to its box/<UTC> branch, this copy is the early local mirror), the
+# sft/data/ artifacts listed in lambda_data_artifacts.sh,
 # and the .cache/ paths listed in lambda_cache_artifacts.sh
 # (so a dataset generated on the box is archived here and uploaded again on
 # the next launch instead of regenerated). Whichever of those don't exist

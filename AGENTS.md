@@ -63,8 +63,9 @@ everything except the protected files, so `git diff` shows only the protected
 changes, and lists every protected file under a `PROTECTED EDIT` heading in
 the final message, with what changed and why. The person reads that diff,
 stages each protected file by name, never with `git add -A`, and commits the
-change as one. The rented-box experimenter follows the
-same rule through patches; its mid-run limits are in
+change as one. On a `box/` run branch the hook allows the commit: the
+branch reaches `main` only through the person's review. The rented-box
+experimenter's mid-run limits are in
 `.agents/skills/altrux-experimenter/SKILL.md`.
 
 ## Always update READMEs and .env.example

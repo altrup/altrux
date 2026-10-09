@@ -64,6 +64,12 @@ def test_commit_pathspec_naming_other_file_is_allowed(repo: Path) -> None:
     assert _hook(repo, "Bash", {"command": "git commit -m x b.py"}) == 0
 
 
+def test_commit_of_protected_file_on_a_run_branch_is_allowed(repo: Path) -> None:
+    _git(repo, "checkout", "-q", "-b", "box/20261009-000000")
+    _git(repo, "add", "a.py")
+    assert _hook(repo, "Bash", {"command": "git commit -m x"}) == 0
+
+
 def test_non_commit_bash_is_allowed(repo: Path) -> None:
     _git(repo, "add", "a.py")
     assert _hook(repo, "Bash", {"command": "git status"}) == 0

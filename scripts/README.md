@@ -23,23 +23,25 @@ its own, for a watchdog-less session.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
-on it (keep a pristine copy of the uploaded repo, `make sync`, install the
-selected agent CLI). Set
+on it (check the uploaded repo out on this run's `box/<UTC>` branch, `make
+sync`, install the selected agent CLI). Set
 `EXPERIMENTER_AGENT=claude|codex`. Launch uploads only that provider's config
 and credentials. The remote tmux session is always named `experimenter`; the
 agent loads the shared repository experimenter workflow. No watchdog, terminate
-chain, Lambda API key, git, or GitHub token lives on the instance.
+chain, or Lambda API key lives on the instance.
 
-**The box never commits.** Launch rsyncs this working tree up (tracked and
-untracked files, ignored ones excluded, no `.git`). A code fix the experimenter
-makes on the box goes into `notes/experiments/patches/<UTC>-<name>.patch` via
-`scripts/box_patch.sh <name>`, a diff against the pristine copy setup keeps at
-`~/pristine`. The notes pull carries it home; review it, `git apply` it, and
-commit here. Files listed in the root `PROTECTED_PATHS` are hand-written and
-off-limits to agents locally (a PreToolUse hook in `.claude/settings.json`
-blocks Edit/Write); the box may patch one only to unblock a crash, and
-results after such a patch are provisional until the patch is accepted — the
-rules are in the experimenter skill.
+**The box commits to its own branch.** Launch pushes `box/<UTC>` from `HEAD`,
+rsyncs this working tree up (tracked and untracked files, ignored ones
+excluded), and setup turns that tree into a checkout of the branch, with a
+fine-grained `GITHUB_TOKEN` in the repo's git config. The experimenter commits
+and pushes code and notes there as it goes, so the record survives a dead
+pull channel. After the run: `git fetch origin box/<UTC>`, review, merge or
+cherry-pick. Protect `main` on GitHub so the token cannot push to it. Files
+listed in the root `PROTECTED_PATHS` reach `main` only through a person
+(a PreToolUse hook in `.claude/settings.json` refuses agent commits that carry
+them, except on a `box/` branch); the box may edit one only to unblock a
+crash, and results after such an edit are provisional until the commit is
+accepted — the rules are in the experimenter skill.
 
 ## Training-data artifacts: generate once, reuse forever
 
@@ -160,7 +162,7 @@ ending, and monitoring never blocks on the run. Reattach to either with
 so a launch fails fast with a clear message when there's no capacity rather
 than erroring mid-launch.
 
-Config (`HF_TOKEN`, `TORCH_BACKEND`, `MAX_JOBS`, `LAMBDA_REMOTE_REPO`) is
+Config (`HF_TOKEN`, `GITHUB_TOKEN`, `BOX_BRANCH`, `TORCH_BACKEND`, `MAX_JOBS`, `LAMBDA_REMOTE_REPO`) is
 forwarded to the instance via a temporary env file, not the command line, so
 tokens don't appear in its process list. `TORCH_BACKEND=cu128` is needed on GH200, where uv's `auto` backend
 guesses the wrong torch wheel.
@@ -168,14 +170,15 @@ guesses the wrong torch wheel.
 ## `lambda_setup.sh`
 
 Configures a freshly-launched instance: install `uv` if absent, wire up
-`HF_TOKEN` if provided, copy the rsynced repo at `~/altrux` to `~/pristine`
-(the base `box_patch.sh` diffs against), write `sft/.env` with `MODEL_NAME`
+`HF_TOKEN` if provided, make the rsynced repo at `~/altrux` a git checkout of
+`BOX_BRANCH` (shallow fetch, token in the repo config, lint pre-commit hook
+on; uncommitted local edits that came up by rsync become the branch's first
+commit), write `sft/.env` with `MODEL_NAME`
 deliberately blank (it's gitignored, so the upload has none; a run that doesn't
 name a model inline fails at import rather than silently training a default —
 the experimenter passes `MODEL_NAME=<arm>` inline per command), `make sync`
 (and verify torch sees a CUDA GPU), and install the selected Claude or Codex
-CLI. For Claude it sets `ALTRUX_PROTECT_OFF=1` in the box's settings so the
-repo's protect-paths hook is a local rule only. It also places whatever launch staged —
+CLI. It also places whatever launch staged —
 resume checkpoints and `sft/data/` artifacts — printing each one, so the
 experimenter can see which datasets already exist. Data *prep* is deliberately
 not part of setup: which data to build (and with what flags) is an experimental

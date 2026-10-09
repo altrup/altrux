@@ -3,9 +3,8 @@
 #
 # Runs on the LOCAL machine (it needs LAMBDA_API_KEY, which by design never
 # lives on the instance). It launches the instance, waits for it to boot and
-# accept ssh, rsyncs this working tree up (tracked + untracked, never ignored
-# files — no .git, no GitHub token: the box never commits, its fixes come home
-# as patches under notes/experiments/patches/), then scp's lambda_setup.sh up
+# accept ssh, pushes a `box/<UTC>` branch from HEAD, rsyncs this working tree
+# up (tracked + untracked, never ignored files), then scp's lambda_setup.sh up
 # and runs it — leaving a box that starts the selected Claude or Codex
 # experimenter when credentials are present.
 #
@@ -13,6 +12,8 @@
 #   LAMBDA_API_KEY         required
 #   LAMBDA_INSTANCE_TYPE   required, e.g. gpu_1x_h100_pcie (see the Lambda UI)
 #   LAMBDA_SSH_KEY_NAME    required, name of an ssh key registered in Lambda
+#   GITHUB_TOKEN           required, fine-grained, contents read/write on this
+#                          repo only; the box commits and pushes to its branch
 #   LAMBDA_REGION          optional, e.g. us-east-1; auto-picks an available
 #                          region for the instance type if unset
 #   LAMBDA_SSH_KEY_PATH    optional, private key for ssh (default ~/.ssh/id_ed25519)
@@ -60,6 +61,8 @@ require() { [[ -n "${!1:-}" ]] || { echo "error: $1 not set (scripts/.env — se
 require LAMBDA_API_KEY
 require LAMBDA_INSTANCE_TYPE
 require LAMBDA_SSH_KEY_NAME
+require GITHUB_TOKEN
+BOX_BRANCH="box/$(date -u +%Y%m%d-%H%M%S)"
 
 SSH_USER="${LAMBDA_SSH_USER:-ubuntu}"
 SSH_KEY_PATH="${LAMBDA_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
@@ -115,6 +118,7 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
   echo "Instance: $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}"
   echo "SSH key: $LAMBDA_SSH_KEY_NAME (private key: $SSH_KEY_PATH)"
   echo "Repo: rsync of this tree at $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD || echo ' + uncommitted changes')"
+  echo "Branch: $BOX_BRANCH, pushed to origin from HEAD now; the box commits and pushes there"
   if [[ "$EXPERIMENTER_AGENT" == claude && -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
     echo "Experimenter: Claude auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
   elif [[ "$EXPERIMENTER_AGENT" == codex && -f "$HOME/.codex/auth.json" ]]; then
@@ -309,6 +313,8 @@ fi
 
 RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
+echo "Pushing $BOX_BRANCH from HEAD..."
+git -C "$ROOT" push -q origin "HEAD:refs/heads/$BOX_BRANCH"
 echo "Uploading repo (tracked + untracked, ignored files excluded) to ~/$remote_repo..."
 git -C "$ROOT" rev-parse HEAD > "$ROOT/.upload-rev"
 git -C "$ROOT" diff --quiet HEAD || echo "+ uncommitted changes" >> "$ROOT/.upload-rev"
@@ -370,7 +376,7 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SCRIPT_DIR/experimenter_age
 # tokens don't land in the instance's process list. Removed after setup reads it.
 env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
-forward_vars=(LAMBDA_REMOTE_REPO EXPERIMENTER_AGENT HF_TOKEN TORCH_BACKEND MAX_JOBS)
+forward_vars=(LAMBDA_REMOTE_REPO EXPERIMENTER_AGENT HF_TOKEN TORCH_BACKEND MAX_JOBS BOX_BRANCH GITHUB_TOKEN LAMBDA_REPO_URL)
 if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
   CLAUDE_MODEL="${CLAUDE_MODEL:-$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)}"
   CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"
@@ -387,5 +393,6 @@ ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" \
 
 echo
 echo "Launched. Instance $instance_id is at $ip; setup is running in tmux '$SESSION'."
+echo "Run branch: $BOX_BRANCH — review with: git fetch origin $BOX_BRANCH && git log --stat main..origin/$BOX_BRANCH"
 echo "Everything is viewable locally: tmux attach -t ${sess:-altrux} (windows: watch / train / agent)."
 echo "Direct ssh fallback: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t <$SESSION|experimenter>"
