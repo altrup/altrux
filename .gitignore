@@ -7,4 +7,3 @@ scripts/.env
 .watchdog-fetch
 .watchdog.lock
 .pull-receipt
-.upload-rev

@@ -293,7 +293,7 @@ Everything on this instance is DESTROYED at termination. Two things survive:
 what you push to this run's git branch, and what your teammate's machine
 rsyncs down via scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/,
 notes/, the sft/data/ artifacts). The repo is checked out on `box/<UTC>`,
-created at launch; push there and only there. `main` is protected on GitHub
+created by setup; push there and only there. `main` is protected on GitHub
 and your teammate merges the branch after review, so a commit here never
 changes `main` by itself. Never create other branches, never force-push,
 never touch the token in `.git/config`. You cannot see their disk —

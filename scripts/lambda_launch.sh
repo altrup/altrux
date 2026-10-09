@@ -3,9 +3,9 @@
 #
 # Runs on the LOCAL machine (it needs LAMBDA_API_KEY, which by design never
 # lives on the instance). It launches the instance, waits for it to boot and
-# accept ssh, pushes a `box/<UTC>` branch from HEAD, rsyncs this working tree
-# up (tracked + untracked, never ignored files), then scp's lambda_setup.sh up
-# and runs it — leaving a box that starts the selected Claude or Codex
+# accept ssh, then scp's lambda_setup.sh up and runs it: the box clones the
+# commit at HEAD from GitHub onto a `box/<UTC>` branch of its own. Launch
+# refuses a dirty tree or a HEAD that origin does not have, and never pushes — leaving a box that starts the selected Claude or Codex
 # experimenter when credentials are present.
 #
 # Config (scripts/.env):
@@ -63,6 +63,21 @@ require LAMBDA_INSTANCE_TYPE
 require LAMBDA_SSH_KEY_NAME
 require GITHUB_TOKEN
 BOX_BRANCH="box/$(date -u +%Y%m%d-%H%M%S)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The box clones HEAD from origin, so HEAD must be a commit origin has and the
+# tree must be clean: what the box runs is a commit, not a snapshot.
+if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
+  if ! git -C "$ROOT" diff --quiet HEAD || [[ -n "$(git -C "$ROOT" ls-files --others --exclude-standard)" ]]; then
+    echo "error: the working tree has uncommitted or untracked changes; commit or stash them, the box clones a commit" >&2
+    exit 1
+  fi
+  git -C "$ROOT" fetch -q origin
+  if [[ -z "$(git -C "$ROOT" branch -r --contains HEAD 2>/dev/null)" ]]; then
+    echo "error: HEAD $(git -C "$ROOT" rev-parse --short HEAD) is not on origin; push it first (git push), launch does not push for you" >&2
+    exit 1
+  fi
+fi
+BOX_BASE="$(git -C "$ROOT" rev-parse HEAD)"
 
 SSH_USER="${LAMBDA_SSH_USER:-ubuntu}"
 SSH_KEY_PATH="${LAMBDA_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
@@ -81,7 +96,6 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i "$SSH_KEY_
 # path it has here — the path itself records which model it belongs to, and
 # checkpoints for several models can ship in one run. Paths must therefore
 # live under the repo root; relative ones resolve against it.
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 resolve_ckpt() {
   # stdout: absolute path with rsync's /./ relative-anchor at the repo root.
   local p="$1"
@@ -117,8 +131,7 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
   done
   echo "Instance: $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}"
   echo "SSH key: $LAMBDA_SSH_KEY_NAME (private key: $SSH_KEY_PATH)"
-  echo "Repo: rsync of this tree at $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD || echo ' + uncommitted changes')"
-  echo "Branch: $BOX_BRANCH, pushed to origin from HEAD now; the box commits and pushes there"
+  echo "Repo: the box clones ${BOX_BASE:0:12} from origin onto $BOX_BRANCH and pushes there"
   if [[ "$EXPERIMENTER_AGENT" == claude && -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
     echo "Experimenter: Claude auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
   elif [[ "$EXPERIMENTER_AGENT" == codex && -f "$HOME/.codex/auth.json" ]]; then
@@ -313,15 +326,6 @@ fi
 
 RSYNC_SSH=(-e "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -i '$SSH_KEY_PATH'")
 remote_repo="${LAMBDA_REMOTE_REPO:-altrux}"
-echo "Pushing $BOX_BRANCH from HEAD..."
-git -C "$ROOT" push -q origin "HEAD:refs/heads/$BOX_BRANCH"
-echo "Uploading repo (tracked + untracked, ignored files excluded) to ~/$remote_repo..."
-git -C "$ROOT" rev-parse HEAD > "$ROOT/.upload-rev"
-git -C "$ROOT" diff --quiet HEAD || echo "+ uncommitted changes" >> "$ROOT/.upload-rev"
-git -C "$ROOT" ls-files -z --cached --others --exclude-standard \
-  | rsync -rt --info=progress2 --files-from=- --from0 "${RSYNC_SSH[@]}" "$ROOT/" "$SSH_USER@$ip:$remote_repo/"
-rsync -t "${RSYNC_SSH[@]}" "$ROOT/.upload-rev" "$SSH_USER@$ip:$remote_repo/"
-rm -f "$ROOT/.upload-rev"
 
 if (( ${#all_ckpts[@]} + ${#data_local_files[@]} + ${#cache_local_paths[@]} )); then
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "rm -rf ~/resume-staging && mkdir -p ~/resume-staging"
@@ -376,7 +380,7 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/lambda_setup.sh" "$SCRIPT_DIR/experimenter_age
 # tokens don't land in the instance's process list. Removed after setup reads it.
 env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
-forward_vars=(LAMBDA_REMOTE_REPO EXPERIMENTER_AGENT HF_TOKEN TORCH_BACKEND MAX_JOBS BOX_BRANCH GITHUB_TOKEN LAMBDA_REPO_URL)
+forward_vars=(LAMBDA_REMOTE_REPO EXPERIMENTER_AGENT HF_TOKEN TORCH_BACKEND MAX_JOBS BOX_BRANCH BOX_BASE GITHUB_TOKEN LAMBDA_REPO_URL)
 if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
   CLAUDE_MODEL="${CLAUDE_MODEL:-$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("model") or "")' 2>/dev/null || true)}"
   CLAUDE_EFFORT="$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".claude/settings.json").read_text()).get("effortLevel") or "")' 2>/dev/null || true)"

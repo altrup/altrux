@@ -23,17 +23,17 @@ its own, for a watchdog-less session.
 
 To bring an **instance** up, run `./scripts/lambda_launch.sh` from the local
 machine — it provisions the GPU, waits for ssh, then runs `lambda_setup.sh`
-on it (check the uploaded repo out on this run's `box/<UTC>` branch, `make
+on it (clone the launch commit onto this run's `box/<UTC>` branch, `make
 sync`, install the selected agent CLI). Set
 `EXPERIMENTER_AGENT=claude|codex`. Launch uploads only that provider's config
 and credentials. The remote tmux session is always named `experimenter`; the
 agent loads the shared repository experimenter workflow. No watchdog, terminate
 chain, or Lambda API key lives on the instance.
 
-**The box commits to its own branch.** Launch pushes `box/<UTC>` from `HEAD`,
-rsyncs this working tree up (tracked and untracked files, ignored ones
-excluded), and setup turns that tree into a checkout of the branch, with a
-fine-grained `GITHUB_TOKEN` in the repo's git config. The experimenter commits
+**The box commits to its own branch.** Launch refuses a dirty tree or a
+`HEAD` that origin does not have (push first; launch never pushes for you).
+Setup clones that commit from GitHub with a fine-grained `GITHUB_TOKEN` in the
+repo's git config and creates `box/<UTC>` from it. The experimenter commits
 and pushes code and notes there as it goes, so the record survives a dead
 pull channel. After the run: `git fetch origin box/<UTC>`, review, merge or
 cherry-pick. Protect `main` on GitHub so the token cannot push to it. Files
@@ -162,7 +162,7 @@ ending, and monitoring never blocks on the run. Reattach to either with
 so a launch fails fast with a clear message when there's no capacity rather
 than erroring mid-launch.
 
-Config (`HF_TOKEN`, `GITHUB_TOKEN`, `BOX_BRANCH`, `TORCH_BACKEND`, `MAX_JOBS`, `LAMBDA_REMOTE_REPO`) is
+Config (`HF_TOKEN`, `GITHUB_TOKEN`, `BOX_BRANCH`, `BOX_BASE`, `TORCH_BACKEND`, `MAX_JOBS`, `LAMBDA_REMOTE_REPO`) is
 forwarded to the instance via a temporary env file, not the command line, so
 tokens don't appear in its process list. `TORCH_BACKEND=cu128` is needed on GH200, where uv's `auto` backend
 guesses the wrong torch wheel.
@@ -170,10 +170,9 @@ guesses the wrong torch wheel.
 ## `lambda_setup.sh`
 
 Configures a freshly-launched instance: install `uv` if absent, wire up
-`HF_TOKEN` if provided, make the rsynced repo at `~/altrux` a git checkout of
-`BOX_BRANCH` (shallow fetch, token in the repo config, lint pre-commit hook
-on; uncommitted local edits that came up by rsync become the branch's first
-commit), write `sft/.env` with `MODEL_NAME`
+`HF_TOKEN` if provided, shallow-clone `BOX_BASE` from origin into `~/altrux`
+and push a new `BOX_BRANCH` from it (token in the repo config, lint
+pre-commit hook on), write `sft/.env` with `MODEL_NAME`
 deliberately blank (it's gitignored, so the upload has none; a run that doesn't
 name a model inline fails at import rather than silently training a default —
 the experimenter passes `MODEL_NAME=<arm>` inline per command), `make sync`
