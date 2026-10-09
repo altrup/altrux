@@ -91,6 +91,14 @@ cover, claims that are disputed or time-sensitive, or source verification that
 the task requires. Update the relevant note and index when new research changes
 or extends the repository's standing knowledge.
 
+## Delete retired experiments
+
+When `notes/README.md` marks an experiment retired, delete its code, tests,
+and diagnostics in the same change, or in the next one. Record what it found
+in its note first; git history and the note are the archive. Shared helpers
+it owned move to the module that still uses them. Keep the SFT pipeline
+(`training/`, `preparation/`) even when idle, since the fine-tune may rerun.
+
 ## Keep AGENTS.md files current
 
 There's an `AGENTS.md` at the root and in some subdirectories (e.g. `models/AGENTS.md`, `sft/AGENTS.md`). Update the relevant one in the same change whenever you introduce or discover something a future session would otherwise have to rediscover the hard way — a non-obvious gotcha, a workaround for broken tooling, a convention that isn't visible just from reading the code, or a rule you had to be told twice. Don't record anything derivable by reading the code itself (that belongs in comments or a README, not here). Each `CLAUDE.md` imports its sibling `AGENTS.md`; don't duplicate instructions there.
