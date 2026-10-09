@@ -50,21 +50,21 @@ Each model is a folder in `models/` at the repo root containing `model.py` (impl
 
 Both `backend` and `sft` read `MODEL_NAME` from their `.env` and import `models.{MODEL_NAME}` at startup. The backend must be started with `PYTHONPATH` pointing at the repo root (the Makefile handles this). `sft` scripts also add the repo root to `sys.path` automatically.
 
-## Protected paths — hand-written code
+## Protected paths — the person commits
 
 `PROTECTED_PATHS` at the repo root lists the files where a wrong line gives a
 wrong scientific result without a crash: the LAMA-CKL protocol (wake, dream
 prompt, dream generation, distillation, baseline training, scorer, split, and
-the cycle runner). The person owns these files. Agents read them, review
-them, write tests for them, and explain them, but do not edit them. A
-PreToolUse hook (`.claude/hooks/protect_paths.py`) enforces this for Edit and
-Write in local sessions; do not route around it with shell edits. Propose the
-change as a diff in the conversation instead.
-
-The rented-box experimenter is the one exception, with its own rules in
-`.agents/skills/altrux-experimenter/SKILL.md`: it may patch a protected file
-only to unblock a crash, never scoring or split logic, and the patch comes
-home for review rather than being committed.
+the cycle runner). Agents may edit them but never commit them. A PreToolUse
+hook (`.claude/hooks/protect_paths.py`) refuses any `git commit` that would
+carry one; do not route around it. A change that touches a protected file is
+not committed by the agent at all, not even its other files: leave the whole
+change unstaged, and list every protected file under a `PROTECTED EDIT`
+heading in the final message, with what changed and why. The person reads
+the diff and commits the change as one. The person stages protected files
+by name, never with `git add -A`. The rented-box experimenter follows the
+same rule through patches; its mid-run limits are in
+`.agents/skills/altrux-experimenter/SKILL.md`.
 
 ## Always update READMEs and .env.example
 

@@ -418,8 +418,8 @@ re-reading the whole file costs more than never delegating.
 
 `PROTECTED_PATHS` at the repo root lists the hand-written files: the LAMA-CKL
 protocol, dream generation and distillation, baseline training, scorer, split,
-and cycle runner. Your teammate owns them. You may edit one ONLY to unblock a
-crash, and then:
+and cycle runner. Your teammate reviews and commits every change to them (root
+`AGENTS.md`). Mid-run you may edit one ONLY to unblock a crash, and then:
 
 - Never `sft/experiments/lama_ckl/evaluation.py`, `split.py`, or `data.py`. A
   bug there means stop the run and write it up; a mid-run fix to verdict code
