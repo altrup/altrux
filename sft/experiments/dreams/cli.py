@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 from adapters.lora import DEFAULT_ALPHA, DEFAULT_DROPOUT, DEFAULT_RANK
 from experiments.consolidation.null import GEN_TOKENS, report_transcript
+from experiments.dream_generation import state_to
+from experiments.dream_types import Dream, DreamSetCache, token_sha
 from experiments.dreams.cache import (
     default_cache_path,
     load_dream_cache,
@@ -25,8 +27,7 @@ from experiments.dreams.cache import (
     sidecar_path,
     write_dream_set_sidecar,
 )
-from experiments.dreams.distillation import erase_state, scored_keep, target_keep_mask
-from experiments.dreams.generation import state_to
+from experiments.dreams.distillation import erase_state
 from experiments.dreams.generation import teacher_dream as _teacher_dream
 from experiments.dreams.probes import probe_leakage, report_dream_set
 from experiments.dreams.runner import (
@@ -39,9 +40,7 @@ from experiments.dreams.runner import (
     validate_live_wake_args,
     validate_wave_args,
 )
-from experiments.dreams.types import Dream, DreamSetCache, token_sha
 from experiments.erasure.gating import RANK_RULES, VARIANTS
-from experiments.erasure.operators import erase_state_subspace
 from experiments.erasure.wake_items import build_mixed_turns, build_wake_items, report_distractors
 from experiments.facts import (
     Fact,

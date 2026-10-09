@@ -58,11 +58,12 @@ prompt, dream generation, distillation, baseline training, scorer, split, and
 the cycle runner). Agents may edit them but never commit them. A PreToolUse
 hook (`.claude/hooks/protect_paths.py`) refuses any `git commit` that would
 carry one; do not route around it. A change that touches a protected file is
-not committed by the agent at all, not even its other files: leave the whole
-change unstaged, and list every protected file under a `PROTECTED EDIT`
-heading in the final message, with what changed and why. The person reads
-the diff and commits the change as one. The person stages protected files
-by name, never with `git add -A`. The rented-box experimenter follows the
+not committed by the agent at all, not even its other files. The agent stages
+everything except the protected files, so `git diff` shows only the protected
+changes, and lists every protected file under a `PROTECTED EDIT` heading in
+the final message, with what changed and why. The person reads that diff,
+stages each protected file by name, never with `git add -A`, and commits the
+change as one. The rented-box experimenter follows the
 same rule through patches; its mid-run limits are in
 `.agents/skills/altrux-experimenter/SKILL.md`.
 

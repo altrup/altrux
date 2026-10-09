@@ -9,6 +9,8 @@ across arms" invariant the 08-06 grid lost in the harness->driver composition.
 import pytest
 import torch
 
+from experiments.dream_distillation import scored_keep, target_keep_mask
+from experiments.dream_types import CachedDream, DreamCache, DreamSetCache, token_sha
 from experiments.dreams.cache import (
     aggregate_binding,
     assert_aggregate_binding,
@@ -20,10 +22,8 @@ from experiments.dreams.cache import (
     sidecar_path,
     write_dream_set_sidecar,
 )
-from experiments.dreams.distillation import scored_keep, target_keep_mask
 from experiments.dreams.generation import dream_seed_text
 from experiments.dreams.probes import report_dream_set
-from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache, token_sha
 from experiments.facts import Fact, build_distractors
 
 FACTS = [Fact("osprey", "bird", "5 9 7 9 7"), Fact("heron", "bird", "1 2 3 4 5")]
@@ -364,7 +364,7 @@ def test_copy_fraction_separates_a_quoting_dream_from_an_original_one():
     the wake transcript verbatim instead of dreaming about it. Rehearsal
     counting cannot see that -- a verbatim copy scores perfect coverage -- so
     copying needs its own number."""
-    from experiments.dreams.cache import copy_fraction
+    from experiments.verbatim import copy_fraction
 
     transcript = (
         "the lighthouse keeper kept meticulous logs of every passing storm "
@@ -378,7 +378,7 @@ def test_copy_fraction_separates_a_quoting_dream_from_an_original_one():
 
 
 def test_copy_fraction_counts_only_runs_at_least_n_long():
-    from experiments.dreams.cache import copy_fraction
+    from experiments.verbatim import copy_fraction
 
     transcript = "alpha beta gamma delta epsilon zeta eta theta".split()
     # A 3-gram overlap is ordinary language reuse, not regurgitation.
@@ -389,7 +389,7 @@ def test_copy_fraction_counts_only_runs_at_least_n_long():
 
 
 def test_copy_fraction_is_zero_for_an_empty_dream():
-    from experiments.dreams.cache import copy_fraction
+    from experiments.verbatim import copy_fraction
 
     assert copy_fraction([], "a b c".split(), n=3) == 0.0
 
@@ -399,7 +399,7 @@ def test_copy_fraction_ignores_spliced_cue_tokens():
     tokens match the transcript BY CONSTRUCTION. Counting them as copying
     inflates a cued set's score for a reason that has nothing to do with what
     the model generated."""
-    from experiments.dreams.cache import copy_fraction
+    from experiments.verbatim import copy_fraction
 
     transcript = "what is the code for the clove the code for the clove is one two".split()
     dream = "what is the code for the clove the code for the clove is one two".split()
@@ -415,8 +415,7 @@ def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
     FRACTION while never reproducing more than a line; a dream that replays
     the transcript wholesale is a different object. The run length is what
     distinguishes them."""
-    from experiments.dreams.cache import copy_fraction
-    from experiments.dreams.probes import longest_verbatim_run
+    from experiments.verbatim import copy_fraction, longest_verbatim_run
 
     transcript = [i for i in range(200)]
     wholesale = transcript[10:150]  # one long replay
@@ -434,7 +433,7 @@ def test_longest_verbatim_run_separates_regurgitation_from_phrase_reuse():
 
 
 def _set_cache(seed, transcript, dreams, **over):
-    from experiments.dreams.types import DreamSetCache
+    from experiments.dream_types import DreamSetCache
 
     fields = dict(
         seed=seed,

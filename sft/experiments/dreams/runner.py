@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Sequence
 from pathlib import Path
 
+from experiments.dream_distillation import (
+    distill_dream_set,
+    distill_replay,
+    dream_from_cached,
+    scored_keep,
+)
+from experiments.dream_generation import copy_state, dream_generation_seed, state_to
+from experiments.dream_types import CachedDream, Dream, DreamCache, DreamSetCache, token_sha
 from experiments.dreams.cache import (
     binding_coverage,
     dream_bases,
-    load_dream_cache,
     pilot_path,
     save_dream_cache,
     sidecar_path,
@@ -19,27 +25,16 @@ from experiments.dreams.cache import (
 )
 from experiments.dreams.distillation import (
     distill_counterfactual,
-    distill_dream_set,
     distill_fused,
     distill_live,
-    distill_replay,
     distill_sft,
-    dream_from_cached,
     erase_state,
     erased_start,
     erased_start_scaled,
-    scored_keep,
     sft_steps,
     spine_states,
 )
-from experiments.dreams.generation import (
-    copy_state,
-    dream_generation_seed,
-    dream_seed_text,
-    rehearsal_fraction,
-    state_to,
-    teacher_dream,
-)
+from experiments.dreams.generation import dream_seed_text, rehearsal_fraction, teacher_dream
 from experiments.dreams.probes import (
     battery_read_queries,
     blank_state_logits,
@@ -47,11 +42,10 @@ from experiments.dreams.probes import (
     report_dream,
     report_dream_set,
 )
-from experiments.dreams.types import CachedDream, Dream, DreamCache, DreamSetCache, token_sha
 from experiments.erasure.gating import VARIANTS, gated_positions, state_divergence
 from experiments.erasure.pilot import PilotCapture, PilotDream, scheme_weights
 from experiments.erasure.probe import group_by_layer
-from experiments.facts import Fact, build_distractors
+from experiments.facts import build_distractors
 from experiments.inference import run_chunks
 from progress import fmt_duration, ts
 
@@ -536,12 +530,17 @@ def run_dream_set_sleep(
         opt,
         cache.dreams,
         wake_state,
-        variant,
         args.dream_epochs,
         args.kl_temp,
         on_step,
         on_boundary,
-        sigma_scaled=(mode == "b4-sigma"),
+        start=None
+        if variant is None
+        else lambda cached: (
+            erased_start_scaled(wake_state, cached.bases[variant], cached.spectra)
+            if mode == "b4-sigma"
+            else erased_start(wake_state, cached.bases[variant])
+        ),
     )
     train_seconds = time.time() - train_started - probe_seconds
     print(

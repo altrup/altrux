@@ -4,5 +4,5 @@ sft/experiments/lama_ckl/split.py
 sft/experiments/lama_ckl/data.py
 sft/experiments/lama_ckl/training.py
 sft/experiments/lama_ckl/runner.py
-sft/experiments/dreams/generation.py
-sft/experiments/dreams/distillation.py
+sft/experiments/dream_generation.py
+sft/experiments/dream_distillation.py

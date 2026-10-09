@@ -11,9 +11,8 @@ from typing import Protocol, Self, TypedDict
 
 import torch
 
-from experiments.dreams.cache import copy_fraction
-from experiments.dreams.generation import copy_state, sample_next
-from experiments.dreams.probes import longest_verbatim_run
+from experiments.dream_generation import copy_state, sample_next
+from experiments.verbatim import copy_fraction, longest_verbatim_run
 from progress import fmt_duration, ts
 
 # Can use {eoc}, {user_open}, and {asst_open}
@@ -226,8 +225,7 @@ def run_conversational_wake(
              included), assistant (decoded)
       transcript_token_ids: all prompts and replies in order
       transcript_sha256: sha256 of the ids joined with ","
-      invariants: turns, missing_assistant_eos, internal_eoc, closing_eoc
-                  (1 when EOC is last and occurs once)
+      invariants: turns, missing_assistant_eos, internal_eoc
     """
     if reply_tokens < 1 or evidence_tokens < 1:
         raise ValueError("reply_tokens and evidence_tokens must be at least 1")

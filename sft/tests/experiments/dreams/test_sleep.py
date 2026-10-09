@@ -7,6 +7,9 @@ import torch
 import torch.nn as nn
 
 from adapters.lora import LoRALinear
+from experiments.dream_distillation import distill_dream_set, distill_replay
+from experiments.dream_generation import sample_next
+from experiments.dream_types import CachedDream
 from experiments.dreams.cache import (
     fact_read_positions,
     gate_agreement,
@@ -17,16 +20,13 @@ from experiments.dreams.cache import (
 from experiments.dreams.cli import ARM_CARRY, paraphrase_prompts, teacher_dream
 from experiments.dreams.distillation import (
     distill_counterfactual,
-    distill_dream_set,
     distill_live,
-    distill_replay,
     distill_sft,
     erase_ssm,
     erase_state,
     erased_start,
 )
-from experiments.dreams.generation import frozen_teacher, rehearsal_fraction, sample_next
-from experiments.dreams.types import CachedDream
+from experiments.dreams.generation import frozen_teacher, rehearsal_fraction
 from experiments.erasure.operators import deflate, state_top_dirs
 from experiments.facts import Fact
 
@@ -497,7 +497,7 @@ def test_teacher_dream_caches_a_position_per_token():
 
 
 def test_uncued_replay_dreams_use_the_configured_model_batch():
-    from experiments.dreams.generation import generate_replay_dreams
+    from experiments.dream_generation import generate_replay_dreams
 
     model, _, wake, seed_ids = _tiny_setup()
     batches = []
@@ -1325,7 +1325,7 @@ def test_multi_wave_requires_an_explicit_wave_teacher():
 def _serial_spine(model, tokens, wake):
     """Ground truth for spine_states: the state carried into each token by a
     plain one-token-at-a-time run."""
-    from experiments.dreams.generation import copy_state
+    from experiments.dream_generation import copy_state
 
     state = copy_state(wake)
     per_token = []
@@ -2168,7 +2168,7 @@ def test_b4_starts_every_dream_from_a_fresh_erased_copy_of_the_wake_state():
         opt,
         dreams,
         wake,
-        variant="raw",
+        start=lambda c: erased_start(wake, c.bases["raw"]),
         epochs=1,
         kl_temp=1.0,
         on_step=lambda s, l: None,
@@ -2191,7 +2191,6 @@ def test_the_dream_set_probes_at_every_boundary_and_carries_the_weights():
         opt,
         dreams,
         wake,
-        variant=None,
         epochs=2,
         kl_temp=1.0,
         on_step=lambda s, l: None,
@@ -2320,7 +2319,6 @@ def test_dream_epochs_interleave_full_passes_over_the_set():
         opt,
         dreams,
         wake,
-        variant=None,
         epochs=2,
         kl_temp=1.0,
         on_step=lambda s, l: None,
@@ -2343,7 +2341,7 @@ def test_every_epoch_restarts_each_dream_from_its_own_eraser():
         opt,
         dreams,
         wake,
-        variant="raw",
+        start=lambda c: erased_start(wake, c.bases["raw"]),
         epochs=2,
         kl_temp=1.0,
         on_step=lambda s, l: None,
@@ -2509,7 +2507,7 @@ def test_dream_seed_offset_makes_parallel_builds_disjoint(tmp_path):
     the same wake state produce IDENTICAL dreams -- parallel builds would
     duplicate instead of extending the set. The offset shifts the derivation
     so N processes cover disjoint dream indices."""
-    from experiments.dreams.generation import dream_generation_seed
+    from experiments.dream_generation import dream_generation_seed
 
     base = [dream_generation_seed(1234, i, attempt=0, offset=0) for i in range(20)]
     shifted = [dream_generation_seed(1234, i, attempt=0, offset=20) for i in range(20)]

@@ -13,16 +13,17 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from experiments.dreams.generation import (
+from experiments.dream_generation import (
     copy_state,
     dream_generation_seed,
     generate_replay_dreams,
     state_to,
 )
-from experiments.dreams.types import dream_set_sha
+from experiments.dream_types import dream_set_sha
 from experiments.lama_ckl.evaluation import score_records
 from experiments.lama_ckl.protocol import (
-    dream_instruction_ids,
+    apply_dream_prompt,
+    dream_prompt_ids,
     lama_dream_diagnostics,
     run_conversational_wake,
 )
@@ -382,7 +383,7 @@ def main() -> None:
         cycle_started = run_started if resumed_setup else time.time()
         work = Path(tempfile.mkdtemp(prefix=f"cycle-{cycle:02d}.", dir=output / "work"))
         wake_started = time.time()
-        wake, state = run_conversational_wake(
+        wake, open_state = run_conversational_wake(
             model,
             tokenizer,
             documents,
@@ -392,15 +393,16 @@ def main() -> None:
             eoc,
             reply_tokens=REPLY_TOKENS,
             evidence_tokens=EVIDENCE_TOKENS,
+            device=device,
         )
         wake_seconds = time.time() - wake_started
         if wake["invariants"] != {
             "turns": len(documents),
             "missing_assistant_eos": 0,
             "internal_eoc": 0,
-            "closing_eoc": 1,
         }:
             raise RuntimeError(f"wake structural invariants failed: {wake['invariants']}")
+        state = apply_dream_prompt(model, tokenizer, open_state, user_open, asst_open, eoc, device)
         treatment: dict[str, object]
         dream_payload = None
         if args.arm == "frozen":
@@ -440,8 +442,8 @@ def main() -> None:
             generation_seed = args.seed * 100 + cycle
             dreams, topology = generate_replay_dreams(
                 model,
-                state,
-                dream_instruction_ids(tokenizer, user_open, asst_open, device),
+                open_state,
+                dream_prompt_ids(tokenizer, user_open, asst_open, eoc, device),
                 count=dream_count,
                 batch_size=args.dream_batch_size,
                 seed=generation_seed,
@@ -471,14 +473,13 @@ def main() -> None:
                 flush=True,
             )
             training_started = time.time()
-            from experiments.dreams.distillation import distill_dream_set
+            from experiments.dream_distillation import distill_dream_set
 
             token_gradients = distill_dream_set(
                 model,
                 optimizer,
                 dreams,
-                state,
-                None,
+                open_state,
                 1,
                 KL_TEMPERATURE,
                 lambda step, loss: print(

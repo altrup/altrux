@@ -2,7 +2,7 @@ import pickle
 
 import torch
 
-from experiments.dreams import types
+from experiments import dream_types as types
 
 
 def test_cache_type_pickle_round_trip_keeps_the_domain_global() -> None:

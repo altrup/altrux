@@ -211,12 +211,13 @@ class FakeModel(torch.nn.Module):
 
 
 def fake_backend(manifest: ExperimentManifest, out: Path) -> DreamSleepBackend:
+    from experiments import dream_distillation
     from experiments.dreams import distillation
     from experiments.dreams.cli import build_distractors
     from experiments.facts import Fact
 
     def fake_distill_set(
-        model, optimizer, dreams, state, variant, epochs, temperature, on_step, on_boundary
+        model, optimizer, dreams, state, epochs, temperature, on_step, on_boundary
     ):
         assert len(dreams) == 300 and epochs == 1
         on_step(0, 0.0)
@@ -227,7 +228,7 @@ def fake_backend(manifest: ExperimentManifest, out: Path) -> DreamSleepBackend:
         on_step(0, 0.0)
         return ids.shape[1] - 1
 
-    distillation.distill_dream_set = fake_distill_set
+    dream_distillation.distill_dream_set = fake_distill_set
     distillation.distill_sft = fake_distill_sft
     backend = DreamSleepBackend.__new__(DreamSleepBackend)
     backend.manifest, backend.seed, backend.initial_state = manifest, 1, None

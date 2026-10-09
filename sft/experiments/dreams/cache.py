@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Hashable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from experiments.dreams.types import (
+from experiments.dream_types import (
     CachedDream,
     DreamCache,
     DreamSetCache,
@@ -25,6 +25,7 @@ from experiments.erasure.gating import (
     variant_basis,
 )
 from experiments.facts import Fact
+from experiments.verbatim import copy_fraction
 from progress import ts
 
 if TYPE_CHECKING:
@@ -87,31 +88,6 @@ def binding_coverage(text: str, facts: Sequence[Fact]) -> tuple[dict[str, int], 
             elif any(other.entity.lower() in low for other in facts if other.entity != fact.entity):
                 misbound[fact.entity] += 1
     return bound, misbound
-
-
-def copy_fraction[Token: Hashable](
-    dream_tokens: Sequence[Token],
-    transcript_tokens: Sequence[Token],
-    n: int = 12,
-    cue_flags: Sequence[bool] | None = None,
-) -> float:
-    """Return the fraction in transcript runs of at least ``n`` tokens."""
-    if cue_flags is not None:
-        keep = [
-            i for i, token in enumerate(dream_tokens) if not (i < len(cue_flags) and cue_flags[i])
-        ]
-        dream_tokens = [dream_tokens[i] for i in keep]
-    if not dream_tokens or not transcript_tokens or n <= 0:
-        return 0.0
-    grams: set[tuple[str, ...]] = {
-        tuple(transcript_tokens[i : i + n]) for i in range(len(transcript_tokens) - n + 1)
-    }
-    copied = [False] * len(dream_tokens)
-    for i in range(len(dream_tokens) - n + 1):
-        if tuple(dream_tokens[i : i + n]) in grams:
-            for j in range(i, i + n):
-                copied[j] = True
-    return sum(copied) / len(copied)
 
 
 def aggregate_binding(dreams: Sequence[CachedDream], facts: Sequence[Fact]) -> dict[str, int]:
@@ -374,7 +350,6 @@ __all__ = [
     "aggregate_binding",
     "assert_aggregate_binding",
     "binding_coverage",
-    "copy_fraction",
     "default_cache_path",
     "dream_bases",
     "dream_sidecar_text",

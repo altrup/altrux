@@ -1,6 +1,6 @@
 import torch
 
-from experiments.dreams.generation import _teacher_dream_batch
+from experiments.dream_generation import _teacher_dream_batch
 
 
 class State:

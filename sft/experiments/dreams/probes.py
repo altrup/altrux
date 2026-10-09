@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Hashable, Sequence
+from collections.abc import Sequence
 
+from experiments.dream_generation import copy_state, state_to
+from experiments.dream_types import DreamCache, DreamSetCache
 from experiments.dreams.cache import (
-    aggregate_binding,
     assert_aggregate_binding,
     binding_coverage,
-    copy_fraction,
     fact_read_positions,
     gate_agreement,
 )
-from experiments.dreams.generation import copy_state, frozen_teacher, state_to
-from experiments.dreams.types import DreamCache, DreamSetCache
+from experiments.dreams.generation import frozen_teacher
 from experiments.erasure.gating import VARIANTS
 from experiments.erasure.probe import group_by_layer
 from experiments.facts import extract_answer, normalize
 from experiments.inference import run_chunks
+from experiments.verbatim import copy_fraction, longest_verbatim_run
 from progress import ts
 
 
@@ -66,25 +66,6 @@ def probe_leakage(
             flush=True,
         )
     return logprobs
-
-
-def longest_verbatim_run[Token: Hashable](
-    dream_tokens: Sequence[Token], transcript_tokens: Sequence[Token], n: int = 12
-) -> int:
-    """Return the longest contiguous transcript run in a dream."""
-    if not dream_tokens or not transcript_tokens or n <= 0:
-        return 0
-    grams = {tuple(transcript_tokens[i : i + n]) for i in range(len(transcript_tokens) - n + 1)}
-    best = current = 0
-    covered = [False] * len(dream_tokens)
-    for i in range(len(dream_tokens) - n + 1):
-        if tuple(dream_tokens[i : i + n]) in grams:
-            for j in range(i, i + n):
-                covered[j] = True
-    for flag in covered:
-        current = current + 1 if flag else 0
-        best = max(best, current)
-    return best
 
 
 def report_dream(cache: DreamCache) -> None:
@@ -263,7 +244,6 @@ __all__ = [
     "battery_read_queries",
     "blank_state_logits",
     "dream_is_degenerate",
-    "longest_verbatim_run",
     "probe_leakage",
     "report_dream",
     "report_dream_set",

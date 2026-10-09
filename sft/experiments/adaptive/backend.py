@@ -301,14 +301,14 @@ class DreamSleepBackend:
         return self.contexts["replay" if arm == "shared" else arm]
 
     def fork_state(self, state: object) -> object:
-        from experiments.dreams.generation import copy_state
+        from experiments.dream_generation import copy_state
 
         return copy_state(state)
 
     def _sample_reply(
         self, arm: str, wake: int, turn: int, user: str, state: object
     ) -> tuple[dict[str, object], object]:
-        from experiments.dreams.generation import sample_next
+        from experiments.dream_generation import sample_next
 
         model = self._context(arm).model
         prompt = self._encode(f"{self.user_open} {user}{self.asst_open} ")
@@ -352,7 +352,7 @@ class DreamSleepBackend:
         return digest.hexdigest()
 
     def _store_state(self, arm: str, wake: int, state: object) -> dict[str, object]:
-        from experiments.dreams.generation import copy_state, state_to
+        from experiments.dream_generation import copy_state, state_to
 
         path = self.output / "states" / f"{arm}_w{wake}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -510,16 +510,17 @@ class DreamSleepBackend:
         ]
 
     def sleep(self, arm: str, wake: int, state: object, artifact: dict[str, object]) -> object:
-        from experiments.dreams.cache import load_dream_cache, save_dream_cache
-        from experiments.dreams.distillation import distill_dream_set, distill_sft, sft_steps
-        from experiments.dreams.generation import (
+        from experiments.dream_distillation import distill_dream_set
+        from experiments.dream_generation import (
             copy_state,
             dream_generation_seed,
             generate_replay_dreams,
             state_to,
         )
+        from experiments.dream_types import DreamSetCache, token_sha
+        from experiments.dreams.cache import load_dream_cache, save_dream_cache
+        from experiments.dreams.distillation import distill_sft, sft_steps
         from experiments.dreams.probes import dream_is_degenerate
-        from experiments.dreams.types import DreamSetCache, token_sha
 
         context = self.contexts[arm]
         if arm == "nosleep":
@@ -772,7 +773,6 @@ class DreamSleepBackend:
             context.optimizer,
             cache.dreams,
             state,
-            None,
             1,
             float(self.runtime["kl_temperature"]),
             lambda step, loss: print(

@@ -40,10 +40,10 @@ def main() -> None:
     from dotenv import load_dotenv
 
     from adapters.lora import apply_lora
+    from experiments.dream_generation import state_to
+    from experiments.dream_types import CachedDream, DreamCache, DreamSetCache
     from experiments.dreams.cache import load_dream_cache
     from experiments.dreams.cli import load_init_adapter
-    from experiments.dreams.generation import state_to
-    from experiments.dreams.types import CachedDream, DreamCache, DreamSetCache
     from experiments.facts import Fact
     from progress import ts
 
