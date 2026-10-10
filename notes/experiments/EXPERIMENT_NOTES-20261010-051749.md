@@ -75,3 +75,25 @@ Change: a reply that reaches the 64-token backstop is closed by feeding the toke
 Why this and not something else: the protocol note's "must emit EOS before the backstop" cannot be met by the registered warm start on these inputs; the alternatives (truncate without EOS, drop the assistant turn, change the prompt, decode with sampling) each change the carried state or the wake design more than this does. This edit keeps the registered source exposure identical and turns the failure into a measured quantity. Whether a wake made mostly of forced closures is the wake the team wants is a protocol decision, not mine: every result produced after this commit is PROVISIONAL, and the Mamba cells are not launched on it (see decision below).
 
 Throughput note for the team (not changed): on CUDA, single-token decoding in `models/mamba2_780m/model.py` always takes the manual per-layer PyTorch `_mixer_step` (line 342 enables the Triton chunk scan only for `seqlen > 1`), so the wake and dream generation run at ~15 tokens/s. The fused `selective_state_update`/`causal_conv1d_update` step path, or CUDA graphs over the step, is the throughput lever; it touches the registered per-token stepping and so belongs to a DISCUSSION decision.
+
+### 06:10 UTC — full-wake diagnostic result (`sft/logs/diag-wake-full.log`)
+
+500 to-learn documents, continuing state, greedy, 64-token backstop with a fed EOS at the backstop (the same rule as commit `634f914`):
+
+| quantity | value |
+|---|---|
+| replies ending with a natural EOS | 55 / 500 (11 %) |
+| replies emitting `<|endofconversation|>` | 0 |
+| prompt tokens (500 user turns) | 44,229 |
+| generated tokens | 31,828 (mean reply 63.7) |
+| generation rate | 15.6 tok/s (single-token stepping) |
+| wall time for one wake | 2,095 s (35 min) |
+| peak VRAM | 5.6 GiB |
+
+Every reply read, natural or forced, is a continuation of the evidence text (biography, geography) rather than an answer; the natural-EOS replies are the ones where the continuation happens to end a paragraph. So the registered wake exposes the model to the official evidence, as intended, plus ~32k tokens per cycle of its own hallucinated continuation. Cost: 30 wakes ≈ 17.5 GPU-hours per cell before dreams, training, or evaluation; 12 cells ≈ 210 GPU-hours of wake alone at the current stepping speed.
+
+### 06:11 UTC — four engineering smokes launched (train tmux, serial)
+
+    cd ~/altrux/sft && for arm in frozen lora mix-review altrux; do make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm $arm --seed 42"; done
+
+PROVISIONAL (after the protected edit). Purpose: prove the remaining machinery (dreams, distillation, LoRA epochs, evaluation, checkpoints) and read rates and VRAM for the cost estimate.
