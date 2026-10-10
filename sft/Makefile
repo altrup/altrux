@@ -269,27 +269,34 @@ lama-ckl-report:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.report $(ARGS)
 
-# Warm-start SFT (DISCUSSION-20260808 sec 2.9.3): ordinary chat data rendered
-# into the repo's marker format by preparation/conversations.py, then 800 training/loop.py steps /
-# 2 epochs at 1e-4 and dream_sleep's LoRA config -- the checkpoint every
-# dream_sleep cell loads with --init-adapter
-# (models/$(MODEL_NAME)/checkpoints/epoch-2/step-800; --keep-ckpts 1 leaves
-# that one and nothing else; sec 2.1 records 400 steps as an acceptance
-# FAIL, 77% plain-] emissions). ~1000 ultrachat
-# conversations is the registered ~4000-turn corpus, packed 2-3 to an example
-# behind <|endofconversation|> (DISCUSSION-20260808 sec 2.10.9) -- the retrain
-# that teaches the boundary token. Run this before the dream cache and before
-# the battery is recalibrated. Box tool (rented CUDA hardware).
+# Warm-start SFT (DISCUSSION-20261010 sec 3.1): 1000 ultrachat conversations
+# plus 1000 Dolly context rows (summarization, closed_qa,
+# information_extraction) in one shuffled pool, packed 2-5 to an example behind
+# <|endofconversation|> with --repeat-rate 0.3 verbatim repeats, then 800
+# training/loop.py steps / 2 epochs at 1e-4 and dream_sleep's LoRA config.
+# training.cli always writes checkpoints/epoch-*, so the finished tree moves to
+# WARM_START_DIR; refusing a stale epoch-* tree keeps --keep-ckpts 1 from
+# pruning the new run against an old one. Box tool (rented CUDA hardware).
+WARM_START_CKPTS := $(CURDIR)/../models/mamba2_2_7b/checkpoints
+WARM_START_DIR := $(WARM_START_CKPTS)/repeat030
 warm-start:
 	@mkdir -p logs
-	@{ HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	@if compgen -G '$(WARM_START_CKPTS)/epoch-*' >/dev/null || [ -e '$(WARM_START_DIR)' ]; then \
+		echo "warm-start: move $(WARM_START_CKPTS)/epoch-* and $(WARM_START_DIR) aside first"; exit 1; fi
+	@set -o pipefail; { HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	   uv run --no-sync python -u -m preparation.dolly \
+		--max-examples 1000 --output data/dolly_context.jsonl && \
+	   HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u -m preparation.conversations \
-		--hf-dataset HuggingFaceH4/ultrachat_200k \
-		--max-examples 1000 --max-len 4096 --pack --output data/warm_start.pt && \
+		--hf-dataset HuggingFaceH4/ultrachat_200k --max-examples 1000 \
+		--input data/dolly_context.jsonl --max-len 8192 --pack --repeat-rate 0.3 \
+		--output data/warm_start.pt && \
 	   HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u -m training.cli --data data/warm_start.pt \
 		--max-steps 800 --epochs 2 --lr 1e-4 --chunk-len 512 \
-		--lora-rank 16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1 $(ARGS); \
+		--lora-rank 16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1 $(ARGS) && \
+	   mkdir -p '$(WARM_START_DIR)' && mv '$(WARM_START_CKPTS)'/epoch-* '$(WARM_START_DIR)/' && \
+	   ls -d '$(WARM_START_DIR)'/epoch-2/step-800; \
 	 } 2>&1 | tee logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log
 
 # In-context capacity ladder: the largest fact count whose in-context control

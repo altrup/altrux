@@ -14,7 +14,7 @@ from models.common import build_tokenizer
 
 import pytest
 
-from preparation.conversations import format_conversation, format_pack, pack_records, recap_messages
+from preparation.conversations import format_conversation, format_pack, pack_records
 
 USER_OPEN = "[USER]"
 ASST_OPEN = "[ASSISTANT]"
@@ -151,17 +151,19 @@ def test_format_conversation_without_a_boundary_token_is_unchanged(tokenizer):
     assert closed == plain + [tokenizer.convert_tokens_to_ids(EOC)]
 
 
-def test_packing_puts_two_or_three_conversations_behind_boundaries(tokenizer):
+def test_packing_at_repeat_rate_zero_uses_every_record_once_two_to_five_per_pack(tokenizer):
     import random
 
-    records = [{"messages": _conv(i)} for i in range(30)]
-    groups = pack_records(records, random.Random(0), recap_rate=0.0)
+    records = [{"messages": _conv(i)} for i in range(60)]
+    groups = pack_records(records, random.Random(0), repeat_rate=0.0)
 
-    assert all(2 <= len(g) <= 3 for g in groups[:-1])  # the tail takes what is left
-    assert 1 <= len(groups[-1]) <= 3
+    assert all(2 <= len(g) <= 5 for g in groups[:-1])  # the tail takes what is left
+    assert 1 <= len(groups[-1]) <= 5
+    assert {len(g) for g in groups[:-1]} == {2, 3, 4, 5}
     assert {kind for g in groups for kind, _ in g} == {"fresh"}
-    # Every source conversation is used exactly once when nothing is recapped.
-    assert sum(len(g) for g in groups) == len(records)
+    used = [messages for g in groups for _, messages in g]
+    assert len(used) == len(records)
+    assert all(a is r["messages"] for a, r in zip(used, records, strict=True))
 
     eoc_id = tokenizer.convert_tokens_to_ids(EOC)
     user_id = tokenizer.convert_tokens_to_ids(USER_OPEN)
@@ -170,7 +172,7 @@ def test_packing_puts_two_or_three_conversations_behind_boundaries(tokenizer):
         assert len(ids) == len(mask)
         assert ids[-1] == eoc_id
         assert ids.count(eoc_id) == len(group)
-        # Every boundary but the last opens a fresh conversation.
+        # Every boundary but the last opens a new conversation.
         for i, token in enumerate(ids[:-1]):
             if token == eoc_id:
                 assert ids[i + 1] == user_id
@@ -191,105 +193,93 @@ def test_a_conversation_that_does_not_fit_is_dropped_whole(tokenizer):
     assert len(ids) == len(mask)
 
 
-def test_every_boundary_is_a_recap_at_rate_one():
-    import random
-
-    records = [{"messages": _conv(i)} for i in range(30)]
-    groups = pack_records(records, random.Random(0), recap_rate=1.0)
-
-    assert all(kind == "recap" for g in groups for kind, _ in g[1:])
-    assert all(kind == "fresh" for g in groups for kind, _ in g[:1])
-
-
-def test_recap_quotes_an_exchange_of_the_conversation_it_follows():
-    import random
-
-    messages = _conv(7)
-    recap = recap_messages(messages, random.Random(0))
-
-    assert [m["role"] for m in recap] == ["user", "assistant", "user", "assistant"]
-    quoted = " ".join(m["content"] for m in recap)
-    sources = [m["content"] for m in messages]
-    # Every recap answer is a quote of a turn of the conversation it follows.
-    assert any(src.split(".")[0] in quoted for src in sources)
+def _repeat_sources(group) -> list[int | None]:
+    """For each slot, the index of the earlier fresh slot it repeats (None if fresh)."""
+    return [
+        None
+        if kind == "fresh"
+        else next(k for k in range(j) if group[k][0] == "fresh" and group[k][1] is messages)
+        for j, (kind, messages) in enumerate(group)
+    ]
 
 
-def test_recap_of_a_conversation_with_no_complete_exchange_is_empty():
-    import random
-
-    assert recap_messages([{"role": "user", "content": "hello?"}], random.Random(0)) == []
-
-
-def test_a_recap_can_target_an_earlier_conversation_not_only_the_last():
-    """The failure this fixes: recapping only the conversation just closed
-    teaches RECENCY recall, which is exactly the bias that left the two
-    earliest facts of a wake transcript at zero spontaneous rehearsals."""
+def test_at_repeat_rate_one_every_later_slot_repeats_while_a_source_is_eligible():
     import random
 
     records = [{"messages": _conv(i)} for i in range(60)]
-    groups = pack_records(records, random.Random(0), recap_rate=1.0)
+    groups = pack_records(records, random.Random(0), repeat_rate=1.0)
 
-    triples = [g for g in groups if len(g) == 3 and g[2][0] == "recap"]
-    assert triples, "no 3-pack ending in a recap to inspect"
-    # Across the corpus, some recap quotes reach past the conversation
-    # immediately before them to the one that opened the pack.
-    reached_back = 0
-    for group in triples:
-        quoted = group[2][1][1]["content"]
-        first_answer = group[0][1][1]["content"][:20]
-        if first_answer in quoted:
-            reached_back += 1
-    assert reached_back > 0
+    assert any(kind == "repeat" for g in groups for kind, _ in g)
+    for group in groups:
+        assert group[0][0] == "fresh"
+        sources = _repeat_sources(group)
+        repeated = [s for s in sources if s is not None]
+        assert len(repeated) == len(set(repeated)), "a source repeated twice in one pack"
+        for j in range(1, len(group)):
+            eligible = [k for k in range(j) if group[k][0] == "fresh" and k not in sources[:j]]
+            assert (group[j][0] == "repeat") == bool(eligible)
 
 
-def test_an_enumerating_recap_quotes_several_pairs_and_invents_nothing():
+def test_repeats_occur_both_adjacent_and_gapped():
     import random
 
-    from preparation.conversations import recap_messages
+    records = [{"messages": _conv(i)} for i in range(400)]
+    groups = pack_records(records, random.Random(0), repeat_rate=0.3)
 
-    # Six pairs, so the quotable head half still holds several: enumeration is
-    # capped by what survives truncation, never by inventing filler.
-    messages = [
-        {"role": "user", "content": "First question about gardening."},
-        {"role": "assistant", "content": "First answer about gardening."},
-        {"role": "user", "content": "Second question about beekeeping."},
-        {"role": "assistant", "content": "Second answer about beekeeping."},
-        {"role": "user", "content": "Third question about composting."},
-        {"role": "assistant", "content": "Third answer about composting."},
-    ]
-    for _ in range(len(messages)):
-        messages.append({"role": "user", "content": "Tail question."})
-        messages.append({"role": "assistant", "content": "Tail answer."})
-    recap = recap_messages(messages, random.Random(0), n_pairs=2)
-
-    text = " ".join(m["content"] for m in recap)
-    quoted = text.split('"')[1::2]
-
-    assert len(set(quoted)) == 4  # two distinct pairs, question and answer each
-    # Every quoted fragment comes from the source conversation: the only words
-    # the builder contributes are its own fixed scaffolding.
-    for fragment in quoted:
-        assert any(fragment in m["content"] for m in messages)
+    adjacent = gapped = 0
+    for group in groups:
+        for j, src in enumerate(_repeat_sources(group)):
+            if src is not None:
+                adjacent += src == j - 1
+                gapped += src < j - 1
+    assert adjacent > 0 and gapped > 0
+    # Repeats never consume pool records: every record still appears once fresh.
+    assert sum(kind == "fresh" for g in groups for kind, _ in g) == len(records)
 
 
-def test_a_recap_quotes_from_the_head_of_its_source_conversation():
-    """--max-len truncation drops a conversation's TAIL turns, so a recap that
-    quoted a tail pair would ask the model to recall text that never made it
-    into the example: hallucination training. Quoting from the head keeps the
-    quoted turn on the right side of any truncation."""
-    import random
+def test_a_repeat_renders_token_identical_to_its_source(tokenizer):
+    eoc_id = tokenizer.convert_tokens_to_ids(EOC)
+    first, second = _conv(0), _conv(1)
+    group = [("fresh", first), ("fresh", second), ("repeat", first)]
+    ids, _, _, packed = format_pack(group, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
 
-    from preparation.conversations import recap_messages
+    assert packed == 3
+    cuts = [i + 1 for i, t in enumerate(ids) if t == eoc_id]
+    parts = [ids[a:b] for a, b in zip([0] + cuts, cuts)]
+    assert parts[2] == parts[0]
+    assert parts[1] != parts[0]
 
-    messages = []
-    for i in range(8):
-        messages.append({"role": "user", "content": f"Question {i} about gardening."})
-        messages.append({"role": "assistant", "content": f"Answer {i} about gardening."})
 
-    for seed in range(25):
-        recap = recap_messages(messages, random.Random(seed))
-        text = " ".join(m["content"] for m in recap)
-        quoted = [q for q in text.split('"')[1::2]]
-        for fragment in quoted:
-            index = next(i for i, m in enumerate(messages) if fragment in m["content"])
-            assert index < len(messages) // 2, f"recap reached into the tail: {fragment!r}"
+def test_iter_records_pools_input_and_hf_dataset_shuffled_by_seed(tmp_path, monkeypatch):
+    import argparse
+    import json
+
+    import datasets
+
+    from preparation import conversations
+
+    def record(tag: str) -> dict:
+        return {
+            "messages": [{"role": "user", "content": tag}, {"role": "assistant", "content": "ok"}]
+        }
+
+    local = tmp_path / "local.jsonl"
+    local.write_text("".join(json.dumps(record(f"local {i}")) + "\n" for i in range(20)))
+    hf_rows = [record(f"hf {i}") for i in range(50)]
+    monkeypatch.setattr(
+        datasets, "load_dataset", lambda *a, **k: datasets.Dataset.from_list(hf_rows)
+    )
+
+    def pool(seed: int) -> list[str]:
+        args = argparse.Namespace(
+            input=str(local), hf_dataset="fake/ds", hf_split="train_sft", max_examples=30, seed=seed
+        )
+        return [r["messages"][0]["content"] for r in conversations.iter_records(args)]
+
+    expected = {f"local {i}" for i in range(20)} | {f"hf {i}" for i in range(30)}
+    assert len(pool(0)) == 50 and set(pool(0)) == expected
+    assert pool(0) == pool(0)
+    assert pool(0) != pool(1)
+    # Shuffled into one pool: neither source sits as a contiguous block.
+    first_twenty = {tag.split()[0] for tag in pool(0)[:20]}
+    assert first_twenty == {"local", "hf"}

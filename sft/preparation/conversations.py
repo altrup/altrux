@@ -19,10 +19,6 @@ from models.common import build_tokenizer
 
 from progress import ts
 
-# How much of a quoted turn a recap exchange carries: enough to be recognisably
-# the same content, short enough that the recap stays a follow-up.
-RECAP_QUOTE_CHARS = 200
-
 _worker_tokenizer = None
 _worker_max_len = None
 _worker_markers: tuple[str, str] | None = None
@@ -123,80 +119,27 @@ def format_conversation(
     return ids, mask, question_offset
 
 
-def _quote(text: str) -> str:
-    """The head of a turn: its first sentence, capped."""
-    head = text.strip().split("\n")[0][:RECAP_QUOTE_CHARS]
-    stop = head.find(". ")
-    return head[: stop + 1] if stop > 0 else head
-
-
-def recap_messages(messages: list[dict], rng: random.Random, n_pairs: int = 1) -> list[dict]:
-    """A mechanical follow-up exchange that quotes the preceding conversation's
-    own user/assistant pairs, chosen at random.
-
-    Packing exclusively unrelated conversations after the boundary would train
-    the model to ignore its state exactly where every dream starts
-    (DISCUSSION-20260808 sec 2.10.9); a recap makes the post-boundary
-    distribution "maybe new, maybe recall". Every content word is quoted, so no
-    model is called and nothing is invented.
-
-    `n_pairs` > 1 asks for several exchanges in one answer. A single-pair recap
-    teaches recall of ONE item; a dream needs to sweep the state, which is what
-    the enumerating shape trains.
-    """
-    pairs = [
-        (messages[i]["content"], messages[i + 1]["content"])
-        for i in range(len(messages) - 1)
-        if messages[i]["role"] == "user" and messages[i + 1]["role"] == "assistant"
-    ]
-    if not pairs:
-        return []
-    # Only the head half is quotable: --max-len truncation drops a
-    # conversation's tail turns, and a recap quoting a dropped turn would train
-    # recall of text the example never contained.
-    pairs = pairs[: max(1, len(pairs) // 2)]
-    if n_pairs > 1:
-        rng.shuffle(pairs)
-        chosen = pairs[:n_pairs]
-        recalled = " ".join(f'You asked: "{_quote(q)}" I said: "{_quote(a)}"' for q, a in chosen)
-        return [
-            {"role": "user", "content": "Can you go over everything we discussed earlier?"},
-            {"role": "assistant", "content": recalled},
-        ]
-    question, answer = pairs[rng.randrange(len(pairs))]
-    return [
-        {"role": "user", "content": "What did I ask you about earlier?"},
-        {"role": "assistant", "content": f'You asked: "{_quote(question)}"'},
-        {"role": "user", "content": "And what did you tell me?"},
-        {"role": "assistant", "content": f'I said: "{_quote(answer)}"'},
-    ]
-
-
 def pack_records(
-    records: list[dict], rng: random.Random, recap_rate: float
+    records: list[dict], rng: random.Random, repeat_rate: float
 ) -> list[list[tuple[str, list[dict]]]]:
-    """Group conversations into examples of 2-3, each element tagged `fresh`
-    (an unrelated conversation) or `recap` (a mechanical recap of the one it
-    follows). A recap does not consume a source record."""
+    """Group conversations into examples of 2-5, each element tagged `fresh`
+    (the next pool record) or `repeat` (the same messages list as an earlier
+    fresh conversation of the pack, never repeated twice). A repeat does not
+    consume a pool record."""
     groups: list[list[tuple[str, list[dict]]]] = []
     pending = [r.get("messages", []) for r in records]
     at = 0
     while at < len(pending):
-        size = rng.choice((2, 3))
+        size = rng.randint(2, 5)
         group: list[tuple[str, list[dict]]] = [("fresh", pending[at])]
         at += 1
+        unrepeated = [pending[at - 1]]
         while len(group) < size:
-            # Recap a conversation drawn from anywhere in the pack so far, not
-            # only the one just closed: quoting the most recent conversation
-            # every time teaches recall of the most recent thing, the very bias
-            # that leaves a wake transcript's earliest items unrehearsed.
-            source = rng.choice([messages for _, messages in group])
-            n_pairs = rng.choice((1, 2, 3))
-            recap = recap_messages(source, rng, n_pairs) if rng.random() < recap_rate else []
-            if recap:
-                group.append(("recap", recap))
+            if unrepeated and rng.random() < repeat_rate:
+                group.append(("repeat", unrepeated.pop(rng.randrange(len(unrepeated)))))
             elif at < len(pending):
                 group.append(("fresh", pending[at]))
+                unrepeated.append(pending[at])
                 at += 1
             else:
                 break
@@ -236,21 +179,23 @@ def format_pack(
 
 
 def iter_records(args) -> list[dict]:
+    records = []
     if args.hf_dataset:
         from datasets import load_dataset
 
         ds = load_dataset(args.hf_dataset, split=args.hf_split)
         if args.max_examples:
             ds = ds.select(range(min(args.max_examples, len(ds))))
-        return list(ds)
-    else:
-        records = []
+        records.extend(ds)
+    if args.input:
         with open(args.input) as f:
             for line in f:
                 line = line.strip()
                 if line:
                     records.append(json.loads(line))
-        return records
+    if args.hf_dataset and args.input:
+        random.Random(args.seed).shuffle(records)
+    return records
 
 
 def report_packing(
@@ -274,35 +219,56 @@ def report_packing(
         if int(ids[i]) == eoc_id and int(ids[i + 1]) != user_id
     )
     dropped = sum(len(group) - packed for group, packed in zip(groups, packed_counts, strict=True))
-    kinds = [
-        kind
+
+    def label(group, j: int) -> str:
+        kind, messages = group[j]
+        if kind == "fresh":
+            return "fresh"
+        source = next(
+            (k for k in range(j) if group[k][0] == "fresh" and group[k][1] is messages), None
+        )
+        if source is None:
+            return "orphan"
+        return "adjacent" if source == j - 1 else "gapped"
+
+    orphaned = sum(label(group, j) == "orphan" for group in groups for j in range(len(group)))
+    twice = sum(
+        len(repeats) - len({id(m) for m in repeats})
+        for repeats in ([m for kind, m in group if kind == "repeat"] for group in groups)
+    )
+    labels = [
+        label(group, j)
         for group, packed in zip(groups, packed_counts, strict=True)
-        for kind, _ in group[1:packed]
+        for j in range(1, packed)
     ]
+    n_repeat = labels.count("adjacent") + labels.count("gapped")
     print(
         f"[{ts()}] packing: {len(all_ids)} examples, {sum(packed_counts)} conversations, "
-        f"{len(kinds)} boundaries ({kinds.count('recap')} recap, {kinds.count('fresh')} fresh)"
+        f"{len(labels)} boundaries ({n_repeat} repeat: {labels.count('adjacent')} adjacent, "
+        f"{labels.count('gapped')} gapped; {labels.count('fresh')} fresh)"
     )
     print(f"[{ts()}]   examples not ending at a boundary : {unterminated}  (must be 0)")
     print(f"[{ts()}]   boundaries != conversations packed: {miscounted}  (must be 0)")
     print(f"[{ts()}]   boundaries not opening a new turn : {unopened}  (must be 0)")
+    print(f"[{ts()}]   repeats without an earlier source : {orphaned}  (must be 0)")
+    print(f"[{ts()}]   sources repeated twice in a pack  : {twice}  (must be 0)")
     print(f"[{ts()}]   conversations dropped by --max-len: {dropped}  (informational)")
 
-    for want in ("fresh", "recap"):
+    for want in ("fresh", "adjacent", "gapped"):
         found = next(
             (
-                (group[:packed], ids)
+                (ids, j)
                 for group, packed, ids in zip(groups, packed_counts, all_ids, strict=True)
-                if want in [k for k, _ in group[1:packed]]
+                for j in range(1, packed)
+                if label(group, j) == want
             ),
             None,
         )
         if found is None:
             print(f"[{ts()}]   no {want} boundary in this dataset")
             continue
-        group, ids = found
-        which = [k for k, _ in group[1:]].index(want)
-        at = [i for i in range(len(ids)) if int(ids[i]) == eoc_id][which]
+        ids, j = found
+        at = [i for i in range(len(ids)) if int(ids[i]) == eoc_id][j - 1]
         print(
             f"[{ts()}]   sample around a {want} boundary:\n"
             f"    ...{tokenizer.decode(ids[max(0, at - 60) : at])!r} "
@@ -312,16 +278,15 @@ def report_packing(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tokenize conversation data for training")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--input", help="Local JSONL file")
-    group.add_argument(
+    parser.add_argument("--input", help="Local JSONL file")
+    parser.add_argument(
         "--hf-dataset", help="HuggingFace dataset ID (e.g. HuggingFaceH4/ultrachat_200k)"
     )
     parser.add_argument(
         "--hf-split", default="train_sft", help="Dataset split (default: train_sft)"
     )
     parser.add_argument(
-        "--max-examples", type=int, default=None, help="Cap number of examples loaded"
+        "--max-examples", type=int, default=None, help="Cap number of --hf-dataset examples loaded"
     )
     parser.add_argument("--output", default="data/train.pt", help="Output .pt file")
     parser.add_argument(
@@ -334,20 +299,25 @@ def main() -> None:
     parser.add_argument(
         "--pack",
         action="store_true",
-        help="Pack 2-3 conversations per example, each closed by the model's "
+        help="Pack 2-5 conversations per example, each closed by the model's "
         "conversation-boundary token (DISCUSSION-20260808 sec 2.10.9)",
     )
     parser.add_argument(
-        "--recap-rate",
+        "--repeat-rate",
         type=float,
-        default=1 / 3,
-        help="Fraction of packed boundaries followed by a mechanical recap of the "
-        "conversation just closed rather than an unrelated one (default: 1/3)",
+        default=0.3,
+        help="Probability that a packed slot after the first is a verbatim repeat of an "
+        "earlier, not yet repeated conversation of the same pack (default: %(default)s)",
     )
     parser.add_argument(
-        "--seed", type=int, default=0, help="Packing RNG seed (default: %(default)s)"
+        "--seed",
+        type=int,
+        default=0,
+        help="Pool shuffle and packing RNG seed (default: %(default)s)",
     )
     args = parser.parse_args()
+    if not (args.input or args.hf_dataset):
+        parser.error("give --input, --hf-dataset, or both")
 
     all_ids: list[torch.Tensor] = []
     all_masks: list[torch.Tensor] = []
@@ -372,7 +342,7 @@ def main() -> None:
         )
 
     groups = (
-        pack_records(records, random.Random(args.seed), args.recap_rate)
+        pack_records(records, random.Random(args.seed), args.repeat_rate)
         if args.pack
         else [[("fresh", r.get("messages", []))] for r in records]
     )
@@ -417,9 +387,7 @@ def main() -> None:
 
 
 __all__ = [
-    "RECAP_QUOTE_CHARS",
     "format_conversation",
-    "recap_messages",
     "pack_records",
     "format_pack",
     "iter_records",
