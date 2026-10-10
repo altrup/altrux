@@ -80,7 +80,7 @@ from experiments.facts import (
     role_adjacency_violations,
 )
 from experiments.inference import generate, kl_loss, replay_step, run_chunks, target_logprob
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 if TYPE_CHECKING:
     import torch
@@ -302,6 +302,7 @@ def main() -> None:
             "logprob": lp,
         }
         emit(record)
+        heartbeat()
         print(
             f"\r[{ts()}]  pre {i + 1}/{len(facts)} {fact.entity:<11} "
             f"in-context {n_ctx / (i + 1):.2f}  fresh-floor {n_floor / (i + 1):.2f}",
@@ -357,6 +358,7 @@ def main() -> None:
         opt.step()
         opt.zero_grad(set_to_none=True)
         rate = (step + 1) / (time.time() - started)
+        heartbeat()
         print(
             f"\r[{ts()}]  distill step {step + 1}/{args.distill_steps} (pass {step // n_chunks + 1}) "
             f"kl {loss.item():.4f}  {rate:.2f} step/s  ETA {fmt_duration((args.distill_steps - step - 1) / rate)}",

@@ -85,6 +85,13 @@ never lives on the instance). Set `LAMBDA_INSTANCE_TYPE` and
 ./scripts/lambda_launch.sh --no-watch # don't auto-start the local watchdog/pull
 ```
 
+Before anything is rented, a full launch with `EXPERIMENTER_AGENT=claude`
+verifies `CLAUDE_CODE_OAUTH_TOKEN` and aborts if it is unset or rejected
+(renew it with `claude setup-token`). `claude auth status` reports any token
+as logged in, so the check is one `claude -p ok --model haiku --max-turns 1`
+call on this machine, with `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` unset so
+they can't mask a bad token. It needs the `claude` CLI installed locally.
+
 If the instance type is sold out, launch **polls** every
 `LAMBDA_CAPACITY_POLL_INTERVAL` seconds (default 30) until capacity frees up —
 `LAMBDA_CAPACITY_MAX_WAIT` (default 0 = forever) caps the wait. The poll rate is
@@ -114,7 +121,7 @@ Unless `--no-watch` is passed, launch also starts a **local tmux session
   launched, pulling artifacts and terminating when idle. So you don't have to
   remember to start it by hand — the box is protected from the moment it's up.
   `--arm-after-training` keeps the watchdog from terminating the box during
-  the minutes-long setup before `train.py` exists (see below).
+  the minutes-long setup before anything touches the delay file (see below).
 - window `train` — ssh'd into the remote `train` tmux (training/setup output,
   live). Waits for the remote session to exist, then attaches.
 - window `agent` — ssh'd into the remote `experimenter` tmux (Claude or Codex).
@@ -295,7 +302,7 @@ Assumes the repo lives at `~/altrux` on the instance (override with
 ## `lambda_watchdog.sh`
 
 Runs on the **local** machine and terminates the instance (via
-`lambda_terminate.sh`) once nothing has been training there for `--timeout`
+`lambda_terminate.sh`) once its delay file has gone untouched for `--timeout`
 seconds (default 1800 — generous enough that a monitoring session's
 deliberate delay touches don't need to be unrealistically frequent, while a
 forgotten instance still dies within half an hour). Keeping it local means
@@ -304,9 +311,10 @@ there (including an autonomous monitoring session) holds credentials to
 launch, resize, or terminate instances. The tradeoff: this machine must stay
 awake and online for the whole run, or nothing stops the billing.
 
-`--arm-after-training` holds the idle countdown until `train.py` is first seen
-(bounded by `--arm-cap` minutes, default 90, 0 = forever), so the watchdog can
-be started *before* training exists — during a long setup/data-gen — without
+`--arm-after-training` holds the idle countdown until the delay file is first
+touched after the watchdog starts (bounded by `--arm-cap` minutes, default 90,
+0 = forever; a file left over from before the first probe does not count), so
+the watchdog can be started *before* training exists — during a long setup/data-gen — without
 terminating the box prematurely. `lambda_launch.sh` uses this when it
 auto-starts the watchdog; a plain manual `lambda_watchdog.sh` alongside an
 already-training run doesn't need it.
@@ -336,20 +344,24 @@ hours at 1.5 Mbit/s); `--no-pull` skips all pulling, scheduled included. The
 unreachable path never pulls — there's nothing to pull from an instance that
 won't answer ssh.
 
-"Training" = a process matching `--pattern` (default `train.py`; alternation
-works, e.g. `train.py|probe_recall.py`. The default also covers the TAALM
-evaluation and the LAMA-CKL split and runner — what launch's auto-started watchdog
-passes, so eval/probe runs count as activity too) exists on the instance,
-probed over ssh every `--interval` (60s). An instance that
-stops answering ssh while the API reports it active is terminated after
-`--unreachable-timeout` (900s) — unreachable can't be trained on, and
-shouldn't bill. Anyone working interactively on the instance between runs
-(e.g. a Claude Code session) can push termination back by touching the delay
-file **on the instance**:
+"Alive" = the delay file **on the instance** was touched within `--timeout`,
+probed over ssh every `--interval` (60s). No process list is read. Every
+long-running Python entrypoint heartbeats the file from its progress lines
+(`sft/progress.py`'s `heartbeat()`, at most once a minute; it swallows a
+read-only path), and the TAALM upstream Make targets heartbeat it from their
+log pipeline, so a run that hangs goes quiet and is reaped like an idle one.
+A new long loop must call `heartbeat()` next to its progress print, or a run
+of it longer than `--timeout` is terminated mid-work. Anyone working
+interactively on the instance between runs (e.g. a Claude Code session)
+touches it by hand:
 
 ```bash
 touch ~/altrux/scripts/.watchdog-delay
 ```
+
+An instance that stops answering ssh while the API reports it active is
+terminated after `--unreachable-timeout` (900s) — unreachable can't be
+trained on, and shouldn't bill.
 
 A touch grants at most one `--timeout` window from the moment of the touch
 (future-dated mtimes are rewritten to now), so the timer can only be

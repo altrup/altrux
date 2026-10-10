@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from experiments.dream_generation import DREAM_MAX_TURNS, sample_next
 from experiments.dream_types import Dream
 from experiments.erasure.probe import group_by_layer
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 if TYPE_CHECKING:
     import torch
@@ -151,6 +151,7 @@ def teacher_dream(
             if (t + 1) % PRINT_EVERY == 0 or t + 1 == n_tokens or stop_reason != "max-tokens":
                 frac, _ = rehearsal_fraction(texts, needles)
                 rate = (t + 1) / (time.time() - started)
+                heartbeat()
                 print(
                     f"[{ts()}]  dream {t + 1}/{n_tokens} rehearsal {frac:.2f} {rate:.1f} tok/s "
                     f"ETA {fmt_duration((n_tokens - t - 1) / rate)} | "

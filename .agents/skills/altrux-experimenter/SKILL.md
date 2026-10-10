@@ -39,7 +39,7 @@ and a local session never compensates by starting box work itself.
 | Start/restart training | `tmux send-keys -t train '<resume command — see below>' Enter` |
 | Stop training | `tmux send-keys -t train C-c` |
 | Check it's alive | `tmux capture-pane -t train -p \| tail` or tail newest `sft/logs/train-*.log` |
-| Hold off the watchdog | `touch scripts/.watchdog-delay` (at least every 25 min while training is stopped) |
+| Hold off the watchdog | `touch scripts/.watchdog-delay` (at least every 25 min while nothing that heartbeats is running — see "The watchdog") |
 | Save code or notes | `git add <files> && git commit -m '<what>' && git push` (this run's `box/` branch) |
 | Pull artifacts home now | `touch scripts/.watchdog-fetch`, then read `scripts/.pull-receipt` |
 | End the run (irreversible) | `touch scripts/.watchdog-terminate` — only after the shutdown checklist |
@@ -277,12 +277,20 @@ complete, going nowhere, unfixable crash). In order:
 
 A watchdog on your teammate's machine (scripts/lambda_watchdog.sh run there,
 probing this instance over ssh) terminates the instance 30 minutes after
-train.py stops, whatever the reason. It also owns the pulling: every ~5
-minutes, on demand via `.watchdog-fetch`, and once more before it
-terminates. While you're actively investigating with
-training stopped, run `touch scripts/.watchdog-delay` — deliberately, when you
-check in on your work, at least every 25 minutes. If you're done (fixed and
-training restarted, or concluded it's unfixable), stop touching it.
+`scripts/.watchdog-delay` was last touched, whatever the reason. It reads
+nothing else: no process list. It also owns the pulling: every ~5 minutes, on
+demand via `.watchdog-fetch`, and once more before it terminates.
+
+These commands touch the delay file themselves, once a minute, from their
+progress lines: training (`make train`/`resume`, `warm-start`'s training
+step), the LAMA-CKL split and runner, the TAALM upstream smoke and run,
+`dream-sleep`, `probe-recall`, `consolidation-null`, `capacity-ladder`. A run
+that hangs stops printing and so stops touching it; the watchdog then reaps it
+like an idle box. Everything else (data prep, filtering, ad-hoc scripts,
+investigating with nothing running) needs your touch: run
+`touch scripts/.watchdog-delay` deliberately, when you check in on your work,
+at least every 25 minutes. If you're done (fixed and a heartbeating command
+restarted, or concluded it's unfixable), stop touching it.
 
 When the run is definitively OVER, run the shutdown checklist — don't bill
 out the remaining idle window.
@@ -352,9 +360,9 @@ after a check burns a whole interval of billed GPU), while a monitor wakes
 you the moment a failure signature hits the log, at the same wake cost.
 And not only while training: its heartbeat fires with no train log at all,
 and it is the only thing that wakes you to touch `.watchdog-delay` during
-data prep, eval-only sessions, and stopped-for-investigation stretches (the
-watchdog counts all of those as "training stopped"; an idle session gets
-the box terminated mid-work). Arm with `persistent: true`, shaped like:
+data prep and stopped-for-investigation stretches (only the commands listed
+under "The watchdog" touch it themselves; an idle session gets the box
+terminated mid-work). Arm with `persistent: true`, shaped like:
 
     seen=0; beat=0; HB=300   # heartbeat 300s for the first hour, then re-arm with 900
     while true; do
@@ -392,7 +400,7 @@ marker) → the thing you were waiting on is done; act on its result now
 heartbeat. Error lines → investigate now.
 Heartbeats → glance at the carried metrics line; a growing "log idle" on a
 run that should be training means it hung or died without a signature —
-also investigate. On a heartbeat while training is deliberately stopped,
+also investigate. On a heartbeat while nothing that heartbeats is running,
 touch `.watchdog-delay`. After an hour of stable training, TaskStop the
 monitor and re-arm with HB=900; drop back to HB=300 whenever you (re)start
 training.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Watches a Lambda Cloud training instance FROM THE LOCAL MACHINE and
-# terminates it via the API once nothing has been training for --timeout
+# terminates it via the API once nothing on it has shown life for --timeout
 # seconds, so an idle instance can't silently bill. The API key stays on
 # this machine -- the instance itself holds no Lambda credentials, so
 # nothing running on it (including an autonomous monitoring session) can
@@ -29,17 +29,19 @@
 # automatically. Both stages are bounded by --pull-timeout /
 # --mem-state-timeout.
 #
-# "Training" means a process matching --pattern (default: train.py) exists
-# on the instance, probed over ssh every --interval seconds. Anyone working
-# on the instance (e.g. a Claude Code session between runs) can DELAY
-# termination by touching the delay file there:
+# "Alive" means the delay file on the instance was touched within --timeout
+# seconds, probed over ssh every --interval seconds:
 #
 #   touch ~/altrux/scripts/.watchdog-delay
 #
-# A touch grants at most one --timeout window from the moment of the touch
-# (future-dated mtimes are rewritten to now), so the timer can be pushed
-# back indefinitely only by touching again every <timeout seconds, never
-# paused outright.
+# Long-running Python entrypoints touch it from their progress lines
+# (sft/progress.py's heartbeat(), at most once a minute), so a hung run goes
+# quiet and is reaped like an idle one; anyone working on the instance by hand
+# (e.g. a Claude Code session between runs) touches it themselves. A touch
+# grants at most one --timeout window from the moment of the touch
+# (future-dated mtimes are rewritten to now), so the timer can be pushed back
+# indefinitely only by touching again every <timeout seconds, never paused
+# outright.
 #
 # The inverse also exists: touching the terminate file on the instance
 #
@@ -82,7 +84,6 @@ fi
 timeout=1800
 interval=60
 unreachable_timeout=900
-pattern="train.py|probe_recall.py|consolidation_null.py|capacity_ladder.py|dream_sleep.py|evaluation_run.py|experiments.lama_ckl.split|experiments.lama_ckl.runner"
 terminate_cmd=""
 pull=1
 pull_interval=300
@@ -96,16 +97,15 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout="$2"; shift 2 ;;
     --interval) interval="$2"; shift 2 ;;
     --unreachable-timeout) unreachable_timeout="$2"; shift 2 ;;
-    --pattern) pattern="$2"; shift 2 ;;
     --no-pull) pull=0; shift ;;
     --pull-interval) pull_interval="$2"; shift 2 ;;
     --pull-timeout) pull_timeout="$2"; shift 2 ;;
     --no-mem-state) mem_state=0; shift ;;
     --mem-state-timeout) mem_state_timeout="$2"; shift 2 ;;
-    # Wait for --pattern to appear once before starting the idle countdown, so
-    # arming the watchdog during a long setup (before training exists) can't
-    # terminate the box. --arm-cap minutes bounds the wait (0 = forever) so a
-    # setup that never starts training is still cleaned up.
+    # Wait for the first touch of the delay file before starting the idle
+    # countdown, so arming the watchdog during a long setup (before anything
+    # heartbeats) can't terminate the box. --arm-cap minutes bounds the wait
+    # (0 = forever) so a setup that never starts work is still cleaned up.
     --arm-after-training) arm_after_training=1; shift ;;
     --arm-cap) arm_cap="$2"; shift 2 ;;
     # Override what runs on timeout -- e.g. `--terminate-cmd "echo boom"`
@@ -144,20 +144,12 @@ if len(instances) != 1:
 print(instances[0]['id'], instances[0]['ip'])
 ")
 fi
-echo "Watching instance $instance_id at $instance_ip (pattern: '$pattern', timeout: ${timeout}s)"
+echo "Watching instance $instance_id at $instance_ip (delay file: $remote_repo/scripts/.watchdog-delay, timeout: ${timeout}s)"
 
-# Neutralize the pattern for pgrep -f on the instance: '[t]rain.py' matches
-# a running train.py but not the probe shell whose own command line
-# contains the (bracketed) pattern text. Bracket the first char of EVERY
-# |-alternative — one unbracketed branch would self-match the probe shell
-# and read as permanent activity, disarming the watchdog entirely.
-neutralized="$(printf '%s' "$pattern" | sed 's/\(^\||\)\([^[\\^.$|]\)/\1[\2]/g')"
-
-# One round trip per probe: remote epoch, training yes/no, delay-file
-# mtime, terminate-file mtime, fetch-file present.
+# One round trip per probe: remote epoch, delay-file mtime, terminate-file
+# mtime, fetch-file present.
 probe_snippet="
   date +%s
-  pgrep -f '$neutralized' >/dev/null && echo 1 || echo 0
   stat -c %Y '$remote_repo/scripts/.watchdog-delay' 2>/dev/null || echo 0
   stat -c %Y '$remote_repo/scripts/.watchdog-terminate' 2>/dev/null || echo 0
   [ -e '$remote_repo/scripts/.watchdog-fetch' ] && echo 1 || echo 0
@@ -235,24 +227,30 @@ instance_still_active() {
   [[ "$status" == "active" ]]
 }
 
-last_active=""      # in REMOTE clock terms; set by the first successful probe (grace window)
+grace_start=""      # in REMOTE clock terms; set by the first successful probe (grace window)
 watch_start=""      # remote epoch of the first successful probe; older terminate touches are stale
 unreachable_since=""
 last_pull=0        # local epoch; 0 pulls on the first probe
 
 if [[ "$arm_after_training" -eq 1 ]]; then
-  echo "watchdog: waiting for '$pattern' to start before arming the idle countdown (cap: ${arm_cap}min, 0=forever)"
+  echo "watchdog: waiting for the first delay-file touch before arming the idle countdown (cap: ${arm_cap}min, 0=forever)"
   arm_deadline=$(( $(date +%s) + arm_cap * 60 ))
+  arm_start=""
   while true; do
-    if timeout "$interval" "${SSH_CMD[@]}" "pgrep -f '$neutralized' >/dev/null" 2>/dev/null; then
-      echo "watchdog: '$pattern' detected — arming"
-      break
+    if output="$(timeout "$interval" "${SSH_CMD[@]}" "$probe_snippet" 2>/dev/null)"; then
+      { read -r remote_now; read -r delay_mtime; } <<< "$output"
+      # A delay file older than the first probe is left over, not a first touch.
+      arm_start="${arm_start:-$remote_now}"
+      if (( delay_mtime >= arm_start )); then
+        echo "watchdog: delay file touched — arming"
+        break
+      fi
     fi
     if (( arm_cap > 0 && $(date +%s) >= arm_deadline )); then
-      echo "watchdog: '$pattern' never started within ${arm_cap}min — arming anyway (a failed setup will now be cleaned up)"
+      echo "watchdog: delay file never touched within ${arm_cap}min — arming anyway (a failed setup will now be cleaned up)"
       break
     fi
-    echo "watchdog: [$(date +%H:%M:%S)] no '$pattern' yet — waiting ${interval}s (setup/data-gen in progress)"
+    echo "watchdog: [$(date +%H:%M:%S)] no delay-file touch yet — waiting ${interval}s (setup/data-gen in progress)"
     sleep "$interval"
   done
 fi
@@ -263,7 +261,7 @@ while true; do
   # interval's worth of failure, never as the whole time it hung.
   if output="$(timeout "$interval" "${SSH_CMD[@]}" "$probe_snippet" 2>/dev/null)"; then
     unreachable_since=""
-    { read -r remote_now; read -r training; read -r delay_mtime; read -r terminate_mtime; read -r fetch; } <<< "$output"
+    { read -r remote_now; read -r delay_mtime; read -r terminate_mtime; read -r fetch; } <<< "$output"
     watch_start="${watch_start:-$remote_now}"
     if (( terminate_mtime >= watch_start )); then
       terminate "termination requested via .watchdog-terminate (touched $(( remote_now - terminate_mtime ))s ago)"
@@ -282,29 +280,25 @@ while true; do
         timeout 30 "${SSH_CMD[@]}" "rm -f '$remote_repo/scripts/.watchdog-fetch'" 2>/dev/null || true
       fi
     fi
-    if [[ -z "$last_active" || "$training" == "1" ]]; then
-      last_active="$remote_now"
-    fi
+    grace_start="${grace_start:-$remote_now}"
     if (( delay_mtime > remote_now + 60 )); then
       # A future-dated mtime would hold the deadline open forever; rewrite
       # it to now so it grants exactly one window, like any other touch.
       timeout 30 "${SSH_CMD[@]}" "touch '$remote_repo/scripts/.watchdog-delay'" 2>/dev/null || true
       delay_mtime="$remote_now"
     fi
-    effective=$(( last_active > delay_mtime ? last_active : delay_mtime ))
+    effective=$(( grace_start > delay_mtime ? grace_start : delay_mtime ))
     remaining=$(( effective + timeout - remote_now ))
     if (( remaining <= 0 )); then
-      terminate "no training and no delay touch for ${timeout}s"
+      terminate "no delay-file touch for ${timeout}s"
     fi
     # Every probe logs: an unguarded instance and a healthy one must not look
     # alike, and a silent watchdog is indistinguishable from a dead one.
     ts="[$(date +%H:%M:%S)]"
-    if [[ "$training" == "1" ]]; then
-      echo "watchdog: $ts training ($pattern) — next check in ${interval}s"
-    elif (( delay_mtime > last_active )); then
-      echo "watchdog: $ts nothing training — delay touched $(( remote_now - delay_mtime ))s ago — terminating in ${remaining}s"
+    if (( delay_mtime > grace_start )); then
+      echo "watchdog: $ts alive — delay touched $(( remote_now - delay_mtime ))s ago — terminating in ${remaining}s unless touched again"
     else
-      echo "watchdog: $ts nothing training — terminating in ${remaining}s unless training resumes or the delay file is touched"
+      echo "watchdog: $ts no delay touch since the watchdog started — terminating in ${remaining}s unless the delay file is touched"
     fi
   else
     if ! instance_still_active; then

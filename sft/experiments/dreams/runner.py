@@ -47,7 +47,7 @@ from experiments.erasure.pilot import PilotCapture, PilotDream, scheme_weights
 from experiments.erasure.probe import group_by_layer
 from experiments.facts import build_distractors
 from experiments.inference import run_chunks
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 USER_CUE = "{user} What is the code for the {entity}?"
 DREAM_RETRIES = 2
@@ -434,6 +434,7 @@ def build_dream_set(
                 )
             )
         elapsed = time.time() - started
+        heartbeat()
         print(
             f"[{ts()}]  dream {i + 1} cached; {fmt_duration(elapsed)} elapsed, ETA "
             f"{fmt_duration(elapsed / (i + 1) * (args.dreams - i - 1))}",
@@ -613,6 +614,7 @@ def run_sleep(
             }
         )
         rate = (step + 1) / (time.time() - started)
+        heartbeat()
         print(
             f"\r[{ts()}]  {mode} step {step + 1}/{total} loss {loss:.4f} {rate:.2f} step/s "
             f"ETA {fmt_duration((total - step - 1) / rate)}",

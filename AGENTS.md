@@ -119,6 +119,8 @@ Any operation that takes more than a few seconds must print live progress so it'
 
 Progress counters alone are not enough: **results must stream as they are produced, never be held for an end-of-run report.** A long run has to be informative if read — or killed — at any point: decoded samples print the moment they're collected, running composition/verdict counters ride the progress line, and anything wall-clock-sensitive reports its rate and ETA. If the only way to learn what a script found is to let it finish, that's a bug. (A filter run once sat at "0 kept" for 100 blocks over an hour while the explanation — the per-test fail composition — existed internally but printed only at exit; the fix was ~5 lines.)
 
+**A long loop also calls `progress.heartbeat()` beside its progress print.** On a rented box the watchdog reads only the mtime of `scripts/.watchdog-delay`, which `heartbeat()` touches (rate-limited to once a minute); a loop that runs longer than the watchdog's 30-minute timeout without it gets the box terminated mid-run.
+
 **Every log line carries a timestamp** (`[HH:MM:SS]` prefix, `sft/training/loop.py`'s existing idiom — including the periodic/`\r` status line). Rates, stalls, and durations must be reconstructable from the log alone; inferring a run's speed from file mtimes because the lines are undated is the failure mode this prevents.
 
 ## Sanity-check the artifact, not just the counts

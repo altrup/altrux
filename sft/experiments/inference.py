@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from progress import ts
+from progress import heartbeat, ts
 
 if TYPE_CHECKING:
     import torch
@@ -24,6 +24,7 @@ def run_chunks(
             state = state.detach()
             if keep_logits:
                 parts.append(logits.detach().to("cpu"))
+            heartbeat()
             print(f"\r[{ts()}]  {label}: chunk {chunk + 1}/{n}", end="", flush=True)
     print()
     return (torch.cat(parts, dim=1) if keep_logits else None), state

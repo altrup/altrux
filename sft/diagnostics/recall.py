@@ -87,6 +87,8 @@ from pathlib import Path
 
 import torch
 
+from progress import heartbeat
+
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 CHUNK_LEN = 24
@@ -444,6 +446,7 @@ def run_chunks(model, ids: torch.Tensor, state, label: str, keep_logits: bool = 
         state = state.detach()
         if keep_logits:
             logits_parts.append(logits.detach())
+        heartbeat()
         print(f"\r  {label}: chunk {ci + 1}/{n_chunks}", end="", flush=True)
     print()
     if not keep_logits:

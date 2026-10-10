@@ -10,6 +10,7 @@ from typing import Callable, Protocol
 import torch
 import torch.nn.functional as F
 
+from progress import heartbeat
 from progress import ts as timestamp
 from training import checkpoints
 from training.datasets import (
@@ -238,6 +239,7 @@ def _print_live(lines: list[str], prev_n_lines: int) -> int:
     out += "\n".join(f"{line}\033[K" for line in lines)
     sys.stdout.write(out)
     sys.stdout.flush()
+    heartbeat()
     return len(lines)
 
 

@@ -122,18 +122,42 @@ source "$SCRIPT_DIR/experimenter_agent.sh"
 EXPERIMENTER_AGENT="${EXPERIMENTER_AGENT:-claude}"
 experimenter_agent_validate "$EXPERIMENTER_AGENT"
 
+# A token that fails only on the box leaves a billed instance with no
+# experimenter. `claude auth status` reports any token as logged in, so only a
+# model call proves it; the API-key variables are unset because they would
+# take precedence over the token.
+preflight_claude_token() {
+  if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    echo "error: EXPERIMENTER_AGENT=claude but CLAUDE_CODE_OAUTH_TOKEN is not set (scripts/.env; create one with \`claude setup-token\`)" >&2
+    return 1
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "error: the claude CLI is not installed here, so CLAUDE_CODE_OAUTH_TOKEN cannot be verified before renting" >&2
+    return 1
+  fi
+  echo "Verifying CLAUDE_CODE_OAUTH_TOKEN (one-word haiku call)..."
+  local out
+  if ! out="$(cd "${TMPDIR:-/tmp}" && env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+      timeout 120 claude -p ok --model haiku --max-turns 1 --tools "" --no-session-persistence </dev/null 2>&1)"; then
+    echo "error: CLAUDE_CODE_OAUTH_TOKEN does not work (renew it with \`claude setup-token\`):" >&2
+    tail -5 <<< "$out" >&2
+    return 1
+  fi
+}
+
 # Validate + confirm the run config BEFORE launching, while aborting is
 # still free (no instance billing yet).
 if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
   [[ -f "$SSH_KEY_PATH" ]] || { echo "error: ssh private key not found: $SSH_KEY_PATH (LAMBDA_SSH_KEY_PATH)" >&2; exit 1; }
+  if [[ "$EXPERIMENTER_AGENT" == claude ]]; then preflight_claude_token || exit 1; fi
   for p in "${all_ckpts[@]}"; do
     [[ -d "$p" ]] || { echo "error: LAMBDA_RESUME_CHECKPOINT(_FULL) entry is not a directory: $p" >&2; exit 1; }
   done
   echo "Instance: $LAMBDA_INSTANCE_TYPE${LAMBDA_REGION:+ in $LAMBDA_REGION}"
   echo "SSH key: $LAMBDA_SSH_KEY_NAME (private key: $SSH_KEY_PATH)"
   echo "Repo: the box clones ${BOX_BASE:0:12} from origin onto $BOX_BRANCH and pushes there"
-  if [[ "$EXPERIMENTER_AGENT" == claude && -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-    echo "Experimenter: Claude auto-starts (CLAUDE_CODE_OAUTH_TOKEN set)"
+  if [[ "$EXPERIMENTER_AGENT" == claude ]]; then
+    echo "Experimenter: Claude auto-starts (CLAUDE_CODE_OAUTH_TOKEN verified)"
   elif [[ "$EXPERIMENTER_AGENT" == codex && -f "$HOME/.codex/auth.json" ]]; then
     echo "Experimenter: Codex auto-starts (local auth cache will upload)"
   else
@@ -286,8 +310,8 @@ notify "instance ready at $ip — setup starting"
 # Local billing-protection stack: the watchdog rescues artifacts (it pulls on
 # a schedule and on request) and terminates the instance once training stops.
 # --arm-after-training holds the
-# watchdog's idle countdown until train.py first appears, so it can't kill the
-# box during the minutes-long setup/data-gen before training starts. Started
+# watchdog's idle countdown until the delay file is first touched, so it can't
+# kill the box during the minutes-long setup before anything heartbeats. Started
 # before setup so protection is live for the whole run.
 if [[ "$RUN_WATCH" == 1 ]]; then
   if ! command -v tmux >/dev/null 2>&1; then

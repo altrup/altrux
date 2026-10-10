@@ -44,7 +44,7 @@ from experiments.facts import (  # noqa: E402
     role_adjacency_violations,
 )
 from experiments.inference import generate, run_chunks  # noqa: E402
-from progress import ts  # noqa: E402
+from progress import heartbeat, ts  # noqa: E402
 
 # The consolidation null's own gate: below this the transcript is not held
 # losslessly and any consolidation verdict measures the wrong thing.
@@ -171,6 +171,7 @@ def main() -> None:
                 + "\n"
             )
             out_file.flush()
+            heartbeat()
             print(
                 f"\r[{ts()}]  probe {i + 1}/{n_facts} {fact.entity:<11} "
                 f"{'HIT ' if hit else 'miss'}  running {n_hit / (i + 1):.2f}",

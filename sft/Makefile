@@ -224,6 +224,11 @@ TAALM_DIR ?= $(CURDIR)/../.cache/TAALM
 TAALM_COMMIT := b12f344a9dbae555c239635b1c192c555bed001b
 LAMA_CKL_CACHE := $(CURDIR)/../.cache/lama_ckl
 
+# The pinned TAALM run is not our Python, so its output lines heartbeat the
+# watchdog delay file (at most once a minute) on their way to the log.
+STAMP_AND_HEARTBEAT := awk '{ print "[" strftime("%H:%M:%S") "] " $$0; fflush(); \
+	if (systime() - hb >= 60) { system("touch $(CURDIR)/../scripts/.watchdog-delay 2>/dev/null"); hb = systime() } }'
+
 lama-ckl-upstream-check:
 	test "$$(git -C "$(TAALM_DIR)" rev-parse HEAD)" = "$(TAALM_COMMIT)"
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
@@ -235,14 +240,14 @@ lama-ckl-upstream-smoke: lama-ckl-upstream-check
 		HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync python -u -m experiments.lama_ckl.upstream prepare-single-gpu-smoke "$(TAALM_DIR)"; \
 		HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) uv run --no-sync python -u -m experiments.lama_ckl.upstream adapt-single-gpu "$(TAALM_DIR)" --smoke \
 			| (cd "$(TAALM_DIR)" && HF_HOME="$(HF_CACHE)" PYTHONUNBUFFERED=1 bash); \
-	} 2>&1 | awk '{ print "[" strftime("%H:%M:%S") "] " $$0; fflush(); }' | tee logs/lama-ckl-upstream-smoke-$(shell date +%Y%m%d-%H%M%S).log
+	} 2>&1 | $(STAMP_AND_HEARTBEAT) | tee logs/lama-ckl-upstream-smoke-$(shell date +%Y%m%d-%H%M%S).log
 
 lama-ckl-upstream-run: lama-ckl-upstream-check
 	@mkdir -p logs
 	set -o pipefail; HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.upstream adapt-single-gpu "$(TAALM_DIR)" \
 		| (cd "$(TAALM_DIR)" && HF_HOME="$(HF_CACHE)" PYTHONUNBUFFERED=1 bash) 2>&1 \
-		| awk '{ print "[" strftime("%H:%M:%S") "] " $$0; fflush(); }' \
+		| $(STAMP_AND_HEARTBEAT) \
 		| tee logs/lama-ckl-upstream-run-$(shell date +%Y%m%d-%H%M%S).log
 
 lama-ckl-upstream-summarize:
