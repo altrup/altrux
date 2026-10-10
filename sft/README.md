@@ -420,8 +420,8 @@ do not substitute newer packages during the registered gate. Then run:
 
 ```bash
 make lama-ckl-upstream-check
-PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
-PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
+PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
+PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
 make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl
 ```
 
@@ -442,9 +442,9 @@ split on the rented CUDA GPU:
 ```bash
 mkdir -p ../.cache/LAMA
 wget -O ../.cache/LAMA/data.zip https://dl.fbaipublicfiles.com/LAMA/data.zip
-unzip ../.cache/LAMA/data.zip -d ../.cache/LAMA
+unzip ../.cache/LAMA/data.zip -d ../.cache/LAMA   # unpacks to ../.cache/LAMA/data/
 rm ../.cache/LAMA/data.zip
-make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA"
+make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
 ```
 
 This loads the pinned recap-0.5 warm start, scores the descriptive and schematic
