@@ -97,3 +97,26 @@ Every reply read, natural or forced, is a continuation of the evidence text (bio
     cd ~/altrux/sft && for arm in frozen lora mix-review altrux; do make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm $arm --seed 42"; done
 
 PROVISIONAL (after the protected edit). Purpose: prove the remaining machinery (dreams, distillation, LoRA epochs, evaluation, checkpoints) and read rates and VRAM for the cost estimate.
+
+### 06:16 UTC — all four smokes pass (PROVISIONAL, after `634f914`)
+
+All EXIT=0; every smoke wake closed both replies by the backstop (2/2), `internal_eoc` 0, the dream diagnostics dict is present for altrux, checkpoints and `cycle-01/` written and the frozen smoke resumed from its earlier `cycle-00/`.
+
+| arm | cycle-1 wall (s) | peak VRAM (GiB) | treatment |
+|---|---|---|---|
+| frozen | 22 | 5.8 | none |
+| lora | 59 | 6.9 | 1 optimizer step on 2 docs, 109 token gradients, 49 s |
+| mix-review | 55 | 9.2 | 1 step on 2+2 docs, 216 token gradients, 46 s |
+| altrux | 54 | 6.2 | 2 dreams × 31 tokens generated in ~2 s, 2 distillation steps in ~43 s |
+
+The ~45 s for a single first optimizer step is read as first-backward Triton compilation; the real cell below gives the steady rate. Smoke dream sample 2 was the recap loop (`[USER] Can you go over everything we discussed earlier? [ASSISTANT] You asked: …`), sample 1 an unrelated web snippet; both 31 tokens, no EOC within 32 tokens (expected at that limit).
+
+### 06:16 UTC — DECISION: one bounded real cell, no full grid
+
+Reasons the 12-cell grid does not start this session: (1) the Llama gate is not run (token lacks Llama-2 access); (2) the wake runs on a protected edit the team has not accepted, and 89 % of its turns are forced closures of hallucinated continuations, which is a protocol question; (3) at 15.6 tok/s a cell is ≥ 17.5 GPU-hours of wake alone, so 12 cells cost ≥ 210 GPU-hours before dreams, training, or evaluation, and that resource decision belongs to the team.
+
+What runs instead: the altrux seed-42 cell, to be stopped after cycle 2 completes, so the team gets two real 300-dream sets from real post-wake states with their diagnostics (coverage of the to-learn bindings is the registered fallback trigger for the instruction-turn arm), the steady dream-generation, distillation, and evaluation rates for costing, and two provisional acquisition/retention points. Verbatim:
+
+    cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --dream-batch-size 30 --eval-batch-size 16"
+
+`--dream-batch-size 30` (10 batches of 30) chosen from the 5.6 GiB single-stream VRAM; the batch size is recorded in `run.json` and the report requires every cell to share it, so a later full grid must either reuse 30 or discard this directory.
