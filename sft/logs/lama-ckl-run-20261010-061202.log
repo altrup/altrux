@@ -1,0 +1,18 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+loaded 257/257 trainable tensors from ../.cache/lama_ckl/runs/frozen-seed-42-smoke/cycle-00
+[06:12:09] resumed after cycle 0 from ../.cache/lama_ckl/runs/frozen-seed-42-smoke/cycle-00
+[06:12:20] wake sample 1: document="Dan Conners (born February 6, 1941) is a former college and professional American Football player who played linebacker for the American Football League's Oakland Raiders from 1964 through 1969, and for the Raiders in the National Football League (NFL) from 1970 through 1974." assistant="\nConners was born in San Francisco, California, and attended San Francisco's Lowell High School. He played college football at the University of California, Berkeley, where he was a three-year starter at linebacker for the Golden Bears. He was a member of the 1964 and 1965 undefeated national championship teams,<|endoftext|>"
+[06:12:25] wake sample 2: document='Pieter Jacobsz Olycan (1572 – 1658), was a Dutch brewer, magistrate, and later mayor of Haarlem, best known today for his portraits by Frans Hals, as well as for the portraits of his wife Maritge Claesdr.' assistant='\nOlycan was born in Haarlem, the son of Pieter Claesz Olycan, a brewer, and his wife, Maria van der Meulen. He was baptized on January 15, 1572, in the Oude Kerk in Haarlem.\n\nOly<|endoftext|>'
+[06:12:25] wake 2/2 0.13 turn/s ETA 0s
+[06:12:25] cycle 1: wake replies closed by the backstop: 2/2
+[06:12:25] scored 2/2  zeros=2 ones=0  13.1 item/s  ETA 0s
+[06:12:25] scored 2/2  zeros=0 ones=2  19.6 item/s  ETA 0s
+[06:12:25] cycle 1 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[06:12:25] cycle 1 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[06:12:25] cycle 1 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[06:12:25] cycle 1 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[06:12:25] cycle 1: to-learn 0.000000, not-to-forget 1.000000
+[06:12:25] completed cycle 1/1: {"cycle": 0, "not_to_forget_accuracy": 1.0, "top_accuracy": 0.0, "total_knowledge": 1.0}
+EXIT=0

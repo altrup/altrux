@@ -213,8 +213,9 @@ def run_conversational_wake(
 
     Per turn the prompt is user_open + " " + document (truncated) + asst_open + " ".
     The reply is argmax tokens until EOS. Each token, EOS included, goes back
-    into the model so the state holds the full turn.
-    Raises RuntimeError if a reply emits EOC, or has no EOS within reply_tokens.
+    into the model so the state holds the full turn. A reply with no EOS
+    within reply_tokens is closed with a fed EOS and flagged eos_forced.
+    Raises RuntimeError if a reply emits EOC.
 
     Runs in eval mode under no_grad on the model's device.
     Prints the first 3 turns decoded, and a rate/ETA line
@@ -222,10 +223,10 @@ def run_conversational_wake(
 
     Returns (artifact, state). artifact has:
       turns: per turn document, prompt_token_ids, assistant_token_ids (EOS
-             included), assistant (decoded)
+             included), assistant (decoded), eos_forced
       transcript_token_ids: all prompts and replies in order
       transcript_sha256: sha256 of the ids joined with ","
-      invariants: turns, missing_assistant_eos, internal_eoc
+      invariants: turns, missing_assistant_eos (forced-EOS count), internal_eoc
     """
     if reply_tokens < 1 or evidence_tokens < 1:
         raise ValueError("reply_tokens and evidence_tokens must be at least 1")
@@ -264,8 +265,14 @@ def run_conversational_wake(
                 )
                 if token == eos_id:
                     break
-            else:
-                raise RuntimeError("Reached reply tokens limit without generated <eos> token")
+            eos_forced = reply[-1] != eos_id
+            if eos_forced:
+                # The backstop closes the turn: EOS is fed so the state holds a
+                # complete turn, and the count is reported, not a crash.
+                reply.append(eos_id)
+                logits, current_state = model(
+                    torch.tensor([[eos_id]], dtype=torch.long, device=device), state=current_state
+                )
 
             turns.append(
                 {
@@ -273,6 +280,7 @@ def run_conversational_wake(
                     "prompt_token_ids": prompt_ids,
                     "assistant_token_ids": reply,
                     "assistant": tokenizer.decode(reply),
+                    "eos_forced": eos_forced,
                 }
             )
 
@@ -302,9 +310,7 @@ def run_conversational_wake(
         ).hexdigest(),
         "invariants": {
             "turns": len(turns),
-            "missing_assistant_eos": sum(
-                turn["assistant_token_ids"][-1] != eos_id for turn in turns
-            ),
+            "missing_assistant_eos": sum(bool(turn["eos_forced"]) for turn in turns),
             "internal_eoc": sum(eoc_id in turn["assistant_token_ids"] for turn in turns),
         },
     }, current_state.detach()

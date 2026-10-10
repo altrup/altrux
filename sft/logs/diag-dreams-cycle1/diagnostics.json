@@ -1,0 +1,14 @@
+{
+ "contradictions": 508,
+ "correct_bindings": 24,
+ "duplicate_dreams": 39,
+ "eoc_termination_rate": 0.5966666666666667,
+ "max_copy_fraction": 0.8187919463087249,
+ "max_generated_tokens": 511,
+ "max_verbatim_run": 147,
+ "mean_copy_fraction": 0.03612554476591686,
+ "mean_generated_tokens": 295.6066666666667,
+ "min_generated_tokens": 24,
+ "misbindings": 508,
+ "unique_dreams": 261
+}

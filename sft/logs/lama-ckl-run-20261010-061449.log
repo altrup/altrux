@@ -1,0 +1,29 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+[06:15:02] scored 2/2  zeros=2 ones=0  0.3 item/s  ETA 0s
+[06:15:02] scored 2/2  zeros=0 ones=2  20.4 item/s  ETA 0s
+[06:15:02] cycle 0 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[06:15:02] cycle 0 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[06:15:02] cycle 0 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[06:15:02] cycle 0 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[06:15:02] cycle 0: to-learn 0.000000, not-to-forget 1.000000
+[06:15:06] wake sample 1: document="Dan Conners (born February 6, 1941) is a former college and professional American Football player who played linebacker for the American Football League's Oakland Raiders from 1964 through 1969, and for the Raiders in the National Football League (NFL) from 1970 through 1974." assistant="\nConners was born in San Francisco, California. He attended San Francisco's Lowell High School, where he was a standout football player. He was a three-year starter at linebacker for the Raiders, and was named to the All-Pro team in 1967. He was also a member of the Raiders'<|endoftext|>"
+[06:15:11] wake sample 2: document='Pieter Jacobsz Olycan (1572 – 1658), was a Dutch brewer, magistrate, and later mayor of Haarlem, best known today for his portraits by Frans Hals, as well as for the portraits of his wife Maritge Claesdr.' assistant='\nOlycan was born in Haarlem, the son of Pieter Claesz. Olycan, a brewer, and his wife, Maritge Claesdr. Olycan was baptized on March 15, 1572, in the Oude Kerk in Haarlem. He<|endoftext|>'
+[06:15:11] wake 2/2 0.22 turn/s ETA 0s
+[06:15:11] cycle 1: wake replies closed by the backstop: 2/2
+[06:15:13] replay dreams 2/2, batch 2, 0.93 dream/s, ETA 0s
+[06:15:13] cycle 1 dream sample 1: '<|endofconversation|>[USER] Offpage link: http://www.poc.ca/article/view/3914\n[ASSISTANT] Managing director of The Philanthropic Alliance,'
+[06:15:13] cycle 1 dream sample 2: '<|endofconversation|>[USER] Can you go over everything we discussed earlier?\n[ASSISTANT] You asked: "Can you go over everything we discussed earlier?" I said: "You asked'
+[06:15:13] cycle 1 dream diagnostics {"contradictions": 0, "correct_bindings": 0, "duplicate_dreams": 0, "eoc_termination_rate": 0.0, "max_copy_fraction": 0.0, "max_generated_tokens": 31, "max_verbatim_run": 2, "mean_copy_fraction": 0.0, "mean_generated_tokens": 31.0, "min_generated_tokens": 31, "misbindings": 0, "unique_dreams": 2}
+[06:15:56] altrux cycle 1 dream 1/2 loss 0.6302
+[06:15:56] altrux cycle 1 dream 2/2 loss 0.6337
+[06:15:57] scored 2/2  zeros=2 ones=0  16.8 item/s  ETA 0s
+[06:15:57] scored 2/2  zeros=0 ones=2  20.6 item/s  ETA 0s
+[06:15:57] cycle 1 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[06:15:57] cycle 1 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[06:15:57] cycle 1 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[06:15:57] cycle 1 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[06:15:57] cycle 1: to-learn 0.000000, not-to-forget 1.000000
+[06:15:57] completed cycle 1/1: {"cycle": 0, "not_to_forget_accuracy": 1.0, "top_accuracy": 0.0, "total_knowledge": 1.0}
+EXIT=0

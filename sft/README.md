@@ -420,8 +420,8 @@ do not substitute newer packages during the registered gate. Then run:
 
 ```bash
 make lama-ckl-upstream-check
-PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
-PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
+PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
+PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
 make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl
 ```
 
@@ -442,9 +442,9 @@ split on the rented CUDA GPU:
 ```bash
 mkdir -p ../.cache/LAMA
 wget -O ../.cache/LAMA/data.zip https://dl.fbaipublicfiles.com/LAMA/data.zip
-unzip ../.cache/LAMA/data.zip -d ../.cache/LAMA
+unzip ../.cache/LAMA/data.zip -d ../.cache/LAMA   # unpacks to ../.cache/LAMA/data/
 rm ../.cache/LAMA/data.zip
-make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA"
+make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
 ```
 
 This loads the pinned recap-0.5 warm start, scores the descriptive and schematic
@@ -482,8 +482,9 @@ done
 ```
 
 Each full cell runs 30 cycles. Every wake has 500 `[USER]` evidence turns and
-greedy `[ASSISTANT]` replies that must end within 64 tokens, followed by one
-`<|endofconversation|>`. Native LoRA trains one fixed seed-42 pass over the 500
+greedy `[ASSISTANT]` replies with a 64-token backstop (a reply that reaches it
+is closed with a fed EOS; `wake.json` flags each such turn as `eos_forced` and
+the cycle log prints the count), followed by one `<|endofconversation|>`. Native LoRA trains one fixed seed-42 pass over the 500
 evidence documents per cycle. Mix-Review pairs that pass with the 500 retention
 documents in the official fixed seed-0 review order. Altrux generates 300
 uncued 512-token dreams at temperature `0.7` from the intact post-wake state and

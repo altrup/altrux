@@ -1,0 +1,115 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+[05:35:56] turn 1 stop=backstop len=65 REPLY="\nConners was born in San Francisco, California, and attended San Francisco's Lowell High School. He played college football at the University of California, Berkeley, where he was a three-year starter at linebacker for the Golden Bears. He was a member of the 1964 and 1965 undefeated national champi"
+[05:36:01] turn 2 stop=backstop len=65 REPLY='\nOlycan was born in Haarlem, the son of Pieter Claesz Olycan, a brewer, and his wife, Maria van der Meulen. He was baptized on January 15, 1572, in the Oude Kerk in Haarlem.\n\nOly<|endoftext|>'
+[05:36:06] turn 3 stop=backstop len=65 REPLY='\nPrestolee is a village in the civil parish of Prestolee and Stoke, in the borough of Staffordshire Moorlands, in the West Midlands of England. It is located on the A5 road, about two miles (3.2 km) north-west of the town of Stafford.<|endoftext|>'
+[05:36:10] turn 4 stop=backstop len=65 REPLY='\nThe Cook Islands national beach soccer team is the national beach soccer team of the Cook Islands and is controlled by the Cook Islands Football Association, the governing body for football in the Cook Islands.\n\nThe Cook Islands national beach soccer team is a member of the Oceania Football Confede'
+[05:36:14] turn 5 stop=backstop len=65 REPLY='\nHaruko Sugimura (1909-1997) was a Japanese stage and film actress. She was born in Tokyo, Japan, and was a graduate of the Tokyo Imperial University. She made her film debut in the film "The House of the Dead" (1931) by Yasujiro O<|endoftext|>'
+[05:36:37] wake 10/500 natural_eos=0 eoc=0 gen_tok/s=15.4 turn/s=0.19 ETA 41.9m vram=5.6G
+[05:37:20] turn 20 stop=eos len=63 REPLY='\nThe German mechanics Franz Reuleaux wrote "a machine is a combination of resistant bodies so arranged that by their means the mechanical forces of nature can be compelled to do work accompanied by certain determinate motion."\n\nThe quote is from his book "The Mechanism of Machines" (1883).<|endoftex'
+[05:37:20] wake 20/500 natural_eos=1 eoc=0 gen_tok/s=15.3 turn/s=0.21 ETA 38.0m vram=5.6G
+[05:37:42] turn 25 stop=eos len=57 REPLY='\nHe also belonged to the Astronomische Gesellschaft of Hamburg, to the Société Mathématique of Moscow, the Société Nationale des Sciences et Mathématiques de Cherbourg, to the Academy of Madrid, New York, Lisbon and Padua.<|endoftext|>'
+[05:37:46] turn 26 stop=eos len=63 REPLY='\nA graduate of George Washington University, where he earned his PhD in physics under the direction of Edward Teller in 1939, he conducted research in ballistics at the Institute for Advanced Study in Princeton and the Ballistic Research Laboratory at the Aberdeen Proving Ground, and received three '
+[05:38:04] wake 30/500 natural_eos=3 eoc=0 gen_tok/s=15.2 turn/s=0.22 ETA 36.0m vram=5.6G
+[05:38:48] wake 40/500 natural_eos=3 eoc=0 gen_tok/s=15.2 turn/s=0.22 ETA 34.9m vram=5.6G
+[05:39:08] turn 45 stop=eos len=51 REPLY="\nIn geometry, Boy's surface is an immersion of the real projective plane in 3-dimensional space found by Werner Boy in 1901 (he discovered it on assignment from David Hilbert to prove that the projective plane could not be immersed in 3-space).<|endoftext|>"
+[05:39:29] wake 50/500 natural_eos=4 eoc=0 gen_tok/s=15.3 turn/s=0.22 ETA 33.6m vram=5.6G
+[05:40:12] wake 60/500 natural_eos=4 eoc=0 gen_tok/s=15.3 turn/s=0.23 ETA 32.5m vram=5.6G
+[05:40:54] wake 70/500 natural_eos=4 eoc=0 gen_tok/s=15.4 turn/s=0.23 ETA 31.6m vram=5.6G
+[05:41:19] turn 76 stop=eos len=56 REPLY="\nWhile at Ellerbe Becket in the 1990’s, Meis designed Europe's largest arena, the Nynex Arena (now Manchester Arena) in Manchester, England, and led the design competition that won the $750 million Saitama Super Arena in Japan.<|endoftext|>"
+[05:41:27] turn 78 stop=eos len=55 REPLY='\nIn 2007, Nielsen announced a marked shift in his field of research: from quantum information and computation to “the development of new tools for scientific collaboration and publication”.This work includes "massively collaborative mathematics" projects like the Polymath project with Timothy Gowers'
+[05:41:36] wake 80/500 natural_eos=6 eoc=0 gen_tok/s=15.4 turn/s=0.23 ETA 30.7m vram=5.6G
+[05:42:14] turn 89 stop=eos len=59 REPLY='\nHe received the 1990 Award for Public Understanding of Science and Technology from the American Association for the Advancement of Science for "his innovative contributions to public understanding of science and its societal impacts by demonstrating with his creative \'Garbage Project\' how the scien'
+[05:42:18] wake 90/500 natural_eos=7 eoc=0 gen_tok/s=15.4 turn/s=0.23 ETA 29.8m vram=5.6G
+[05:43:01] wake 100/500 natural_eos=7 eoc=0 gen_tok/s=15.4 turn/s=0.23 ETA 29.0m vram=5.6G
+[05:43:43] wake 110/500 natural_eos=7 eoc=0 gen_tok/s=15.4 turn/s=0.23 ETA 28.2m vram=5.6G
+[05:44:21] turn 119 stop=eos len=56 REPLY="\nCraig's daughter, Kara Markley, began her musical career at a young age and has studied fiddle with renowned players Eileen Ivers of Riverdance fame, Cape Breton’s Natalie MacMaster, and Scotland’s John McCusker.<|endoftext|>"
+[05:44:25] wake 120/500 natural_eos=8 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 27.4m vram=5.6G
+[05:44:33] turn 122 stop=eos len=50 REPLY='\nThese were the European paintings Galleries at the Metropolitan Museum of Art, The Prince George Gallery at the Walker Art Museum in Liverpool, England and the gallery that housed The Night Watch at the Rijksmuseum in Amsterdam, the Netherlands.<|endoftext|>'
+[05:45:07] wake 130/500 natural_eos=9 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 26.6m vram=5.6G
+[05:45:08] turn 131 stop=eos len=16 REPLY='\nAs a composer, he has recorded over 50 of his own compositions.<|endoftext|>'
+[05:45:12] turn 132 stop=eos len=55 REPLY='\nIt is next to the City of Manchester Stadium, and the National Indoor BMX Arena which opened in 2011, and hosted track cycling events in the 2002 Commonwealth Games, the Revolution series and the UCI Track Cycling World Championships in 1996, 2000 and 2008.<|endoftext|>'
+[05:45:46] wake 140/500 natural_eos=11 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 25.7m vram=5.6G
+[05:46:28] wake 150/500 natural_eos=11 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 25.0m vram=5.6G
+[05:47:11] wake 160/500 natural_eos=11 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 24.3m vram=5.6G
+[05:47:43] turn 168 stop=eos len=43 REPLY='\nIgor Morozov was awarded by Boris Yeltsin with the highest title for artists in Russia, the title "Narodni Artist Rossii" (= People\'s Artist of the USSR)<|endoftext|>'
+[05:47:52] wake 170/500 natural_eos=12 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 23.5m vram=5.6G
+[05:48:24] turn 178 stop=eos len=34 REPLY='\nThe Dean Street Underground Orchestra, Storms/Nocturnes, Acoustic Triangle and his award winning Lighthouse Project were all groups that he led.<|endoftext|>'
+[05:48:32] wake 180/500 natural_eos=13 eoc=0 gen_tok/s=15.5 turn/s=0.23 ETA 22.7m vram=5.6G
+[05:48:36] turn 181 stop=eos len=52 REPLY='\nHe is also the younger brother of Joe Laurinaitis (Road Warrior Animal; one half of the former wrestling tag team The Road Warriors), and the uncle of James Laurinaitis, former Ohio State standout linebacker for the St. Louis Rams.<|endoftext|>'
+[05:49:01] turn 187 stop=eos len=57 REPLY="\nThe orchestra collaborates with stars from the stage and screen, such as Tony Bennett, Michael Feinstein, Megan Hilty, Idina Menzel, Kelli O'Hara, Miss Piggy, Pink Martini, John Pizzarelli, and many more.<|endoftext|>"
+[05:49:14] wake 190/500 natural_eos=15 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 22.0m vram=5.6G
+[05:49:56] wake 200/500 natural_eos=15 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 21.3m vram=5.6G
+[05:50:04] turn 202 stop=eos len=61 REPLY='\nHe studied piano (with Boris Roubakine, Karl Engel, and Alexandra Munn), French horn (with Pierre del Vescovo, Eugene Rittich, and Pierre Boulez), and conducting (with Franco Mannino, Kurt Sanderling, and Pierre Boulez).<|endoftext|>'
+[05:50:38] wake 210/500 natural_eos=16 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 20.6m vram=5.6G
+[05:51:21] wake 220/500 natural_eos=16 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 19.8m vram=5.6G
+[05:52:03] wake 230/500 natural_eos=16 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 19.1m vram=5.6G
+[05:52:46] wake 240/500 natural_eos=16 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 18.4m vram=5.6G
+[05:53:19] turn 248 stop=eos len=54 REPLY='\nRecent / recurring members have included Ben Webster on drums, Patrick Costello on bass, Denver Dalley on guitar, Dave Hernandez on guitar, Jeff Quinn on bass, Greg Dulli on backing vocals / organ, and Maria Taylor & Kate Taylor on vocals.<|endoftext|>'
+[05:53:28] wake 250/500 natural_eos=17 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 17.7m vram=5.6G
+[05:54:10] wake 260/500 natural_eos=17 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 17.0m vram=5.6G
+[05:54:22] turn 263 stop=eos len=56 REPLY='\nCampbell has worked with numerous jazz artists, including Terry Gibbs and Buddy DeFranco, Stan Getz, Eddie Harris, James Moody, Charles McPherson, and Clark Terry, and in the late 1980s was pianist for Mel Tormé.<|endoftext|>'
+[05:54:52] wake 270/500 natural_eos=18 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 16.3m vram=5.6G
+[05:55:34] wake 280/500 natural_eos=18 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 15.6m vram=5.6G
+[05:56:03] turn 287 stop=eos len=53 REPLY='\nThe Andorra national futsal team is controlled by the Andorran Football Federation, the governing body for futsal in Andorra and represents the country in FIFA futsal competitions, such as the World Cup and the European Championships.<|endoftext|>'
+[05:56:11] turn 289 stop=eos len=54 REPLY='\nThe society\'s main objective was to "advance education and science by the promotion, for the benefit of the public, the study of the chemistry, physiology and disorders of central and peripheral regulating peptides and by the dissemination of the results of such study and research."<|endoftext|>'
+[05:56:15] wake 290/500 natural_eos=20 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 14.8m vram=5.6G
+[05:56:24] turn 292 stop=eos len=60 REPLY="\nManchester United's Gordon Hill, who was transferred to Derby County (now managed by Tommy Docherty) at the end of the season, bowed out of Old Trafford in style as the club's top scorer once again with 17 goals in the league and 19 in all competitions.<|endoftext|>"
+[05:56:31] turn 294 stop=eos len=54 REPLY='\nOther BBC sports reporters and correspondents who contributed to the programme included Tony Adamson, Christopher Martin-Jenkins, Gary Richardson, Ian Robertson, Renton Laidlaw, Peter Bromley, Peter Jones, Bryon Butler, John Inverdale and others.<|endoftext|>'
+[05:56:57] wake 300/500 natural_eos=22 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 14.1m vram=5.6G
+[05:57:22] turn 306 stop=eos len=55 REPLY='\nHelen Fospero is a British television presenter and journalist, best known for her presenting roles on shows such as GMTV, Daybreak and Lorraine.\n\nShe is currently working as a reporter for Watchdog and The One Show for the BBC.<|endoftext|>'
+[05:57:39] wake 310/500 natural_eos=23 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 13.4m vram=5.6G
+[05:57:55] turn 314 stop=eos len=62 REPLY='\nSharafyan is a prominent Armenian composer and conductor. He is the author of several operas, ballets, symphonic, chamber, vocal, choral compositions, and has been awarded numerous prizes and distinctions. He is a professor of music at the Yerevan State Conservatory.<|endoftext|>'
+[05:58:21] wake 320/500 natural_eos=24 eoc=0 gen_tok/s=15.5 turn/s=0.24 ETA 12.7m vram=5.6G
+[05:58:28] turn 322 stop=eos len=46 REPLY='\nOn November 26, the first bishop Raymond Sumlut Gam was ordained, and the St Patrick church was elevated to the cathedral of the diocese by Archbishop Salvatore Pennacchio, Apostolic Nuncio for Myanmar.<|endoftext|>'
+[05:58:32] turn 323 stop=eos len=61 REPLY='\nTheir eighth album Vinyl Confessions released the single "Play the Game Tonight" which became their first Top 20 single on the Billboard Hot 100 in four years, however the album itself did not sell and eventually after the release of a ninth studio album in 1983, the group disbanded.<|endoftext|>'
+[05:58:57] turn 329 stop=eos len=56 REPLY="\nThe International Animated Film Association (Association Internationale du Film d'Animation) or ASIFA is an international non-profit organization founded in 1960 in Annecy, France by the best known animation artists of the time such as the Canadian animation, Norman McLaren.<|endoftext|>"
+[05:59:00] turn 330 stop=eos len=53 REPLY="\nNarodne novine (English: The People's Newspaper) is the official gazette (or newspaper of public record) of the Republic of Croatia which publishes laws, regulations, appointments and official decisions and releases them in the public domain.<|endoftext|>"
+[05:59:00] wake 330/500 natural_eos=28 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 12.0m vram=5.6G
+[05:59:12] turn 333 stop=eos len=50 REPLY='\nIn mathematics, Reeb stability theorem, named after Georges Reeb, asserts that if one leaf of a codimension-one foliation is closed and has finite fundamental group, then all the leaves are closed and have finite fundamental group.<|endoftext|>'
+[05:59:20] turn 335 stop=eos len=46 REPLY='\nThe original Cobra has appeared outside of Marvel Comics, most notably in "The Mighty Thor" portion of The Mighty Thor and in episodes of Avengers: Earth\'s Mightiest Heroes and Disk Wars: The Avengers.<|endoftext|>'
+[05:59:36] turn 339 stop=eos len=51 REPLY='\nThe Dallas Cowboys Ring of Honor (RoH) was a ring around Texas Stadium in Irving and currently around AT&T Stadium in Arlington, Texas which honors former players, coaches and club officials who made outstanding contributions to the Dallas Cowboys football organization.<|endoftext|>'
+[05:59:40] wake 340/500 natural_eos=31 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 11.2m vram=5.6G
+[05:59:56] turn 344 stop=eos len=52 REPLY='\nThe Patriots had four different players who rushed for more than 500 yards: running back Sam "Bam" Cunningham, 768; running back Andy Johnson, 675; running back Horace Ivory, 693; and quarterback Steve Grogan, 539.<|endoftext|>'
+[06:00:00] turn 345 stop=eos len=61 REPLY="\nIn Japan, Taito, Tecmo and Sammy assisted TAD in distributing their arcade titles, while Fabtek distributed every arcade title of TAD's internationally with permission (who were also known for internationally distributing arcade titles by Seibu Kaihatsu with permission).<|endoftext|>"
+[06:00:16] turn 349 stop=eos len=52 REPLY='\nHe was born in Bussy (Fribourg, Switzerland) and obtained his Diplom in mathematics from the University of Fribourg and then his doctoral degree in 1907 with a thesis written under the supervision of Mathias Lerch.<|endoftext|>'
+[06:00:20] wake 350/500 natural_eos=34 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 10.5m vram=5.6G
+[06:01:03] wake 360/500 natural_eos=34 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 9.8m vram=5.6G
+[06:01:45] wake 370/500 natural_eos=34 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 9.1m vram=5.6G
+[06:02:28] wake 380/500 natural_eos=34 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 8.4m vram=5.6G
+[06:02:35] turn 382 stop=eos len=50 REPLY='\nJoconde is the central database created in 1975 and now available online, maintained by the French Ministry of Culture, for objects in the collections of the main French public and private museums listed as Musées de France, according to article L.<|endoftext|>'
+[06:03:09] wake 390/500 natural_eos=35 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 7.7m vram=5.6G
+[06:03:52] wake 400/500 natural_eos=35 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 7.0m vram=5.6G
+[06:04:12] turn 405 stop=eos len=56 REPLY='\nSome international organizations provide assistance to so-called developing countries to help them promote their exports, most prominently the International Trade Centre in Geneva, which is a subsidiary of the World Trade Organization and the United Nations with a mandate to providing trade-related'
+[06:04:16] turn 406 stop=eos len=59 REPLY='\nHe was elected diocesan administrator on December 1, 1983 and apostolic administrator and bishop on October 25, 1984 before being consecrated titular bishop of Cellae in Proconsulari on December 8, 1984 in Rome by Cardinal Secretary of State Agostino Casaroli.<|endoftext|>'
+[06:04:33] turn 410 stop=eos len=63 REPLY='\nHis performance repertoire includes the history of opera, from Cavalli, Bach, and Mozart, to Puccini, Verdi, and Richard Strauss, and the premieres of operas by composers such as Dominick Argento, Leonard Bernstein, Carlisle Floyd and Lowell Liebermann.<|endoftext|>'
+[06:04:33] wake 410/500 natural_eos=38 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 6.3m vram=5.6G
+[06:05:15] wake 420/500 natural_eos=38 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 5.6m vram=5.6G
+[06:05:58] wake 430/500 natural_eos=38 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 4.9m vram=5.6G
+[06:06:31] turn 438 stop=eos len=50 REPLY='\nIn addition to the main campus in Ruston, Louisiana Tech holds classes at the Louisiana Tech University Shreveport Center, Cyber Innovation Center in Bossier City, Barksdale Air Force Base, and on the CenturyLink campus in Monroe.<|endoftext|>'
+[06:06:33] turn 439 stop=eos len=32 REPLY='\nHe graduated from University College, University of London, where he attended lectures by Edward Victor Appleton and received the BSc degree in physics in 1926.<|endoftext|>'
+[06:06:37] wake 440/500 natural_eos=40 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 4.2m vram=5.6G
+[06:06:41] turn 441 stop=eos len=56 REPLY='\nThe Lisbon Geographic Society (Portuguese: Sociedade de Geografia de Lisboa) is a Portuguese scientific society created in Lisbon in the year of 1875, aiming to "promote and assist the study and progress of geography and related sciences in Portugal."<|endoftext|>'
+[06:06:48] turn 443 stop=eos len=47 REPLY='\nThe accompanying music video was directed by actor Rashida Jones, and features Bareilles singing intertwined with clips of people dancing in various public places such as a shopping mall, a gym, a library and a bus stop.<|endoftext|>'
+[06:07:18] wake 450/500 natural_eos=42 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 3.5m vram=5.6G
+[06:08:01] wake 460/500 natural_eos=42 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 2.8m vram=5.6G
+[06:08:21] turn 465 stop=eos len=49 REPLY='\nSince 2005, Falkenberg has worked with British rock band Slade, especially their drummer Don Powell and this has led to a string of Slade-related blogs on the internet as well as many articles and interviews in magazines and papers.<|endoftext|>'
+[06:08:25] turn 466 stop=eos len=57 REPLY='\nHis ingenuity in providing amusement for the members of the circle ensured his popularity, which was never seriously threatened except by Antoine Godeau (nicknamed le Nain de Julie), and this rivalry ceased when Richelieu appointed Godeau bishop of Grasse.<|endoftext|>'
+[06:08:42] wake 470/500 natural_eos=44 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 2.1m vram=5.6G
+[06:09:24] wake 480/500 natural_eos=44 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 1.4m vram=5.6G
+[06:09:27] turn 481 stop=eos len=43 REPLY='\nThe former high school building is now an elementary school for grades 7-9 called Djäkneskolan ("Deacons School") whose students likewise are called Djäknar ("Deacons").<|endoftext|>'
+[06:09:31] turn 482 stop=eos len=57 REPLY='\nThe Donboli khans pledged their allegiances then first to Mohammad Hassan Khan Qajar, later to Karim Khan Zand and at the end to Agha Mohammad Khan Qajar, who was proclaimed 1792 Shah and emperor of all of Iran.<|endoftext|>'
+[06:09:34] turn 483 stop=eos len=48 REPLY="\nCliff Morgan - who had just retired as a senior BBC TV Executive - took over the presenter's role in the Spring of 1987 and remained at the helm until the programme came to an end with schedule changes in April 1998.<|endoftext|>"
+[06:09:36] turn 484 stop=eos len=42 REPLY="\nEgypt's Stock Exchange, now Egyptian Exchange (EGX), comprises two exchanges, Cairo and Alexandria, both governed by the same board of directors and sharing the same trading, clearing and settlement systems.<|endoftext|>"
+[06:09:40] turn 485 stop=eos len=58 REPLY="\nViktor Yanukovych was appointed as Ukraine's Prime Minister in 2010, but was forced to resign in February 2014 after mass protests against his government. He was replaced by Arseniy Yatsenyuk, who was appointed as Prime Minister on 25 February 2014.<|endoftext|>"
+[06:09:44] turn 486 stop=eos len=53 REPLY="\nAt the close of the 1971 season, he was a throw-in in one of the off-season's blockbuster trades, when the White Sox dealt him and left-handed pitcher Tommy John to the Los Angeles Dodgers for slugger Dick Allen.<|endoftext|>"
+[06:09:52] turn 488 stop=eos len=63 REPLY='\nThe policy area of defence is principally the domain of nation states, and the main military alliance in Europe remains the intergovernmental NATO, which includes 22 of the EU member states together with four non-EU European countries, Albania, Iceland, Turkey and Norway, as well as the United Stat'
+[06:10:01] wake 490/500 natural_eos=51 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 0.7m vram=5.6G
+[06:10:21] turn 495 stop=eos len=54 REPLY="\nIt was created to fill a gap in English-language news in Austria after the closure of the English language Austrian radio station Blue Danube Radio and the daily English language news service published by the Wiener Zeitung, the world's oldest still in publication newspaper.<|endoftext|>"
+[06:10:25] turn 496 stop=eos len=53 REPLY='\nLocated near the centre of the city at 857 Corrientes Avenue, it was designed by the architect Alberto Prebisch, who was also in charge of the construction of the Obelisk, one of the main icons of the city.<|endoftext|>'
+[06:10:33] turn 498 stop=eos len=63 REPLY='\nLinda Brava is a collection of easy-on-the-ear violin favourites including pieces by Edvard Grieg, Jules Massenet, Johann Sebastian Bach, Charles Gounod, Edward Elgar, Gabriel Fauré, Fritz Kreisler, Jean Sibelius.<|endoftext|>'
+[06:10:40] turn 500 stop=eos len=46 REPLY='\nThe "Oval Eagles" debuted (May 13, 1928) at Rome\'s National Stadium (demolished and rebuilt in the 1950s as Stadio Flaminio) in front of 20,000 spectators.<|endoftext|>'
+[06:10:40] wake 500/500 natural_eos=55 eoc=0 gen_tok/s=15.6 turn/s=0.24 ETA 0.0m vram=5.6G
+[06:10:40] DONE natural_eos=55/500 eoc=0 prompt_tokens=44229 gen_tokens=31828 mean_len=63.7 total=2095s
+EXIT=0

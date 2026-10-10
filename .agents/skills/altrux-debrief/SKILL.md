@@ -32,28 +32,23 @@ act on.
    versus what it merely suggests, which conclusions are load-bearing for
    the next step, and a proposed direction for the next run with reasoning.
 
-3. **Discuss as teammates.** Open with your position as a handful of
-   one-line claims, strongest first — no prose block, no restating the run.
-   Then have a real two-way discussion, one thread at a time — your
-   teammate pushes back, you defend or update;
-   you push back on their readings too when the evidence disagrees.
-   Don't relitigate what a prior DISCUSSION file already rejected unless
-   one of you has new evidence. Disagreements either get resolved or get
-   recorded as open questions — don't paper over them.
+3. **Discuss as teammates.** This is a conversation, not a report. Open
+   with your position as a few one-line claims, strongest first. Then take
+   one thread at a time in short replies: your teammate pushes back, you
+   defend or update, and you push back on their readings when the evidence
+   disagrees. Do not restate the run, do not answer a one-line question
+   with a section, and do not relitigate what a prior DISCUSSION file
+   already rejected unless one of you has new evidence. Disagreements get
+   resolved or recorded as open questions.
 
-   Before anything is registered, confirm you are on the same page — and
-   "the same page" includes the details, not just the headline. The
-   details ARE the experiment: which state a logit is trained from, what
-   carries versus what's discarded, what fires before what inside a step,
-   what two arms share byte-for-byte. Restate any agreed mechanism back as
-   math plus a numbered event sequence and get explicit sign-off on that
-   block specifically — never on a paraphrase or a vibe. When your teammate's
-   words admit two readings, or your design differs from what they
-   originally described even slightly, surface it as a named difference and
-   ask; a nod to a summary that papered over one detail cost an entire grid
-   (08-06: "B1" ran as generate-while-draining when the intent was
-   train-on-shared-dream — the discrepancy was sign-off-able all along,
-   nobody put the sequence in front of the teammate).
+   The one formal moment: before a mechanism is registered, restate it as
+   math plus a numbered event sequence and get sign-off on that block, not
+   on a paraphrase. The details are the experiment: which state a logit is
+   trained from, what carries versus what is discarded, what fires before
+   what inside a step. When your teammate's words admit two readings, name
+   the difference and ask (08-06: "B1" ran as generate-while-draining when
+   the intent was train-on-shared-dream; nobody put the sequence in front
+   of the teammate).
 
 4. **Write the DISCUSSION file as you converge** —
    `notes/discussion/DISCUSSION-YYYYMMDD-<topic>.md` (see the existing ones for the
@@ -110,7 +105,8 @@ grinding it out locally.
 
 - No instance actions: this command never launches, drives, or terminates
   rented boxes. Prepping the next launch is outside its scope.
-- The conversation is a conversation. The DISCUSSION file is the only place
-  long-form writing belongs.
+- The conversation is a conversation: short turns, plain prose, tables
+  only when a number decides something. Long-form writing belongs in the
+  DISCUSSION file only.
 - The standing direction is the product. If the discussion ends without a
   next-run plan the experimenter could execute unprompted, it isn't done.
