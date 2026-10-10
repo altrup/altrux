@@ -124,3 +124,9 @@ What runs instead: the altrux seed-42 cell, to be stopped after cycle 2 complete
 ### 06:18 UTC — altrux cell cycle 0
 
 Evaluation of 1000 rows at `--eval-batch-size 16` takes ~30 s (to-learn at ~20 item/s, not-to-forget at ~165 item/s). Result: to-learn 0.0000, not-to-forget 0.9855. The split selected the 500 retention rows at score 1.0 with batch 8; 7 of them score 0 at batch 16 in the runner, so the object-token accuracy is sensitive to padding/batch numerics in bf16 at the ~1 % level. The do-nothing floor for this cell is therefore (0.0000, 0.9855), not (0, 1). Wake 1 running at 0.23 turn/s.
+
+### 07:03 UTC — altrux cell cycle 1 stopped by the duplicate-dream rule
+
+Wake 1: 500 turns in 35 min, 458/500 replies closed by the backstop, `internal_eoc` 0. Dream generation: 300 dreams × 512 tokens at batch 30 in 8.8 min (0.57 dream/s, ≈290 tok/s aggregate). Then `runner.py:459` raised `the fixed dream set contains duplicate dreams; refusing to train` (EXIT=2). The check runs before `dreams.json` or the wake artifact is written, so the cycle left nothing on disk: the dream set, its diagnostics, and the wake transcript are lost. The handoff lists "duplicate dream" as a stop condition and the protocol forbids a content-dependent retry, so the cell is not restarted. Recommendation for the team (not applied; `runner.py` is protected and this is not a crash to unblock): write `dreams.json` and `wake.json` before the duplicate check, so a refused set is still inspectable.
+
+Next: reproduce the same wake and dream set with the protocol's own functions (`run_conversational_wake`, `dream_prompt_ids`, `generate_replay_dreams`, `lama_dream_diagnostics`, seed 4201 = 42·100 + 1) in a scratch script that saves the wake, the state, every dream, the duplicate groups, and the diagnostics under `sft/logs/`, so the duplicate content and the to-learn coverage are on record. ≈ 50 min GPU.
