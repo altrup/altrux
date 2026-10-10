@@ -169,3 +169,37 @@ Every duplicate is the recap loop: `[USER] What did I ask you about earlier? [AS
 The instruction set's duplicates are the instruction echoed back (`\nDream about the preceding experience. Rehearse what matters without copying it verbatim.<|endoftext|>`, 6 + 3 copies); the long dreams are generic "dream journal" prose, writing prompts, or unrelated chat. The instruction sentence was never in the warm-start corpus (the 2026-10-05 amendment's reason for removing it) and the model treats it as text to echo or riff on. Both registered invocation mechanisms fail the coverage the protocol needs. By §2 of the protocol note, what comes next (a `[DREAM]` token, a different wake rendering, a different warm start, or dropping the dream arm) is a team decision.
 
 Reading: after 500 evidence turns plus ~32k tokens of forced continuation, the open state is dominated by the chat prior and the last few documents (the only rehearsals seen cite the final documents: Stadio Flaminio, the Vinci brothers). This agrees with the ~3–4 binding capacity measured for the SSM state in the 2026-08-04 discussion; a 500-fact wake cannot be held in state for the dream to rehearse, whatever the prompt.
+
+## Closing (08:05 UTC) — stop and report
+
+Session length ≈ 3 h on one GH200. No cell was trained; the stop is "going nowhere within the registered protocol", not a crash.
+
+### What was tried, in order
+
+1. TAALM pinned environment on ARM64 (three deviations, all recorded above: bitsandbytes 0.42.0 built from source with upstream's include/ guards; triton removed; peft pinned by date).
+2. `lama-ckl-upstream-check`: pass. Upstream smoke: blocked by the box token lacking Llama-2 access (BLOCKER A). Gate NOT RUN.
+3. Mamba split: built, 500/500, invariants zero, pulled home.
+4. Frozen smoke: crashed at wake turn 1 on the EOS invariant (BLOCKER B). Diagnosed, protected edit `634f914` (forced EOS at the backstop, counted). Four smokes then pass (PROVISIONAL).
+5. One real altrux seed-42 cell: cycle 0 evaluation (floor 0.0000 / 0.9855, 34 s, peak VRAM 10.3 GiB), wake 1 (35 min, 458/500 forced), 300 dreams (9 min), then the registered duplicate-dream stop. Nothing written by the runner for cycle 1.
+6. Reproduced the wake and the dream set outside the runner and saved them (`sft/logs/diag-dreams-cycle1/`), then generated the registered fallback instruction-prompt set from the same state. Both prompts fail to-learn coverage (18 and 5 of 500 subjects).
+
+### What was learned
+
+- The recap-0.5 warm start does not reply to a bare evidence-document user turn; it continues the text. 89–92 % of wake replies hit the 64-token backstop. The registered wake invariant is unsatisfiable with this adapter and input rendering.
+- The recap behaviour at `<|endofconversation|>` has collapsed to a self-referential loop with no content from the wake; 46/300 dreams are byte-identical copies of it, which trips the runner's duplicate rule on every cycle. The instruction prompt is echoed rather than followed.
+- Dream rehearsal of the wake is near zero under either prompt, consistent with the ~3–4 binding state capacity: the Altrux arm as registered has no path from a 500-document wake to its dreams.
+- Costs at the current manual per-token stepping (15.6 tok/s single stream, ~290 tok/s at batch 30): wake 35 min, dreams 9 min, 1000-row evaluation 0.5 min per cycle; ≈ 23 h per altrux cell, ≈ 18 h per lora/mix-review cell, 12 cells ≈ 250 GPU-hours. The fused step kernel is the lever.
+- Object-token accuracy moves at the 1 % level with evaluation batch size (7/500 retention rows flip between batch 8 and 16); the greedy wake is not bit-reproducible between runs.
+- Every smoke mechanism (dreams, distillation, LoRA/Mix-Review epochs, evaluation, atomic cycles, resume) works end to end on CUDA after the protected edit.
+
+### For discussion
+
+1. Accept or reject `634f914` (forced EOS at the backstop). If rejected, the wake needs a different rendering (e.g. no assistant turn, or an instruction that the adapter actually answers) or a different warm start.
+2. The dream invocation: both registered mechanisms fail coverage; §2 of the protocol says reconsider `[DREAM]` only now. The saved `open_state.pt` lets any new prompt be tested in 9 min without a wake.
+3. Whether the Altrux arm can work at all on a 500-fact wake given the state capacity, or whether the comparison should use a shorter wake per cycle (the published epoch has 500 documents; splitting one epoch into many short wake/dream cycles changes the mapping in §2).
+4. Llama-2 access for the HF account, so the gate can run next time (≈ 2 GPU-hours estimated from the smoke's model-load path, unmeasured).
+5. The runner should write `dreams.json`/`wake.json` before the duplicate check; and the duplicate rule itself may be the wrong response to a degenerate loop (it is a content property, so a retry is forbidden, so every altrux cell stops at cycle 1).
+6. The three TAALM environment deviations, and whether the gate's pinned requirements should be re-pinned to a resolvable set (peft ref, triton) in `sft/README.md`.
+7. The fused single-token step path for decode throughput (model code, registered per-token semantics).
+
+Not committed: `sft/uv.lock` (modified by setup's `make sync`, left as the box resolved it). Not pulled: `.cache/TAALM`, `.cache/bnb-src`, `.cache/peft-src` (reproducible from the commands above), `.cache/LAMA`.
