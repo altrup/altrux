@@ -120,3 +120,7 @@ What runs instead: the altrux seed-42 cell, to be stopped after cycle 2 complete
     cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --dream-batch-size 30 --eval-batch-size 16"
 
 `--dream-batch-size 30` (10 batches of 30) chosen from the 5.6 GiB single-stream VRAM; the batch size is recorded in `run.json` and the report requires every cell to share it, so a later full grid must either reuse 30 or discard this directory.
+
+### 06:18 UTC — altrux cell cycle 0
+
+Evaluation of 1000 rows at `--eval-batch-size 16` takes ~30 s (to-learn at ~20 item/s, not-to-forget at ~165 item/s). Result: to-learn 0.0000, not-to-forget 0.9855. The split selected the 500 retention rows at score 1.0 with batch 8; 7 of them score 0 at batch 16 in the runner, so the object-token accuracy is sensitive to padding/batch numerics in bf16 at the ~1 % level. The do-nothing floor for this cell is therefore (0.0000, 0.9855), not (0, 1). Wake 1 running at 0.23 turn/s.
