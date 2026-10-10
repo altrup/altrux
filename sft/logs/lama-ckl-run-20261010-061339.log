@@ -1,0 +1,24 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+[06:13:52] scored 2/2  zeros=2 ones=0  0.3 item/s  ETA 0s
+[06:13:53] scored 2/2  zeros=0 ones=2  19.2 item/s  ETA 0s
+[06:13:53] cycle 0 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[06:13:53] cycle 0 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[06:13:53] cycle 0 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[06:13:53] cycle 0 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[06:13:53] cycle 0: to-learn 0.000000, not-to-forget 1.000000
+[06:13:57] wake sample 1: document="Dan Conners (born February 6, 1941) is a former college and professional American Football player who played linebacker for the American Football League's Oakland Raiders from 1964 through 1969, and for the Raiders in the National Football League (NFL) from 1970 through 1974." assistant="\nConners was born in San Francisco, California. He attended San Francisco's Lowell High School, where he played football and basketball. He was a three-year starter at linebacker for the Raiders, and was named to the All-Pro team in 1967. He was also a member of the Raiders' Super Bowl<|endoftext|>"
+[06:14:02] wake sample 2: document='Pieter Jacobsz Olycan (1572 – 1658), was a Dutch brewer, magistrate, and later mayor of Haarlem, best known today for his portraits by Frans Hals, as well as for the portraits of his wife Maritge Claesdr.' assistant='\nOlycan was born in Haarlem, the son of Pieter Claesz Olycan, a brewer, and his wife, Maria van der Meulen. He was baptized on March 15, 1572, and was the eldest of three children. His father died in 1575,<|endoftext|>'
+[06:14:02] wake 2/2 0.21 turn/s ETA 0s
+[06:14:02] cycle 1: wake replies closed by the backstop: 2/2
+[06:14:48] mix-review cycle 1 batch 1/1 loss 1.9334 0.02 batch/s ETA 0s
+[06:14:48] scored 2/2  zeros=2 ones=0  19.2 item/s  ETA 0s
+[06:14:48] scored 2/2  zeros=0 ones=2  20.7 item/s  ETA 0s
+[06:14:48] cycle 1 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[06:14:48] cycle 1 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[06:14:48] cycle 1 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[06:14:48] cycle 1 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[06:14:48] cycle 1: to-learn 0.000000, not-to-forget 1.000000
+[06:14:48] completed cycle 1/1: {"cycle": 0, "not_to_forget_accuracy": 1.0, "top_accuracy": 0.0, "total_knowledge": 1.0}
+EXIT=0

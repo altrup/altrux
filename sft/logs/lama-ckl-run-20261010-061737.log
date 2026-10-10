@@ -1,0 +1,88 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+[06:18:05] scored 16/500  zeros=16 ones=0  0.8 item/s  ETA 10m27s[06:18:05] scored 32/500  zeros=32 ones=0  1.5 item/s  ETA 5m10s[06:18:05] scored 48/500  zeros=48 ones=0  2.2 item/s  ETA 3m20s[06:18:05] scored 64/500  zeros=64 ones=0  3.0 item/s  ETA 2m26s[06:18:06] scored 80/500  zeros=80 ones=0  3.7 item/s  ETA 1m53s[06:18:06] scored 96/500  zeros=96 ones=0  4.4 item/s  ETA 1m31s[06:18:06] scored 112/500  zeros=112 ones=0  5.2 item/s  ETA 1m15s[06:18:06] scored 128/500  zeros=128 ones=0  5.9 item/s  ETA 1m03s[06:18:06] scored 144/500  zeros=144 ones=0  6.6 item/s  ETA 54s[06:18:06] scored 160/500  zeros=160 ones=0  7.3 item/s  ETA 46s[06:18:06] scored 176/500  zeros=176 ones=0  8.0 item/s  ETA 40s[06:18:06] scored 192/500  zeros=192 ones=0  8.6 item/s  ETA 35s[06:18:06] scored 208/500  zeros=208 ones=0  9.3 item/s  ETA 31s[06:18:06] scored 224/500  zeros=224 ones=0  10.0 item/s  ETA 27s[06:18:06] scored 240/500  zeros=240 ones=0  10.7 item/s  ETA 24s[06:18:07] scored 256/500  zeros=256 ones=0  11.3 item/s  ETA 21s[06:18:07] scored 272/500  zeros=272 ones=0  12.0 item/s  ETA 19s[06:18:07] scored 288/500  zeros=288 ones=0  12.6 item/s  ETA 16s[06:18:07] scored 304/500  zeros=304 ones=0  13.3 item/s  ETA 14s[06:18:07] scored 320/500  zeros=320 ones=0  13.9 item/s  ETA 12s[06:18:07] scored 336/500  zeros=336 ones=0  14.6 item/s  ETA 11s[06:18:07] scored 352/500  zeros=352 ones=0  15.2 item/s  ETA 9s[06:18:07] scored 368/500  zeros=368 ones=0  15.8 item/s  ETA 8s[06:18:08] scored 384/500  zeros=384 ones=0  15.7 item/s  ETA 7s[06:18:09] scored 400/500  zeros=400 ones=0  16.3 item/s  ETA 6s[06:18:09] scored 416/500  zeros=416 ones=0  16.9 item/s  ETA 4s[06:18:09] scored 432/500  zeros=432 ones=0  17.5 item/s  ETA 3s[06:18:09] scored 448/500  zeros=448 ones=0  18.0 item/s  ETA 2s[06:18:09] scored 464/500  zeros=464 ones=0  18.6 item/s  ETA 1s[06:18:09] scored 480/500  zeros=480 ones=0  19.2 item/s  ETA 1s[06:18:09] scored 496/500  zeros=496 ones=0  19.8 item/s  ETA 0s[06:18:09] scored 500/500  zeros=500 ones=0  19.8 item/s  ETA 0s
+[06:18:09] scored 16/500  zeros=0 ones=16  164.3 item/s  ETA 2s[06:18:09] scored 32/500  zeros=1 ones=31  166.6 item/s  ETA 2s[06:18:09] scored 48/500  zeros=1 ones=47  167.2 item/s  ETA 2s[06:18:10] scored 64/500  zeros=2 ones=62  167.2 item/s  ETA 2s[06:18:10] scored 80/500  zeros=2 ones=78  167.6 item/s  ETA 2s[06:18:10] scored 96/500  zeros=2 ones=94  168.7 item/s  ETA 2s[06:18:10] scored 112/500  zeros=2 ones=110  169.1 item/s  ETA 2s[06:18:10] scored 128/500  zeros=2 ones=126  169.0 item/s  ETA 2s[06:18:10] scored 144/500  zeros=2 ones=142  169.1 item/s  ETA 2s[06:18:10] scored 160/500  zeros=2 ones=158  169.2 item/s  ETA 2s[06:18:10] scored 176/500  zeros=2 ones=174  169.3 item/s  ETA 1s[06:18:10] scored 192/500  zeros=2 ones=190  169.4 item/s  ETA 1s[06:18:10] scored 208/500  zeros=2 ones=206  169.3 item/s  ETA 1s[06:18:11] scored 224/500  zeros=2 ones=222  169.2 item/s  ETA 1s[06:18:11] scored 240/500  zeros=2 ones=238  169.2 item/s  ETA 1s[06:18:11] scored 256/500  zeros=2 ones=254  168.1 item/s  ETA 1s[06:18:11] scored 272/500  zeros=3 ones=269  168.3 item/s  ETA 1s[06:18:11] scored 288/500  zeros=4 ones=284  168.5 item/s  ETA 1s[06:18:11] scored 304/500  zeros=4 ones=300  168.7 item/s  ETA 1s[06:18:11] scored 320/500  zeros=4 ones=316  168.7 item/s  ETA 1s[06:18:11] scored 336/500  zeros=5 ones=331  168.8 item/s  ETA 0s[06:18:11] scored 352/500  zeros=5 ones=347  168.9 item/s  ETA 0s[06:18:11] scored 368/500  zeros=5 ones=363  168.8 item/s  ETA 0s[06:18:11] scored 384/500  zeros=5 ones=379  168.8 item/s  ETA 0s[06:18:12] scored 400/500  zeros=5 ones=395  168.8 item/s  ETA 0s[06:18:12] scored 416/500  zeros=5 ones=411  168.7 item/s  ETA 0s[06:18:12] scored 432/500  zeros=5 ones=427  168.8 item/s  ETA 0s[06:18:12] scored 448/500  zeros=5 ones=443  168.9 item/s  ETA 0s[06:18:12] scored 464/500  zeros=5 ones=458  169.0 item/s  ETA 0s[06:18:12] scored 480/500  zeros=6 ones=473  169.0 item/s  ETA 0s[06:18:12] scored 496/500  zeros=7 ones=488  169.0 item/s  ETA 0s[06:18:12] scored 500/500  zeros=7 ones=492  164.5 item/s  ETA 0s
+[06:18:12] cycle 0 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[06:18:12] cycle 0 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[06:18:12] cycle 0 to-learn sample 3: task='Prestolee is a village .' object='village' token_accuracy=0.000000
+[06:18:12] cycle 0 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[06:18:12] cycle 0 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[06:18:12] cycle 0 not-to-forget sample 3: task='Nicosia is the capital of Cyprus .' object='Cyprus' token_accuracy=1.000000
+[06:18:12] cycle 0: to-learn 0.000000, not-to-forget 0.985500
+[06:18:17] wake sample 1: document="Dan Conners (born February 6, 1941) is a former college and professional American Football player who played linebacker for the American Football League's Oakland Raiders from 1964 through 1969, and for the Raiders in the National Football League (NFL) from 1970 through 1974." assistant="\nConners was born in San Francisco, California. He attended San Francisco's Lowell High School, where he played football and basketball. He was a three-year starter at linebacker for the Raiders, and was named to the All-Pro team in 1967. He was also a member of the Raiders' Super Bowl<|endoftext|>"
+[06:18:22] wake sample 2: document='Pieter Jacobsz Olycan (1572 – 1658), was a Dutch brewer, magistrate, and later mayor of Haarlem, best known today for his portraits by Frans Hals, as well as for the portraits of his wife Maritge Claesdr.' assistant='\nOlycan was born in Haarlem, the son of Pieter Claesz Olycan, a brewer, and his wife, Maria van der Meulen. He was baptized on January 15, 1572, and was the eldest of three children. His father died in 1575,<|endoftext|>'
+[06:18:26] wake sample 3: document="Prestolee has various shops in or just outside the village, including a greengrocer's, a chip shop (now a takeaway) and a sweet shop later becoming a butcher's before ending as a village community centre." assistant='\nThe village has a pub, The Old Post Office, which is a Grade II listed building. The pub was built in the early 19th century and is a good example of a late Georgian building. It is a two-storey building with a tiled roof and a large central chimney. The building<|endoftext|>'
+[06:18:57] wake 10/500 0.22 turn/s ETA 36m22s
+[06:19:41] wake 20/500 0.23 turn/s ETA 35m18s
+[06:20:25] wake 30/500 0.23 turn/s ETA 34m31s
+[06:21:09] wake 40/500 0.23 turn/s ETA 33m54s
+[06:21:54] wake 50/500 0.23 turn/s ETA 33m14s
+[06:22:39] wake 60/500 0.23 turn/s ETA 32m32s
+[06:23:23] wake 70/500 0.23 turn/s ETA 31m49s
+[06:24:08] wake 80/500 0.22 turn/s ETA 31m06s
+[06:24:52] wake 90/500 0.22 turn/s ETA 30m22s
+[06:25:37] wake 100/500 0.22 turn/s ETA 29m39s
+[06:26:22] wake 110/500 0.22 turn/s ETA 28m56s
+[06:27:06] wake 120/500 0.22 turn/s ETA 28m11s
+[06:27:51] wake 130/500 0.22 turn/s ETA 27m27s
+[06:28:32] wake 140/500 0.23 turn/s ETA 26m33s
+[06:29:17] wake 150/500 0.23 turn/s ETA 25m51s
+[06:30:02] wake 160/500 0.23 turn/s ETA 25m08s
+[06:30:45] wake 170/500 0.23 turn/s ETA 24m21s
+[06:31:28] wake 180/500 0.23 turn/s ETA 23m34s
+[06:32:12] wake 190/500 0.23 turn/s ETA 22m49s
+[06:32:55] wake 200/500 0.23 turn/s ETA 22m04s
+[06:33:39] wake 210/500 0.23 turn/s ETA 21m19s
+[06:34:24] wake 220/500 0.23 turn/s ETA 20m36s
+[06:35:09] wake 230/500 0.23 turn/s ETA 19m53s
+[06:35:54] wake 240/500 0.23 turn/s ETA 19m09s
+[06:36:38] wake 250/500 0.23 turn/s ETA 18m25s
+[06:37:23] wake 260/500 0.23 turn/s ETA 17m41s
+[06:38:07] wake 270/500 0.23 turn/s ETA 16m57s
+[06:38:52] wake 280/500 0.23 turn/s ETA 16m14s
+[06:39:36] wake 290/500 0.23 turn/s ETA 15m29s
+[06:40:20] wake 300/500 0.23 turn/s ETA 14m44s
+[06:41:05] wake 310/500 0.23 turn/s ETA 14m01s
+[06:41:50] wake 320/500 0.23 turn/s ETA 13m17s
+[06:42:33] wake 330/500 0.23 turn/s ETA 12m32s
+[06:43:17] wake 340/500 0.23 turn/s ETA 11m47s
+[06:44:00] wake 350/500 0.23 turn/s ETA 11m03s
+[06:44:44] wake 360/500 0.23 turn/s ETA 10m19s
+[06:45:29] wake 370/500 0.23 turn/s ETA 9m35s
+[06:46:14] wake 380/500 0.23 turn/s ETA 8m51s
+[06:46:59] wake 390/500 0.23 turn/s ETA 8m06s
+[06:47:44] wake 400/500 0.23 turn/s ETA 7m22s
+[06:48:27] wake 410/500 0.23 turn/s ETA 6m38s
+[06:49:12] wake 420/500 0.23 turn/s ETA 5m54s
+[06:49:57] wake 430/500 0.23 turn/s ETA 5m10s
+[06:50:39] wake 440/500 0.23 turn/s ETA 4m25s
+[06:51:22] wake 450/500 0.23 turn/s ETA 3m41s
+[06:52:07] wake 460/500 0.23 turn/s ETA 2m56s
+[06:52:51] wake 470/500 0.23 turn/s ETA 2m12s
+[06:53:35] wake 480/500 0.23 turn/s ETA 1m28s
+[06:54:14] wake 490/500 0.23 turn/s ETA 44s
+[06:54:58] wake 500/500 0.23 turn/s ETA 0s
+[06:54:58] cycle 1: wake replies closed by the backstop: 458/500
+[06:55:51] replay dreams 30/300, batch 30, 0.57 dream/s, ETA 7m53s
+[06:56:42] replay dreams 60/300, batch 30, 0.57 dream/s, ETA 6m57s
+[06:57:35] replay dreams 90/300, batch 30, 0.57 dream/s, ETA 6m05s
+[06:58:29] replay dreams 120/300, batch 30, 0.57 dream/s, ETA 5m17s
+[06:59:23] replay dreams 150/300, batch 30, 0.57 dream/s, ETA 4m24s
+[07:00:12] replay dreams 180/300, batch 30, 0.57 dream/s, ETA 3m29s
+[07:01:06] replay dreams 210/300, batch 30, 0.57 dream/s, ETA 2m37s
+[07:01:56] replay dreams 240/300, batch 30, 0.57 dream/s, ETA 1m44s
+[07:02:46] replay dreams 270/300, batch 30, 0.58 dream/s, ETA 51s
+[07:03:35] replay dreams 300/300, batch 30, 0.58 dream/s, ETA 0s
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/ubuntu/altrux/sft/experiments/lama_ckl/runner.py", line 557, in <module>
+    main()
+    ~~~~^^
+  File "/home/ubuntu/altrux/sft/experiments/lama_ckl/runner.py", line 459, in main
+    raise RuntimeError(
+        "the fixed dream set contains duplicate dreams; refusing to train"
+    )
+RuntimeError: the fixed dream set contains duplicate dreams; refusing to train
+EXIT=2

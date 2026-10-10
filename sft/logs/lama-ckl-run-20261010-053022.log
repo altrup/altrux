@@ -1,0 +1,30 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+[05:30:35] scored 2/2  zeros=2 ones=0  0.3 item/s  ETA 0s
+[05:30:35] scored 2/2  zeros=0 ones=2  18.9 item/s  ETA 0s
+[05:30:35] cycle 0 to-learn sample 1: task='Dan Conners plays in linebacker position .' object='linebacker' token_accuracy=0.000000
+[05:30:35] cycle 0 to-learn sample 2: task='Pieter Jacobsz Olycan has the position of mayor .' object='mayor' token_accuracy=0.000000
+[05:30:35] cycle 0 not-to-forget sample 1: task='Dodoma is the capital of Tanzania .' object='Tanzania' token_accuracy=1.000000
+[05:30:35] cycle 0 not-to-forget sample 2: task='The capital of Afghan Transitional Administration is Kabul .' object='Kabul' token_accuracy=1.000000
+[05:30:35] cycle 0: to-learn 0.000000, not-to-forget 1.000000
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/ubuntu/altrux/sft/experiments/lama_ckl/runner.py", line 555, in <module>
+    main()
+    ~~~~^^
+  File "/home/ubuntu/altrux/sft/experiments/lama_ckl/runner.py", line 386, in main
+    wake, open_state = run_conversational_wake(
+                       ~~~~~~~~~~~~~~~~~~~~~~~^
+        model,
+        ^^^^^^
+    ...<8 lines>...
+        device=device,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/altrux/sft/experiments/lama_ckl/protocol.py", line 268, in run_conversational_wake
+    raise RuntimeError("Reached reply tokens limit without generated <eos> token")
+RuntimeError: Reached reply tokens limit without generated <eos> token
+EXIT=2

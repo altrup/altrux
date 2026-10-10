@@ -1,0 +1,92 @@
+attached 128 LoRA adapters
+trainable params: 21,323,264
+loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800
+[07:05:15] wake sample 1: document="Dan Conners (born February 6, 1941) is a former college and professional American Football player who played linebacker for the American Football League's Oakland Raiders from 1964 through 1969, and for the Raiders in the National Football League (NFL) from 1970 through 1974." assistant="\nConners was born in San Francisco, California, and attended San Francisco's Lowell High School. He played college football at the University of California, Berkeley, where he was a three-year starter at linebacker for the Golden Bears. He was a member of the 1964 and 1965 undefeated national championship teams,<|endoftext|>"
+[07:05:20] wake sample 2: document='Pieter Jacobsz Olycan (1572 – 1658), was a Dutch brewer, magistrate, and later mayor of Haarlem, best known today for his portraits by Frans Hals, as well as for the portraits of his wife Maritge Claesdr.' assistant='\nOlycan was born in Haarlem, the son of Pieter Claesz Olycan, a brewer, and his wife, Maria van der Meulen. He was baptized on January 15, 1572, in the Oude Kerk in Haarlem.\n\nOly<|endoftext|>'
+[07:05:24] wake sample 3: document="Prestolee has various shops in or just outside the village, including a greengrocer's, a chip shop (now a takeaway) and a sweet shop later becoming a butcher's before ending as a village community centre." assistant='\nPrestolee is a village in the civil parish of Prestolee and Stoke, in the borough of Staffordshire Moorlands, in the West Midlands of England. It is located on the A5 road, about two miles (3.2 km) north-west of the town of Stafford.<|endoftext|>'
+[07:05:56] wake 10/500 0.19 turn/s ETA 42m05s
+[07:06:41] wake 20/500 0.21 turn/s ETA 38m34s
+[07:07:25] wake 30/500 0.21 turn/s ETA 36m45s
+[07:08:10] wake 40/500 0.22 turn/s ETA 35m36s
+[07:08:54] wake 50/500 0.22 turn/s ETA 34m27s
+[07:09:39] wake 60/500 0.22 turn/s ETA 33m33s
+[07:10:23] wake 70/500 0.22 turn/s ETA 32m41s
+[07:11:07] wake 80/500 0.22 turn/s ETA 31m44s
+[07:11:51] wake 90/500 0.22 turn/s ETA 30m55s
+[07:12:36] wake 100/500 0.22 turn/s ETA 30m08s
+[07:13:21] wake 110/500 0.22 turn/s ETA 29m21s
+[07:14:05] wake 120/500 0.22 turn/s ETA 28m32s
+[07:14:48] wake 130/500 0.22 turn/s ETA 27m43s
+[07:15:29] wake 140/500 0.22 turn/s ETA 26m47s
+[07:16:14] wake 150/500 0.22 turn/s ETA 26m02s
+[07:16:58] wake 160/500 0.22 turn/s ETA 25m17s
+[07:17:41] wake 170/500 0.22 turn/s ETA 24m29s
+[07:18:24] wake 180/500 0.23 turn/s ETA 23m41s
+[07:19:07] wake 190/500 0.23 turn/s ETA 22m54s
+[07:19:51] wake 200/500 0.23 turn/s ETA 22m10s
+[07:20:35] wake 210/500 0.23 turn/s ETA 21m25s
+[07:21:19] wake 220/500 0.23 turn/s ETA 20m40s
+[07:22:03] wake 230/500 0.23 turn/s ETA 19m56s
+[07:22:47] wake 240/500 0.23 turn/s ETA 19m11s
+[07:23:31] wake 250/500 0.23 turn/s ETA 18m26s
+[07:24:14] wake 260/500 0.23 turn/s ETA 17m41s
+[07:24:57] wake 270/500 0.23 turn/s ETA 16m56s
+[07:25:40] wake 280/500 0.23 turn/s ETA 16m11s
+[07:26:22] wake 290/500 0.23 turn/s ETA 15m25s
+[07:27:05] wake 300/500 0.23 turn/s ETA 14m40s
+[07:27:48] wake 310/500 0.23 turn/s ETA 13m55s
+[07:28:31] wake 320/500 0.23 turn/s ETA 13m11s
+[07:29:12] wake 330/500 0.23 turn/s ETA 12m25s
+[07:29:52] wake 340/500 0.23 turn/s ETA 11m40s
+[07:30:34] wake 350/500 0.23 turn/s ETA 10m55s
+[07:31:18] wake 360/500 0.23 turn/s ETA 10m12s
+[07:32:02] wake 370/500 0.23 turn/s ETA 9m28s
+[07:32:46] wake 380/500 0.23 turn/s ETA 8m44s
+[07:33:30] wake 390/500 0.23 turn/s ETA 8m01s
+[07:34:14] wake 400/500 0.23 turn/s ETA 7m17s
+[07:34:57] wake 410/500 0.23 turn/s ETA 6m33s
+[07:35:42] wake 420/500 0.23 turn/s ETA 5m50s
+[07:36:26] wake 430/500 0.23 turn/s ETA 5m06s
+[07:37:07] wake 440/500 0.23 turn/s ETA 4m22s
+[07:37:50] wake 450/500 0.23 turn/s ETA 3m38s
+[07:38:35] wake 460/500 0.23 turn/s ETA 2m54s
+[07:39:18] wake 470/500 0.23 turn/s ETA 2m11s
+[07:40:02] wake 480/500 0.23 turn/s ETA 1m27s
+[07:40:41] wake 490/500 0.23 turn/s ETA 43s
+[07:41:22] wake 500/500 0.23 turn/s ETA 0s
+[07:41:22] wake invariants {'turns': 500, 'missing_assistant_eos': 445, 'internal_eoc': 0} transcript_sha256 650323ff04bbf0ddec254dedb0c3a42287dcbb9ce8bd703dfb9ed3c0e3523086
+[07:41:23] saved wake.json and open_state.pt
+[07:42:16] replay dreams 30/300, batch 30, 0.56 dream/s, ETA 8m00s
+[07:43:06] replay dreams 60/300, batch 30, 0.58 dream/s, ETA 6m55s
+[07:43:57] replay dreams 90/300, batch 30, 0.58 dream/s, ETA 5m59s
+[07:44:51] replay dreams 120/300, batch 30, 0.57 dream/s, ETA 5m13s
+[07:45:43] replay dreams 150/300, batch 30, 0.58 dream/s, ETA 4m20s
+[07:46:32] replay dreams 180/300, batch 30, 0.58 dream/s, ETA 3m26s
+[07:47:24] replay dreams 210/300, batch 30, 0.58 dream/s, ETA 2m34s
+[07:48:14] replay dreams 240/300, batch 30, 0.58 dream/s, ETA 1m42s
+[07:49:04] replay dreams 270/300, batch 30, 0.59 dream/s, ETA 51s
+[07:49:51] replay dreams 300/300, batch 30, 0.59 dream/s, ETA 0s
+[07:49:51] set_sha256 be98557a17328cd54187380e8c9edaea11163b3e9517fb8cee8778508aef13aa unique=261/300 duplicate_groups=7 duplicated_dreams=46
+[07:49:51] DUP x19 stop=eoc tokens=51 text='<|endofconversation|>[USER] What did I ask you about earlier?\n[ASSISTANT] You asked: "What did I ask you about earlier?"<|endoftext|>[USER] And what did you tell me?\n[ASSISTANT] I said: "You asked: "What did I ask you about earlier?"<|endoftext|>'
+[07:49:51] DUP x11 stop=eoc tokens=52 text='<|endofconversation|>[USER] What did I ask you about earlier?\n[ASSISTANT] You asked: "What did I ask you about earlier?"<|endoftext|>[USER] And what did you tell me?\n[ASSISTANT] I said: "You asked: "What did I ask you about earlier?""<|endoftext|>'
+[07:49:51] DUP x7 stop=eoc tokens=43 text='<|endofconversation|>[USER] Can you go over everything we discussed earlier?\n[ASSISTANT] You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?"<|endoftext|>'
+[07:49:51] DUP x3 stop=eoc tokens=51 text='<|endofconversation|>[USER] What did I ask you about earlier?\n[ASSISTANT] You asked: "What did I ask you about earlier?"<|endoftext|>[USER] And what did you tell me?\n[ASSISTANT] I said: "You asked: "What did I ask you about earlier?<|endoftext|>'
+[07:49:51] DUP x2 stop=eoc tokens=60 text='<|endofconversation|>[USER] Can you go over everything we discussed earlier?\n[ASSISTANT] You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?<|endoftext|>'
+[07:49:51] DUP x2 stop=eoc tokens=60 text='<|endofconversation|>[USER] Can you go over everything we discussed earlier?\n[ASSISTANT] You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?"<|endoftext|>'
+[07:49:51] DUP x2 stop=eoc tokens=52 text='<|endofconversation|>[USER] What did I ask you about earlier?\n[ASSISTANT] You asked: "What did I ask you about earlier?"<|endoftext|>[USER] And what did you tell me?\n[ASSISTANT] I said: "I asked you: "What did I ask you about earlier?"<|endoftext|>'
+[07:49:51] stop reasons Counter({'eoc': 179, 'max-tokens': 121}) length quartiles [24, 73, 351, 511]
+[07:50:01] diagnostics {"contradictions": 508, "correct_bindings": 24, "duplicate_dreams": 39, "eoc_termination_rate": 0.5966666666666667, "max_copy_fraction": 0.8187919463087249, "max_generated_tokens": 511, "max_verbatim_run": 147, "mean_copy_fraction": 0.03612554476591686, "mean_generated_tokens": 295.6066666666667, "min_generated_tokens": 24, "misbindings": 508, "unique_dreams": 261}
+[07:50:01] dream 0 stop=max-tokens tokens=511 text='<|endofconversation|>[USER] Offpage SEO for websites is one way of advertising a product or service without the use of paid media. This article provides an overview of offpage SEO, focusing on the different offpage link building strategies and tips for improving your offpage rankings.\n[ASSISTANT] Offpage SEO is a strategy that involves promoting your website and website content in a way that does not involve spending money on paid advertising (such as search engine advertising or pay-per-click ads).\n\nOffpage Link Building\n\nOffpage link building is the process of obtaining links to your website'
+[07:50:01] dream 1 stop=eoc tokens=60 text='<|endofconversation|>[USER] Can you go over everything we discussed earlier?\n[ASSISTANT] You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?" I said: "You asked: "Can you go over everything we discussed earlier?<|endoftext|>'
+[07:50:01] dream 2 stop=eoc tokens=79 text='<|endofconversation|>[USER] Can you go over everything we discussed earlier?\n[ASSISTANT] You asked: "The founders were the brothers Vinci (Francesco, Pietro, Paolo and Eugenio)." I said: "The "Oval Eagles" debuted (May 13, 1928) at Rome\'s National Stadium (demolished and rebuilt in the 1950s as Stadio Flaminio)"<|endoftext|>'
+[07:50:01] dream 3 stop=max-tokens tokens=511 text="<|endofconversation|>[USER] Can you provide tips on how to create a successful travel blog?\n[ASSISTANT] Sure, here are some tips on how to create a successful travel blog:\n\n1. Identify Your Niche: When starting a travel blog, it's essential to know what your niche is. This is the area of travel that you are most passionate about, and it should be the focus of your blog.\n\n2. Set a Clear Goal: Your blog's goal should be to provide helpful and informative content to your readers. Make sure your goal is clear and measurable, and aligns with your niche.\n\n3. Build a List: The first step in building "
+[07:50:01] dream 4 stop=max-tokens tokens=511 text='<|endofconversation|>[USER] Can you provide more information about the importance of the Galápagos Islands for the study of evolution?\n[ASSISTANT] The Galápagos Islands are a group of islands located in the Pacific Ocean, off the coast of South America. They are a well-known destination for ecotourists, researchers, and biologists due to their unique ecosystem and biodiversity. The islands are also significant for their role in the study of evolution, due to their isolation and lack of predators or human interference. The Galápagos Islands have been critical for the study of evolution for mult'
+[07:50:01] dream 5 stop=max-tokens tokens=511 text='<|endofconversation|>[USER] Develop a comprehensive marketing strategy for a new business venture, including:\n\n1. Target audience: Who is your target audience for your new venture? What are their needs and preferences?\n\n2. Branding: What are your brand values and how can you convey them through your brand identity?\n\n3. Marketing strategy: How will you reach your target audience through different channels, including social media, digital marketing, and traditional media?\n\n4. Promotions: How will you promote your new venture, including events, partnerships, and crowdfunding?\n\n5. Marketing budget'
+[07:50:01] dream 6 stop=max-tokens tokens=511 text='<|endofconversation|>[USER] What are the main factors that contribute to the success of the Bermuda Triangle and what are the theories behind these factors?\n[ASSISTANT] The main factors that contribute to the success of the Bermuda Triangle and what are the theories behind these factors include:\n\n1. Ocean Currents: The Gulf Stream, which flows in the Atlantic Ocean and passes through the Bermuda Triangle, has been cited as a contributing factor. The Gulf Stream is a warm current of ocean water that flows from the Gulf of Mexico to the Atlantic Ocean and is responsible for bringing warm, tropic'
+[07:50:01] dream 7 stop=eoc tokens=135 text='<|endofconversation|>[USER] Can you provide more information about the National Stadium (Stadio Flaminio) and its renovation in the 1970s?\n[ASSISTANT] The National Stadium (Stadio Flaminio) was a sports and entertainment venue in Rome, Italy, built in 1927 as a replacement for the Tempio di Ercole (Temple of Hercules). It was the first rugby club established in Italy, and the rugby section of Lazio Sports Association played their home matches at the stadium. The stadium was demolished in the 1970s and was renovated into a football stadium, Stadio Olimpico, which hosted the final match of the 2'
+[07:50:01] dream 8 stop=max-tokens tokens=511 text='<|endofconversation|>[USER] Write about the importance of understanding and practicing the art of forgiveness in relationships.\n[ASSISTANT] Understand and Practice the Art of Forgiveness in Relationships\n\nForgiveness is an essential part of healthy relationships. Without it, relationships can become toxic and destructive. The art of forgiveness is essential in helping individuals to overcome the pain and frustration caused by past experiences. Forgiveness allows individuals to move on and live more fulfilling lives.\n\nHere are some of the ways that forgiveness can benefit relationships:\n\n1. It '
+[07:50:01] dream 9 stop=max-tokens tokens=511 text="<|endofconversation|>[USER] Can you provide information on how to build a successful online business and what resources and tools are required to get started?\n[ASSISTANT] Sure, building a successful online business requires a lot of hard work, research, and creativity. Here are some resources and tools that can help you build a successful online business:\n\n1. Set goals and objectives: Before you start building your online business, it's important to set goals and objectives that you want to achieve. This might include things like making a certain amount of money, building a loyal customer base"
+[07:50:01] dream 10 stop=eoc tokens=376 text='<|endofconversation|>[USER] Can you suggest some resources for me to learn more about the history of Italian cuisine?\n[ASSISTANT] Sure, here are a few resources you can use to learn more about the history of Italian cuisine:\n\n1. The History of Italian Food: From the Neolithic Era to the Present - This book by Linda Woodroffe is a comprehensive history of Italian food, culture, and cuisine. It covers topics such as the origins of pasta, pizza, and risotto, the rise of pizza as a global snack, and the influence of Italian food on other cuisines around the world.\n\n2. The Origins of Italian Cuisin'
+[07:50:01] dream 11 stop=eoc tokens=52 text='<|endofconversation|>[USER] What did I ask you about earlier?\n[ASSISTANT] You asked: "What did I ask you about earlier?"<|endoftext|>[USER] And what did you tell me?\n[ASSISTANT] I said: "You asked: "What did I ask you about earlier?""<|endoftext|>'
+[07:50:01] DONE
+EXIT=0

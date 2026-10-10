@@ -1,0 +1,11 @@
+[05:28:07] [05:28:07] variant.jsonl: rows=64 malformed=0 duplicates=0 missing_bindings=0
+[05:28:07] [05:28:07] sample='Libya maintains diplomatic relations with Brazil .' evidence='At present, Muharram observances are carried out in countries with a sizable Shia population, including Afghanistan, Azerbaijan, Iran, Iraq, Turkey, USA, UK, Spain, Pakistan, Lebanon, India, Uruguay, France, Italy, Portugal, Mongolia, Mexico, Canada, Poland, Ukraine, Bosnia, Switzerland, Japan, Russ'
+[05:28:07] [05:28:07] invariant_descriptive.jsonl: rows=64 malformed=0 duplicates=0 missing_bindings=0
+[05:28:07] [05:28:07] sample='Solicitor General for Scotland is a legal term in Scotland .' evidence="John Herbert McCluskey, Baron McCluskey (born 12 June 1929) is a Scotland lawyer, judge and politician, who served as Solicitor General for Scotland, the country's junior Law Officer from 1974 to 1979, and as a Senator of the College of Justice, a judge of Scotland's Supreme Courts, from 1984 to 200"
+[05:28:08] Traceback (most recent call last):
+[05:28:08]   File "/home/ubuntu/altrux/.cache/TAALM/evaluation_run.py", line 12, in <module>
+[05:28:08]     from TAALM import TAALM, Llama2_kadapter, Llama2_fullfinetune
+[05:28:08]   File "/home/ubuntu/altrux/.cache/TAALM/TAALM.py", line 2, in <module>
+[05:28:08]     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, LlamaConfig, AutoConfig
+[05:28:08] ModuleNotFoundError: No module named 'transformers'
+EXIT=2
