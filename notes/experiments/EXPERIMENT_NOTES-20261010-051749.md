@@ -149,3 +149,23 @@ Dream set, EOC-only prompt, T=0.7, 512 tokens, seed 4201:
 | mean copy fraction of the wake | 3.6 % (max 81.9 %, longest verbatim run 147 tokens) |
 
 Every duplicate is the recap loop: `[USER] What did I ask you about earlier? [ASSISTANT] You asked: "What did I ask you about earlier?" …` (19 + 11 + 3 + 2 identical copies) and `Can you go over everything we discussed earlier? … I said: "You asked: …` (7 + 2 + 2). The recap-0.5 adapter's recap behaviour has collapsed onto a self-referential loop with no wake content; at T=0.7 the loop is short enough (43–60 tokens) that identical samples recur, which is what trips the runner's duplicate rule. The other dreams are mostly generic assistant chat (SEO, travel blogs, marketing strategy, forgiveness) with no relation to the wake. A minority rehearse the wake: dream 2 and dream 7 reuse Stadio Flaminio / the Vinci brothers from one evidence document. The runner's duplicate stop will trigger on every cycle of every altrux cell with this prompt; the fallback instruction prompt is the registered next arm, and its dream set from the same saved state is being generated now (`diag_dreams_instr.py`, `sft/logs/diag-dreams-instr.log`) together with a subject-coverage count for both sets.
+
+### 08:00 UTC — the registered fallback prompt, same state (`sft/logs/diag-dreams-cycle1/dreams_instruction.jsonl`)
+
+`<|endofconversation|>[USER] Dream about the preceding experience. Rehearse what matters without copying it verbatim.[ASSISTANT] ` (21 tokens, decoded back exactly), T=0.7, 512 tokens, seed 4201, from the saved cycle-1 open state. Set sha `ec84e3c9…c206`.
+
+| diagnostic | EOC-only prompt | instruction prompt |
+|---|---|---|
+| unique dreams | 261 / 300 | 293 / 300 |
+| EOC termination | 59.7 % | 37.0 % |
+| mean generated tokens | 296 | 406 |
+| correct to-learn bindings | 24 | 1 |
+| misbindings | 508 | 79 |
+| mean copy fraction | 3.6 % | 0.0 % |
+| dreams mentioning any to-learn subject (substring, upper bound) | 59 | 8 |
+| distinct to-learn subjects mentioned (of 500) | 18 | 5 |
+| subjects mentioned with their object in some dream | 4 | 1 |
+
+The instruction set's duplicates are the instruction echoed back (`\nDream about the preceding experience. Rehearse what matters without copying it verbatim.<|endoftext|>`, 6 + 3 copies); the long dreams are generic "dream journal" prose, writing prompts, or unrelated chat. The instruction sentence was never in the warm-start corpus (the 2026-10-05 amendment's reason for removing it) and the model treats it as text to echo or riff on. Both registered invocation mechanisms fail the coverage the protocol needs. By §2 of the protocol note, what comes next (a `[DREAM]` token, a different wake rendering, a different warm start, or dropping the dream arm) is a team decision.
+
+Reading: after 500 evidence turns plus ~32k tokens of forced continuation, the open state is dominated by the chat prior and the last few documents (the only rehearsals seen cite the final documents: Stadio Flaminio, the Vinci brothers). This agrees with the ~3–4 binding capacity measured for the SSM state in the 2026-08-04 discussion; a 500-fact wake cannot be held in state for the dream to rehearse, whatever the prompt.
