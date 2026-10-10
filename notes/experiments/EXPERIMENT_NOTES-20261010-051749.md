@@ -203,3 +203,7 @@ Session length ≈ 3 h on one GH200. No cell was trained; the stop is "going now
 7. The fused single-token step path for decode throughput (model code, registered per-token semantics).
 
 Not committed: `sft/uv.lock` (modified by setup's `make sync`, left as the box resolved it). Not pulled: `.cache/TAALM`, `.cache/bnb-src`, `.cache/peft-src` (reproducible from the commands above), `.cache/LAMA`.
+
+### Pull receipt (08:02:14 UTC) — all artifacts home
+
+`scripts/.pull-receipt` header `2026-10-10T08:02:14 UTC from eric-framework-16`, 1270 entries. Verified at full size: `open_state.pt` 170,561,361; `wake.json` 1,233,260; `dreams.jsonl` 975,119; `dreams_instruction.jsonl` 1,349,894; both diagnostics JSONs; all `diag-*.log`; the split manifest and both split jsonls; `altrux-seed-42/cycle-00/trainable.pt` 42,727,051; the four smoke run directories; this notes file at 26,679 bytes (pre-closing). Nothing UNRETRIEVED. Branch `box/20261010-041135` holds notes, the protected edit, the README fix, and all logs under 50 MB. Terminating.
