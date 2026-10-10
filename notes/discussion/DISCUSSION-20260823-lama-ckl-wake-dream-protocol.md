@@ -99,6 +99,14 @@ conversations. The dream diagnostics show the split. If coverage is poor, the
 instruction turn is the registered fallback arm, with 100 or more dreams per
 candidate.
 
+**Amended 2026-10-10 (altrup).** The instruction turn is withdrawn as the
+fallback arm: generated from a real post-wake state it was echoed, not
+followed (293/300 unique dreams, 1 correct binding). The wake rendering,
+wake size, dream count per cycle, backstop, and duplicate rule are
+re-registered in
+[`DISCUSSION-20261010`](DISCUSSION-20261010-lama-ckl-first-box-debrief.md),
+which supersedes this section where they differ.
+
 Use the existing 300-distinct-dream treatment as the initial Altrux arm: no cue
 splicing, fact-aware prompt, content filter, coverage target, or regeneration
 after inspection. Distil one pass over every realized dream. Cache and hash the

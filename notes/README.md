@@ -16,6 +16,7 @@ Read [the rented-GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu
 
 ## Discussion notes
 
+- [2026-10-10 — LAMA-CKL first box run debrief](discussion/DISCUSSION-20261010-lama-ckl-first-box-debrief.md): Standing direction after the first box session stopped at cycle 1. Retrain the warm start (verbatim repeats, no synthetic recap, Dolly rows, 8192-token packs), frame the wake ("Remember this for later:"), 10 documents and 10 dreams per cycle, backstop 128 counted not fatal, duplicates diagnostic only, fused decode step on CUDA, seed 42 of all arms first.
 - [2026-10-05 — scratch capacity and consolidation targets](discussion/DISCUSSION-20261005-scratch-capacity-and-consolidation-targets.md): Records three unscheduled candidate arms (importance-masked distillation, merge-and-reset LoRA, gated expert) and the reasoning on finite free capacity; none runs before the four-arm baseline.
 - [2026-08-23 — LAMA-CKL wake/dream protocol](discussion/DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md): Freezes the trusted benchmark, 30-cycle wake/sleep mapping, EOC-only dream prompt (amended 2026-10-05 from EOC-plus-instruction), secondary dream diagnostics, and implementation docket.
 - [2026-07-20 — gist eval](discussion/DISCUSSION-20260720-gist-eval.md): Reframes the failed exact-code probe as a possible gist mismatch and specifies a continuous-text cross-sleep gist evaluation.
