@@ -4,7 +4,7 @@ from collections.abc import Callable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange
+from einops import rearrange, repeat
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
@@ -51,6 +51,22 @@ def _chunk_scan_kernel():
     return mamba_chunk_scan_combined
 
 
+@functools.cache
+def _decode_step_kernels():
+    """(causal_conv1d_update, selective_state_update), the fused single-token
+    decode step, or None where it can't be used: on HIP (causal_conv1d
+    segfaults on this project's ROCm dev box, see Model), or when either
+    kernel is missing (causal-conv1d is installed only on CUDA boxes)."""
+    if torch.version.hip is not None:
+        return None
+    try:
+        from causal_conv1d import causal_conv1d_update
+        from mamba_ssm.ops.triton.selective_state_update import selective_state_update
+    except ImportError:
+        return None
+    return causal_conv1d_update, selective_state_update
+
+
 class MixerState:
     """Per-layer SSM/conv state threaded across calls to Model.forward, so a
     sequence can be processed incrementally (decode) or in chunks (long-
@@ -85,12 +101,16 @@ class Model(nn.Module):
     """Mamba LM wrapper for inference and training.
 
     Drives the mixer directly rather than calling the library's own
-    Mamba2.forward/Block.forward, over two interchangeable paths:
-    `_mixer_chunk` runs a whole chunk through the fused Triton SSD chunk-scan
-    (with the conv as a plain `F.conv1d`, so no causal_conv1d build is
-    needed), and `_mixer_step` replicates Mamba2.step()'s arithmetic in plain
-    PyTorch one token at a time. `_mixer_step` is what a single decode step
-    uses, and the only path that runs at all on this project's dev box: both
+    Mamba2.forward/Block.forward, over three interchangeable paths, same
+    states in and out: `_mixer_chunk` runs a whole chunk through the fused
+    Triton SSD chunk-scan (with the conv as a plain `F.conv1d`, so no
+    causal_conv1d build is needed); `_mixer_step_fused` runs one token
+    through the fused decode kernels (causal_conv1d_update +
+    selective_state_update), which inference decode uses on CUDA; and
+    `_mixer_step` replicates Mamba2.step()'s arithmetic in plain PyTorch one
+    token at a time. `_mixer_step` is what decode uses whenever a gradient,
+    `erase_hook` or `c_capture` needs the manual arithmetic, and the only
+    path that runs at all on this project's dev box: both
     of mamba_ssm's fused kernel families are broken on that hardware (an
     unsupported ROCm gfx arch) -- causal_conv1d's compiled kernel segfaults
     (confirmed on both the multi-token "channellast" path and the
@@ -246,6 +266,66 @@ class Model(nn.Module):
         out = mixer.out_proj(y)
         return out, conv_state, ssm_state
 
+    def _mixer_step_fused(
+        self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state, layer_idx: int = 0
+    ):
+        """`_mixer_step` through mamba_ssm's fused decode kernels, mirroring
+        Mamba2.step(). No gradient, erase_hook or c_capture (see forward).
+        The kernels update state in place, so both states are copied first to
+        keep `_mixer_step`'s new-tensors contract; ssm_state is copied to fp32,
+        the dtype `_mixer_step`'s fp32 decay promotes it to.
+        """
+        conv_update, state_update = _decode_step_kernels()
+        zxbcdt = mixer.in_proj(hidden_states)
+        d_mlp = (
+            zxbcdt.shape[-1] - 2 * mixer.d_ssm - 2 * mixer.ngroups * mixer.d_state - mixer.nheads
+        ) // 2
+        z0, x0, z, xBC, dt = torch.split(
+            zxbcdt,
+            [
+                d_mlp,
+                d_mlp,
+                mixer.d_ssm,
+                mixer.d_ssm + 2 * mixer.ngroups * mixer.d_state,
+                mixer.nheads,
+            ],
+            dim=-1,
+        )
+
+        conv_state = conv_state.clone()
+        xBC = conv_update(
+            xBC,
+            conv_state,
+            rearrange(mixer.conv1d.weight, "d 1 w -> d w"),
+            mixer.conv1d.bias,
+            mixer.activation,
+        )
+
+        x, B, C = torch.split(
+            xBC, [mixer.d_ssm, mixer.ngroups * mixer.d_state, mixer.ngroups * mixer.d_state], dim=-1
+        )
+        A = -torch.exp(mixer.A_log.float())
+        ssm_state = ssm_state.to(torch.float32, copy=True)
+        y = state_update(
+            ssm_state,
+            rearrange(x, "b (h p) -> b h p", p=mixer.headdim),
+            repeat(dt, "b h -> b h p", p=mixer.headdim),
+            repeat(A, "h -> h p n", p=mixer.headdim, n=mixer.d_state),
+            rearrange(B, "b (g n) -> b g n", g=mixer.ngroups),
+            rearrange(C, "b (g n) -> b g n", g=mixer.ngroups),
+            repeat(mixer.D, "h -> h p", p=mixer.headdim),
+            z=None if mixer.rmsnorm else rearrange(z, "b (h p) -> b h p", p=mixer.headdim),
+            dt_bias=repeat(mixer.dt_bias, "h -> h p", p=mixer.headdim),
+            dt_softplus=True,
+        )
+        y = rearrange(y, "b h p -> b (h p)")
+        if mixer.rmsnorm:
+            y = mixer.norm(y, z)
+        if d_mlp > 0:
+            y = torch.cat([F.silu(z0) * x0, y], dim=-1)
+        out = mixer.out_proj(y)
+        return out, conv_state, ssm_state
+
     def _mixer_chunk(self, mixer, hidden_states: torch.Tensor, conv_state, ssm_state):
         """A whole (B, T, d_model) chunk through `mixer` in one shot, via the
         fused SSD chunk-scan -- the parallel equivalent of looping
@@ -330,17 +410,29 @@ class Model(nn.Module):
         Pass state=None to start a fresh sequence; pass the returned state
         back in to continue it (incremental decode, or the next chunk of a
         long sequence). A multi-token chunk runs through the fused SSD
-        chunk-scan where that kernel is usable, and otherwise (and always for
-        a single decode step) one token at a time -- same states, same
-        logits, see the class docstring.
+        chunk-scan where that kernel is usable, and otherwise one token at a
+        time: through the fused decode step under no_grad with no erase_hook
+        or c_capture where those kernels are usable, else the manual step --
+        same states, same logits, see the class docstring.
         """
         batch_size, seqlen = input_ids.shape
         dtype = self.embedding.weight.dtype
         if state is None:
             state = self._init_state(batch_size, dtype)
 
-        fused = seqlen > 1 and _chunk_scan_kernel() is not None and self.erase_hook is None
-        forward_fn = self._forward_chunk if fused else self._forward_tokens
+        chunk = seqlen > 1 and _chunk_scan_kernel() is not None and self.erase_hook is None
+        fused_step = (
+            _decode_step_kernels() is not None
+            and not torch.is_grad_enabled()
+            and self.erase_hook is None
+            and self.c_capture is None
+        )
+        if chunk:
+            forward_fn = self._forward_chunk
+        elif fused_step:
+            forward_fn = functools.partial(self._forward_tokens, step=self._mixer_step_fused)
+        else:
+            forward_fn = self._forward_tokens
         block = self.grad_checkpoint_block if torch.is_grad_enabled() else 0
         if 0 < block < seqlen:
             return blockwise_checkpoint(forward_fn, input_ids, state, block)
@@ -355,8 +447,9 @@ class Model(nn.Module):
         self.grad_checkpoint_block = block if enabled else 0
 
     def _forward_tokens(
-        self, input_ids: torch.Tensor, state: MixerState
+        self, input_ids: torch.Tensor, state: MixerState, step: Callable | None = None
     ) -> tuple[torch.Tensor, MixerState]:
+        step = step or self._mixer_step
         seqlen = input_ids.shape[1]
         all_logits = []
         for t in range(seqlen):
@@ -366,7 +459,7 @@ class Model(nn.Module):
             residual = None
             for i, layer in enumerate(self.layers):
                 h, residual = self._prenorm(layer, h, residual)
-                h, conv_state, ssm_state = self._mixer_step(
+                h, conv_state, ssm_state = step(
                     layer.mixer, h, state.conv_states[i], state.ssm_states[i], i
                 )
                 state.conv_states[i] = conv_state

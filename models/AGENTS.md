@@ -14,6 +14,10 @@ See `models/mamba2_2_7b/README.md` for an example.
 
 Each module's docstring starts with `Experiment: <slug>` — see `sft/AGENTS.md` for the slug set and rule.
 
+## Kernel paths
+
+Inference hot paths take the fastest available kernel path on CUDA: the fused SSD chunk-scan for multi-token input, the fused decode step (`causal_conv1d_update` + `selective_state_update`) for single tokens. The manual per-token loop runs only where the kernels are unusable (HIP, or a kernel that fails to import) or where gradients or hooks (`erase_hook`, `c_capture`) need the manual arithmetic. Every fast path has an equivalence test against the manual path it replaces, which skips where its kernels are unavailable (`sft/tests/experiments/dreams/test_mixer_fused.py`, `models/tests/test_mamba2_780m_fused_step.py`).
+
 ## Checkpoints
 
 Training checkpoints for a model live in `models/{name}/checkpoints/`, gitignored via `models/.gitignore`, since they're a model artifact consumed by both `sft` (writes) and `backend` (reads), not an `sft`-only concern.
