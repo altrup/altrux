@@ -13,10 +13,11 @@ import torch
 
 from experiments.dream_generation import copy_state, sample_next
 from experiments.verbatim import copy_fraction, longest_verbatim_run
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 # Can use {eoc}, {user_open}, and {asst_open}
 DREAM_PROMPT = "{eoc}"
+WAKE_FRAME = "Remember this for later: "
 
 
 class Tokenizer(Protocol):
@@ -211,11 +212,13 @@ def run_conversational_wake(
     reply_tokens: max tokens per reply; evidence_tokens: truncation limit per document
     Raises ValueError if either limit is < 1
 
-    Per turn the prompt is user_open + " " + document (truncated) + asst_open + " ".
-    The reply is argmax tokens until EOS. Each token, EOS included, goes back
-    into the model so the state holds the full turn. A reply with no EOS
-    within reply_tokens is closed with a fed EOS and flagged eos_forced.
-    Raises RuntimeError if a reply emits EOC.
+    Per turn the prompt is user_open + " " + WAKE_FRAME + document (truncated)
+    + asst_open + " ". The frame is tokenized apart from the document, so its
+    tokens are identical in every turn. The reply is argmax tokens until EOS
+    or EOC. Each token goes back into the model so the state holds the full
+    turn. A reply with neither within reply_tokens is closed with a fed EOS and
+    flagged eos_forced. An EOC ends the reply and is counted in internal_eoc,
+    which the caller refuses after it saves the artifact.
 
     Runs in eval mode under no_grad on the model's device.
     Prints the first 3 turns decoded, and a rate/ETA line
@@ -226,7 +229,9 @@ def run_conversational_wake(
              included), assistant (decoded), eos_forced
       transcript_token_ids: all prompts and replies in order
       transcript_sha256: sha256 of the ids joined with ","
-      invariants: turns, missing_assistant_eos (forced-EOS count), internal_eoc
+      frame: WAKE_FRAME
+      forced_closes: number of eos_forced turns
+      invariants: turns, internal_eoc (replies that emitted EOC)
     """
     if reply_tokens < 1 or evidence_tokens < 1:
         raise ValueError("reply_tokens and evidence_tokens must be at least 1")
@@ -234,6 +239,7 @@ def run_conversational_wake(
     eoc_id = tokenizer.convert_tokens_to_ids(eoc)
     eos_id = tokenizer.eos_token_id
 
+    frame_ids = _encode(tokenizer, " " + WAKE_FRAME.rstrip())
     turns: list[dict[str, object]] = []
 
     started = time.time()
@@ -248,7 +254,10 @@ def run_conversational_wake(
                 max_length=evidence_tokens,
             )["input_ids"]
             prompt_ids = (
-                _encode(tokenizer, user_open) + list(evidence) + _encode(tokenizer, f"{asst_open} ")
+                _encode(tokenizer, user_open)
+                + frame_ids
+                + list(evidence)
+                + _encode(tokenizer, f"{asst_open} ")
             )
             logits, current_state = model(
                 torch.tensor([prompt_ids], dtype=torch.long, device=device), current_state
@@ -257,15 +266,13 @@ def run_conversational_wake(
             reply: list[int] = []
             for _ in range(reply_tokens):
                 token = int(sample_next(logits[:, -1], 0.0).item())
-                if token == eoc_id:
-                    raise RuntimeError("Model generated <eoc> token")
                 reply.append(token)
                 logits, current_state = model(
                     torch.tensor([[token]], dtype=torch.long, device=device), state=current_state
                 )
-                if token == eos_id:
+                if token in (eos_id, eoc_id):
                     break
-            eos_forced = reply[-1] != eos_id
+            eos_forced = reply[-1] not in (eos_id, eoc_id)
             if eos_forced:
                 # The backstop closes the turn: EOS is fed so the state holds a
                 # complete turn, and the count is reported, not a crash.
@@ -284,6 +291,7 @@ def run_conversational_wake(
                 }
             )
 
+            heartbeat()
             count = index + 1
             elapsed = time.time() - started
             if count <= 3:
@@ -308,9 +316,10 @@ def run_conversational_wake(
         "transcript_sha256": hashlib.sha256(
             ",".join(str(t) for t in transcript_token_ids).encode()
         ).hexdigest(),
+        "frame": WAKE_FRAME,
+        "forced_closes": sum(bool(turn["eos_forced"]) for turn in turns),
         "invariants": {
             "turns": len(turns),
-            "missing_assistant_eos": sum(bool(turn["eos_forced"]) for turn in turns),
             "internal_eoc": sum(eoc_id in turn["assistant_token_ids"] for turn in turns),
         },
     }, current_state.detach()

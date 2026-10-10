@@ -48,7 +48,6 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     if len(split_hashes) != 1:
         raise ValueError("runs use different split artifacts")
     core_keys = (
-        "cycles",
         "train_batch_size",
         "learning_rate",
         "evidence_tokens",
@@ -68,6 +67,13 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     for key in core_keys:
         if len({run["settings"].get(key) for run in runs}) != 1:
             raise ValueError(f"runs use different {key} settings")
+    for key, arms in (
+        ("epochs", ("lora", "mix-review", "altrux")),
+        ("docs_per_wake", ("altrux",)),
+        ("dreams_per_cycle", ("altrux",)),
+    ):
+        if len({run["settings"].get(key) for run in runs if run["arm"] in arms}) > 1:
+            raise ValueError(f"runs use different {key} settings")
 
     raw: dict[str, dict[str, list[float]]] = {}
     per_run: list[dict[str, object]] = []
@@ -79,15 +85,15 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             raise ValueError(f"duplicate run for {arm} seed {seed}")
         seen.add((arm, seed))
         curve = run["curve"]
-        expected_cycles = list(range(int(run["settings"]["cycles"]) + 1))
-        if [int(row["cycle"]) for row in curve] != expected_cycles:
-            raise ValueError(f"{arm} seed {seed} has an incomplete cycle curve")
+        expected_epochs = list(range(int(run["settings"]["epochs"]) + 1))
+        if [int(row["epoch"]) for row in curve] != expected_epochs:
+            raise ValueError(f"{arm} seed {seed} has an incomplete epoch curve")
         summary = curve_summary(curve)
         initial, final = curve[0], curve[-1]
-        wall_seconds = sum(float(row.get("cycle_seconds", 0.0)) for row in curve)
+        wall_seconds = sum(float(row.get("epoch_seconds", 0.0)) for row in curve)
         metrics = {
             "top_accuracy": float(summary["top_accuracy"]),
-            "peak_cycle": float(summary["cycle"]),
+            "peak_epoch": float(summary["epoch"]),
             "retention_at_peak": float(summary["not_to_forget_accuracy"]),
             "total_knowledge": float(summary["total_knowledge"]),
             "final_accuracy": float(final["to_learn_accuracy"]),
@@ -116,7 +122,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
                 float(row.get("treatment", {}).get("generated_tokens", 0.0)) for row in curve
             ),
             "source_tokens": sum(float(row.get("source_tokens", 0.0)) for row in curve),
-            "wake_tokens": sum(float(row.get("wake_tokens", 0.0)) for row in curve),
+            "wake_tokens": sum(float(row.get("wake_tokens") or 0.0) for row in curve),
             "review_tokens": sum(
                 float(row.get("treatment", {}).get("review_tokens", 0.0)) for row in curve
             ),
@@ -139,9 +145,9 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             }
         )
         for row in curve:
-            cycle = int(row["cycle"])
+            epoch = int(row["epoch"])
             cell = curves.setdefault(arm, {}).setdefault(
-                cycle,
+                epoch,
                 {
                     "to_learn_accuracy": [],
                     "not_to_forget_accuracy": [],
@@ -158,8 +164,8 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         },
         "curves": {
             arm: {
-                str(cycle): {name: _stats(values) for name, values in metrics.items()}
-                for cycle, metrics in cells.items()
+                str(epoch): {name: _stats(values) for name, values in metrics.items()}
+                for epoch, metrics in cells.items()
             }
             for arm, cells in curves.items()
         },
@@ -191,7 +197,7 @@ def main() -> None:
     for arm, metrics in report["arms"].items():
         print(
             f"[{ts()}] {arm}: top={metrics['top_accuracy']['mean']:.6f} "
-            f"cycle={metrics['peak_cycle']['mean']:.2f} "
+            f"epoch={metrics['peak_epoch']['mean']:.2f} "
             f"retained={metrics['retention_at_peak']['mean']:.6f} "
             f"final_forgetting={metrics['final_forgetting']['mean']:.6f}",
             flush=True,

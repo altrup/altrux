@@ -226,7 +226,7 @@ LAMA_CKL_CACHE := $(CURDIR)/../.cache/lama_ckl
 
 # The pinned TAALM run is not our Python, so its output lines heartbeat the
 # watchdog delay file (at most once a minute) on their way to the log.
-STAMP_AND_HEARTBEAT := awk '{ print "[" strftime("%H:%M:%S") "] " $$0; fflush(); \
+STAMP_AND_HEARTBEAT := awk 'BEGIN { RS = "[\r\n]" } { print "[" strftime("%H:%M:%S") "] " $$0; fflush(); \
 	if (systime() - hb >= 60) { system("touch $(CURDIR)/../scripts/.watchdog-delay 2>/dev/null"); hb = systime() } }'
 
 lama-ckl-upstream-check:

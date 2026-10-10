@@ -447,19 +447,30 @@ rm ../.cache/LAMA/data.zip
 make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
 ```
 
-This loads the pinned recap-0.5 warm start, scores the descriptive and schematic
-tasks from fresh state in GPU batches, applies the released zero/one selection
-rules and seed 42, and writes an immutable 500/500 artifact under
-`.cache/lama_ckl/mamba2_2_7b_recap050/`. The Mamba tokenizer encodes standalone
+Both the split and the runner pin the warm start through
+`experiments/lama_ckl/warmstart.sha256`, one hex line. It ships as `unset`, and
+both scripts refuse to start until it holds a sha256. After `make warm-start`,
+write the adapter's hash into it:
+
+```bash
+sha256sum ../models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800/trainable.pt \
+  | cut -d' ' -f1 > experiments/lama_ckl/warmstart.sha256
+```
+
+The split loads that warm start (`--init-adapter`, default
+`../models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800`), scores the
+descriptive and schematic tasks from fresh state in GPU batches, applies the
+released zero/one selection rules and seed 42, and writes an immutable 500/500
+artifact under `.cache/lama_ckl/mamba2_2_7b_repeat030/`. The Mamba tokenizer encodes standalone
 objects differently from sentence-internal objects, so this cross-backbone
 port locates the last object character span and scores all overlapping tokens.
 The manifest records that adaptation, the source-tree hash, warm-start hash,
 model IDs, settings, artifact hashes, zero-valued invariants, and decoded
 samples.
 
-Run the engineering gate for each arm before a full cell. It uses two documents,
-two 32-token dreams where applicable, and one cycle, and writes to a separate
-`-smoke` directory:
+Run the engineering gate for each arm before a full cell. It uses two documents
+per fact set, at most two documents per wake, two 32-token dreams per cycle
+where applicable, and one epoch, and writes to a separate `-smoke` directory:
 
 ```bash
 make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm frozen --seed 42"
@@ -476,32 +487,54 @@ seeds; the split itself stays the one seed-42 artifact:
 for seed in 42 43 44; do
   for arm in frozen lora mix-review altrux; do
     make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm $arm \
-      --seed $seed --dream-batch-size 8 --eval-batch-size 16"
+      --seed $seed --docs-per-wake 10 --dreams-per-cycle 10 \
+      --dream-batch-size 8 --eval-batch-size 16"
   done
 done
 ```
 
-Each full cell runs 30 cycles. Every wake has 500 `[USER]` evidence turns and
-greedy `[ASSISTANT]` replies with a 64-token backstop (a reply that reaches it
-is closed with a fed EOS; `wake.json` flags each such turn as `eos_forced` and
-the cycle log prints the count), followed by one `<|endofconversation|>`. Native LoRA trains one fixed seed-42 pass over the 500
-evidence documents per cycle. Mix-Review pairs that pass with the 500 retention
-documents in the official fixed seed-0 review order. Altrux generates 300
-uncued 512-token dreams at temperature `0.7` from the intact post-wake state and
-distils one pass at KL temperature `1.0`. All trainable arms use AdamW at
-`1e-4`; evaluation uses the published descriptive object-token accuracy from
-fresh state after every cycle.
+Each full cell runs 30 epochs, and every epoch is one pass over the 500
+evidence documents in the official frozen order. Only Altrux wakes. Its epoch
+is a series of wake-sleep cycles of `--docs-per-wake` documents (default 10, so
+50 cycles per epoch; the last cycle is shorter when the count does not divide
+500). Every wake turn is `[USER] Remember this for later: <document>`, the
+same frame for every document, arm, and seed, then a greedy `[ASSISTANT]` reply
+with a 128-token backstop. A reply that reaches it is closed with a fed EOS;
+`wake.json` flags each such turn as `eos_forced` and counts them as
+`forced_closes`, a per-cycle diagnostic. A reply that emits
+`<|endofconversation|>` stops the run after the cycle's artifacts are saved.
+From copies of the open post-wake state plus one `<|endofconversation|>`,
+Altrux generates `--dreams-per-cycle` uncued 512-token dreams per cycle
+(default 10) at temperature `0.7`, then distils one optimizer step per dream at
+KL temperature `1.0`. The state carried to the next cycle is the open state plus
+one `<|endofconversation|>`, fed with the weights from before that cycle's
+distillation. It carries across the cycles of an epoch and resets to fresh
+state at every epoch. Duplicate dreams train like any other and are counted in
+the diagnostics.
 
-Runs resume from the last atomically completed `cycle-NN/`. Each cycle stores
-the exact wake, adapter and optimizer, carried state, metric vectors, resource
-counts, hashes, and decoded samples. Altrux stores exact dream token IDs, text,
-seeds, stop reasons, diagnostics, teacher adapter hash, and set hash. Its
-full-vocabulary teacher logits exist only in memory through that cycle's
-distillation; the saved teacher adapter and tokens can reconstruct them. Dream
-diagnostics never select, regenerate, stop, or tune a dream.
+Native LoRA trains one fixed seed-42 pass over the 500 evidence documents per
+epoch. Mix-Review pairs that pass with the 500 retention documents in the
+official fixed seed-0 review order. Neither wakes. The frozen arm is the initial
+evaluation alone, a one-point curve. All trainable arms use AdamW at `1e-4`;
+evaluation uses the published descriptive object-token accuracy from fresh
+state once per epoch, after its last cycle.
+
+Runs resume from the last atomically completed `epoch-EE/`. A partial epoch
+restarts from its first cycle, since the state at an epoch boundary is fresh.
+Each epoch stores the adapter and optimizer, metric vectors, resource counts,
+and hashes in `epoch-EE/result.json`; each Altrux cycle stores
+`epoch-EE/cycle-CC/wake.json` (every prompt and reply token, the forced-close
+count) and `dreams.json` (exact dream token IDs, text, seeds, stop reasons,
+diagnostics, teacher adapter hash, and set hash). `wake.json` is written
+before the wake invariants are checked, and `dreams.json` before any training
+step, so a refused cycle leaves its artifacts. The teacher is the epoch's starting adapter after the cycles
+before it (`teacher_cycles_distilled`). Full-vocabulary teacher logits exist
+only in memory through that cycle's distillation; the saved adapter, the
+earlier dreams, and the tokens can reconstruct them. Dream diagnostics never
+select, regenerate, stop, or tune a dream.
 
 After all 12 cells finish, aggregate the official checkpoint metrics, full
-per-cycle curves, acquisition, forgetting, source, wake, review, generated and
+per-epoch curves, acquisition, forgetting, source, wake, review, generated and
 training tokens, all persistent artifact bytes, wall time, GPU-hours, peak
 VRAM, parameter counts, LoRA configuration, and GPU identity:
 
@@ -509,7 +542,7 @@ VRAM, parameter counts, LoRA configuration, and GPU identity:
 make lama-ckl-report
 ```
 
-The report ignores adjacent smoke directories and rejects incomplete cycle
+The report ignores adjacent smoke directories and rejects incomplete epoch
 curves, mixed split hashes, evaluation or dream batch sizes, other shared
 settings, duplicate arm/seed cells, or a missing registered cell. Use
 `ARGS="--allow-incomplete"` only for an interim engineering report.

@@ -9,7 +9,7 @@ from collections.abc import Sequence
 import torch
 import torch.nn.functional as F
 
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 
 def epoch_batches(size: int, batch_size: int, seed: int) -> list[list[int]]:
@@ -88,6 +88,7 @@ def train_document_epoch(
         token_gradients += int(mask.sum())
 
         elapsed = time.time() - start_time
+        heartbeat()
         count = c + 1
         print(
             f"[{ts()}] {label} batch {count}/{len(batches)} loss {loss.item():.4f} "

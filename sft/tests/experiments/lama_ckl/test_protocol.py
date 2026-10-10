@@ -1,14 +1,15 @@
 from types import SimpleNamespace
 
-import pytest
 import torch
 
 from experiments.lama_ckl.protocol import (
+    WAKE_FRAME,
     apply_dream_prompt,
     dream_prompt_ids,
     lama_dream_diagnostics,
     run_conversational_wake,
 )
+from experiments.lama_ckl.runner import REPLY_TOKENS
 
 
 class Tokenizer:
@@ -83,48 +84,74 @@ def test_conversational_wake_keeps_one_state_and_leaves_it_open():
     assert len(artifact["turns"]) == 2
     assert all(turn["assistant_token_ids"] == [2] for turn in artifact["turns"])
     assert 5 not in artifact["transcript_token_ids"]
-    assert artifact["invariants"] == {
-        "turns": 2,
-        "missing_assistant_eos": 0,
-        "internal_eoc": 0,
-    }
+    assert artifact["invariants"] == {"turns": 2, "internal_eoc": 0}
+    assert artifact["forced_closes"] == 0
+
+
+def test_conversational_wake_puts_one_frame_before_every_document():
+    tokenizer = Tokenizer()
+    documents = ["Ada in Rome", "Bob lives in Oslo"]
+
+    artifact, _ = run_conversational_wake(
+        Model(),
+        tokenizer,
+        documents,
+        None,
+        "[USER]",
+        "[ASSISTANT]",
+        "<EOC>",
+        reply_tokens=4,
+        evidence_tokens=512,
+        device="cpu",
+    )
+
+    prompts = [turn["prompt_token_ids"] for turn in artifact["turns"]]
+    frame_ids = tokenizer(f"[USER] {WAKE_FRAME}".rstrip())["input_ids"]
+    assert all(prompt[: len(frame_ids)] == frame_ids for prompt in prompts)
+    for prompt, document in zip(prompts, documents, strict=True):
+        assert tokenizer.decode(prompt) == f"[USER] {WAKE_FRAME}{document}[ASSISTANT] "
+    assert artifact["frame"] == WAKE_FRAME
 
 
 def test_conversational_wake_forces_eos_at_the_backstop_and_counts_it():
     artifact, state = run_conversational_wake(
         Model(next_token=20),
         Tokenizer(),
-        ["Ada in Rome"],
+        ["Ada in Rome", "Bob in Oslo"],
         None,
         "[USER]",
         "[ASSISTANT]",
         "<EOC>",
-        reply_tokens=3,
+        reply_tokens=REPLY_TOKENS,
         evidence_tokens=512,
         device="cpu",
     )
 
     turn = artifact["turns"][0]
-    assert turn["assistant_token_ids"] == [20, 20, 20, 2]
+    assert REPLY_TOKENS == 128
+    assert turn["assistant_token_ids"] == [20] * 128 + [2]
     assert turn["eos_forced"] is True
-    assert state.calls == 5
-    assert artifact["invariants"]["missing_assistant_eos"] == 1
+    assert state.calls == 2 * (1 + 128 + 1)
+    assert artifact["forced_closes"] == 2
+    assert artifact["invariants"] == {"turns": 2, "internal_eoc": 0}
 
 
-def test_conversational_wake_rejects_internal_eoc():
-    with pytest.raises(RuntimeError, match="(?i)eoc"):
-        run_conversational_wake(
-            Model(next_token=5),
-            Tokenizer(),
-            ["Ada in Rome"],
-            None,
-            "[USER]",
-            "[ASSISTANT]",
-            "<EOC>",
-            reply_tokens=4,
-            evidence_tokens=512,
-            device="cpu",
-        )
+def test_conversational_wake_records_internal_eoc_for_the_runner_to_refuse():
+    artifact, _ = run_conversational_wake(
+        Model(next_token=5),
+        Tokenizer(),
+        ["Ada in Rome"],
+        None,
+        "[USER]",
+        "[ASSISTANT]",
+        "<EOC>",
+        reply_tokens=4,
+        evidence_tokens=512,
+        device="cpu",
+    )
+
+    assert artifact["turns"][0]["assistant_token_ids"] == [5]
+    assert artifact["invariants"]["internal_eoc"] == 1
 
 
 def test_dream_prompt_is_the_wake_boundary_alone():

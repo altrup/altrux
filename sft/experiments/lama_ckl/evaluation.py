@@ -9,7 +9,7 @@ from typing import Protocol
 
 import torch
 
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 
 class Tokenizer(Protocol):
@@ -160,6 +160,7 @@ def score_records(
             logits, _ = model(ids, state=None)
             scores.extend(object_token_accuracy(logits, ids, positions))
 
+            heartbeat()
             elapsed = time.monotonic() - start_time
             rate = end / elapsed if elapsed > 0 else 0.0
             eta = (len(rows) - end) / rate if rate > 0 else 0.0

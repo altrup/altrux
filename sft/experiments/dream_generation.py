@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from experiments.dream_types import CachedDream, Dream
-from progress import fmt_duration, ts
+from progress import fmt_duration, heartbeat, ts
 
 if TYPE_CHECKING:
     import torch
@@ -193,6 +193,7 @@ def generate_replay_dreams(
                     bases={},
                 )
             )
+        heartbeat()
         elapsed = time.time() - started
         print(
             f"[{ts()}] replay dreams {len(cached)}/{count}, batch {width}, "

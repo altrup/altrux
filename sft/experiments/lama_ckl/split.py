@@ -7,14 +7,28 @@ import hashlib
 import importlib
 import json
 import random
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
 from experiments.lama_ckl.data import build_candidates, select_split
 from experiments.lama_ckl.evaluation import score_records
-from progress import ts
+from progress import heartbeat, ts
 
-WARMSTART_SHA256 = "226e95765f9e2c0a9fa335d5f70af8fb1d63bbf0f30c4427097b116375a11f3c"
+WARMSTART_PIN = Path(__file__).with_name("warmstart.sha256")
+DEFAULT_SPLIT = Path("../.cache/lama_ckl/mamba2_2_7b_repeat030")
+DEFAULT_WARMSTART = Path("../models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800")
+
+
+def pinned_warmstart_sha(pin: Path = WARMSTART_PIN) -> str:
+    """The registered warm-start adapter sha256, one hex line in the pin file."""
+    value = pin.read_text().strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise SystemExit(
+            f"{pin} holds {value!r}, not a sha256; after `make warm-start`, write "
+            "`sha256sum <adapter>/trainable.pt` into it"
+        )
+    return value
 
 
 def _sha256(path: Path) -> str:
@@ -82,15 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="unpacked official LAMA data directory containing relations.jsonl and TREx/",
     )
-    parser.add_argument(
-        "--output", type=Path, default=Path("../.cache/lama_ckl/mamba2_2_7b_recap050")
-    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--model-name", default="mamba2_2_7b")
-    parser.add_argument(
-        "--init-adapter",
-        type=Path,
-        default=Path("../models/mamba2_2_7b/checkpoints/recap050/epoch-2/step-800"),
-    )
+    parser.add_argument("--init-adapter", type=Path, default=DEFAULT_WARMSTART)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--seed", type=int, default=42)
@@ -104,14 +112,15 @@ def main() -> None:
 
     if not torch.cuda.is_available():
         raise SystemExit("Mamba-conditioned split scoring requires a CUDA GPU")
-    adapter_path = args.init_adapter / "trainable.pt"
-    adapter_sha = _sha256(adapter_path)
-    if adapter_sha != WARMSTART_SHA256:
-        raise SystemExit(f"warm-start sha256 {adapter_sha} != {WARMSTART_SHA256}")
+    pinned = pinned_warmstart_sha()
+    adapter_sha = _sha256(args.init_adapter / "trainable.pt")
+    if adapter_sha != pinned:
+        raise SystemExit(f"warm-start sha256 {adapter_sha} != pinned {pinned}")
     source_sha = source_tree_sha(args.lama_root)
     candidates: list[dict[str, object]] = []
     for row in build_candidates(args.lama_root):
         candidates.append(row)
+        heartbeat()
         if len(candidates) % 1000 == 0:
             print(f"[{ts()}] source candidates {len(candidates)}", flush=True)
     if not candidates:

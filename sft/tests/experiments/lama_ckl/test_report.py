@@ -8,7 +8,7 @@ from experiments.lama_ckl.report import _load_run, aggregate_runs, scientific_ru
 
 def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
     settings = {
-        "cycles": 1,
+        "epochs": 1,
         "engineering_only": False,
         "eval_batch_size": 16,
         "requested_dream_batch_size": 8,
@@ -26,8 +26,8 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
             "seed": 42,
             "settings": settings | {"optimizer_parameters": 0},
             "curve": [
-                {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-                {"cycle": 1, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+                {"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+                {"epoch": 1, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
             ],
         },
         {
@@ -35,9 +35,9 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
             "seed": 42,
             "settings": settings,
             "curve": [
-                {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+                {"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
                 {
-                    "cycle": 1,
+                    "epoch": 1,
                     "to_learn_accuracy": 0.2,
                     "not_to_forget_accuracy": 0.9,
                     "source_tokens": 400,
@@ -71,7 +71,7 @@ def test_aggregate_runs_rejects_smokes_and_mixed_splits():
         "arm": "frozen",
         "seed": 42,
         "curve": [
-            {"cycle": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+            {"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
         ],
     }
 
@@ -81,7 +81,7 @@ def test_aggregate_runs_rejects_smokes_and_mixed_splits():
                 {
                     **run,
                     "settings": {
-                        "cycles": 0,
+                        "epochs": 0,
                         "engineering_only": True,
                         "eval_batch_size": 16,
                         "requested_dream_batch_size": 8,
@@ -96,7 +96,7 @@ def test_aggregate_runs_rejects_smokes_and_mixed_splits():
                 {
                     **run,
                     "settings": {
-                        "cycles": 0,
+                        "epochs": 0,
                         "engineering_only": False,
                         "eval_batch_size": 16,
                         "requested_dream_batch_size": 8,
@@ -107,7 +107,7 @@ def test_aggregate_runs_rejects_smokes_and_mixed_splits():
                     **run,
                     "seed": 43,
                     "settings": {
-                        "cycles": 0,
+                        "epochs": 0,
                         "engineering_only": False,
                         "eval_batch_size": 16,
                         "requested_dream_batch_size": 8,
@@ -118,41 +118,41 @@ def test_aggregate_runs_rejects_smokes_and_mixed_splits():
         )
 
 
-@pytest.mark.parametrize("cycles", [[0, 1], [0, 2]])
-def test_aggregate_runs_rejects_incomplete_cycle_curves(cycles: list[int]):
+@pytest.mark.parametrize("epochs", [[0, 1], [0, 2]])
+def test_aggregate_runs_rejects_incomplete_epoch_curves(epochs: list[int]):
     run = {
         "arm": "frozen",
         "seed": 42,
         "settings": {
-            "cycles": 2,
+            "epochs": 2,
             "engineering_only": False,
             "eval_batch_size": 16,
             "requested_dream_batch_size": 8,
             "split_manifest_sha256": "x",
         },
-        "curve": [{"cycle": cycle} for cycle in cycles],
+        "curve": [{"epoch": epoch} for epoch in epochs],
     }
 
-    with pytest.raises(ValueError, match="cycle curve"):
+    with pytest.raises(ValueError, match="epoch curve"):
         aggregate_runs([run])
 
 
 @pytest.mark.parametrize("key", ["eval_batch_size", "requested_dream_batch_size"])
 def test_aggregate_runs_rejects_mixed_batch_settings(key: str):
     settings = {
-        "cycles": 0,
+        "epochs": 0,
         "engineering_only": False,
         "eval_batch_size": 16,
         "requested_dream_batch_size": 8,
         "split_manifest_sha256": "x",
     }
     runs = [
-        {"arm": "frozen", "seed": 42, "settings": settings, "curve": [{"cycle": 0}]},
+        {"arm": "frozen", "seed": 42, "settings": settings, "curve": [{"epoch": 0}]},
         {
             "arm": "lora",
             "seed": 42,
             "settings": settings | {key: settings[key] * 2},
-            "curve": [{"cycle": 0}],
+            "curve": [{"epoch": 0}],
         },
     ]
 
@@ -181,3 +181,27 @@ def test_load_run_counts_persistent_files_but_not_work_files(tmp_path: Path):
     assert loaded["persistent_artifact_bytes"] == (
         summary.stat().st_size + (run / "run.json").stat().st_size
     )
+
+
+def test_aggregate_runs_accepts_a_one_point_frozen_curve_beside_trained_arms():
+    settings = {"split_manifest_sha256": "x", "epochs": 1, "docs_per_wake": 10}
+    point = {"to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}
+    runs = [
+        {
+            "arm": "frozen",
+            "seed": 42,
+            "settings": settings | {"epochs": 0, "docs_per_wake": None},
+            "curve": [{"epoch": 0, "wake_tokens": None, **point}],
+        },
+        {
+            "arm": "altrux",
+            "seed": 42,
+            "settings": settings,
+            "curve": [{"epoch": 0, **point}, {"epoch": 1, "wake_tokens": 30, **point}],
+        },
+    ]
+
+    report = aggregate_runs(runs)
+
+    assert report["arms"]["frozen"]["final_forgetting"]["mean"] == 0.0
+    assert report["arms"]["altrux"]["wake_tokens"]["mean"] == 30
