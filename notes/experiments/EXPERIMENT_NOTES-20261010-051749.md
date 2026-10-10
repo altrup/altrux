@@ -130,3 +130,22 @@ Evaluation of 1000 rows at `--eval-batch-size 16` takes ~30 s (to-learn at ~20 i
 Wake 1: 500 turns in 35 min, 458/500 replies closed by the backstop, `internal_eoc` 0. Dream generation: 300 dreams × 512 tokens at batch 30 in 8.8 min (0.57 dream/s, ≈290 tok/s aggregate). Then `runner.py:459` raised `the fixed dream set contains duplicate dreams; refusing to train` (EXIT=2). The check runs before `dreams.json` or the wake artifact is written, so the cycle left nothing on disk: the dream set, its diagnostics, and the wake transcript are lost. The handoff lists "duplicate dream" as a stop condition and the protocol forbids a content-dependent retry, so the cell is not restarted. Recommendation for the team (not applied; `runner.py` is protected and this is not a crash to unblock): write `dreams.json` and `wake.json` before the duplicate check, so a refused set is still inspectable.
 
 Next: reproduce the same wake and dream set with the protocol's own functions (`run_conversational_wake`, `dream_prompt_ids`, `generate_replay_dreams`, `lama_dream_diagnostics`, seed 4201 = 42·100 + 1) in a scratch script that saves the wake, the state, every dream, the duplicate groups, and the diagnostics under `sft/logs/`, so the duplicate content and the to-learn coverage are on record. ≈ 50 min GPU.
+
+### 07:50 UTC — the cycle-1 dream set, reproduced and saved (`sft/logs/diag-dreams-cycle1/`)
+
+Scratch script `diag_dreams.py` (protocol functions only; log `sft/logs/diag-dreams.log`). Files: `wake.json` (the 500-turn wake artifact, transcript sha `650323ff…3086`, invariants `turns 500, missing_assistant_eos 445, internal_eoc 0`), `open_state.pt` (170 MB, the open post-wake state; travels by the pull only), `dreams.jsonl` (300 dreams, set sha `be98557a…13aa`), `diagnostics.json`.
+
+Wake reproducibility: the runner's wake closed 458/500 replies at the backstop, this one 445/500, same code, same weights, greedy. The greedy wake is therefore not bit-reproducible run to run on this GPU (bf16 kernel nondeterminism), which also means dream sets cannot be reproduced from seeds alone; the saved state is the reproducible object.
+
+Dream set, EOC-only prompt, T=0.7, 512 tokens, seed 4201:
+
+| diagnostic | value |
+|---|---|
+| unique dreams | 261 / 300 (7 duplicate groups, 46 dreams) |
+| EOC termination | 179 / 300 (59.7 %) |
+| generated tokens | min 24, quartiles 73 / 351 / 511, mean 296 |
+| correct to-learn bindings | 24 |
+| misbindings / contradictions | 508 / 508 |
+| mean copy fraction of the wake | 3.6 % (max 81.9 %, longest verbatim run 147 tokens) |
+
+Every duplicate is the recap loop: `[USER] What did I ask you about earlier? [ASSISTANT] You asked: "What did I ask you about earlier?" …` (19 + 11 + 3 + 2 identical copies) and `Can you go over everything we discussed earlier? … I said: "You asked: …` (7 + 2 + 2). The recap-0.5 adapter's recap behaviour has collapsed onto a self-referential loop with no wake content; at T=0.7 the loop is short enough (43–60 tokens) that identical samples recur, which is what trips the runner's duplicate rule. The other dreams are mostly generic assistant chat (SEO, travel blogs, marketing strategy, forgiveness) with no relation to the wake. A minority rehearse the wake: dream 2 and dream 7 reuse Stadio Flaminio / the Vinci brothers from one evidence document. The runner's duplicate stop will trigger on every cycle of every altrux cell with this prompt; the fallback instruction prompt is the registered next arm, and its dream set from the same saved state is being generated now (`diag_dreams_instr.py`, `sft/logs/diag-dreams-instr.log`) together with a subject-coverage count for both sets.
