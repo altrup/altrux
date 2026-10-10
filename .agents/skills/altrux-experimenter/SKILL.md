@@ -293,9 +293,9 @@ Everything on this instance is DESTROYED at termination. Two things survive:
 what you push to this run's git branch, and what your teammate's machine
 rsyncs down via scripts/lambda_pull.sh (sft/logs/, models/*/checkpoints/,
 notes/, the sft/data/ artifacts). The repo is checked out on `box/<UTC>`,
-created by setup; push there and only there. `main` is protected on GitHub
-and your teammate merges the branch after review, so a commit here never
-changes `main` by itself. Never create other branches, never force-push,
+created by setup; push there and only there. Your teammate merges the branch
+into `main` after review; nothing you do here touches `main`, and nothing
+but this rule enforces that. Never create other branches, never force-push,
 never touch the token in `.git/config`. You cannot see their disk —
 `scripts/.pull-receipt`, which every successful pull writes back onto this
 instance (timestamp + the size of each file as it landed there), is the ONLY
