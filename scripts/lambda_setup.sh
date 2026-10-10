@@ -100,10 +100,17 @@ step "make sync (torch + mamba-ssm — several minutes)"
 # Wheels uploaded through LAMBDA_CACHE_ARTIFACTS (harvested from a previous instance)
 # spare the mamba-ssm CUDA compile; a stale/mismatched wheel is simply not
 # selected and uv builds from source as usual.
+# Pin the interpreter: with no pin uv takes the newest CPython, which the
+# compiled deps (pyarrow, torch) may not ship wheels for yet. Stashed wheels
+# win, since their cpXYZ tag is the only Python they install into.
+export UV_PYTHON="${UV_PYTHON:-3.14}"
 if ls "$REPO_DIR"/.cache/wheels/*.whl >/dev/null 2>&1; then
   echo "using stashed wheels from $REPO_DIR/.cache/wheels: $(ls "$REPO_DIR"/.cache/wheels)"
   export UV_FIND_LINKS="$REPO_DIR/.cache/wheels"
+  tag="$(ls "$REPO_DIR"/.cache/wheels/*.whl | grep -o -- '-cp3[0-9]*-' | head -1 | tr -d -- '-')"
+  [[ -n "$tag" ]] && UV_PYTHON="3.${tag#cp3}"
 fi
+echo "python: $UV_PYTHON"
 make -C "$REPO_DIR/sft" sync
 
 step "Verify CUDA torch"
