@@ -396,12 +396,14 @@ def main() -> None:
             device=device,
         )
         wake_seconds = time.time() - wake_started
-        if wake["invariants"] != {
-            "turns": len(documents),
-            "missing_assistant_eos": 0,
-            "internal_eoc": 0,
-        }:
+        invariants = dict(wake["invariants"])
+        forced_eos = int(invariants.pop("missing_assistant_eos"))
+        if invariants != {"turns": len(documents), "internal_eoc": 0}:
             raise RuntimeError(f"wake structural invariants failed: {wake['invariants']}")
+        print(
+            f"[{ts()}] cycle {cycle}: wake replies closed by the backstop: {forced_eos}/{len(documents)}",
+            flush=True,
+        )
         state = apply_dream_prompt(model, tokenizer, open_state, user_open, asst_open, eoc, device)
         treatment: dict[str, object]
         dream_payload = None

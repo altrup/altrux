@@ -482,8 +482,9 @@ done
 ```
 
 Each full cell runs 30 cycles. Every wake has 500 `[USER]` evidence turns and
-greedy `[ASSISTANT]` replies that must end within 64 tokens, followed by one
-`<|endofconversation|>`. Native LoRA trains one fixed seed-42 pass over the 500
+greedy `[ASSISTANT]` replies with a 64-token backstop (a reply that reaches it
+is closed with a fed EOS; `wake.json` flags each such turn as `eos_forced` and
+the cycle log prints the count), followed by one `<|endofconversation|>`. Native LoRA trains one fixed seed-42 pass over the 500
 evidence documents per cycle. Mix-Review pairs that pass with the 500 retention
 documents in the official fixed seed-0 review order. Altrux generates 300
 uncued 512-token dreams at temperature `0.7` from the intact post-wake state and

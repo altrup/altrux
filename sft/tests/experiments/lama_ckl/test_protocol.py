@@ -90,6 +90,27 @@ def test_conversational_wake_keeps_one_state_and_leaves_it_open():
     }
 
 
+def test_conversational_wake_forces_eos_at_the_backstop_and_counts_it():
+    artifact, state = run_conversational_wake(
+        Model(next_token=20),
+        Tokenizer(),
+        ["Ada in Rome"],
+        None,
+        "[USER]",
+        "[ASSISTANT]",
+        "<EOC>",
+        reply_tokens=3,
+        evidence_tokens=512,
+        device="cpu",
+    )
+
+    turn = artifact["turns"][0]
+    assert turn["assistant_token_ids"] == [20, 20, 20, 2]
+    assert turn["eos_forced"] is True
+    assert state.calls == 5
+    assert artifact["invariants"]["missing_assistant_eos"] == 1
+
+
 def test_conversational_wake_rejects_internal_eoc():
     with pytest.raises(RuntimeError, match="(?i)eoc"):
         run_conversational_wake(
