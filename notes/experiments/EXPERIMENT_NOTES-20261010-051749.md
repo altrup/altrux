@@ -38,3 +38,17 @@ Verbatim, in `work:split`:
     cd ~/altrux/sft && make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
 
 Warm start loaded and hashed `226e9576…a11f3c`, 257/257 trainable tensors, 21,323,264 trainable params, 128 LoRA adapters. Scoring 13,645 candidates at ~58 items/s (batch 8), GPU 8.8 GiB / ~17 % util. Ordering note: the handoff lists the split after the Llama gate; the split's content does not depend on the gate (deterministic from the frozen warm start and seed 42), only its use does, and the GPU was otherwise idle while the TAALM environment built. The gate still blocks every Mamba cell.
+
+### 05:26 UTC — split done; two more TAALM environment deviations
+
+Split finished at 05:26 (about 4 min, 13,645 candidates at ~79 items/s, descriptive zeros=8346, ones=2458). Artifacts under `.cache/lama_ckl/mamba2_2_7b_recap050/`: `variant.jsonl` 500 rows sha256 `1be3643d…050c88`, `invariant_descriptive.jsonl` 500 rows sha256 `ca6470c8…b702d`, both invariant dicts zero, `manifest.json` records warm-start hash, source hash, TAALM commit, and the object-span metric alignment. Samples read as a to-learn fact the model gets wrong (Dan Conners / linebacker) and a retained fact it gets right (Dodoma / Tanzania). `.watchdog-fetch` touched at 05:27.
+
+**DEVIATION 2 — triton removed from the TAALM venv.** With torch 2.11 the venv carries triton 3.6.0, and bitsandbytes 0.42.0 imports `triton.ops.matmul_perf_model` (removed in triton 3) whenever triton is importable, so `import bitsandbytes` fails on any torch ≥2.4 install, x86 included. The import sits in bitsandbytes' optional int8 "SwitchBack" triton kernels, which QLoRA 4-bit never calls. Fix: `uv pip uninstall --python .cache/TAALM/.venv/bin/python triton`; bitsandbytes then reports `COMPILED_WITH_CUDA True` and torch works without triton (no `torch.compile` in TAALM). bitsandbytes also needs `LD_LIBRARY_PATH` pointing at the venv's `nvidia/cuda_runtime/lib` to locate `libcudart.so`; exported in the `train` shell before every upstream command.
+
+**DEVIATION 3 — peft pinned by date.** TAALM's `requirements.txt` lists `git+https://github.com/huggingface/peft.git` with no ref, so the pinned environment was never reproducible; today's peft main (0.21.3.dev0) requires a newer accelerate than the pinned 0.25.0, and peft main at the TAALM commit date (2024-11-10) requires transformers ≥4.42 against the pinned 4.36.2. Chosen pin: peft main at the release date of the newest pinned package, bitsandbytes 0.42.0 (2024-01-07): commit `8665e2b5719faa4e4b91749ddec09442927b53e0` (peft 0.7.2.dev0, 2024-01-03). Installed with `uv pip install --no-deps git+https://github.com/huggingface/peft.git@8665e2b5719faa4e4b91749ddec09442927b53e0`. TAALM uses only `LoraConfig` and `get_peft_model`. Resulting venv: torch 2.11.0+cu128, transformers 4.36.2, peft 0.7.2.dev0, trl 0.7.4, accelerate 0.25.0, bitsandbytes 0.42.0 (aarch64 source build), datasets 5.0.1 (unpinned upstream; left as resolved).
+
+### 05:28 UTC — upstream smoke launched (train tmux)
+
+Verbatim (after `source ~/.bashrc` and the `LD_LIBRARY_PATH` export above):
+
+    cd ~/altrux/sft && PATH="../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
