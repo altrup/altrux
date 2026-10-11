@@ -380,3 +380,49 @@ one optimizer update, loss 2.216, eval ch ppl 6.20 acc 0.000 / unch ppl
 then `diag_dreams2.py` (scratch; prefix `[USER] What is the capital of
 France?\n[ASSISTANT] Paris<|endoftext|>` + EOC, 10 dreams T 0.7, 256
 tokens), log `sft/logs/diag-dreams2-20261011-143000.log`. PROVISIONAL (all).
+
+### 14:29 UTC — frozen cell DONE (PROVISIONAL)
+
+`sft/logs/lama-ckl-run-20261011-142839.log`, EXIT=0, 25 s. Output
+`.cache/lama_ckl/runs/frozen-seed-42/`. Epoch 0: to-learn 0.0040,
+not-to-forget 0.9835, total 0.9875 (eval batch 16; the acceptance runs at
+their batch read 0.9815, the 1 % wobble the debrief §1.5 records).
+
+### 14:29 UTC — in-distribution dream recheck (`sft/logs/diag-dreams2-20261011-143000.log`)
+
+Prefix `[USER] What is the capital of France?\n[ASSISTANT] Paris<|endoftext|>`
+then `<|endofconversation|>`, 10 dreams at T 0.7: **9 of 10 emit
+`<|endofconversation|>` as the very next token** (an empty dream, stopped
+on the second EOC); the tenth: `' capital of France<|endoftext|>[ASSISTANT]
+This application was created by WizIQ.<|endoftext|><|endofconversation|>'`.
+`acceptance()` passes vacuously (markers 1, plain 0, non-ASCII 0).
+
+Cause, from the corpus mask (`data/warm_start.pt`, target-position mask as
+`training/loop.py` applies it): the token after EOC is a training target
+**0 of 1766** times; `[USER]` is a target **0 of 4377** times; EOC itself
+is a target 2476 of 2476 times; after EOS, the 2472 EOC targets are trained
+and the 2611 `[USER]` targets are not. The warm start teaches "EOS then
+EOC" and never "EOC then `[USER] …`". The 08-10 recap050 warm start could
+open a `[USER]` conversation after EOC only because the train mask was not
+applied then (fixed in `97ecb30`, 2026-09-24, "conversation data trained on
+user turns"). So the registered dream prompt (open state + EOC, the model
+writes the conversation) has no supervision in the repeat030 warm start:
+an altrux cycle would produce ten empty dreams even if the wake replied.
+For the debrief: either the warm start trains the boundary-opening
+`[USER]` turn (a masked-in boundary token, or user turns trained as the
+recap050 run did), or the dream prompt changes; both are protocol
+decisions. The `[ASSISTANT]`-repeat artifact (12 % after the plain
+question, loops under the question frame and after `\n` in free text) is a
+second warm-start finding.
+
+## 14:33 UTC — lora cell launched (`train:0`, verbatim, after the HF_TOKEN export)
+
+Fresh start, warm start 245e2089, split `mamba2_2_7b_repeat030`, cap
+remaining 19.1 h → `--max-hours 19`:
+
+    cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm lora --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 19"
+
+Log `sft/logs/lama-ckl-run-20261011-143328.log`. PROVISIONAL. Running
+beside the upstream Llama-2 run (`train:upstream`, log
+`sft/logs/lama-ckl-upstream-run-*.log`; at 14:33 ~3 it/s, GPU 68 GB used,
+96 % util with both jobs).
