@@ -426,3 +426,34 @@ Log `sft/logs/lama-ckl-run-20261011-143328.log`. PROVISIONAL. Running
 beside the upstream Llama-2 run (`train:upstream`, log
 `sft/logs/lama-ckl-upstream-run-*.log`; at 14:33 ~3 it/s, GPU 68 GB used,
 96 % util with both jobs).
+
+### 14:53 UTC — Llama-2 calibration: MISS, recorded (gate did not pass)
+
+Upstream run `train:upstream`, log `sft/logs/lama-ckl-upstream-run-20261011-1429*.log`,
+EXIT=0, 14:29–14:51 (22 min, 30 epochs, ~2.5–3 it/s, single-GH200
+batch-equivalent adapter: microbatch 8, accumulation 8). Summary
+(`sft/logs/upstream-summarize-20261011-145500.log`, EXIT=2, pickle archived
+first at `.cache/lama_ckl/upstream/finetune_qlora.pkl`, 47,802 bytes):
+peak to-learn **0.105 at epoch 29**, paired not-to-forget **0.897**, total
+1.002, `passes_gate` false. Against the frozen gate: peak 0.115 ± 0.02 →
+inside; first peak epoch 16 ± 2 → outside (29); paired retention 0.8174 ±
+0.02 → outside (higher). Curve samples: epoch=1 to_learn=0.004000 not_to_forget=0.985333;epoch=5 to_learn=0.008000 not_to_forget=0.981667;epoch=10 to_learn=0.014000 not_to_forget=0.979333;epoch=15 to_learn=0.038000 not_to_forget=0.966333;epoch=16 to_learn=0.040000 not_to_forget=0.966333;epoch=17 to_learn=0.048000 not_to_forget=0.965333;epoch=18 to_learn=0.057000 not_to_forget=0.961333;
+The ARM64 environment deviations (bitsandbytes source build, triton
+removed, peft pinned by date) and the one-GPU accumulation are the
+candidate causes; for the debrief. Not a blocker (debrief §3.5).
+
+### 14:55 UTC — lora cell curve so far (PROVISIONAL)
+
+~110 s per epoch (training 500 documents + two 500-row evaluations),
+30 epochs ≈ 55 min, ETA ~15:30. Live curve (`epoch N:` lines; the
+`completed epoch` line prints the running checkpoint summary, i.e. the
+peak-acquisition epoch and its paired retention, not the current epoch):
+
+| epoch | 1 | 2 | 3 | 4 | 5 | 6 | 9 |
+|---|---|---|---|---|---|---|---|
+| to-learn | 0.017 | 0.021 | 0.046 | 0.058 | 0.056 | 0.058 | 0.037 |
+| not-to-forget | 0.876 | 0.843 | 0.761 | 0.605 | 0.494 | 0.581 | 0.485 |
+
+Loss on the documents falls to ~0.15 by epoch 10 (memorized) while the
+object-token acquisition stays under 0.06 and retention halves: the
+registered method's behaviour, recorded as data.
