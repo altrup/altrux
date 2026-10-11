@@ -5,7 +5,10 @@ Debrief of the first LAMA-CKL box session
 branch `box/20261010-041135`). It amends the protocol in
 [`DISCUSSION-20260823`](DISCUSSION-20260823-lama-ckl-wake-dream-protocol.md)
 and supersedes the recap-0.5 warm start registered there. Where this note
-and the 2026-08-23 note disagree, this note wins.
+and the 2026-08-23 note disagree, this note wins. Amended by
+[`DISCUSSION-20261011`](DISCUSSION-20261011-lama-ckl-second-box-debrief.md)
+in §3.1 (warm start recipe) and §3.7 (session order); that note wins where
+they differ.
 
 ## 1. What the run established
 
