@@ -73,3 +73,45 @@ export LD_LIBRARY_PATH=$HOME/altrux/.cache/TAALM/.venv/lib/python3.10/site-packa
 $PY -c "import torch, transformers, peft, trl, accelerate, bitsandbytes as b; print(torch.__version__, transformers.__version__, peft.__version__, trl.__version__, accelerate.__version__, b.__version__, b.COMPILED_WITH_CUDA)"
 log "DONE"
 ```
+
+## 13:45–13:52 UTC — warm start attempt 1: stopped on a loss spike, then explained
+
+Packer (log `sft/logs/warm-start-20261011-134419.log`): 710 examples, 2476
+conversations, 1766 boundaries (476 repeat: 354 adjacent, 122 gapped; 1290
+fresh), 1,926,846 tokens; all five "must be 0" invariants 0; decoded samples
+at a fresh, an adjacent, and a gapped boundary read as a clean
+`<|endoftext|><|endofconversation|>[USER] ...` join. `make sanity-sample
+ARGS="--data data/warm_start.pt"` (`work:sanity`, log
+`sft/logs/sanity-sample-20261011-134419.log`) EXIT=0; random windows read as
+ordinary conversations and Dolly rows. Corpus accepted.
+
+Training (chunk 512, batch 6, trainable 21,323,264, VRAM free 94.0 GB at
+start): loss 1.83 (step 1) → 1.28 (step 4) → 2.51 (8) → 5.14 (9) → 10.15
+(14) → 12.26 (20) with gnorm up to 3984 during LR warm-up (lr ≤ 6e-5), then
+a slow fall: 7.4 at step 74, 6.28 at step 136. I stopped it at 13:48 (step
+136) as a suspected numerical fault: AdamW at lr ≤ 3e-5 with clip 1.0 cannot
+move a rank-16 LoRA that far in four steps, and a loss near ln(50k) means a
+near-uniform model.
+
+Checks while stopped: `tests/experiments/dreams/test_mixer_fused.py` on the
+GH200 (`work:gputest`, log `sft/logs/gputest-mixer-fused.log`): 5 passed in
+91 s. Library versions: python 3.14.8, torch 2.11.0+cu128, mamba_ssm
+2.3.2.post1, triton 3.6.0 (the 08-10 warm start ran torch 2.13.0+cu129).
+
+Teammate message at 13:50 (altrup, not watching live): this spike is the
+known shape of the 2.7B warm start. They placed the 08-10 run's every-10th
+step lines at `/tmp/warm-start-20260810-steps.txt` (not in the repo). Those
+read: step 1 loss 2.18, step 21 12.12 (gnorm 692), step 31 10.52 (gnorm
+5440), step 86 7.54, step 201 2.62, step 261 1.41. My run at step 86 read
+7.36: the same curve. The 08-10 note's "5.76 → 4.77 over the first 160
+steps" was that session's mis-summary. Decision: treat it as the registered
+training's known transient, finish the fused test (done, passed), delete the
+partial `models/mamba2_2_7b/checkpoints/epoch-1`, rerun `make warm-start`
+unchanged. Open for discussion, not a stop: a transient collapse to
+near-uniform during warm-up and a relearn from there is a different object
+from a gently adapted base, even when step 800 passes acceptance; a warm-up
+schedule or lower peak LR is a protocol change and belongs to the debrief.
+
+## 13:52 UTC — warm start attempt 2 (verbatim, `train`, after the HF_TOKEN export)
+
+    cd ~/altrux/sft && MODEL_NAME=mamba2_2_7b make warm-start; echo "EXIT=$?" >> "$(ls -t logs/warm-start-*.log | head -1)"
