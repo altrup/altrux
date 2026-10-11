@@ -203,3 +203,29 @@ def test_lama_dream_diagnostics_reports_bindings_misbindings_and_copies():
     assert result["unique_dreams"] == 2
     assert result["eoc_termination_rate"] == 0.5
     assert result["max_verbatim_run"] == 3
+
+
+def test_subjects_mentioned_counts_distinct_rows_named_in_generated_text():
+    rows = [
+        {"subject": "Ada", "object": "Rome"},
+        {"subject": "Bob", "object": "Oslo"},
+        {"subject": "Cy", "object": "Lima"},
+    ]
+    dreams = [
+        SimpleNamespace(
+            token_texts=["Cy says ", "ada left."],
+            dream_ids=[1, 2],
+            prefix_len=1,
+            stop_reason="eoc",
+            dream_sha="a",
+        ),
+        SimpleNamespace(
+            token_texts=["no facts, ", "just ADA"],
+            dream_ids=[3, 4],
+            prefix_len=0,
+            stop_reason="eoc",
+            dream_sha="b",
+        ),
+    ]
+
+    assert lama_dream_diagnostics(dreams, rows, [])["subjects_mentioned"] == 1

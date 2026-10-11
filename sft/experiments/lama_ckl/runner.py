@@ -11,7 +11,12 @@ cycle.
 
 Runs resume at epoch granularity from the last completed epoch-EE/. The state
 at an epoch end is the fresh state, so a partial epoch restarts from its first
-cycle with the saved adapter and optimizer.
+cycle with the saved adapter and optimizer. --max-hours stops a session after
+the first epoch that ends past the cap; the same command resumes it.
+
+--cycles N is a pre-grid acceptance check, not a grid cell: after the initial
+evaluation, epoch 1 runs only its first N altrux cycles, is saved without an
+evaluation, and the run stops. It needs a fresh --output outside runs/.
 """
 
 from __future__ import annotations
@@ -193,9 +198,12 @@ def _altrux_epoch(
     rows: Sequence[Mapping[str, object]],
     docs_per_wake: int,
     steps: EpochSteps,
+    max_cycles: int | None = None,
 ) -> dict[str, object]:
     """Wake-sleep cycles over rows in order; wake.json is saved before the wake is checked."""
     count = cycles_per_epoch(len(rows), docs_per_wake)
+    if max_cycles is not None:
+        count = min(count, max_cycles)
     cycles: list[dict[str, object]] = []
     state: object | None = None
     started = time.time()
@@ -271,8 +279,14 @@ def run_epochs(
     Each epoch is built in a work/ tempdir and moved to epoch-EE/ once its
     result is saved, so a crash leaves no partial epoch-EE/. Every epoch
     starts from fresh state. Returns the curve, one row per epoch.
+
+    settings["cycles"] stops the run after a truncated, unevaluated epoch 1;
+    settings["max_hours"] stops it after the first epoch that ends past the cap.
     """
     arm = str(settings["arm"])
+    max_cycles = settings.get("cycles")
+    max_hours = settings.get("max_hours")
+    run_started = time.time()
     (output / "work").mkdir(parents=True, exist_ok=True)
 
     def write_summary() -> dict[str, object]:
@@ -295,7 +309,9 @@ def run_epochs(
         if epoch == 0:
             treatment = {"kind": "initial", "optimizer_steps": 0, "review_tokens": 0}
         elif arm == "altrux":
-            treatment = _altrux_epoch(epoch, work, rows, int(settings["docs_per_wake"]), steps)
+            treatment = _altrux_epoch(
+                epoch, work, rows, int(settings["docs_per_wake"]), steps, max_cycles
+            )
             cycles = treatment["cycles"]
             wake_sha = hashlib.sha256(
                 ",".join(str(cycle["wake_sha256"]) for cycle in cycles).encode()
@@ -306,7 +322,8 @@ def run_epochs(
             heartbeat()
         else:
             raise ValueError(f"the {arm} arm has no treatment epochs")
-        result = steps.evaluate(epoch)
+        acceptance = max_cycles is not None and epoch > 0
+        result = {"epoch": epoch} if acceptance else steps.evaluate(epoch)
         result.update(
             {
                 "arm": arm,
@@ -320,6 +337,13 @@ def run_epochs(
         steps.save(work, result)
         _write_epoch_result(work, result)
         os.replace(work, output / f"epoch-{epoch:02d}")
+        if acceptance:
+            print(
+                f"[{ts()}] acceptance epoch {epoch} saved after {max_cycles} cycles, "
+                "not evaluated; stopping",
+                flush=True,
+            )
+            return curve
         curve.append(result)
         summary = write_summary()
         heartbeat()
@@ -328,6 +352,14 @@ def run_epochs(
             f"{json.dumps(summary['checkpoint'], sort_keys=True)}",
             flush=True,
         )
+        hours = (time.time() - run_started) / 3600
+        if max_hours is not None and hours > float(max_hours) and epoch < int(settings["epochs"]):
+            print(
+                f"[{ts()}] soft cap of {max_hours} h reached after epoch {epoch} "
+                f"({hours:.2f} h); rerun the same command to resume",
+                flush=True,
+            )
+            return curve
     write_summary()
     return curve
 
@@ -585,6 +617,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="engineering-only gate: one epoch, two documents per set, "
         "at most two documents per wake, two 32-token dreams per cycle",
     )
+    parser.add_argument(
+        "--cycles",
+        type=int,
+        help="altrux acceptance check: after the initial evaluation, run the first N "
+        "cycles of epoch 1, save them unevaluated, and stop; needs a fresh --output",
+    )
+    parser.add_argument(
+        "--max-hours",
+        type=float,
+        help="stop after the first epoch that ends past H hours of this session; "
+        "the same command resumes",
+    )
     return parser
 
 
@@ -598,6 +642,11 @@ def main() -> None:
         raise SystemExit("batch sizes and --docs-per-wake must be positive")
     if args.dreams_per_cycle < 1:
         raise SystemExit("--dreams-per-cycle must be positive")
+    if args.cycles is not None:
+        if args.arm != "altrux" or args.output is None or args.cycles < 1:
+            raise SystemExit("--cycles needs --arm altrux, --output, and a positive N")
+        if (args.output / "run.json").exists():
+            raise SystemExit(f"--cycles needs a fresh --output: {args.output}")
     pinned = pinned_warmstart_sha()
     torch.cuda.reset_peak_memory_stats()
     learned, retained, split_manifest = _load_split(args.split)
@@ -642,6 +691,8 @@ def main() -> None:
         "model_name": args.model_name,
         "warmstart_sha256": warm_sha,
         "split_manifest_sha256": file_sha(args.split / "manifest.json"),
+        "cycles": args.cycles,
+        "max_hours": args.max_hours,
     }
     device = torch.device("cuda")
     torch.manual_seed(args.seed)
@@ -679,10 +730,13 @@ def main() -> None:
         }
     )
     manifest_path = output / "run.json"
-    serialized_settings = json.dumps(settings, indent=1, sort_keys=True) + "\n"
-    if manifest_path.exists() and manifest_path.read_text() != serialized_settings:
-        raise SystemExit(f"existing run uses different settings: {manifest_path}")
-    manifest_path.write_text(serialized_settings)
+    if manifest_path.exists():
+        existing = json.loads(manifest_path.read_text())
+        current = json.loads(json.dumps(settings))
+        existing.setdefault("cycles", None)
+        if {**existing, "max_hours": None} != {**current, "max_hours": None}:
+            raise SystemExit(f"existing run uses different settings: {manifest_path}")
+    manifest_path.write_text(json.dumps(settings, indent=1, sort_keys=True) + "\n")
 
     completed = _completed_epochs(output)
     curve = [json.loads((path / "result.json").read_text()) for path in completed]

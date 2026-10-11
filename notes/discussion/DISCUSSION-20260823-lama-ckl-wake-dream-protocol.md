@@ -105,7 +105,9 @@ followed (293/300 unique dreams, 1 correct binding). The wake rendering,
 wake size, dream count per cycle, backstop, and duplicate rule are
 re-registered in
 [`DISCUSSION-20261010`](DISCUSSION-20261010-lama-ckl-first-box-debrief.md),
-which supersedes this section where they differ.
+which supersedes this section where they differ. Per that note, the frozen
+Llama gate in §1 is a calibration check, not a blocker, and seeds 43 and 44
+are conditional on the seed-42 result.
 
 Use the existing 300-distinct-dream treatment as the initial Altrux arm: no cue
 splicing, fact-aware prompt, content filter, coverage target, or regeneration

@@ -1,5 +1,21 @@
 # Experiment notes — 2026-08-23: LAMA-CKL rented-GPU handoff
 
+**Amended 2026-10-10 (altrup).** The
+[2026-10-10 debrief](../discussion/DISCUSSION-20261010-lama-ckl-first-box-debrief.md)
+supersedes this note where they differ:
+
+- The Llama-2 gate is a calibration check. A miss is recorded; it does not
+  block the Mamba cells.
+- Seed 42 of the four arms runs first. The 12 cells are not required; seeds
+  43 and 44 are conditional (debrief §3.7 amendment).
+- The split takes `--lama-root ../.cache/LAMA/data`.
+- TAALM commands take `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH"`.
+- The recap050 checkpoint is retired. The warm start is repeat030, pinned in
+  `sft/experiments/lama_ckl/warmstart.sha256`.
+- The three ARM64 dependency deviations in
+  [`EXPERIMENT_NOTES-20261010-051749`](EXPERIMENT_NOTES-20261010-051749.md)
+  are repeated as-is and labelled as deviations.
+
 ## Status
 
 Local implementation and CPU/fake-model gates are complete. No rented GPU has

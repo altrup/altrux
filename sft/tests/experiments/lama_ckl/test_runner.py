@@ -230,3 +230,39 @@ def test_unset_warmstart_pin_refuses(tmp_path: Path):
 
     pin.write_text("a" * 64 + "\n")
     assert pinned_warmstart_sha(pin) == "a" * 64
+
+
+def test_cycles_cap_writes_one_truncated_epoch_and_skips_its_evaluation(tmp_path: Path):
+    steps = FakeSteps()
+
+    run_epochs(tmp_path, {**_settings("altrux", epochs=3), "cycles": 1}, ROWS, steps, [])
+
+    assert steps.evaluated == [0]
+    assert len(steps.wakes) == 1
+    assert [path.name for path in (tmp_path / "epoch-01").glob("cycle-*")] == ["cycle-00"]
+    assert (tmp_path / "epoch-01" / "result.json").exists()
+    assert not (tmp_path / "epoch-02").exists()
+
+
+def test_max_hours_stops_after_the_epoch_that_crosses_the_cap(tmp_path: Path, monkeypatch):
+    from experiments.lama_ckl import runner
+
+    clock = [0.0]
+    monkeypatch.setattr(runner.time, "time", lambda: clock[0])
+    steps = FakeSteps()
+    evaluate = steps.evaluate
+
+    def timed_evaluate(epoch):
+        clock[0] += 3600.0 * epoch
+        return evaluate(epoch)
+
+    steps.evaluate = timed_evaluate
+
+    curve = run_epochs(
+        tmp_path, {**_settings("altrux", epochs=3), "max_hours": 0.5}, ROWS, steps, []
+    )
+
+    assert sorted(path.name for path in tmp_path.glob("epoch-*")) == ["epoch-00", "epoch-01"]
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert [row["epoch"] for row in summary["curve"]] == [0, 1]
+    assert len(curve) == 2

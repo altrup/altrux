@@ -189,13 +189,51 @@ tuning on the outcome.
 Seed 42 of all four arms first (frozen, lora, mix-review, altrux), 30
 epochs, same split, same `--dreams-per-cycle`, same `--docs-per-wake`.
 Seeds 43 and 44 only if the seed-42 curves show a difference worth
-confirming. Box session order: retrain, acceptance, split, Llama-2 check,
+confirming. Box session order (superseded by the amendment below): retrain, acceptance, split, Llama-2 check,
 then the cells, in one session if acceptance passes.
 
-Cost at the current decode speed, per altrux epoch: wake about 35 to 70
-min, dreams about 40 min at 10 per cycle, distillation about 10 min,
-evaluation under 1 min. About 12 h for the four seed-42 cells. The fused
-decode step is expected to cut most of it.
+Cost at the old decode speed, per altrux epoch: wake about 35 to 70 min,
+dreams about 40 min at 10 per cycle, distillation about 10 min, evaluation
+under 1 min. That is about 85 to 120 min per epoch, so 42 to 60 h for the
+altrux cell alone. The fused decode step is expected to cut most of it.
+About 12 h for the four seed-42 cells is the hoped-for total after the fused
+step; it is unverified.
+
+**Amended 2026-10-10 (altrup, after the skill dry run).** These rules are
+registered for the next box session:
+
+1. Session order: retrain, warm-start format acceptance (§3.6.1), pin, split,
+   wake acceptance (§3.6.2), engineering smokes, Llama-2 calibration, cells.
+   §3.6.2 needs split documents, so the split comes first.
+2. §3.6.2 runs as `make lama-ckl-run ARGS="... --arm altrux --cycles 1
+   --output ../.cache/lama_ckl/acceptance/docs10"`, and the same with
+   `--docs-per-wake 5` and `--output ../.cache/lama_ckl/acceptance/docs5`.
+   The rule reads the `subjects_mentioned` field of `epoch-01/cycle-00/dreams.json`:
+   the count of distinct wake subjects whose string appears in any of the
+   10 dreams.
+3. If both wake sizes exceed 20% forced closes, stop and report. The
+   no-reply wake is not an in-session fallback.
+4. The dream count may go up (20 to 50) only if the 10 acceptance dreams
+   show no relation to the wake documents at all. This is the
+   experimenter's judgment. It goes in the run notes before any cell.
+5. Seeds 43 and 44 run only if, at seed 42, altrux differs from the best
+   baseline by at least 0.02 absolute on peak acquisition or paired
+   retention. This is about twice the 1% evaluation-batch wobble.
+6. The session has a soft cap of 20 h wall clock (ASSUMED VALUE, altrup to
+   confirm). Each cell launches with `--max-hours` set to the remaining
+   budget. A stopped cell resumes next session at epoch granularity. The
+   ETA above is unverified until the fused decode is measured. A higher
+   measured ETA is recorded; it is not a stop.
+7. After `make warm-start`, the box writes the adapter SHA-256 into
+   `sft/experiments/lama_ckl/warmstart.sha256` and commits it on the box
+   branch.
+8. Before launch, altrup moves the stale `.cache/lama_ckl/runs` (recap050
+   cells) and the `mamba2_2_7b_recap050` split aside locally. altrup sets
+   `LAMBDA_RESUME_CHECKPOINT` to the repeat030 checkpoint path. The box
+   retrains, so this uploads only a pre-existing adapter, if any. Uploads
+   then do not collide with the new cells.
+9. The Llama-2 result pickle is archived before the tolerance check, so a
+   miss comes home.
 
 ## 4. Explicitly considered and rejected
 

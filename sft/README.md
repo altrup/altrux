@@ -519,8 +519,23 @@ evaluation alone, a one-point curve. All trainable arms use AdamW at `1e-4`;
 evaluation uses the published descriptive object-token accuracy from fresh
 state once per epoch, after its last cycle.
 
+Before the grid, an Altrux acceptance check reads one wake and its dreams
+without a full epoch: `--cycles N` runs the initial evaluation, then only the
+first `N` cycles of epoch 1, saves `epoch-01/` with its cycle artifacts
+unevaluated, and stops. It needs `--arm altrux` and a fresh `--output` outside
+`runs/`, and it does not resume:
+
+```bash
+make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 \
+  --docs-per-wake 10 --dreams-per-cycle 10 --cycles 1 \
+  --output ../.cache/lama_ckl/acceptance/altrux-10"
+```
+
 Runs resume from the last atomically completed `epoch-EE/`. A partial epoch
 restarts from its first cycle, since the state at an epoch boundary is fresh.
+`--max-hours H` stops a session after the first epoch that ends more than `H`
+hours after the session started; rerun the same command to continue. A resumed
+session may pass a different `--max-hours`.
 Each epoch stores the adapter and optimizer, metric vectors, resource counts,
 and hashes in `epoch-EE/result.json`; each Altrux cycle stores
 `epoch-EE/cycle-CC/wake.json` (every prompt and reply token, the forced-close

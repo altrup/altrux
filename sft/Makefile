@@ -250,12 +250,13 @@ lama-ckl-upstream-run: lama-ckl-upstream-check
 		| $(STAMP_AND_HEARTBEAT) \
 		| tee logs/lama-ckl-upstream-run-$(shell date +%Y%m%d-%H%M%S).log
 
+# The result is archived before the tolerance check so a miss still comes home.
 lama-ckl-upstream-summarize:
 	test -n "$(RESULT)"
-	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u -m experiments.lama_ckl.upstream summarize "$(RESULT)"
 	mkdir -p "$(LAMA_CKL_CACHE)/upstream"
 	cp "$(RESULT)" "$(LAMA_CKL_CACHE)/upstream/finetune_qlora.pkl"
+	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.upstream summarize "$(RESULT)"
 
 lama-ckl-split:
 	@mkdir -p logs

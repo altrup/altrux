@@ -62,6 +62,7 @@ class DreamRecord(Protocol):
 
 class DreamDiagnostics(TypedDict):
     correct_bindings: int
+    subjects_mentioned: int
     misbindings: int
     contradictions: int
     unique_dreams: int
@@ -141,6 +142,8 @@ def lama_dream_diagnostics(
       own object present   -> correct binding, counted once per dream per row
       own object absent    -> misbinding, counted every time
     The generated part of a dream is dream_ids[prefix_len:].
+    subjects_mentioned counts the rows whose subject (case-insensitive) is in
+    the generated text of at least one dream.
 
     Returns DreamDiagnostics dict
     """
@@ -150,7 +153,12 @@ def lama_dream_diagnostics(
     copy_fractions: list[float] = []
     longest: list[int] = []
     lengths: list[int] = []
+    mentioned: set[int] = set()
     for dream in dreams:
+        generated_text = "".join(dream.token_texts[dream.prefix_len :]).lower()
+        mentioned.update(
+            index for index, subject in enumerate(subjects) if subject.lower() in generated_text
+        )
         text = "".join(dream.token_texts)
         sentences = re.split(r"[.\n]", text)
         bound: set[int] = set()
@@ -174,6 +182,7 @@ def lama_dream_diagnostics(
     hashes = [dream.dream_sha for dream in dreams]
     return {
         "correct_bindings": correct,
+        "subjects_mentioned": len(mentioned),
         "misbindings": misbound,
         "contradictions": misbound,
         "unique_dreams": len(set(hashes)),
