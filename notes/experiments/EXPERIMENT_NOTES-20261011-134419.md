@@ -339,3 +339,44 @@ Upstream smoke (verbatim, `train:upstream`, after the HF_TOKEN export and
 `export LD_LIBRARY_PATH=$HOME/altrux/.cache/TAALM/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime/lib`):
 
     cd ~/altrux/sft && PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
+
+### 14:22 UTC — 100-document census and EOC-alone dreams (`sft/logs/diag-wake100-20261011-143000.log`)
+
+Registered frame, corpus rendering, greedy, 128 backstop, fresh state per
+document, first 100 to-learn rows: **EOC first 87, content 11, `[ASSISTANT]`
+first 2, EOS first 0**; of the 11 content replies 2 hit the backstop; reply
+lengths 3, 4, 5, 26, 38, 44, 75, 78, 87, 128, 128. The content replies
+decode as "end of quote ]"-style closers or document copies.
+
+10 dreams at T 0.7, 256 tokens, from `<|endofconversation|>` alone from
+fresh state: none opens a `[USER]` turn; every dream starts mid-sentence
+(" some of the most iconic moments in music history…", " the war.") and
+5 of 10 fall into a `\n[ASSISTANT][ASSISTANT][ASSISTANT]…` loop; 3 end with
+`<|endoftext|><|endofconversation|>` after one mid-sentence span.
+`acceptance()`: plain 0, markers 643 (the loops), non-ASCII 2 (a curly
+apostrophe), passed false. Caveat: in the corpus EOC always follows EOS, so
+EOC from a fresh state is itself off-distribution; rechecked below with a
+corpus-shaped turn + EOS + EOC prefix. The `[ASSISTANT]` loop after `\n`
+is the same artifact as the question-frame probe and is a warm-start
+quality finding regardless.
+
+### 14:22 UTC — upstream smoke PASSED
+
+`sft/logs/lama-ckl-upstream-smoke-20261011-142131.log`, EXIT=0: 64 rows,
+one optimizer update, loss 2.216, eval ch ppl 6.20 acc 0.000 / unch ppl
+0.383 acc 1.000 (the one-update smoke, numbers not meaningful).
+
+## 14:28 UTC — launched: upstream run, frozen cell, dream recheck
+
+`train:upstream` (verbatim, same exports):
+
+    cd ~/altrux/sft && PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-run
+
+`train:0` (verbatim, after the HF_TOKEN export), fresh start, warm start
+245e2089, split `mamba2_2_7b_repeat030`, cap remaining 19.2 h → `--max-hours 19`:
+
+    cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm frozen --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 19"
+
+then `diag_dreams2.py` (scratch; prefix `[USER] What is the capital of
+France?\n[ASSISTANT] Paris<|endoftext|>` + EOC, 10 dreams T 0.7, 256
+tokens), log `sft/logs/diag-dreams2-20261011-143000.log`. PROVISIONAL (all).
