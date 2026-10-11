@@ -214,9 +214,18 @@ else:
 "
 }
 
-# resolve_region exits 3 on an unknown instance type (fatal); any other
-# nonzero (curl/network blip) or an empty result means "no capacity yet".
-try_region() { region="$(resolve_region)" || { [[ $? == 3 ]] && exit 1; region=""; }; }
+# resolve_region exits 3 on an unknown instance type: fatal on the first
+# lookup (a typo), "no capacity yet" once the listing has carried the type
+# (the API drops a type from the listing transiently while it is sold out).
+type_seen=0
+try_region() {
+  if region="$(resolve_region)"; then
+    type_seen=1
+  else
+    [[ $? == 3 && "$type_seen" == 0 ]] && exit 1
+    region=""
+  fi
+}
 
 launch_instance() {
   # One launch attempt in $region. Success: sets instance_id, returns 0.
