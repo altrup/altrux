@@ -314,3 +314,28 @@ reply are identical at any wake size, so it fails the same invariant at
 turn 1. Before shutdown: the fused-step equivalence test and a 100-document
 first-token census plus the §3.6.1 EOC-alone dream check, for the
 discussion.
+
+### 14:21 UTC — teammate direction: altrux arm stop-and-report only; baselines and calibration proceed
+
+Teammate (pasted, read the diag log): agrees it is model behaviour (EOC /
+"end quote" after a pasted passage), not a bug. The wake frame is altrup's
+decision; write the altrux arm up as stop-and-report with the top-8 lines
+and the `[ASSISTANT]`-repeat artifact (12 % after the plain chat question),
+do NOT shut the box down: frozen, lora, mix-review never wake (debrief §3.2),
+so run those three seed-42 cells now in order with `--max-hours` = remaining
+budget, run the Llama-2 calibration in parallel on the TAALM env, mark all
+PROVISIONAL (protected edit `4dee2aa`), run the fused-step test before the
+lora cell, leave the altrux cell to altrup.
+
+Done before this: `models/tests/test_mamba2_780m_fused_step.py` on the
+GH200: 7 passed, 0 skipped (`sft/logs/gputest-fused-step-20261011-142500.log`).
+Soft cap: 20 h from 13:42 UTC → 09:42 UTC 2026-10-12.
+
+Parallel GPU use is the teammate's call for this session (the one-tmux rule
+is otherwise one GPU job at a time): the upstream run goes in a second
+`train` window named `upstream`; the Mamba cells stay in `train:0`.
+
+Upstream smoke (verbatim, `train:upstream`, after the HF_TOKEN export and
+`export LD_LIBRARY_PATH=$HOME/altrux/.cache/TAALM/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime/lib`):
+
+    cd ~/altrux/sft && PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke
