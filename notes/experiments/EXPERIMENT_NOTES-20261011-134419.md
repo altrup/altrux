@@ -571,3 +571,22 @@ seed-42-first amendment; follow-up for the team, not changed here.
 No cell is partial: frozen `epoch-00`, lora `epoch-30`, mix-review
 `epoch-30` complete. The altrux cell has not started; the acceptance
 artifacts are under `.cache/lama_ckl/acceptance/{docs10,docs10-failed-rendering}`.
+
+### 17:01 UTC — artifacts verified home (pull receipt 2026-10-11T17:00:48 UTC)
+
+| artifact | bytes on teammate's machine |
+|---|---|
+| `models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800/trainable.pt` | 42,727,051 |
+| `.cache/lama_ckl/mamba2_2_7b_repeat030/variant.jsonl` / `manifest.json` | 613,514 / 4,029 |
+| `.cache/lama_ckl/acceptance/docs10/…/cycle-00/wake.json` | 23,934 |
+| `.cache/lama_ckl/acceptance/docs10-failed-rendering/…/cycle-00/wake.json` | 31,423 |
+| `.cache/lama_ckl/runs/frozen-seed-42/summary.json` | 10,736 |
+| `.cache/lama_ckl/runs/lora-seed-42/summary.json` + `epoch-30/result.json` | 305,379 + 7,772 |
+| `.cache/lama_ckl/runs/mix-review-seed-42/summary.json` + `epoch-30/result.json` | 305,626 + 7,785 |
+| all 62 lora + mix-review `epoch-NN/result.json` | present |
+| `.cache/lama_ckl/upstream/finetune_qlora.pkl` | 47,802 |
+| this notes file | 31,742 (pre-closing-receipt size) |
+| session logs under `sft/logs/` (warm-start, split, runs, diag-*) | 25 files |
+
+Nothing UNRETRIEVED. Terminating via `scripts/.watchdog-terminate` at 17:02
+UTC; box time used ≈ 3.3 h of the assumed 20 h cap.
