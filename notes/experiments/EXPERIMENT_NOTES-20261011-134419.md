@@ -483,3 +483,91 @@ remaining 18.1 h → `--max-hours 18`:
     cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 18"
 
 Log `sft/logs/lama-ckl-run-20261011-153326.log`. PROVISIONAL.
+
+### 16:58 UTC — mix-review cell DONE (PROVISIONAL)
+
+`sft/logs/lama-ckl-run-20261011-153326.log`, EXIT=0, 15:33–16:58 (85 min,
+~165 s/epoch: 500 source + 500 review documents per epoch).
+`.cache/lama_ckl/runs/mix-review-seed-42/summary.json` checkpoint: **peak
+to-learn 0.060 at epoch 13, paired not-to-forget 0.518, total 0.578.**
+Curve (epoch: to-learn/not-to-forget): 0: 0.004/0.984, 1: 0.022/0.880,
+2: 0.019/0.859, 3: 0.028/0.828, 4: 0.043/0.722, 5: 0.037/0.625,
+6: 0.043/0.538, 7: 0.043/0.544, 8: 0.050/0.600, 9: 0.034/0.524,
+10: 0.043/0.484, 11: 0.054/0.506, 12: 0.038/0.482, 13: 0.060/0.518,
+14: 0.047/0.506, 15: 0.043/0.524, 16: 0.046/0.528, 17: 0.051/0.530,
+18: 0.045/0.514, 19: 0.055/0.540, 20: 0.053/0.528, 21: 0.055/0.525,
+22: 0.053/0.521, 23: 0.053/0.518, 24: 0.055/0.516, 25: 0.049/0.515,
+26: 0.049/0.518, 27: 0.049/0.514, 28: 0.053/0.513, 29: 0.051/0.511,
+30: 0.051/0.513. Reviewing the 500 retention documents each epoch did not
+protect their object-token accuracy: the retention curve tracks lora's
+within ~0.01 from epoch 10 on.
+
+`make lama-ckl-report` (`work:report`, log
+`sft/logs/lama-ckl-report-20261011-170000.log`, EXIT=2): refuses with
+"report needs the 12 registered cells". Its check predates the debrief's
+seed-42-first amendment; follow-up for the team, not changed here.
+
+## Closing (shutdown checklist, 17:00 UTC)
+
+### What ran
+
+1. Warm start retrained (`make warm-start`, repeat 0.3, Dolly rows, 8192
+   packs), 800 steps, final loss 0.956, SHA-256 `245e2089…70fe`, pinned
+   in `sft/experiments/lama_ckl/warmstart.sha256` (`29de8e3`). Loss spike
+   to ~12 during LR warm-up then recovery, the same curve as the 08-10
+   warm start (teammate's step file).
+2. Split rebuilt on it: `.cache/lama_ckl/mamba2_2_7b_repeat030/`, 500/500,
+   invariants zero.
+3. Wake acceptance (§3.6.2) failed twice: first on the wake rendering (no
+   newline before `[ASSISTANT]`, lone space after it; fixed by PROTECTED
+   EDIT `4dee2aa`, test-backed), then on the model: with the corrected
+   rendering the warm start answers the registered frame with
+   `<|endofconversation|>` as the first token (10/10 in the run, 87/100 in
+   the census). Teammate's read: model behaviour, not a bug; the wake frame
+   is altrup's decision. **Altrux arm: STOP-AND-REPORT, not run.**
+4. Dream prompt finding: after `…<|endoftext|><|endofconversation|>` the
+   warm start emits `<|endofconversation|>` again (9/10). The train mask
+   never makes the `[USER]` after EOC a target (0/1766), so since the
+   09-24 mask fix the warm start teaches "EOS then EOC" and nothing after.
+   The registered dream prompt has no supervision in this warm start.
+5. Baselines at seed 42 (PROVISIONAL, protected edit `4dee2aa` pending
+   altrup's review; the edit touches only the altrux wake, which these arms
+   never run):
+
+   | arm | peak to-learn (epoch) | paired not-to-forget | total | wall |
+   |---|---|---|---|---|
+   | frozen | 0.004 (0) | 0.9835 | 0.9875 | 25 s |
+   | lora | 0.064 (15) | 0.527 | 0.591 | 56 min |
+   | mix-review | 0.060 (13) | 0.518 | 0.578 | 85 min |
+   | Llama-2-7B QLoRA calibration (TAALM, 1×GH200 batch-equivalent) | 0.105 (29) | 0.897 | 1.002 | 22 min |
+
+   Seeds 43/44 rule (≥ 0.02 difference, altrux vs best baseline) cannot be
+   applied without the altrux cell.
+6. Llama-2 calibration: gate MISS (peak epoch 29 vs 16 ± 2; retention
+   0.897 vs 0.8174 ± 0.02; peak 0.105 inside 0.115 ± 0.02). Pickle
+   archived at `.cache/lama_ckl/upstream/finetune_qlora.pkl`.
+
+### What to discuss
+
+- The wake frame: the 2.7B warm start closes the conversation when handed
+  a bare document. Options are altrup's (a question-shaped frame, a
+  reply-free wake, a warm start that teaches "acknowledge a document", or
+  sampling), all protocol changes.
+- The boundary: the warm start must teach what follows
+  `<|endofconversation|>` for the dream prompt to produce anything.
+  Candidates: train the `[USER]` opener token at every boundary, or train
+  user turns as the recap050 run did by accident (then the 09-24 mask fix
+  needs a per-corpus switch).
+- The `[ASSISTANT]`-repeat artifact of this warm start (12 % after a plain
+  question; loops under a question-shaped frame and in free text).
+- Warm-up collapse to near-uniform loss during the warm start: known
+  shape, but a warm-up schedule or lower peak LR may be worth a look.
+- The 20 h soft cap was an ASSUMED VALUE; 3.3 h used.
+- `make lama-ckl-report` needs the seed-42-first amendment; the
+  evaluation-batch wobble (0.9815 vs 0.9835 at the same adapter).
+
+### Resume points
+
+No cell is partial: frozen `epoch-00`, lora `epoch-30`, mix-review
+`epoch-30` complete. The altrux cell has not started; the acceptance
+artifacts are under `.cache/lama_ckl/acceptance/{docs10,docs10-failed-rendering}`.
