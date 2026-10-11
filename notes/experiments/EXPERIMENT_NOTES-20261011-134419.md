@@ -208,3 +208,58 @@ Pull receipt 14:09:46 UTC: `repeat030/epoch-2/step-800/trainable.pt`
 
 Log `sft/logs/lama-ckl-run-20261011-141302.log`. Fresh start; warm start
 245e2089, split manifest `.cache/lama_ckl/mamba2_2_7b_repeat030/manifest.json`.
+
+### 14:14 UTC — docs10 acceptance attempt 1 FAILED on the wake invariant
+
+Log `sft/logs/lama-ckl-run-20261011-141302.log`, EXIT=2:
+`epoch 1 cycle 0 wake invariants failed: {'turns': 10, 'internal_eoc': 2}`.
+Epoch-0 evaluation first (floor, from fresh state, 34 s): to-learn 0.0040,
+not-to-forget 0.9815, total 0.9855. Wake 10 turns at 0.39 turn/s.
+Artifacts kept at `.cache/lama_ckl/acceptance/docs10-failed-rendering/`
+(`work/epoch-01.*/cycle-00/wake.json`).
+
+Decoding every turn's `prompt_token_ids` and `assistant_token_ids`:
+
+- Every prompt ended `...<document>[ASSISTANT] ` as tokens `[..., 50278,
+  209]`: no newline between the user turn and the assistant marker, and a
+  lone space token (209) after it. The warm-start corpus
+  (`preparation/conversations.py` `format_conversation`) renders
+  `[USER] <content>\n` then `[ASSISTANT] <content><|endoftext|>`, where the
+  space merges into the first content token. The wake prompt was therefore
+  off the trained distribution at exactly the position the reply starts.
+- Every reply began with token 4118 `###` and then, in 8 of 10, the
+  model's own `[ASSISTANT]` (50278): the model repaired the rendering
+  itself. After that: 6 substantive replies (turns 0, 4, 5, 6, 7 are
+  near-verbatim copies of the document, the repeat-030 behaviour), 2 empty
+  (`###[ASSISTANT]<|endoftext|>`), 2 EOC (`###<|endofconversation|>`,
+  turns 8 and 9). Forced closes 0/10.
+
+The 2026-10-10 wake (no frame, same prompt assembly) had the same
+missing newline, so its 445–458/500 forced closes were measured on an
+off-distribution prompt too.
+
+## PROTECTED EDIT — `sft/experiments/lama_ckl/protocol.py` (commit `4dee2aa`)
+
+Traceback: `runner.py:218 RuntimeError: epoch 1 cycle 0 wake invariants
+failed: {'turns': 10, 'internal_eoc': 2}` (above). Change, in
+`run_conversational_wake`: the prompt is now
+`user_open + " " + WAKE_FRAME + document + "\n" + asst_open` (tokens:
+`_encode("\n")` = `[187]` appended after the evidence, `_encode(asst_open)`
+without the trailing space), the corpus rendering up to the reply. The
+docstring says so. Verified on the real tokenizer that `" <doc>\n"` encodes
+identically joint and split at every seam tried (`.`, `)`, digits). Tests:
+`test_conversational_wake_puts_one_frame_before_every_document` now expects
+`...<doc>\n[ASSISTANT]`, and the new
+`test_conversational_wake_prompt_is_the_corpus_rendering_up_to_the_reply`
+asserts byte-identity with `format_conversation` up to the reply. Both
+failed before the fix; `tests/experiments/lama_ckl/`: 50 passed after.
+`evaluation.py`, `split.py`, `data.py` untouched. **Every result from here
+on is PROVISIONAL until altrup accepts `4dee2aa` into `main`.** The debrief
+§3.2 frame is written on two lines, so I read this as the registered
+rendering, not a protocol change.
+
+## 14:17 UTC — docs10 acceptance attempt 2 (`train`, verbatim)
+
+    cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs10"
+
+Log `sft/logs/lama-ckl-run-20261011-141715.log`. PROVISIONAL.
