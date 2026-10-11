@@ -115,3 +115,96 @@ schedule or lower peak LR is a protocol change and belongs to the debrief.
 ## 13:52 UTC — warm start attempt 2 (verbatim, `train`, after the HF_TOKEN export)
 
     cd ~/altrux/sft && MODEL_NAME=mamba2_2_7b make warm-start; echo "EXIT=$?" >> "$(ls -t logs/warm-start-*.log | head -1)"
+
+## 14:01 UTC — warm start DONE and PINNED
+
+Log `sft/logs/warm-start-20261011-135130.log`, EXIT=0, 800 steps / 2 epochs
+in 9 min (13:52–14:01), ~1.5 step/s. Attempt 2 reproduced attempt 1 step for
+step (packer and trainer deterministic). Every-100th step:
+
+| step | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 |
+|---|---|---|---|---|---|---|---|---|
+| loss | 7.17 | 4.69 | 1.44 | 1.07 | 1.18 | 1.24 | 1.06 | 0.956 |
+| gnorm | 1.8 | 17.6 | 0.27 | 0.31 | 0.31 | 0.26 | 0.22 | 0.36 |
+
+Zero non-finite warnings. Checkpoint
+`models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800` (2.2 GB tree).
+**Warm-start SHA-256 (trainable.pt): `245e2089aa51d923747030feb8d77f23e691803478269a8bc222b2591cbf70fe`**,
+written to `sft/experiments/lama_ckl/warmstart.sha256`, commit `29de8e3`.
+GPU utilization was not sampled during the 9-minute job (same call as the
+08-10 note: not worth tuning).
+
+## 14:03–14:09 UTC — split built (`train`, verbatim, after the HF_TOKEN export)
+
+    cd ~/altrux/sft && make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
+
+Log `sft/logs/lama-ckl-split-20261011-140317.log`, EXIT=0, 6 min. Source
+candidates 13,645 (sha256 `6d787847…ea775`); scoring ~62–80 item/s. Output
+`.cache/lama_ckl/mamba2_2_7b_repeat030/`: `variant.jsonl` 500 rows sha256
+`f5edfdd9a6a5077d7dd404a8d245869d9621be4ca68b0b97dba6cd616e01d98d`,
+`invariant_descriptive.jsonl` 500 rows sha256
+`eec005e5c3ce7fc05484f17d5cbaf3c52aad1941ed9cd22640136b4e5711854c`,
+`manifest.json` 4,029 bytes. Both invariant dicts zero
+(`duplicate_uuid`, `missing_subject_or_object`). Samples: to-learn "Gary
+Cuozzo plays in quarterback position" with a Cardinals evidence paragraph;
+retained "Gloria Estefan used to communicate in Spanish" with a songwriting
+evidence paragraph. Both read as well-formed task/evidence rows.
+
+Order note: the amendment puts the §3.6.1 format acceptance before the pin
+and the split. The repo's `make acceptance-check` scores a dream cache from
+the retired erasure harness (`experiments/dreams/cli.py --build-dream-cache`,
+which needs that harness's wake manifest), so instead §3.6.1 is scored on the
+§3.6.2 acceptance dreams with the same function (`diagnostics.acceptance.
+acceptance`, token-level plain-`]` share < 35 %, zero non-ASCII), after the
+split. No benchmark score is read before it. Script (scratchpad, run with
+`MODEL_NAME=mamba2_2_7b PYTHONPATH=.. uv run --no-sync python format_acceptance.py <dreams.json>...`):
+
+```python
+"""DISCUSSION-20261010 sec 3.6.1 on the sec 3.6.2 acceptance dreams: score a
+LAMA-CKL dreams.json with diagnostics.acceptance.acceptance (token-level
+plain-']' share and mojibake over the free-running span)."""
+import importlib
+import json
+import os
+import sys
+from dataclasses import dataclass
+
+from models.common import build_tokenizer
+
+from diagnostics.acceptance import MARKER_SHARE_MAX, PLAIN_BRACKET_ID, acceptance
+
+
+@dataclass
+class D:
+    dream_ids: list
+    token_texts: list
+    prefix_len: int
+
+
+model_mod = importlib.import_module(f"models.{os.environ['MODEL_NAME']}")
+tok = build_tokenizer(model_mod)
+for path in sys.argv[1:]:
+    rows = json.load(open(path))["dreams"]
+    dreams = [
+        D(r["token_ids"], [tok.decode([i]) for i in r["token_ids"]], r["prefix_tokens"]) for r in rows
+    ]
+    res = acceptance(
+        dreams,
+        user_id=tok.convert_tokens_to_ids(model_mod.USER_OPEN),
+        asst_id=tok.convert_tokens_to_ids(model_mod.ASST_OPEN),
+    )
+    print(path, json.dumps(res), f"(share must be < {MARKER_SHARE_MAX}, plain id {PLAIN_BRACKET_ID})")
+    for r in rows[:3]:
+        print("  stop:", r["stop_reason"], "|", r["text"][: 300].replace("\n", "\\n"))
+    print("  PASSED" if res["passed"] else "  FAILED")
+```
+
+Pull receipt 14:09:46 UTC: `repeat030/epoch-2/step-800/trainable.pt`
+42,727,051 bytes, `optimizer.pt` 85,509,515, the split's three files. Home.
+
+## 14:13 UTC — wake acceptance, 10 documents (`train`, verbatim)
+
+    cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs10"
+
+Log `sft/logs/lama-ckl-run-20261011-141302.log`. Fresh start; warm start
+245e2089, split manifest `.cache/lama_ckl/mamba2_2_7b_repeat030/manifest.json`.
