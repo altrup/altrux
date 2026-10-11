@@ -10,6 +10,7 @@ from experiments.lama_ckl.protocol import (
     run_conversational_wake,
 )
 from experiments.lama_ckl.runner import REPLY_TOKENS
+from preparation.conversations import format_conversation
 
 
 class Tokenizer:
@@ -19,6 +20,9 @@ class Tokenizer:
 
     def convert_tokens_to_ids(self, token):
         return self.markers[token]
+
+    def encode(self, text, add_special_tokens=False):
+        return self(text, add_special_tokens=add_special_tokens)["input_ids"]
 
     def __call__(self, text, add_special_tokens=False, **_kwargs):
         ids, index = [], 0
@@ -109,8 +113,39 @@ def test_conversational_wake_puts_one_frame_before_every_document():
     frame_ids = tokenizer(f"[USER] {WAKE_FRAME}".rstrip())["input_ids"]
     assert all(prompt[: len(frame_ids)] == frame_ids for prompt in prompts)
     for prompt, document in zip(prompts, documents, strict=True):
-        assert tokenizer.decode(prompt) == f"[USER] {WAKE_FRAME}{document}[ASSISTANT] "
+        assert tokenizer.decode(prompt) == f"[USER] {WAKE_FRAME}{document}\n[ASSISTANT]"
     assert artifact["frame"] == WAKE_FRAME
+
+
+def test_conversational_wake_prompt_is_the_corpus_rendering_up_to_the_reply():
+    tokenizer = Tokenizer()
+    document = "Ada in Rome"
+
+    artifact, _ = run_conversational_wake(
+        Model(),
+        tokenizer,
+        [document],
+        None,
+        "[USER]",
+        "[ASSISTANT]",
+        "<EOC>",
+        reply_tokens=4,
+        evidence_tokens=512,
+        device="cpu",
+    )
+
+    corpus_ids, _, _ = format_conversation(
+        [
+            {"role": "user", "content": WAKE_FRAME + document},
+            {"role": "assistant", "content": "x"},
+        ],
+        tokenizer,
+        10_000,
+        "[USER]",
+        "[ASSISTANT]",
+    )
+    reply_start = corpus_ids.index(tokenizer.convert_tokens_to_ids("[ASSISTANT]")) + 1
+    assert artifact["turns"][0]["prompt_token_ids"] == corpus_ids[:reply_start]
 
 
 def test_conversational_wake_forces_eos_at_the_backstop_and_counts_it():

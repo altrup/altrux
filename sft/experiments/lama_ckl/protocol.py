@@ -222,8 +222,10 @@ def run_conversational_wake(
     Raises ValueError if either limit is < 1
 
     Per turn the prompt is user_open + " " + WAKE_FRAME + document (truncated)
-    + asst_open + " ". The frame is tokenized apart from the document, so its
-    tokens are identical in every turn. The reply is argmax tokens until EOS
+    + "\n" + asst_open: the warm-start corpus rendering
+    (preparation/conversations.py format_conversation) up to the reply, whose
+    first token carries the separating space. The frame is tokenized apart
+    from the document, so its tokens are identical in every turn. The reply is argmax tokens until EOS
     or EOC. Each token goes back into the model so the state holds the full
     turn. A reply with neither within reply_tokens is closed with a fed EOS and
     flagged eos_forced. An EOC ends the reply and is counted in internal_eoc,
@@ -266,7 +268,8 @@ def run_conversational_wake(
                 _encode(tokenizer, user_open)
                 + frame_ids
                 + list(evidence)
-                + _encode(tokenizer, f"{asst_open} ")
+                + _encode(tokenizer, "\n")
+                + _encode(tokenizer, asst_open)
             )
             logits, current_state = model(
                 torch.tensor([prompt_ids], dtype=torch.long, device=device), current_state
