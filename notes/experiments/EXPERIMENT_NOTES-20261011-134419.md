@@ -263,3 +263,54 @@ rendering, not a protocol change.
     cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs10"
 
 Log `sft/logs/lama-ckl-run-20261011-141715.log`. PROVISIONAL.
+
+### 14:20 UTC — docs10 acceptance attempt 2 FAILED: EOC is the first reply token, 10/10
+
+Log `sft/logs/lama-ckl-run-20261011-141715.log`, EXIT=2,
+`wake invariants failed: {'turns': 10, 'internal_eoc': 10}`. Every prompt
+now ends `[..., 187, 50278]` (`\n[ASSISTANT]`), and every reply is the single
+token 50279 `<|endofconversation|>`. Forced closes 0. Artifacts under
+`.cache/lama_ckl/acceptance/docs10/work/epoch-01.*/cycle-00/wake.json`.
+
+Teammate (14:25, pasted): corpus count on the box: `[ASSISTANT]` occurs
+5083 times, always preceded by newline, never followed by EOC; after EOS the
+split is 2611 `[USER]` / 2472 EOC. The data never teaches `[ASSISTANT]`→EOC.
+Also: the 2.7B wrapper imports the 780m one, so replies after token 0 run
+the new fused single-token step (`ace1155`); its equivalence test
+`models/tests/test_mamba2_780m_fused_step.py` is queued on this box.
+
+Diagnostic (`sft/logs/diag-reply-20261011-142300.log`, scratch script
+`diag_reply.py`, same loader as the runner): top-8 next tokens after the
+prompt and the greedy continuation. The first token comes from the chunk
+path, the one evaluation uses.
+
+| prompt | top next tokens (p) | greedy |
+|---|---|---|
+| wake frame, corpus rendering, doc 1 | EOC .25, " end" .07, `[ASSISTANT]` .06, "end" .06, " Remember" .04 | `<\|endofconversation\|>` |
+| wake frame, corpus rendering, doc 2 | " end" .16, EOC .13, " End" .10 | `end quote<\|endoftext\|>` |
+| wake frame, OLD rendering (no `\n`, lone space), doc 1 | `###` .21, `].` .19, `####` .13 | `###[ASSISTANT] Hollway was traded …` |
+| no frame, corpus rendering, doc 1 | EOC .22, " The" .11, " Holl" .08 | EOC |
+| document + "What is this passage about?" | `[ASSISTANT]` .18 / .50 | `[ASSISTANT]` × 40 (degenerate) |
+| `[USER] What is the capital of France?` | " Paris" .33 | ` Paris<\|endoftext\|>` |
+| Dolly-style context + question | " Gust" .65 | ` Gustave Eiffel<\|endoftext\|>` |
+
+Reading: the corrected rendering is the trained one (plain chat and Dolly
+prompts answer correctly and tersely, as the corpus does). Under the
+registered frame the warm start's honest greedy reply to a bare document is
+to close the conversation or say "end quote": the frame gives it nothing to
+answer, which is the debrief §2 diagnosis ("a document with no reason to
+reply to it") surviving the frame. The 10-10 wake's long replies were the
+old rendering's `###[ASSISTANT]` self-repair followed by document
+continuation, not replies to the frame. Note also `[ASSISTANT]` itself
+carries 5–50 % next-token mass after `\n[ASSISTANT]` in several prompts and
+loops under the question frame: a marker-delta/LoRA artifact of this warm
+start worth a look.
+
+Decision: this is the debrief amendment §3 case ("the no-reply wake is not
+an in-session fallback") reached through `internal_eoc` rather than forced
+closes, and the pre-grid acceptance fails → STOP-AND-REPORT. The
+5-document run is not run formally: the first document's prompt and greedy
+reply are identical at any wake size, so it fails the same invariant at
+turn 1. Before shutdown: the fused-step equivalence test and a 100-document
+first-token census plus the §3.6.1 EOC-alone dream check, for the
+discussion.
