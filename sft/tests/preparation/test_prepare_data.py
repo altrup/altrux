@@ -144,6 +144,29 @@ def test_format_conversation_closes_the_conversation_with_the_boundary_token(tok
     assert len(ids) == len(mask)
 
 
+def test_train_user_turns_masks_user_tokens_true_and_assistant_turns_stay_true(tokenizer):
+    user_id = tokenizer.convert_tokens_to_ids(USER_OPEN)
+    ids, default_mask, _ = format_conversation(_conv(0), tokenizer, 4096, USER_OPEN, ASST_OPEN)
+    _, mask, _ = format_conversation(
+        _conv(0), tokenizer, 4096, USER_OPEN, ASST_OPEN, train_user_turns=True
+    )
+
+    user_positions = [i for i, token in enumerate(ids) if token == user_id]
+    assert len(user_positions) == 2
+    assert all(not default_mask[i] for i in user_positions)
+    assert all(mask)
+    packed_ids, packed_mask, _, _ = format_pack(
+        [("fresh", _conv(0)), ("fresh", _conv(1))],
+        tokenizer,
+        4096,
+        USER_OPEN,
+        ASST_OPEN,
+        EOC,
+        train_user_turns=True,
+    )
+    assert len(packed_ids) == len(packed_mask) and all(packed_mask)
+
+
 def test_format_conversation_without_a_boundary_token_is_unchanged(tokenizer):
     plain, _, _ = format_conversation(_conv(0), tokenizer, 4096, USER_OPEN, ASST_OPEN)
     closed, _, _ = format_conversation(_conv(0), tokenizer, 4096, USER_OPEN, ASST_OPEN, eoc=EOC)

@@ -23,10 +23,12 @@ _worker_tokenizer = None
 _worker_max_len = None
 _worker_markers: tuple[str, str] | None = None
 _worker_eoc: str | None = None
+_worker_train_user_turns = False
 
 
-def _worker_init(model_name: str, max_len: int) -> None:
+def _worker_init(model_name: str, max_len: int, train_user_turns: bool) -> None:
     global _worker_tokenizer, _worker_max_len, _worker_markers, _worker_eoc
+    global _worker_train_user_turns
     # Imported here, not at module top: importing a model package pulls in
     # mamba_ssm, which needs a working GPU even to import -- keeping it lazy
     # keeps format_conversation importable (and testable) without one.
@@ -35,12 +37,20 @@ def _worker_init(model_name: str, max_len: int) -> None:
     _worker_max_len = max_len
     _worker_markers = (mod.USER_OPEN, mod.ASST_OPEN)
     _worker_eoc = getattr(mod, "EOC", None)
+    _worker_train_user_turns = train_user_turns
 
 
 def _worker_format(
     group: list[tuple[str, list[dict]]],
 ) -> tuple[list[int], list[bool], int | None, int]:
-    return format_pack(group, _worker_tokenizer, _worker_max_len, *_worker_markers, _worker_eoc)
+    return format_pack(
+        group,
+        _worker_tokenizer,
+        _worker_max_len,
+        *_worker_markers,
+        _worker_eoc,
+        train_user_turns=_worker_train_user_turns,
+    )
 
 
 def format_conversation(
@@ -50,6 +60,8 @@ def format_conversation(
     user_open: str,
     asst_open: str,
     eoc: str | None = None,
+    *,
+    train_user_turns: bool = False,
 ) -> tuple[list[int], list[bool], int | None]:
     """Returns (ids, mask, question_offset).
 
@@ -65,6 +77,10 @@ def format_conversation(
     `eoc` closes the conversation with the model's boundary marker, so the
     corpus teaches it as conversation-end (DISCUSSION-20260808 sec 2.9.3). It
     is trainable: emitting it is the behaviour being taught.
+
+    `train_user_turns` puts user turns under the loss too, so the model learns
+    to open and write a `[USER]` turn (the dream prompt asks it to write both
+    sides; DISCUSSION-20261011 sec 3.1).
     """
     ids: list[int] = []
     mask: list[bool] = []
@@ -92,7 +108,7 @@ def format_conversation(
                     turn_ids = tokenizer.encode(text + q_text, add_special_tokens=False)
             else:
                 turn_ids = tokenizer.encode(text, add_special_tokens=False)
-            turn_mask = [False] * len(turn_ids)
+            turn_mask = [train_user_turns] * len(turn_ids)
         elif role == "assistant":
             text = asst_open + " " + content
             toks = tokenizer.encode(text, add_special_tokens=False)
@@ -154,6 +170,8 @@ def format_pack(
     user_open: str,
     asst_open: str,
     eoc: str | None,
+    *,
+    train_user_turns: bool = False,
 ) -> tuple[list[int], list[bool], int | None, int]:
     """One packed example: every conversation of `group` in order, each closed
     by `eoc`. `max_len` bounds the whole example, not each conversation, so a
@@ -166,7 +184,13 @@ def format_pack(
     packed = 0
     for _kind, messages in group:
         part_ids, part_mask, qoff = format_conversation(
-            messages, tokenizer, max_len - len(ids), user_open, asst_open, eoc
+            messages,
+            tokenizer,
+            max_len - len(ids),
+            user_open,
+            asst_open,
+            eoc,
+            train_user_turns=train_user_turns,
         )
         if not part_ids:
             break
@@ -315,6 +339,11 @@ def main() -> None:
         default=0,
         help="Pool shuffle and packing RNG seed (default: %(default)s)",
     )
+    parser.add_argument(
+        "--train-user-turns",
+        action="store_true",
+        help="Put user turns under the loss as well as assistant turns",
+    )
     args = parser.parse_args()
     if not (args.input or args.hf_dataset):
         parser.error("give --input, --hf-dataset, or both")
@@ -355,13 +384,19 @@ def main() -> None:
             with multiprocessing.Pool(
                 args.workers,
                 initializer=_worker_init,
-                initargs=(model_name, args.max_len),
+                initargs=(model_name, args.max_len, args.train_user_turns),
             ) as pool:
                 yield from pool.imap(_worker_format, groups)
         else:
             for group in groups:
                 yield format_pack(
-                    group, tokenizer, args.max_len, model_mod.USER_OPEN, model_mod.ASST_OPEN, eoc
+                    group,
+                    tokenizer,
+                    args.max_len,
+                    model_mod.USER_OPEN,
+                    model_mod.ASST_OPEN,
+                    eoc,
+                    train_user_turns=args.train_user_turns,
                 )
 
     for i, (ids, mask, qoff, packed) in enumerate(formatted()):
@@ -381,7 +416,7 @@ def main() -> None:
     torch.save({"ids": all_ids, "masks": all_masks, "question_offsets": all_qoffs}, out)
     n_q = sum(q is not None for q in all_qoffs)
     print(
-        f"Saved {len(all_ids)} examples to {out} ({skipped} skipped — no assistant turns; "
+        f"Saved {len(all_ids)} examples to {out} ({skipped} skipped — nothing trainable; "
         f"{n_q} with question offsets)"
     )
 
