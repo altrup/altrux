@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.lama_ckl.report import _load_run, aggregate_runs, scientific_runs
+from experiments.lama_ckl.report import _load_run, aggregate_runs, build_report, scientific_runs
 
 
 def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
@@ -205,3 +205,37 @@ def test_aggregate_runs_accepts_a_one_point_frozen_curve_beside_trained_arms():
 
     assert report["arms"]["frozen"]["final_forgetting"]["mean"] == 0.0
     assert report["arms"]["altrux"]["wake_tokens"]["mean"] == 30
+
+
+def _cell(arm: str, seed: int) -> dict[str, object]:
+    point = {"to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}
+    return {
+        "arm": arm,
+        "seed": seed,
+        "settings": {"split_manifest_sha256": "x", "epochs": 0},
+        "curve": [{"epoch": 0, **point}],
+    }
+
+
+def test_build_report_aggregates_the_seed_42_cells_and_lists_the_rest_as_missing():
+    arms = ("frozen", "lora", "mix-review", "altrux")
+
+    report = build_report([_cell(arm, 42) for arm in arms])
+
+    assert set(report["arms"]) == set(arms)
+    assert sorted(map(tuple, report["present_cells"])) == sorted((arm, 42) for arm in arms)
+    assert sorted(map(tuple, report["missing_cells"])) == sorted(
+        (arm, seed) for arm in arms for seed in (43, 44)
+    )
+
+
+def test_build_report_accepts_a_two_arm_subset():
+    report = build_report([_cell("frozen", 42), _cell("lora", 42)])
+
+    assert set(report["arms"]) == {"frozen", "lora"}
+    assert len(report["missing_cells"]) == 10
+
+
+def test_build_report_refuses_an_empty_set():
+    with pytest.raises(ValueError):
+        build_report([])

@@ -172,26 +172,25 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     }
 
 
+def build_report(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    report = aggregate_runs(runs)
+    present = {(str(run["arm"]), int(run["seed"])) for run in runs}
+    expected = {(arm, seed) for arm in ARMS for seed in SEEDS}
+    report["present_cells"] = [list(cell) for cell in sorted(present)]
+    report["missing_cells"] = [list(cell) for cell in sorted(expected - present)]
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path, nargs="?", default=Path("../.cache/lama_ckl/runs"))
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
     paths = sorted(args.root.glob("*/summary.json"))
     runs = scientific_runs([_load_run(path) for path in paths])
-    if not args.allow_incomplete:
-        present = {
-            (str(run["arm"]), int(run["seed"]))
-            for run in runs
-            if not bool(run["settings"].get("engineering_only"))
-        }
-        expected = {(arm, seed) for arm in ARMS for seed in SEEDS}
-        if present != expected:
-            raise SystemExit(
-                f"report needs the 12 registered cells; missing={sorted(expected - present)}"
-            )
-    report = aggregate_runs(runs)
+    if not runs:
+        raise SystemExit(f"no scientific runs under {args.root}; nothing to report")
+    report = build_report(runs)
     output = args.output or args.root / "report.json"
     output.write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     for arm, metrics in report["arms"].items():
@@ -202,6 +201,13 @@ def main() -> None:
             f"final_forgetting={metrics['final_forgetting']['mean']:.6f}",
             flush=True,
         )
+    missing = report["missing_cells"]
+    print(
+        f"[{ts()}] missing cells: {', '.join(f'{arm}/{seed}' for arm, seed in missing)}"
+        if missing
+        else f"[{ts()}] all {len(ARMS) * len(SEEDS)} registered cells present",
+        flush=True,
+    )
     print(f"[{ts()}] wrote {output}", flush=True)
 
 
