@@ -457,3 +457,29 @@ peak-acquisition epoch and its paired retention, not the current epoch):
 Loss on the documents falls to ~0.15 by epoch 10 (memorized) while the
 object-token acquisition stays under 0.06 and retention halves: the
 registered method's behaviour, recorded as data.
+
+### 15:29 UTC — lora cell DONE (PROVISIONAL)
+
+`sft/logs/lama-ckl-run-20261011-143328.log`, EXIT=0, 14:33–15:29 (56 min,
+~110 s/epoch). `.cache/lama_ckl/runs/lora-seed-42/summary.json` checkpoint:
+**peak to-learn 0.064 at epoch 15, paired not-to-forget 0.527, total 0.591.**
+Full curve (epoch: to-learn/not-to-forget): 0: 0.004/0.984, 1: 0.017/0.875,
+2: 0.021/0.843, 3: 0.046/0.761, 4: 0.058/0.605, 5: 0.056/0.494,
+6: 0.058/0.581, 7: 0.052/0.590, 8: 0.051/0.421, 9: 0.037/0.485,
+10: 0.044/0.523, 11: 0.048/0.558, 12: 0.048/0.540, 13: 0.054/0.532,
+14: 0.055/0.518, 15: 0.064/0.527, 16: 0.058/0.522, 17: 0.058/0.529,
+18: 0.058/0.518, 19: 0.051/0.524, 20: 0.056/0.513, 21: 0.056/0.524,
+22: 0.056/0.526, 23: 0.052/0.528, 24: 0.056/0.519, 25: 0.055/0.525,
+26: 0.056/0.519, 27: 0.054/0.510, 28: 0.052/0.515, 29: 0.054/0.516,
+30: 0.048/0.520. Acquisition plateaus near 0.055 from epoch 4; retention
+drops to ~0.52 by epoch 10 and holds. For comparison the Llama-2 QLoRA
+calibration above peaked at 0.105 with 0.897 retained.
+
+## 15:33 UTC — mix-review cell launched (`train:0`, verbatim, after the HF_TOKEN export)
+
+Fresh start, warm start 245e2089, split `mamba2_2_7b_repeat030`, cap
+remaining 18.1 h → `--max-hours 18`:
+
+    cd ~/altrux/sft && make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 18"
+
+Log `sft/logs/lama-ckl-run-20261011-153326.log`. PROVISIONAL.
