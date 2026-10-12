@@ -323,3 +323,69 @@ epoch 4 ≈ 22:55 (past the 22:21 cap → the runner stops after epoch 4; shutdo
 cycle of the epoch; duplicates 0/10 throughout. Retention falling ~5 points per epoch
 (0.9765 → 0.932 → 0.8765) with no acquisition. Epoch 3 ETA ≈ 18:58, epoch 4 ≈ 22:59 (stops after
 it, past the 22:21 cap). `.watchdog-fetch` touched 14:58.
+
+## STOP — altrux cell stopped at epoch 3 cycle 8 (15:19 UTC), teammate's call
+
+altrup asked at 15:19 "is the model outputting gibberish? If so I think we should stop here and
+terminate." Checked `work/epoch-03.*/cycle-08`: all 5 replies are `eeee…e` to the 128-token
+backstop; all 10 dreams are character noise (`16e\neekeee2\neee Ante3e2…`), `subjects_mentioned 0`,
+`copy_fraction 0.0`. Confirmed gibberish → `C-c` sent to the runner at 15:19:0x (make exit 130).
+Epoch 3 is incomplete (8 of 100 cycles in `runs/altrux-seed-42/work/epoch-03.8bon8b7j/`, no
+`result.json`); a resume would restart epoch 3 from `epoch-02/` with the same command.
+
+### Collapse timeline (scan of every cycle's `wake.json`/`dreams.json`)
+
+| where | replies | dreams |
+|---|---|---|
+| epoch 1, cycles 0–2 | "Yes, <copy/paraphrase>", closes with EOS | 2–3 of 5 subjects mentioned, two-sided conversations |
+| epoch 1, cycle 3+ | "Yes, <copy>\n\n<copy again…>" to the backstop | mostly unrelated UltraChat-style tasks; copy fraction 0.3–0.97 |
+| epoch 1, cycles 14–17 | **`YesYesYesYes…`** (transient) | `YesYesYes…` |
+| epoch 1, cycles 18–99 | back to document copies (copy fraction 0.5–0.97) | unrelated tasks, 0 subjects |
+| epoch 2, cycles 0–16 | document copies, copy fraction → 0 | ... |
+| epoch 2, cycle 17+ | **`\n\n\n…`** to the backstop | `Remember\n20 Yes\n20…` (frame fragments + digits) |
+| epoch 2, cycle 18 → epoch 3 cycle 8 | `\n…` then **`eeee…`** | character noise |
+
+Distillation losses stayed finite and small throughout (0.006–0.011 at the end): the KL to a
+teacher that is itself the collapsed model is small by construction, so the loss line is
+not a collapse detector. The epoch evaluations were 0.002/0.932 (epoch 1) and 0.004/0.8765
+(epoch 2): the scorer reads object-token accuracy at the task's object span, so a model that
+emits only `\n` or `e` still scores 0.88 on retention — the metric does not see the collapse
+either. Only the decoded samples did.
+
+### What to discuss
+
+1. **Dream-distillation self-collapse.** The registered loop (dream from the post-wake state,
+   distil the dreams with the pre-treatment weights as teacher, one step per dream, AdamW 1e-4,
+   repeat 100× per epoch) drives the model to a degenerate fixed point within ~120 cycles
+   (1200 steps), with a transient `Yes`-loop at ~140 steps that recovered. The ultra20k warm
+   start fixed both gaps the 2026-10-11 debrief named (EOC-first 0/50, dreams open `[USER]`
+   10/10), so the cell ran — and the method as registered destroyed the model. Candidate
+   causes to argue: no anchor/replay term in the distillation (nothing holds the model to its
+   prior distribution off-dream); teacher = student-before-step makes the KL target drift
+   with the student; 1000 optimizer steps per epoch on 512-token self-generated text at
+   1e-4 is a lot of self-training; `copy_fraction` and `subjects_mentioned` went to 0 and
+   forced closes to 5/5 by cycle 4 — the diagnostics flagged it at 07:05, and the brief's
+   "a bad trend is data" rule carried it on for 8 h. Worth a registered **collapse stop rule**
+   (e.g. forced closes 5/5 AND subjects 0 for N consecutive cycles, or a decoded-sample
+   check) so the next cell stops at cycle ~10 instead of epoch 3.
+2. **Baselines on the new base** (seed 42, 30 epochs): frozen 0.000/0.9765; lora peak
+   0.092 @9, 0.5175 retained (plateau 0.074/0.465); mix-review peak 0.066 @5, 0.6728 retained
+   (plateau 0.047/0.63). Lora learns more and faster than on repeat-0.3; review now protects
+   retention by ~0.16 over lora's plateau, unlike on the old base.
+3. **Evaluation noise across processes** (section above): 1.3-point retention spread on
+   identical weights, deterministic within a process; likely Triton autotune. The seed-43/44
+   0.02 rule is ~1.5× this. Needs a pinned autotune or fp32 scorer path (protocol decision).
+4. **The scorer cannot see collapse**: 0.88 retention on a model that emits `\n`. A
+   generation-based sanity metric (or the dream diagnostics) should gate the curve.
+5. **Cost**: 145 s/cycle at 5 docs (wake 20 s, dreams 70 s, distil 46–83 s), 4.0 h/epoch,
+   ~120 h for a 30-epoch altrux cell; GPU 11 % utilised (latency-bound single-token decode).
+   Dream generation and the per-dream optimizer step are the two knobs if the method survives.
+6. `make lama-ckl-report` still refuses an incomplete curve
+   (`ValueError: altrux seed 42 has an incomplete epoch curve`); the §3.4 "report what exists"
+   change is not in `report.py` on this branch. Not fixed here.
+7. Warm-start probe curve (table above): forced closes never fell below 40 % on Dolly
+   contexts but were 0 % on LAMA sentences; the top-up never triggered (EOC-first 0/50 from
+   step 907 on). `step-907`/`step-1815` checkpoints were deleted by `--keep-ckpts 11`
+   (12 intervals at 31.8M tokens); their probe logs survive.
+
+Seeds 43/44: not run (altrux has no complete curve to compare; rule not evaluable).
