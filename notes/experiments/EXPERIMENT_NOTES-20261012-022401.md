@@ -389,3 +389,21 @@ either. Only the decoded samples did.
    (12 intervals at 31.8M tokens); their probe logs survive.
 
 Seeds 43/44: not run (altrux has no complete curve to compare; rule not evaluable).
+
+## Shutdown checklist (15:21 UTC)
+
+1. Latest complete epoch per cell: frozen `epoch-00`, lora `epoch-30`, mix-review `epoch-30`,
+   altrux `epoch-02` (all with `result.json`). altrux epoch 3 partial (8 cycles, no result).
+2. Closing section written above.
+3. Notes and the branch-fallback copy (every cell's `summary.json`/`result.json`/`run.json`, the
+   split manifest, this session's `sft/logs/*.log`) committed and pushed on `box/20261012-020915`.
+4. Receipt `2026-10-12T15:20:17 UTC from eric-framework-16` verified, 0 missing: all 11
+   `ultra20k/epoch-1/step-*` (trainable.pt 42,727,051 + optimizer.pt 85,509,515 each),
+   `probe.json` ×22 entries, split (manifest 4,106; variant 612,953; invariant 715,443),
+   acceptance docs10/docs5 dreams.json (73,638 / 66,056), summaries (frozen 10,733; lora
+   304,488; mix-review 305,613; altrux 225,816), lora/mix-review `epoch-30/result.json`, altrux
+   `epoch-01`/`epoch-02` result.json (100,002 / 98,922) + `epoch-02/trainable.pt`, 200 altrux
+   epoch-02 cycle files, 18 `work/epoch-03` files, upstream pickle 47,802, this notes file
+   (29,018 at pull time; the final version is on the branch and in the terminate pull).
+5. UNRETRIEVED: none.
+6. `.watchdog-terminate` touched after this commit.
