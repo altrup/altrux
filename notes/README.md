@@ -41,6 +41,7 @@ Read [the 2026-10-11 LAMA-CKL second box run debrief](discussion/DISCUSSION-2026
 
 ## Experiment notes
 
+- [2026-10-12 12:49 — cycle-0 replay](experiments/EXPERIMENT_NOTES-20261012-124900-cycle0-replay.md): Replays altrux seed-42 cycle 0 locally; one cycle raises the wake frame from 3.5 % to 31 % in context (×1700 unconditionally), the gradient is shared by the three wake-related dreams, and the carried state compounds the frame prior.
 - [2026-08-23 — LAMA-CKL GPU handoff](experiments/EXPERIMENT_NOTES-20260823-lama-ckl-gpu-handoff.md): Records the verified local implementation, single-GH200 gate order, stop conditions, and artifact contract for the published benchmark run.
 - [2026-07-16](experiments/EXPERIMENT_NOTES-2026-07-16.md): Fixes the unnormalized gated-delta write-key instability and shows the SSM handles low-load recall while M contributes almost nothing under the original data.
 - [2026-07-20](experiments/EXPERIMENT_NOTES-20260720-023324.md): Runs episodic chains, observes an early gist rise followed by collapse, and tests cross-sleep-biased data and freeze-LoRA recovery.
