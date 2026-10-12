@@ -269,3 +269,24 @@ retention. Finite losses throughout (0.06–0.04 by epoch 13+). All 31 `epoch-EE
 
 - 05:33 `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 16"`
   (fresh start; same warm start and split). `.watchdog-fetch` touched for the lora tree.
+
+### mix-review, seed 42 — complete (05:33–06:54, 81 min, 30 epochs)
+
+`runs/mix-review-seed-42/summary.json`: **peak to-learn 0.066 at epoch 5, not-to-forget 0.6728
+at the peak** (total 0.739). Curve: 0: 0.000/0.9765 · 1: 0.023/0.893 · 2: 0.025/0.898 ·
+3: 0.034/0.847 · 4: 0.054/0.759 · 5: 0.066/0.673 · 6: 0.060/0.634 · 8: 0.062/0.586 · 10: 0.062/0.623 ·
+12: 0.056/0.657 · 16: 0.056/0.663 · 20: 0.047/0.627 · 25: 0.047/0.631 · 30: 0.045/0.630.
+Unlike the repeat-0.3 base (where review tracked lora within 0.01), review here holds retention
+~0.16 above lora's plateau (0.63 vs 0.46) at a lower acquisition plateau (0.05 vs 0.07). Note the
+epoch-0 reading 0.000/0.9765 (vs lora's 0.004/0.9795 on the same weights): the cross-process eval
+noise above. Finite losses. All 31 result.json present.
+
+### altrux, seed 42 — started 06:54:42
+
+- `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 15"`
+- RESUME POINT: started fresh (no `runs/altrux-seed-42/epoch-*`); warm start `98f0071f…ce17`,
+  split `mamba2_2_7b_ultra20k` manifest sha `54e11258…82f7` (as recorded in the lora/mix-review
+  `run.json`). `--max-hours 15` = cap 22:21 UTC minus launch time, rounded down. At ~135 s/cycle ×
+  100 cycles ≈ 3.8 h/epoch, expect ~4 epochs before the cap stops it (the runner stops after the
+  first epoch ending past the cap, so the last epoch may finish near 22:21–26:00).
+- `.watchdog-fetch` touched for the mix-review tree.
