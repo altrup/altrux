@@ -107,6 +107,11 @@ change. Retired code stays in its own folder, with its note as the record.
 Keep the SFT pipeline (`training/`, `preparation/`) even when idle, since the
 fine-tune may rerun.
 
+A one-off script (a diagnostic, a probe, a check) lives under its
+experiment's folder (`sft/experiments/<name>/diagnostics/`), linted and
+committed, or is deleted before the session closes. Its output goes where
+the experiment's other logs go.
+
 ## Keep AGENTS.md files current
 
 There's an `AGENTS.md` at the root and in some subdirectories (e.g. `models/AGENTS.md`, `sft/AGENTS.md`). Update the relevant one in the same change whenever you introduce or discover something a future session would otherwise have to rediscover the hard way — a non-obvious gotcha, a workaround for broken tooling, a convention that isn't visible just from reading the code, or a rule you had to be told twice. Don't record anything derivable by reading the code itself (that belongs in comments or a README, not here). Each `CLAUDE.md` imports its sibling `AGENTS.md`; don't duplicate instructions there.

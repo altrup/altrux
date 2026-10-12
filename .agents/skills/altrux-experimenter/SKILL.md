@@ -298,6 +298,9 @@ cap reached, stop-and-report). In order:
    fallback, `git add -f` those small json files and the logs under
    `sft/logs/` that are under 50 MB each and 1 GB in total, commit, push.
    Never checkpoints or `.pt` caches; those go by the pull only.
+   A one-off script you wrote on the box lives under
+   `sft/experiments/<name>/diagnostics/`, linted and committed, or is
+   deleted: a script in a log folder is lost to the next session.
 4. VERIFY THE ARTIFACTS ARE HOME: `touch scripts/.watchdog-fetch`, then wait
    ~2 min (touch `.watchdog-delay` while you wait) for a fresh
    `scripts/.pull-receipt` — the teammate's pull writes it back after every
