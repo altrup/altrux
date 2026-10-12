@@ -76,5 +76,23 @@ Model `mamba2_2_7b` on every command.
 | 6343 | 0 | 40 | 10 | 0 | 0 | best so far; mean reply 86 tok, min 8; one wake of 10 had 1 forced close at 0.74 turn/s; self-dialogue replies (`[USER] Can you provide more…\n[ASSISTANT][USER] Sure…`) persist on the list-shaped document |
 | 7246 | 0 | 56 | 10 | 0 | 0 | mean 109 tok; same reply mix; dreams 10/10 `[USER]`, 1 EOC close |
 | 8150 | 0 | 52 | 10 | 1 | 0 | mean 105 tok; one dream has an `[ASSISTANT]` loop (first since step-1815) |
+| 9055 | 0 | 66 | 6 | 0 | 0 | worst forced count of the curve (33/50); mean 112 tok; dreams: only 6 open `[USER]` |
+| 9961 | 0 | 58 | 10 | 1 | 0 | mean 109 tok; dreams 2 EOC closes, one `[ASSISTANT]` loop |
 
 Probe wall time ≈ 7–12 min per checkpoint beside training (0.15 turn/s on the wake while the trainer holds the GPU), longer than the 7.5-min checkpoint interval, so the probe loop lags training and finishes after it. Monitor gotcha: `grep -c` without `-a` on these logs (they carry `\r` progress bytes) returns "Binary file matches", so an EXIT wake was missed once; the monitor uses `grep -a` from 03:03.
+
+## Warm-start training complete (03:53:50)
+
+- 11060 steps, 8654/8654 examples, 02:25 → 03:53 wall (88 min; ~2.1 step/s, ~6000 tok/s
+  including the probe sharing the GPU). Last per-slot avg_loss lines 0.69–1.74; the trainer's
+  running loss sat around 1.0–1.3 from step ~2000 on (no further decrease visible in the
+  heartbeat samples: 1.27 @839, 0.77 @1477, 1.02 @5240, 1.10 @6488, 1.16 @9007, 1.22 @10265).
+- Final checkpoint `ultra20k/final -> epoch-1/step-11060`. Interval checkpoints kept:
+  2722, 3630, 4534, 5439, 6343, 7246, 8150, 9055, 9961, 10864 (+ final = 11, the Makefile's
+  `--keep-ckpts 11`). **step-907 and step-1815 were deleted by the trainer's retention**, together
+  with their `probe.json`; their probe logs (`warm-start-probe-20261012-023200.log`,
+  `-024056.log`) hold the verdicts. The debrief expected ten interval checkpoints at 26M tokens;
+  the corpus came out at 31.8M so there were twelve.
+- `.watchdog-fetch` touched at 03:55 for the finished tree.
+- 03:55 `train`: `MODEL_NAME=mamba2_2_7b make warm-start-probe ARGS="--init-adapter ../models/mamba2_2_7b/checkpoints/ultra20k/final --output ../models/mamba2_2_7b/checkpoints/ultra20k/final/probe.json"`
+  (the gate probe for §3.3 step 1). `work:probe10864`: same command on `epoch-1/step-10864`.
