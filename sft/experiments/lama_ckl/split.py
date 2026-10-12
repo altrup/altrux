@@ -16,8 +16,8 @@ from experiments.lama_ckl.evaluation import score_records
 from progress import heartbeat, ts
 
 WARMSTART_PIN = Path(__file__).with_name("warmstart.sha256")
-DEFAULT_SPLIT = Path("../.cache/lama_ckl/mamba2_2_7b_repeat030")
-DEFAULT_WARMSTART = Path("../models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800")
+DEFAULT_SPLIT = Path("../.cache/lama_ckl/mamba2_2_7b_ultra20k")
+DEFAULT_WARMSTART = Path("../models/mamba2_2_7b/checkpoints/ultra20k/final")
 
 
 def pinned_warmstart_sha(pin: Path = WARMSTART_PIN) -> str:
