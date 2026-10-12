@@ -306,3 +306,13 @@ noise above. Finite losses. All 31 result.json present.
 - 07:17 cycles 5–10: forced closes **5/5 every cycle** since cycle 4; duplicates 0,0,6,0,0,0;
   cycle-9 dreams back to 460 mean tokens, EOC rate 0.1, `subjects_mentioned 0`; distillation
   losses 0.008–0.011 (finite, small). 130 s/cycle.
+
+### altrux epoch 1 — complete (06:55–10:55, 14421 s = 4.0 h, 100 cycles)
+
+`runs/altrux-seed-42/epoch-01/result.json`: **to-learn 0.002, not-to-forget 0.932**
+(adapter `72d4e184…`, wake_tokens 109817, peak VRAM 11.2 GB, evaluation 6 s). Forced closes
+5/5 in 97 of 100 cycles (0/5 twice, 1/5 once, all in cycles 1–3); duplicates 0/10 in 90 cycles,
+up to 6/10 (cycle 7). Against the floor (0.000/0.9765): no acquisition after 1000 distilled
+dreams; retention down 4.5 points. ETA per epoch 4.0 h → epoch 2 ≈ 14:55, epoch 3 ≈ 18:55,
+epoch 4 ≈ 22:55 (past the 22:21 cap → the runner stops after epoch 4; shutdown then).
+`.watchdog-fetch` touched at 10:57.
