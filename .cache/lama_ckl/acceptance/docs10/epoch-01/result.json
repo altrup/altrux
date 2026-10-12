@@ -1,0 +1,54 @@
+{
+ "adapter_sha256": "d04b2761158fbeca3b5d18eb952c05bee5aa6173955aa8bd4fc9d5a970b8fb98",
+ "arm": "altrux",
+ "artifact_bytes": 128346358,
+ "epoch": 1,
+ "epoch_seconds": 195.92301678657532,
+ "peak_vram_bytes": 8113138176,
+ "seed": 42,
+ "source_tokens": 42244,
+ "treatment": {
+  "cycles": [
+   {
+    "cycle": 0,
+    "diagnostics": {
+     "contradictions": 0,
+     "correct_bindings": 0,
+     "duplicate_dreams": 1,
+     "eoc_termination_rate": 0.2,
+     "max_copy_fraction": 1.0,
+     "max_generated_tokens": 511,
+     "max_verbatim_run": 315,
+     "mean_copy_fraction": 0.2,
+     "mean_generated_tokens": 471.8,
+     "min_generated_tokens": 315,
+     "misbindings": 0,
+     "subjects_mentioned": 1,
+     "unique_dreams": 9
+    },
+    "distil_seconds": 82.92107081413269,
+    "documents": 10,
+    "dreams": 10,
+    "duplicate_dreams": 1,
+    "forced_closes": 0,
+    "generated_tokens": 4718,
+    "optimizer_steps": 10,
+    "seconds": 195.7601420879364,
+    "set_sha256": "671d979752a668f3840b77167af1c2dbe00f349ab18822d64feab260ab3506c3",
+    "token_gradients": 4728,
+    "wake_sha256": "f94398f0af4bd8a18f524dfb9e2aa647ad5d809657f254577526e48bc9f250b4",
+    "wake_tokens": 1553
+   }
+  ],
+  "dreams": 10,
+  "duplicate_dreams": 1,
+  "forced_closes": 0,
+  "generated_tokens": 4718,
+  "kind": "altrux",
+  "optimizer_steps": 10,
+  "review_tokens": 0,
+  "token_gradients": 4728
+ },
+ "wake_sha256": "906fd27816bd6c83e5985bef9e100f98e238a58a18749cfc7c286c052d0fceb5",
+ "wake_tokens": 1553
+}

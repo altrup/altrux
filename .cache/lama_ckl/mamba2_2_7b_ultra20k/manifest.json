@@ -1,0 +1,68 @@
+{
+ "artifacts": {
+  "invariant_descriptive.jsonl": {
+   "invariants": {
+    "duplicate_uuid": 0,
+    "missing_subject_or_object": 0
+   },
+   "rows": 500,
+   "sample": {
+    "evidence": "He has presented invited talks and participated in international conferences at institutions of higher learning worldwide including: Central European University \u2013 Budapest, Columbia University, The Hebrew University - Jerusalem, New York University, Hebrew Union College - Los Angeles, Monasch University - Melbourne, Northwestern University, Open School \u2013 Belgrade; University of Oxford, Princeton University, Rice University, Siegel College \u2013 Cleveland, Tel Aviv University, UCLA, University of Chicago, University of Frankfurt, University of Hamburg, University of Scranton, University of Sydney, and Yeshiva University.",
+    "evidence_length": 623,
+    "invariant": true,
+    "masked_evidence": "He has presented invited talks and participated in international conferences at institutions of higher learning worldwide including: Central European University \u2013 [MASK], Columbia University, The Hebrew University - Jerusalem, New York University, Hebrew Union College - Los Angeles, Monasch University - Melbourne, Northwestern University, Open School \u2013 Belgrade; University of Oxford, Princeton University, Rice University, Siegel College \u2013 Cleveland, Tel Aviv University, UCLA, University of Chicago, University of Frankfurt, University of Hamburg, University of Scranton, University of Sydney, and Yeshiva University.",
+    "object": "Budapest",
+    "position": 0.26247987117552335,
+    "relation_code": "P131",
+    "relation_label": "located in the administrative territorial entity",
+    "scores": {
+     "descriptive": 1.0,
+     "schematic": 0.0
+    },
+    "subject": "Central European University",
+    "task_descriptive": "Central European University is located in Budapest .",
+    "task_schematic": "Guess the object. \n  subject is Central European University , relation is located in the administrative territorial entity , object is Budapest",
+    "uuid": "c6cdc1b6-812b-4e66-811d-207cc32ff2b1"
+   },
+   "sha256": "4b1c27e6039d1a9274d218dd76e65cdfa14acfc06f8a6d51f393e0b8d5312b31"
+  },
+  "variant.jsonl": {
+   "invariants": {
+    "duplicate_uuid": 0,
+    "missing_subject_or_object": 0
+   },
+   "rows": 500,
+   "sample": {
+    "evidence": "When Romo started the Thanksgiving Day game against Tampa Bay, it marked the 7th different starting Cowboys quarterback in the last 7 Thanksgiving Day games (Troy Aikman, Ryan Leaf, Chad Hutchison, Quincy Carter, Drew Henson, Drew Bledsoe and Romo).",
+    "evidence_length": 249,
+    "invariant": false,
+    "masked_evidence": "When Romo started the Thanksgiving Day game against Tampa Bay, it marked the 7th different starting Cowboys [MASK] in the last 7 Thanksgiving Day games (Troy Aikman, Ryan Leaf, Chad Hutchison, Quincy Carter, Drew Henson, Drew Bledsoe and Romo).",
+    "object": "quarterback",
+    "position": 0.4426229508196721,
+    "relation_code": "P413",
+    "relation_label": "position played on team / speciality",
+    "scores": {
+     "descriptive": 0.0,
+     "schematic": 0.0
+    },
+    "subject": "Ryan Leaf",
+    "task_descriptive": "Ryan Leaf plays in quarterback position .",
+    "task_schematic": "Guess the object. \n  subject is Ryan Leaf , relation is position played on team / speciality , object is quarterback",
+    "uuid": "797aabe5-3082-4d00-a610-2c4b928bbdc5"
+   },
+   "sha256": "98b1cab95853c871e2a331a22034e6d2d3cbe32968f118ebe8917fad948a992f"
+  }
+ },
+ "candidate_count": 13645,
+ "max_length": 512,
+ "metric_alignment": "last object character span",
+ "model_id": "state-spaces/mamba2-2.7b",
+ "model_name": "mamba2_2_7b",
+ "pipeline": "TAALM LAMA_ckl_pipeline.ipynb",
+ "seed": 42,
+ "source": "facebookresearch/LAMA T-REx",
+ "source_sha256": "6d787847b6d373eb8c71df8178f4efa11cec6dab29f7137c847f1679ea3ea775",
+ "taalm_commit": "b12f344a9dbae555c239635b1c192c555bed001b",
+ "tokenizer_id": "EleutherAI/gpt-neox-20b",
+ "warmstart_sha256": "98f0071fca3952b737a3cdb42c9235022bbff5e233169ac1c9555a3fa547ce17"
+}
