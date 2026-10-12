@@ -303,3 +303,6 @@ noise above. Finite losses. All 31 result.json present.
   (`[USER] Remember this for later: It was a massive undertaking…`). Recorded as a result of the
   registered method (distilling empty/frame dreams back into the model); not a technical fault
   (finite losses, no crash). Continuing; counters re-read every check-in.
+- 07:17 cycles 5–10: forced closes **5/5 every cycle** since cycle 4; duplicates 0,0,6,0,0,0;
+  cycle-9 dreams back to 460 mean tokens, EOC rate 0.1, `subjects_mentioned 0`; distillation
+  losses 0.008–0.011 (finite, small). 130 s/cycle.
