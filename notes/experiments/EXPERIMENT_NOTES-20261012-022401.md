@@ -69,3 +69,6 @@ Model `mamba2_2_7b` on every command.
 |---|---|---|---|---|---|---|
 | 907 | 0 | 96 | 1 | 1 | 8 | replies copy the document or open a hallucinated `[USER]` turn; one `ASASAS…` loop; dreams: 9 stop at an immediate second EOC |
 | 1815 | 0 | 50 | 9 | 1 | 0 | wake replies open a `[USER]` turn (`[USER] I don't have a lot of time to read…\n[ASSISTANT][USER] I'm not sure…` loop, same text across documents); mean reply 103 tok, min 33; dreams open `[USER]` and run to 512 tok (9 max-tokens, 1 EOC); `[ASSISTANT][USER]` empty-assistant adjacency appears in replies and one dream |
+| 2722 | 0 | 58 | 9 | 0 | 0 | replies are mostly document copies or an echo of the whole frame (`[USER] Remember this for later: <doc><|endoftext|>`); mean 95 tok, min 10; dreams: 9 open `[USER]` with UltraChat-style tasks, run to 512 tok |
+
+Probe wall time ≈ 7–12 min per checkpoint beside training (0.15 turn/s on the wake while the trainer holds the GPU), longer than the 7.5-min checkpoint interval, so the probe loop lags training and finishes after it. Monitor gotcha: `grep -c` without `-a` on these logs (they carry `\r` progress bytes) returns "Binary file matches", so an EXIT wake was missed once; the monitor uses `grep -a` from 03:03.
