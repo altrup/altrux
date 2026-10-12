@@ -102,7 +102,8 @@ Pool, one shuffle, same packer (2–5 per example, `--max-len 8192`,
 No acknowledgement rows in the pool. The first question of this warm start
 is whether general chat data alone teaches the model to acknowledge a
 pasted passage. A **top-up stage** exists for the case it does not (3.3
-step 1): 500 rows of user `Remember this for later:\n\n<Dolly context>`
+step 1): 500 rows of user `Remember this for later: <Dolly context>` (the wake frame string, so
+the top-up tokens match the wake prompt)
 and a short templated acknowledgement (`preparation/dolly.py
 --acknowledge`), trained for a few hundred steps by resuming from the
 final checkpoint. No LAMA text; the split is model-conditioned after the
@@ -239,4 +240,5 @@ In this order, tests first, under the standing go-ahead gate:
 - The evaluation-batch wobble (0.9815 vs 0.9835 at the same adapter, batch
   8 vs 16) stands as recorded in the 2026-10-10 note §1.5.
 - `warmstart.sha256` in `PROTECTED_PATHS`: altrup's call, still open.
-- Two stale stashes on `main`; the local `altrux-1` tmux session.
+- Three stale stashes on `main` (superseded notes, drop them); the local
+  `altrux-1` tmux session is closed.
