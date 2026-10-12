@@ -27,3 +27,10 @@ Model `mamba2_2_7b` on every command.
 - 02:22 `train`: `cd ~/altrux/sft && MODEL_NAME=mamba2_2_7b make warm-start`
   (verbatim; Makefile ARGS empty). Dolly prep started 02:22:24.
 - 02:22 `work:lama-dl`: `wget https://dl.fbaipublicfiles.com/LAMA/data.zip` → `.cache/LAMA/data/`.
+- 02:24 packer done: `8654 examples, 30108 conversations, 21454 boundaries (5722 repeat: 3919
+  adjacent, 1803 gapped; 15732 fresh)`; all four must-be-zero invariants 0; 39 conversations
+  dropped by `--max-len`; **31,774,865 tokens** (debrief estimated 26M → expect ~13k steps,
+  12 interval checkpoints at 2.6M tokens; Makefile keeps 11 + final).
+- 02:25 training started. Step 37: loss 9.86, gnorm 346 (known LR warm-up spike shape).
+- 02:27 `work:sanity`: `MODEL_NAME=mamba2_2_7b make sanity-sample ARGS="--data data/warm_start.pt --samples 4"`.
+- 02:25 `work:test`: `MODEL_NAME=mamba2_2_7b make test` (full suite, runs beside training).
