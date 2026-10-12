@@ -78,6 +78,8 @@ Model `mamba2_2_7b` on every command.
 | 8150 | 0 | 52 | 10 | 1 | 0 | mean 105 tok; one dream has an `[ASSISTANT]` loop (first since step-1815) |
 | 9055 | 0 | 66 | 6 | 0 | 0 | worst forced count of the curve (33/50); mean 112 tok; dreams: only 6 open `[USER]` |
 | 9961 | 0 | 58 | 10 | 1 | 0 | mean 109 tok; dreams 2 EOC closes, one `[ASSISTANT]` loop |
+| 10864 | 0 | 52 | 9 | 0 | 0 | mean 103 tok; dreams 2 EOC closes |
+| **11060 (final)** | **0** | **60** | **10** | 1 | 0 | per-wake forced 8,4,7,6,5 of 10; mean 112 tok, min 20; see reply characterization below |
 
 Probe wall time ≈ 7–12 min per checkpoint beside training (0.15 turn/s on the wake while the trainer holds the GPU), longer than the 7.5-min checkpoint interval, so the probe loop lags training and finishes after it. Monitor gotcha: `grep -c` without `-a` on these logs (they carry `\r` progress bytes) returns "Binary file matches", so an EXIT wake was missed once; the monitor uses `grep -a` from 03:03.
 
@@ -96,3 +98,38 @@ Probe wall time ≈ 7–12 min per checkpoint beside training (0.15 turn/s on th
 - `.watchdog-fetch` touched at 03:55 for the finished tree.
 - 03:55 `train`: `MODEL_NAME=mamba2_2_7b make warm-start-probe ARGS="--init-adapter ../models/mamba2_2_7b/checkpoints/ultra20k/final --output ../models/mamba2_2_7b/checkpoints/ultra20k/final/probe.json"`
   (the gate probe for §3.3 step 1). `work:probe10864`: same command on `epoch-1/step-10864`.
+
+## Final-checkpoint probe → decision (04:08)
+
+**EOC-first 0/50.** The §3.3 step-1 top-up trigger is "EOC-first on more than half the documents";
+it is not met, so `make warm-start-topup` does NOT run and `ultra20k/final = epoch-1/step-11060`
+is the warm start. The 2026-10-11 gap 1 (EOC reply to the frame, 87/100) is closed by the recipe;
+gap 2 (no `[USER]` after EOC) is closed: 10/10 dreams open a `[USER]` turn and 9 of 10 are
+two-sided conversations.
+
+**Forced closes 60 % (30/50)** on the held-out Dolly contexts, against the probe's "<20 %"
+expectation. Reply characterization from the decoded samples (final checkpoint):
+- verbatim continuation/copy of the document (most forced closes) — the expected cost of the
+  0.3 repeat rate noted in the 2026-10-10 debrief §3.1;
+- a paraphrase/summary of the document, some running to 128 tokens;
+- a self-dialogue: the model writes ` What are some variations of gazpacho…\n[ASSISTANT] There are…`
+  or `[USER] Can you provide more…\n[ASSISTANT] …` inside the assistant slot, then EOS (these
+  close naturally and are short);
+- one degenerate repetition (`The water vapor in the atmosphere is a major component…` ×N);
+- **state bleed within a wake**: in wake 4 the reply to document 2 (Everything Everywhere All At
+  Once) is a copy of document 1's Modern Warfare 2 reply. The wake state carries across the 10
+  documents by design; the model answered the previous document.
+The debrief registers the forced-close test at acceptance (§3.3 step 3: both wake sizes above
+20 % → stop and report), not at the probe, and the top-up is registered for the EOC-first failure
+only. Running the top-up for a different failure would be a protocol change made after reading
+a diagnostic the protocol did not name, so it is not done here; the acceptance runs as
+registered and decides. Expectation from this probe: forced closes near 50–60 % on 10 LAMA
+documents, i.e. a likely stop-and-report at step 3 unless the LAMA documents (short T-REx
+evidence sentences) close more readily than Dolly contexts.
+
+**Pin.** `sft/experiments/lama_ckl/warmstart.sha256` =
+`98f0071fca3952b737a3cdb42c9235022bbff5e233169ac1c9555a3fa547ce17`
+(= sha256 of `models/mamba2_2_7b/checkpoints/ultra20k/final/trainable.pt`, `final ->
+epoch-1/step-11060`). Committed and pushed on the box branch (PROTECTED EDIT, as the brief directs).
+
+- 04:08 `train`: `make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"`
