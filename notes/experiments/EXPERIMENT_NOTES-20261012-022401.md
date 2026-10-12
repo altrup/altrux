@@ -295,3 +295,11 @@ noise above. Finite losses. All 31 result.json present.
   `correct_bindings 4`, one empty dream (`min_generated_tokens 0`, immediate second EOC).
   125–130 s/cycle → ETA 3.5 h/epoch, ~4 epochs before the cap. GPU 12.8 GB, 11 % util (single-token
   decode, latency-bound; per-token stepping is registered semantics).
+- 07:05 **trend, cycles 0–4 of epoch 1** (forced / duplicate / subjects_mentioned / mean dream tokens):
+  c0 0/0/3/433 · c1 0/0/3/321 · c2 1/1/2/348 · c3 **5/5/1/141** · c4 5/5. At cycle 3 (after 30
+  distillation steps) every reply runs past 128 tokens as `Yes, <document copy>\n\n<copy
+  again…>`, and the dreams collapse: 5 of 10 are empty (`<|endofconversation|>` then an immediate
+  second EOC, so they hash identical = the duplicates), one dreams the wake frame itself
+  (`[USER] Remember this for later: It was a massive undertaking…`). Recorded as a result of the
+  registered method (distilling empty/frame dreams back into the model); not a technical fault
+  (finite losses, no crash). Continuing; counters re-read every check-in.
