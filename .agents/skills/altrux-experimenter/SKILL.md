@@ -134,11 +134,32 @@ confirmed structural problem as stop-and-report, not something to train
 through. Every data disaster in this project's history was visible in a
 decoded sample and invisible in every count.
 
-PIN THE WARM START. After `make warm-start` finishes, write the SHA-256 of
-`models/mamba2_2_7b/checkpoints/repeat030/epoch-2/step-800/trainable.pt`
-into `sft/experiments/lama_ckl/warmstart.sha256` (the hex digest only),
-commit and push it on the box branch, and record it in the run notes. The
-split and the runner refuse to start while that file reads `unset`.
+PROBE EVERY CHECKPOINT AS IT LANDS (DISCUSSION-20261011 §3.2). `make
+warm-start` saves a checkpoint every 2.6M tokens under
+`models/mamba2_2_7b/checkpoints/epoch-1/step-*` (ten plus the final save;
+the finished tree moves to `checkpoints/ultra20k/` and `ultra20k/final`
+links to the last step). While training continues, run in a `work` window
+`make warm-start-probe ARGS="--init-adapter <that step dir>"` on each new
+checkpoint and record its verdict line (EOC-first count of 50, forced
+closes %, `[USER]` openers of 10 dreams, `[ASSISTANT]` loops) in the run
+notes as a curve. Read the decoded EOC-first replies and the dreams it
+prints. The final checkpoint is the only candidate for the warm start; an
+earlier one is never picked, whatever its probe says.
+
+TOP-UP RULE (§3.3 step 1). If the final checkpoint's probe shows EOC-first
+on more than half the documents (more than 25 of 50), run
+`make warm-start-topup` once (300 steps of acknowledgement rows resumed
+from `ultra20k/final`; it re-links `final`), then probe `ultra20k/final`
+again. If that probe still shows EOC-first on more than half, stop and
+report: the warm start is not fit for the protocol, and no split or cell
+runs this session.
+
+PIN THE WARM START. After the probe passes, write the SHA-256 of
+`models/mamba2_2_7b/checkpoints/ultra20k/final/trainable.pt` into
+`sft/experiments/lama_ckl/warmstart.sha256` (the hex digest only), commit
+and push it on the box branch, and record it in the run notes with the
+step the link resolves to. The split and the runner refuse to start while
+that file reads `unset`.
 
 RECORD THE RESUME POINT: every time you start or restart a cell, note in
 your file which `epoch-EE/` it resumed from (the runner resumes from the
@@ -180,7 +201,7 @@ knobs belong to the DISCUSSION file, not the utilization budget.
 
 Run the LAMA-CKL four-arm comparison registered in the governing debrief:
 frozen, lora, mix-review, and altrux on the 2.7B Mamba model, one shared
-500/500 split built on the repeat030 warm start, 30 epochs per cell. Seed
+500/500 split built on the ultra20k warm start, 30 epochs per cell. Seed
 42 of all four arms runs first. Seeds 43 and 44 run only on the rule in
 the debrief. The official acquisition and retention scores are primary;
 the dream and wake diagnostics are secondary process measurements.
@@ -214,6 +235,14 @@ rule. Record both counts and the decision in the run notes before any
 cell. `make lama-ckl-smoke` is the engineering smoke only (2 documents, 2
 dreams, 32 tokens). It proves the code path runs; it proves nothing about
 dream quality.
+
+TIME THE FIRST CYCLE (DISCUSSION-20261011 §3.3 step 3). From the
+10-document acceptance run's log timestamps, record the wall time of the
+wake, the dream generation, and the distillation separately, and write
+the altrux ETA for 1500 cycles plus 31 evaluations in the run notes before
+any baseline starts. This is the fused single-token step's first timed
+cycle; if the ETA is far above the debrief's estimate, record it and
+continue.
 
 SESSION SOFT CAP. The session has a wall-clock soft cap; the debrief states
 the hours. Launch every `lama-ckl-run` cell with `--max-hours` set to the
@@ -266,7 +295,9 @@ cap reached, stop-and-report). In order:
    `scripts/.pull-receipt` — the teammate's pull writes it back after every
    successful pull: UTC timestamp plus the size of every artifact AS IT
    EXISTS on their machine. Check every artifact this session produced
-   (the warm-start checkpoint, the split, each cell's epoch dirs and
+   (the whole `checkpoints/ultra20k/` tree: all ten interval checkpoints,
+   the final step, `topup/` if it ran, and each `probe.json`; the split;
+   each cell's epoch dirs and
    `summary.json`, the upstream pickle, this run's notes file) appears at a plausible size, and echo the receipt into the
    notes. "The pull carries it" is an unchecked invariant, and it cost the
    g2 session its entire cache set. A missing file or a stale header
