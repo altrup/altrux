@@ -225,6 +225,14 @@ the registered method. Record it with numbers in the run notes as it
 appears. Stop only on a stop-and-report condition. A technical fault (a
 non-finite loss, an OOM, a hang) is a bug: see IF TRAINING CRASHES.
 
+You may stop a cell early on your own judgment when further epochs cannot
+change the result (the model has degenerated, the curve sits at the floor).
+Finish the current epoch's eval first so the cell has at least one scored
+point past the point of no return. Write the reason in the run notes with
+the numbers and one decoded reply and dream, then treat it as
+STOP-AND-REPORT. Stopping is the only judgment call: never edit, resume,
+or relaunch to repair it.
+
 PRE-GRID ACCEPTANCE (the debrief §3.6 and its amendment). Run the runner
 with `--arm altrux --cycles 1 --output <dir outside .cache/lama_ckl/runs/>`
 once with the 10-document wake and once with `--docs-per-wake 5`. Each run
