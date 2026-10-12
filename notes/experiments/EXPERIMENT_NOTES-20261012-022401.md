@@ -226,3 +226,32 @@ document 1), so the 20–50 raise is not available under §3.7 amendment 4.
   Both start fresh (no `epoch-EE/` under `.cache/lama_ckl/runs/`), warm start `98f0071f…ce17`,
   split `mamba2_2_7b_ultra20k` (manifest above). `--max-hours 17` = hours remaining at launch,
   rounded down.
+
+### frozen, seed 42 — complete (04:33, 13.6 s)
+
+`runs/frozen-seed-42/summary.json`: to-learn **0.000**, not-to-forget **0.9765** (one evaluation,
+adapter `98f0071f…`). The floor for every metric this grid quotes.
+
+### Evaluation noise, measured (scratch `eval_repeat.py`, 04:33)
+
+The frozen adapter scored on the split four times in ONE process:
+
+| batch | to-learn | not-to-forget |
+|---|---|---|
+| 16 | 0.0040 | 0.9795 |
+| 16 | 0.0040 | 0.9795 |
+| 16 | 0.0040 | 0.9795 |
+| 8 | 0.0020 | 0.9775 |
+
+Within a process the scorer is bit-reproducible; batch size shifts it (padding width changes the
+chunked-scan numerics; the 2026-10-10 §1.5 wobble). But ACROSS processes, same weights, same
+batch 16, this session has now seen the epoch-0 evaluation read 0.004/0.9795 (acceptance docs10,
+lora cell), 0.002/0.9665 (acceptance docs5) and 0.000/0.9765 (frozen cell): a **1.3-point spread
+in retention and 0.4 in acquisition from identical inputs.** Deterministic within a process and
+variable across processes points at Triton autotuning in mamba-ssm's kernels (the chosen config,
+hence the accumulation order, is picked per process by timing) rather than at the scorer. Not
+touched mid-run (`evaluation.py` is off-limits); flagged for the debrief: the seed-43/44 rule's
+0.02 threshold is about 1.5× this noise, and the frozen "floor" itself carries it. A fix would
+be a pinned autotune config or an fp32 scorer path, both protocol-level decisions.
+
+- lora epoch 1: to-learn 0.021, not-to-forget 0.8838 (0.57 batch/s, ~110 s/epoch, as last session).
