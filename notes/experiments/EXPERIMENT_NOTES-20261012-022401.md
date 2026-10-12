@@ -290,3 +290,8 @@ noise above. Finite losses. All 31 result.json present.
   100 cycles ≈ 3.8 h/epoch, expect ~4 epochs before the cap stops it (the runner stops after the
   first epoch ending past the cap, so the last epoch may finish near 22:21–26:00).
 - `.watchdog-fetch` touched for the mix-review tree.
+- 06:59 first cycles healthy: cycle 1 forced 0/5, duplicates 0/10, dreams `subjects_mentioned 3`,
+  `correct_bindings 6`; cycle 2 forced 0/5, duplicates 0/10, `subjects_mentioned 3`,
+  `correct_bindings 4`, one empty dream (`min_generated_tokens 0`, immediate second EOC).
+  125–130 s/cycle → ETA 3.5 h/epoch, ~4 epochs before the cap. GPU 12.8 GB, 11 % util (single-token
+  decode, latency-bound; per-token stepping is registered semantics).
