@@ -54,3 +54,17 @@ Model `mamba2_2_7b` on every command.
 - GPU 30.1 GB / 97.9 GB, 67 % util (shared with the test suite at the time). VRAM headroom
   is left for the per-checkpoint probe that runs beside training; batch size is part of the
   registered recipe (step count), not changed.
+- 02:28 `make test` (work:test): 701 passed, 1 xfailed, 293 s.
+- Checkpoints land every 907 steps (2.6M tokens) at `models/mamba2_2_7b/checkpoints/epoch-1/step-N`;
+  each is ~1.15 GB (`mem_state.pt` 1.02 GB = mid-pack SSM slot state for exact resume, plus
+  `trainable.pt` 42.7 MB, `optimizer.pt` 85.5 MB) — not the 123 MB the debrief estimated; ~14 GB
+  for the tree.
+- 02:32 `work:probe`: `MODEL_NAME=mamba2_2_7b make warm-start-probe ARGS="--init-adapter ../models/mamba2_2_7b/checkpoints/epoch-1/step-907 --output ../models/mamba2_2_7b/checkpoints/epoch-1/step-907/probe.json"`
+  (8 min beside training; GPU 33.6 GB / 100 %). From step-1815 on, `probe_loop.sh`
+  (scratchpad; copied into the notes below) runs the same command on each unprobed step dir in order.
+
+## Warm-start probe curve (DISCUSSION-20261011 §3.2)
+
+| step | eoc_first /50 | forced % | user_opener /10 | asst loops | empty dreams /10 | notes |
+|---|---|---|---|---|---|---|
+| 907 | 0 | 96 | 1 | 1 | 8 | replies copy the document or open a hallucinated `[USER]` turn; one `ASASAS…` loop; dreams: 9 stop at an immediate second EOC |
