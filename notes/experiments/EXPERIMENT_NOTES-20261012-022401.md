@@ -133,3 +133,15 @@ evidence sentences) close more readily than Dolly contexts.
 epoch-1/step-11060`). Committed and pushed on the box branch (PROTECTED EDIT, as the brief directs).
 
 - 04:08 `train`: `make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"`
+
+## Split (04:08–04:13) — PASS
+
+`.cache/lama_ckl/mamba2_2_7b_ultra20k/`: 13645 T-REx candidates (source sha256 `6d787847…ea775`),
+scored at 12→87 item/s, 5.5 min. `variant.jsonl` 500 rows sha256 `98b1cab9…992f`,
+`invariant_descriptive.jsonl` 500 rows sha256 `4b1c27e6…2b31`; invariants
+`duplicate_uuid 0, missing_subject_or_object 0` on both. Manifest records
+`warmstart_sha256 98f0071f…ce17` (matches the pin), seed 42, TAALM commit `b12f344a`.
+Decoded samples read: task/evidence pairs are well-formed T-REx items.
+
+- 04:15 `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs10"`
+  (pre-grid acceptance, 10 documents; started fresh; warm start `98f0071f…`, split manifest above).
