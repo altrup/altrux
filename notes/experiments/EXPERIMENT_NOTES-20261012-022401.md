@@ -316,3 +316,10 @@ up to 6/10 (cycle 7). Against the floor (0.000/0.9765): no acquisition after 100
 dreams; retention down 4.5 points. ETA per epoch 4.0 h → epoch 2 ≈ 14:55, epoch 3 ≈ 18:55,
 epoch 4 ≈ 22:55 (past the 22:21 cap → the runner stops after epoch 4; shutdown then).
 `.watchdog-fetch` touched at 10:57.
+
+### altrux epoch 2 — complete (10:55–14:57, 4.0 h)
+
+`epoch-02/result.json`: **to-learn 0.004, not-to-forget 0.8765.** Forced closes 5/5 in every
+cycle of the epoch; duplicates 0/10 throughout. Retention falling ~5 points per epoch
+(0.9765 → 0.932 → 0.8765) with no acquisition. Epoch 3 ETA ≈ 18:58, epoch 4 ≈ 22:59 (stops after
+it, past the 22:21 cap). `.watchdog-fetch` touched 14:58.
