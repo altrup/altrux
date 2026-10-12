@@ -11,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-smoke lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split lama-ckl-run lama-ckl-smoke lama-ckl-report summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
+.PHONY: sync data data-memory warm-start warm-start-topup warm-start-probe prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-smoke lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split lama-ckl-run lama-ckl-smoke lama-ckl-report summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
 
 sync:
 	uv sync --inexact
@@ -275,35 +275,78 @@ lama-ckl-report:
 	HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.report $(ARGS)
 
-# Warm-start SFT (DISCUSSION-20261010 sec 3.1): 1000 ultrachat conversations
-# plus 1000 Dolly context rows (summarization, closed_qa,
+# Warm-start SFT (DISCUSSION-20261011 sec 3.1): 20000 ultrachat conversations
+# plus every Dolly context row (summarization, closed_qa,
 # information_extraction) in one shuffled pool, packed 2-5 to an example behind
-# <|endofconversation|> with --repeat-rate 0.3 verbatim repeats, then 800
-# training/loop.py steps / 2 epochs at 1e-4 and dream_sleep's LoRA config.
-# training.cli always writes checkpoints/epoch-*, so the finished tree moves to
-# WARM_START_DIR; refusing a stale epoch-* tree keeps --keep-ckpts 1 from
-# pruning the new run against an old one. Box tool (rented CUDA hardware).
+# <|endofconversation|> with --repeat-rate 0.3 verbatim repeats, user turns
+# under the loss, one epoch (about 11000 steps) at 1e-4 with dream_sleep's LoRA
+# config, a checkpoint every 2.6M tokens (ten plus the final save, all kept).
+# dolly.py also writes the 50 held-out probe contexts (data/dolly_heldout.json)
+# that never enter the pool. training.cli always writes checkpoints/epoch-*, so
+# the finished tree moves to WARM_START_DIR and WARM_START_DIR/final links to
+# the last step: the warm start the split and the runner load by default.
+# Refusing a stale epoch-* tree keeps --keep-ckpts from pruning the new run
+# against an old one. Box tool (rented CUDA hardware).
 WARM_START_CKPTS := $(CURDIR)/../models/mamba2_2_7b/checkpoints
-WARM_START_DIR := $(WARM_START_CKPTS)/repeat030
+WARM_START_DIR := $(WARM_START_CKPTS)/ultra20k
+WARM_START_TRAIN := HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m training.cli --lr 1e-4 --chunk-len 512 \
+	--lora-rank 16 --lora-alpha 32 --lora-dropout 0
+# $(1): the tree under WARM_START_DIR that receives checkpoints/epoch-*
+define WARM_START_FINALIZE
+mkdir -p '$(1)' && mv '$(WARM_START_CKPTS)'/epoch-* '$(1)/' && \
+	last=$$(ls -d '$(1)'/epoch-*/step-* | awk -F'step-' '{print $$NF, $$0}' | sort -n | tail -1 | cut -d' ' -f2-) && \
+	ln -sfn "$${last#$(WARM_START_DIR)/}" '$(WARM_START_DIR)/final' && ls -l '$(WARM_START_DIR)/final'
+endef
 warm-start:
 	@mkdir -p logs
 	@if compgen -G '$(WARM_START_CKPTS)/epoch-*' >/dev/null || [ -e '$(WARM_START_DIR)' ]; then \
 		echo "warm-start: move $(WARM_START_CKPTS)/epoch-* and $(WARM_START_DIR) aside first"; exit 1; fi
 	@set -o pipefail; { HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u -m preparation.dolly \
-		--max-examples 1000 --output data/dolly_context.jsonl && \
+		--output data/dolly_context.jsonl --held-out-output data/dolly_heldout.json && \
 	   HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u -m preparation.conversations \
-		--hf-dataset HuggingFaceH4/ultrachat_200k --max-examples 1000 \
+		--hf-dataset HuggingFaceH4/ultrachat_200k --max-examples 20000 \
 		--input data/dolly_context.jsonl --max-len 8192 --pack --repeat-rate 0.3 \
-		--output data/warm_start.pt && \
-	   HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	   uv run --no-sync python -u -m training.cli --data data/warm_start.pt \
-		--max-steps 800 --epochs 2 --lr 1e-4 --chunk-len 512 \
-		--lora-rank 16 --lora-alpha 32 --lora-dropout 0 --keep-ckpts 1 $(ARGS) && \
-	   mkdir -p '$(WARM_START_DIR)' && mv '$(WARM_START_CKPTS)'/epoch-* '$(WARM_START_DIR)/' && \
-	   ls -d '$(WARM_START_DIR)'/epoch-2/step-800; \
+		--train-user-turns --output data/warm_start.pt && \
+	   $(WARM_START_TRAIN) --data data/warm_start.pt --epochs 1 \
+		--ckpt-every-tokens 2600000 --keep-ckpts 11 $(ARGS) && \
+	   $(call WARM_START_FINALIZE,$(WARM_START_DIR)); \
 	 } 2>&1 | tee logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log
+
+# Top-up stage (DISCUSSION-20261011 sec 3.1, 3.3 step 1): only when the final
+# checkpoint's probe shows EOC-first on more than half the documents. 500
+# acknowledgement rows ("Remember this for later: <Dolly context>" and a
+# templated reply), 300 more steps resumed from WARM_START_DIR/final. The
+# resumed tree lands in WARM_START_DIR/topup and final re-links to its last
+# step, so the pin, the split, and the runner keep their default path.
+warm-start-topup:
+	@mkdir -p logs
+	@if compgen -G '$(WARM_START_CKPTS)/epoch-*' >/dev/null || [ -e '$(WARM_START_DIR)/topup' ]; then \
+		echo "warm-start-topup: move $(WARM_START_CKPTS)/epoch-* and $(WARM_START_DIR)/topup aside first"; exit 1; fi
+	@[ -L '$(WARM_START_DIR)/final' ] || { echo "warm-start-topup: no $(WARM_START_DIR)/final; run make warm-start first"; exit 1; }
+	@set -o pipefail; { HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	   uv run --no-sync python -u -m preparation.dolly --acknowledge 500 \
+		--output data/dolly_ack.jsonl --held-out-output data/dolly_heldout.json && \
+	   HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	   uv run --no-sync python -u -m preparation.conversations \
+		--input data/dolly_ack.jsonl --max-len 8192 --pack --repeat-rate 0.3 \
+		--train-user-turns --output data/topup.pt && \
+	   src=$$(readlink -f '$(WARM_START_DIR)/final') && step=$${src##*step-} && \
+	   mkdir -p '$(WARM_START_CKPTS)/epoch-1' && cp -r "$$src" '$(WARM_START_CKPTS)/epoch-1/' && \
+	   $(WARM_START_TRAIN) --data data/topup.pt --resume --epochs 99 \
+		--max-steps $$((step + 300)) --keep-ckpts 2 $(ARGS) && \
+	   $(call WARM_START_FINALIZE,$(WARM_START_DIR)/topup); \
+	 } 2>&1 | tee logs/warm-start-topup-$(shell date +%Y%m%d-%H%M%S).log
+
+# Probe one warm-start checkpoint (DISCUSSION-20261011 sec 3.2): wake frame on
+# the 50 held-out Dolly contexts, ten dreams from the last wake. Read-only;
+# runs beside training on a box with VRAM headroom.
+warm-start-probe:
+	@mkdir -p logs
+	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.probe $(ARGS) 2>&1 | tee logs/warm-start-probe-$(shell date +%Y%m%d-%H%M%S).log
 
 # In-context capacity ladder: the largest fact count whose in-context control
 # still clears 0.8, i.e. the N at which consolidation-null has a valid premise.
