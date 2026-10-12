@@ -34,3 +34,23 @@ Model `mamba2_2_7b` on every command.
 - 02:25 training started. Step 37: loss 9.86, gnorm 346 (known LR warm-up spike shape).
 - 02:27 `work:sanity`: `MODEL_NAME=mamba2_2_7b make sanity-sample ARGS="--data data/warm_start.pt --samples 4"`.
 - 02:25 `work:test`: `MODEL_NAME=mamba2_2_7b make test` (full suite, runs beside training).
+
+## Data sanity gate — warm_start.pt (02:30) — PASS
+
+- `make sanity-sample` 4 random windows: two UltraChat chats, two Dolly rows; every boundary
+  is `<|endoftext|><|endofconversation|>[USER]`; replies answer their question; no mojibake
+  (independent haiku read agreed).
+- Scratch check (`check_pack.py`, scratchpad) over the artifact (`ids`/`masks`, 8654 packs):
+  mask on `[USER]` 2824/2824, `[ASSISTANT]` 2819/2819, EOC 1018/1018, token after EOC
+  718/718 masked-in (first 300 packs) — `--train-user-turns` is in effect and the dream
+  prompt's `[USER]` opener is supervised (the 2026-10-11 gap 2 is closed in the data).
+- Decoded two verbatim repeats: example 0 segment 3 = segment 2 (2833 tokens, adjacent),
+  example 2 segment 2 = segment 0 (1474 tokens, gapped by 1). Clean boundaries, verbatim text.
+
+## Warm-start training health
+
+- 02:28:01 step 301, examples 253/8654, loss 3.20, gnorm 7.2 → ~2 step/s, ~1.4 ex/s; whole
+  epoch ETA ~100 min (≈10.3k steps; 12 interval checkpoints ≈ one every 7 min).
+- GPU 30.1 GB / 97.9 GB, 67 % util (shared with the test suite at the time). VRAM headroom
+  is left for the per-checkpoint probe that runs beside training; batch size is part of the
+  registered recipe (step count), not changed.
