@@ -255,3 +255,17 @@ touched mid-run (`evaluation.py` is off-limits); flagged for the debrief: the se
 be a pinned autotune config or an fp32 scorer path, both protocol-level decisions.
 
 - lora epoch 1: to-learn 0.021, not-to-forget 0.8838 (0.57 batch/s, ~110 s/epoch, as last session).
+
+### lora, seed 42 — complete (04:33–05:32, 59.4 min, 30 epochs)
+
+`runs/lora-seed-42/summary.json`: **peak to-learn 0.092 at epoch 9, not-to-forget 0.5175 at the
+peak** (total 0.6095). Curve (epoch: to-learn/not-to-forget):
+0: 0.004/0.9795 · 1: 0.021/0.884 · 2: 0.030/0.863 · 3: 0.042/0.786 · 4: 0.064/0.663 · 5: 0.068/0.551 ·
+6: 0.076/0.489 · 7: 0.067/0.531 · 8: 0.085/0.512 · 9: 0.092/0.518 · 10: 0.082/0.506 · 11: 0.070/0.442 ·
+12–30: to-learn 0.068–0.076, not-to-forget 0.459–0.471 (plateau; 30: 0.074/0.465).
+Against the repeat-0.3 base (peak 0.064 @15, 0.527 retained): acquisition peaks higher and
+earlier, retention at the peak is the same within noise, and the late plateau is ~0.06 lower in
+retention. Finite losses throughout (0.06–0.04 by epoch 13+). All 31 `epoch-EE/result.json` present.
+
+- 05:33 `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 16"`
+  (fresh start; same warm start and split). `.watchdog-fetch` touched for the lora tree.
