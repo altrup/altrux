@@ -214,3 +214,15 @@ document 1), so the 20–50 raise is not available under §3.7 amendment 4.
 - Dream count: dreams relate to the wake (docs10: 2 of 10 about document 1; docs5: 3 of 5 subjects) →
   **`--dreams-per-cycle 10`**, no raise.
 - `internal_eoc 0` in both runs; `subjects_mentioned > 0` in both. Acceptance PASS.
+
+## Smokes (04:28–04:31) — PASS
+
+`for a in frozen lora mix-review altrux; do make lama-ckl-smoke ARGS="--arm $a --model-name mamba2_2_7b"; done`
+— all four EXIT 0 (2 documents, 2 dreams, 32 tokens; engineering only).
+
+## Grid, seed 42 (session start 02:21 UTC; 20 h soft cap → 22:21 UTC)
+
+- 04:33 `train`: `for a in frozen lora; do make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm $a --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --dream-batch-size 8 --eval-batch-size 16 --max-hours 17"; done`
+  Both start fresh (no `epoch-EE/` under `.cache/lama_ckl/runs/`), warm start `98f0071f…ce17`,
+  split `mamba2_2_7b_ultra20k` (manifest above). `--max-hours 17` = hours remaining at launch,
+  rounded down.
