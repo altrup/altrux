@@ -6,3 +6,4 @@ sft/experiments/lama_ckl/training.py
 sft/experiments/lama_ckl/runner.py
 sft/experiments/dream_generation.py
 sft/experiments/dream_distillation.py
+sft/experiments/lama_ckl/warmstart.sha256
