@@ -75,5 +75,6 @@ Model `mamba2_2_7b` on every command.
 | 5439 | 0 | 52 | 10 | 0 | 0 | same mix; one reply is a self-dialogue closing with EOS at 20 tok; mean 109 tok; dreams 10/10 open `[USER]`, all run to 512 tok, two-sided story/task exchanges |
 | 6343 | 0 | 40 | 10 | 0 | 0 | best so far; mean reply 86 tok, min 8; one wake of 10 had 1 forced close at 0.74 turn/s; self-dialogue replies (`[USER] Can you provide more…\n[ASSISTANT][USER] Sure…`) persist on the list-shaped document |
 | 7246 | 0 | 56 | 10 | 0 | 0 | mean 109 tok; same reply mix; dreams 10/10 `[USER]`, 1 EOC close |
+| 8150 | 0 | 52 | 10 | 1 | 0 | mean 105 tok; one dream has an `[ASSISTANT]` loop (first since step-1815) |
 
 Probe wall time ≈ 7–12 min per checkpoint beside training (0.15 turn/s on the wake while the trainer holds the GPU), longer than the 7.5-min checkpoint interval, so the probe loop lags training and finishes after it. Monitor gotcha: `grep -c` without `-a` on these logs (they carry `\r` progress bytes) returns "Binary file matches", so an EXIT wake was missed once; the monitor uses `grep -a` from 03:03.
