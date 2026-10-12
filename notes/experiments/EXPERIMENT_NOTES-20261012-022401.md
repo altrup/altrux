@@ -68,3 +68,4 @@ Model `mamba2_2_7b` on every command.
 | step | eoc_first /50 | forced % | user_opener /10 | asst loops | empty dreams /10 | notes |
 |---|---|---|---|---|---|---|
 | 907 | 0 | 96 | 1 | 1 | 8 | replies copy the document or open a hallucinated `[USER]` turn; one `ASASAS…` loop; dreams: 9 stop at an immediate second EOC |
+| 1815 | 0 | 50 | 9 | 1 | 0 | wake replies open a `[USER]` turn (`[USER] I don't have a lot of time to read…\n[ASSISTANT][USER] I'm not sure…` loop, same text across documents); mean reply 103 tok, min 33; dreams open `[USER]` and run to 512 tok (9 max-tokens, 1 EOC); `[ASSISTANT][USER]` empty-assistant adjacency appears in replies and one dream |
