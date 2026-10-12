@@ -145,3 +145,46 @@ Decoded samples read: task/evidence pairs are well-formed T-REx items.
 
 - 04:15 `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 10 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs10"`
   (pre-grid acceptance, 10 documents; started fresh; warm start `98f0071f…`, split manifest above).
+
+## Pre-grid acceptance, 10 documents (04:17–04:21) — `acceptance/docs10`
+
+- Epoch-0 evaluation (the frozen floor on this warm start, eval batch 16, 170 item/s, 3 s):
+  to-learn **0.004**, not-to-forget **0.9795**, total 0.9835 (identical to the repeat-0.3 floor).
+- Wake: `internal_eoc 0`, **forced closes 0/10**, 0.23 turn/s. Replies are "Yes, <paraphrase/copy of
+  the document>" or a `[USER] Can you provide more info…` self-dialogue, all closing with EOS
+  before 128 tokens. The LAMA evidence sentences (one sentence) close far more readily than the
+  probe's multi-sentence Dolly contexts (60 % forced).
+- Dreams (10, T 0.7, batch [8, 2]): `subjects_mentioned 1`, `duplicate_dreams 1`, `unique 9`,
+  `eoc_termination_rate 0.2`, mean 472 generated tokens (min 315, max 511),
+  `mean_copy_fraction 0.2`, `max_copy_fraction 1.0`, `max_verbatim_run 315`. Dream samples 1 and 2
+  (duplicates) are a `[USER] Can you provide more information on the different starting
+  quarterbacks in the last 7 Thanksgiving Day games?\n[ASSISTANT] …Troy Aikman…Ryan Leaf…` exchange
+  about wake document 1; the rest are UltraChat-shaped tasks unrelated to the wake.
+- Distillation: 10 finite losses 0.468, 0.381, 0.034, 0.023, 0.035, 0.041, 0.011, 0.026, 0.018, 0.014.
+
+### Timed first cycle (DISCUSSION-20261011 §3.3 step 3)
+
+| phase | wall | from log |
+|---|---|---|
+| wake, 10 documents | 43 s | 04:18:16 → 04:18:59 (0.23 turn/s, ~100-token replies) |
+| dream generation, 10 dreams | 70 s | 04:18:59 → 04:20:09 (0.14–0.21 dream/s) |
+| distillation, 10 steps | 83 s | 04:20:09 → 04:21:32 (≈50 s before step 1: teacher pass + save; ≈4 s/step) |
+| cycle total | **196 s** | runner: `195.9 s/cycle` |
+| evaluation, both sets | ~3 s | 170 item/s |
+
+ETA, 10 documents per cycle: 1500 cycles × 196 s + 31 × 3 s ≈ **82 h** for the altrux cell.
+ETA, 5 documents per cycle (3000 cycles; wake halves, dreams and distillation do not):
+≈ 3000 × 175 s ≈ **146 h**. Both far above the debrief's ~12 h hope for all four cells; recorded,
+not a stop (§3.3 step 5). GPU utilization during the wake is 11 % at 11.5 GB: single-token
+decode is latency-bound by design (per-token stepping is registered semantics, not a knob).
+Under the 20 h soft cap this session the altrux cell reaches about epoch 4–5 (docs 5) or 7 (docs 10).
+
+### Wake size rule (2026-10-10 §3.6.2)
+
+"10 documents per cycle if the 10-document dreams mention at least half of the wake's subjects,
+else 5." `subjects_mentioned 1` of 10 → **5 documents per cycle**, pending the 5-document run's
+forced-close count (the stop rule needs both sizes above 20 %; 10-doc is 0 %, so it cannot
+trigger). Dream count stays 10: the dreams are not unrelated to the wake (two of ten are about
+document 1), so the 20–50 raise is not available under §3.7 amendment 4.
+
+- 04:22 `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs5"`
