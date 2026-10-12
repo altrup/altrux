@@ -188,3 +188,29 @@ trigger). Dream count stays 10: the dreams are not unrelated to the wake (two of
 document 1), so the 20–50 raise is not available under §3.7 amendment 4.
 
 - 04:22 `train`: `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/docs5"`
+
+## Pre-grid acceptance, 5 documents (04:22–04:25) — `acceptance/docs5`
+
+- Wake: `internal_eoc 0`, **forced closes 0/5**, 0.26 turn/s; replies "Yes, <copy/abridgement>"
+  closing with EOS, one self-dialogue (document 1, same as in docs10).
+- Dreams: `subjects_mentioned 3` (of 5), `correct_bindings 6`, `duplicate_dreams 0`, `unique 10`,
+  `eoc_termination_rate 0.4`, mean 419 tokens (min 109), `mean_copy_fraction 0.30`.
+- Cycle 135 s (wake 20 s, dreams 69 s, distillation 46 s).
+- Epoch-0 evaluation on the SAME adapter read to-learn **0.002**, not-to-forget **0.9665**
+  (docs10 run: 0.004 / 0.9795). Same `--eval-batch-size 16`; a 0.013 retention spread between two
+  evaluations of identical weights, larger than the 2026-10-10 §1.5 wobble (0.002). Noted for
+  the debrief: the seed-43/44 rule's 0.02 threshold is close to this spread. See below for what
+  the code says about eval order/batching.
+- Independent (haiku) read of docs10 `wake.json`/`dreams.json`: prompts decode to
+  ` Remember this for later: <doc>\n`; replies 6 copies, 3 paraphrases, 1 self-dialogue; all
+  10 dreams open `[USER]`, dreams 0–1 identical and about the wake, 2–9 unrelated tasks; no
+  empty dreams, no `[ASSISTANT]` loops. First-cycle data gate PASS.
+
+### Acceptance decision (registered rules, before any cell)
+
+- Stop rule (both wake sizes > 20 % forced): **not triggered** (0 % and 0 %).
+- Wake size: 10-document dreams mention 1 of 10 subjects (< half) → **`--docs-per-wake 5`**
+  (100 cycles per epoch, 3000 cycles per cell).
+- Dream count: dreams relate to the wake (docs10: 2 of 10 about document 1; docs5: 3 of 5 subjects) →
+  **`--dreams-per-cycle 10`**, no raise.
+- `internal_eoc 0` in both runs; `subjects_mentioned > 0` in both. Acceptance PASS.
