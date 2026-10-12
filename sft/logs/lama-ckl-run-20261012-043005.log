@@ -1,30 +1,0 @@
-attached 128 LoRA adapters
-trainable params: 21,323,264
-loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/ultra20k/final
-[04:30:18] scored 2/2  zeros=2 ones=0  0.3 item/s  ETA 0s
-[04:30:18] scored 2/2  zeros=0 ones=2  20.4 item/s  ETA 0s
-[04:30:18] epoch 0 to-learn sample 1: task='Ryan Leaf plays in quarterback position .' object='quarterback' token_accuracy=0.000000
-[04:30:18] epoch 0 to-learn sample 2: task='Augustine of Hippo has the position of bishop .' object='bishop' token_accuracy=0.000000
-[04:30:18] epoch 0 not-to-forget sample 1: task='Central European University is located in Budapest .' object='Budapest' token_accuracy=1.000000
-[04:30:18] epoch 0 not-to-forget sample 2: task='The native language of Dominique Sanda is French .' object='French' token_accuracy=1.000000
-[04:30:18] epoch 0: to-learn 0.000000, not-to-forget 1.000000
-[04:30:18] completed epoch 0/1: {"epoch": 0, "not_to_forget_accuracy": 1.0, "top_accuracy": 0.0, "total_knowledge": 1.0}
-[04:30:25] wake sample 1: document='When Romo started the Thanksgiving Day game against Tampa Bay, it marked the 7th different starting Cowboys quarterback in the last 7 Thanksgiving Day games (Troy Aikman, Ryan Leaf, Chad Hutchison, Quincy Carter, Drew Henson, Drew Bledsoe and Romo).' assistant='[USER] Can you provide more information on the different starting quarterbacks in the last 7 Thanksgiving Day games?\n[ASSISTANT] Yes, the different starting quarterbacks in the last 7 Thanksgiving Day games are:\n1. Troy Aikman (1995)\n2. Ryan Leaf (2000)\n3. Chad Hutchison (2001)\n4. Drew Henson (2002)\n5. Drew Bledsoe (2003)\n6. Quincy Carter (2004)\n7. Tony Romo (2011)<|endoftext|>'
-[04:30:27] wake sample 2: document='It stands opposed to monergism, a doctrine most commonly associated with the Lutheran and Reformed Protestant traditions, whose soteriologies have been strongly influenced by the North African bishop and Latin Church Father Augustine of Hippo (354–430).' assistant=' Yes, monergism is a doctrine that is most commonly associated with the Lutheran and Reformed Protestant traditions.<|endoftext|>'
-[04:30:27] wake 2/2 0.23 turn/s ETA 0s
-[04:30:29] replay dreams 2/2, batch 2, 0.98 dream/s, ETA 0s
-[04:30:29] epoch 1 cycle 0 dream sample 1: '<|endofconversation|>[USER] Can you provide more information on the different starting quarterbacks in the last 7 Thanksgiving Day games?\n[ASSISTANT] Yes, the different starting quarterbacks in the'
-[04:30:29] epoch 1 cycle 0 dream sample 2: '<|endofconversation|>[USER] Can you provide more information on the different starting quarterbacks in the last 7 Thanksgiving Day games?\n[ASSISTANT] Yes, the different starting quarterbacks in the'
-[04:30:29] epoch 1 cycle 0 dream diagnostics {"contradictions": 0, "correct_bindings": 0, "duplicate_dreams": 1, "eoc_termination_rate": 0.0, "max_copy_fraction": 1.0, "max_generated_tokens": 31, "max_verbatim_run": 31, "mean_copy_fraction": 1.0, "mean_generated_tokens": 31.0, "min_generated_tokens": 31, "misbindings": 0, "subjects_mentioned": 0, "unique_dreams": 1}
-[04:31:03] altrux epoch 1 cycle 0 dream 1/2 loss 2.1313
-[04:31:03] altrux epoch 1 cycle 0 dream 2/2 loss 1.6685
-[04:31:03] epoch 1 cycle 1/1: forced closes 0/2, duplicate dreams 1/2, 45.0 s/cycle ETA 0s
-[04:31:03] scored 2/2  zeros=2 ones=0  15.6 item/s  ETA 0s
-[04:31:04] scored 2/2  zeros=0 ones=2  19.3 item/s  ETA 0s
-[04:31:04] epoch 1 to-learn sample 1: task='Ryan Leaf plays in quarterback position .' object='quarterback' token_accuracy=0.000000
-[04:31:04] epoch 1 to-learn sample 2: task='Augustine of Hippo has the position of bishop .' object='bishop' token_accuracy=0.000000
-[04:31:04] epoch 1 not-to-forget sample 1: task='Central European University is located in Budapest .' object='Budapest' token_accuracy=1.000000
-[04:31:04] epoch 1 not-to-forget sample 2: task='The native language of Dominique Sanda is French .' object='French' token_accuracy=1.000000
-[04:31:04] epoch 1: to-learn 0.000000, not-to-forget 1.000000
-[04:31:04] completed epoch 1/1: {"epoch": 0, "not_to_forget_accuracy": 1.0, "top_accuracy": 0.0, "total_knowledge": 1.0}
-EXIT=0

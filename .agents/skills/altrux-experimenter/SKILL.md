@@ -294,10 +294,8 @@ cap reached, stop-and-report). In order:
    `.cache/lama_ckl/runs/<cell>/summary.json`, each
    `.cache/lama_ckl/runs/<cell>/epoch-EE/result.json`, and the upstream
    pickle under `.cache/lama_ckl/upstream/`. They come home by the pull
-   (`LAMBDA_CACHE_ARTIFACTS` must include `lama_ckl`). As the branch
-   fallback, `git add -f` those small json files and the logs under
-   `sft/logs/` that are under 50 MB each and 1 GB in total, commit, push.
-   Never checkpoints or `.pt` caches; those go by the pull only.
+   (`LAMBDA_CACHE_ARTIFACTS` must include `lama_ckl`). Do not commit
+   them here; the branch fallback is step 5, for what the pull missed.
    A one-off script you wrote on the box lives under
    `sft/experiments/<name>/diagnostics/`, linted and committed, or is
    deleted: a script in a log folder is lost to the next session.
@@ -315,9 +313,12 @@ cap reached, stop-and-report). In order:
    timestamp: touch `.watchdog-fetch` once more and re-check; still missing
    → step 5.
 5. Record everything still missing from the receipt as UNRETRIEVED, with
-   sizes, in the notes, commit and push the notes once more, then touch
-   `.watchdog-fetch` one last time. The branch holds the record even when
-   the artifacts never arrive.
+   sizes, in the notes. As the branch fallback, `git add -f` only the
+   missing result json files and logs that are under 50 MB each and 1 GB
+   in total (never checkpoints or `.pt` caches), commit and push with the
+   notes, then touch `.watchdog-fetch` one last time. The branch holds the
+   record even when the artifacts never arrive. Nothing is missing: no
+   fallback commit; the pull is the record.
 6. `touch scripts/.watchdog-terminate` — the watchdog's next probe (within
    ~1 min) does a final pull (retried twice), terminates regardless, and
    leaves a `PULL-FAILED-<timestamp>` file on the teammate's machine if the

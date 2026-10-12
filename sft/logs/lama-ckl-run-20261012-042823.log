@@ -1,12 +1,0 @@
-attached 128 LoRA adapters
-trainable params: 21,323,264
-loaded 257/257 trainable tensors from ../models/mamba2_2_7b/checkpoints/ultra20k/final
-[04:28:36] scored 2/2  zeros=2 ones=0  0.3 item/s  ETA 0s
-[04:28:36] scored 2/2  zeros=0 ones=2  20.6 item/s  ETA 0s
-[04:28:36] epoch 0 to-learn sample 1: task='Ryan Leaf plays in quarterback position .' object='quarterback' token_accuracy=0.000000
-[04:28:36] epoch 0 to-learn sample 2: task='Augustine of Hippo has the position of bishop .' object='bishop' token_accuracy=0.000000
-[04:28:36] epoch 0 not-to-forget sample 1: task='Central European University is located in Budapest .' object='Budapest' token_accuracy=1.000000
-[04:28:36] epoch 0 not-to-forget sample 2: task='The native language of Dominique Sanda is French .' object='French' token_accuracy=1.000000
-[04:28:36] epoch 0: to-learn 0.000000, not-to-forget 1.000000
-[04:28:36] completed epoch 0/0: {"epoch": 0, "not_to_forget_accuracy": 1.0, "top_accuracy": 0.0, "total_knowledge": 1.0}
-EXIT=0
