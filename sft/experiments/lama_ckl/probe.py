@@ -23,12 +23,12 @@ from experiments.lama_ckl.protocol import (
     run_conversational_wake,
 )
 from experiments.lama_ckl.runner import (
-    DOCS_PER_WAKE,
     DREAM_TEMPERATURE,
     DREAM_TOKENS,
     DREAMS_PER_CYCLE,
     EVIDENCE_TOKENS,
     REPLY_TOKENS,
+    dream_set_seed,
     file_sha,
 )
 from experiments.verbatim import copy_fraction
@@ -149,7 +149,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--init-adapter", type=Path, required=True)
     parser.add_argument("--documents", type=Path, default=Path("data/dolly_heldout.json"))
-    parser.add_argument("--docs-per-wake", type=int, default=DOCS_PER_WAKE)
+    parser.add_argument("--docs-per-wake", type=int, default=5, help="the protocol wake size")
     parser.add_argument("--dreams", type=int, default=DREAMS_PER_CYCLE)
     parser.add_argument("--dream-batch-size", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
@@ -196,7 +196,7 @@ def main() -> None:
             evidence_tokens=EVIDENCE_TOKENS,
             device=device,
             temperature=DREAM_TEMPERATURE,
-            seed=args.seed + wake_index,
+            seed=dream_set_seed(args.seed, 1, wake_index),
         )
         turns = artifact["turns"]
         all_turns.extend(turns)
