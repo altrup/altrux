@@ -353,8 +353,9 @@ if [[ "$RUN_WATCH" == 1 ]]; then
     tmux new-window -t "$sess" -n train "$rssh -t 'until tmux has-session -t train 2>/dev/null; do echo \"waiting for remote train tmux...\"; sleep 5; done; exec tmux attach -t train'; exec bash"
     tmux new-window -t "$sess" -n agent "$rssh -t 'until tmux has-session -t experimenter 2>/dev/null; do echo \"waiting for remote experimenter tmux...\"; sleep 5; done; exec tmux attach -t experimenter'; exec bash"
     tmux new-window -t "$sess" -n work "$rssh -t 'until tmux has-session -t work 2>/dev/null; do echo \"waiting for remote work tmux...\"; sleep 5; done; exec tmux attach -t work'; exec bash"
+    tmux new-window -t "$sess" -n shell "$rssh -t 'cd ~/altrux/sft 2>/dev/null; exec bash -l'; exec bash"
     tmux select-window -t "$sess:watch"
-    echo "Local tmux session '$sess' up — windows: watch (watchdog: pulls + terminates), train (remote train tmux), agent (remote experimenter tmux), work (remote work tmux)."
+    echo "Local tmux session '$sess' up — windows: watch (watchdog: pulls + terminates), train (remote train tmux), agent (remote experimenter tmux), work (remote work tmux), shell (your own ssh shell on the box, outside every remote tmux)."
     echo "Attach: tmux attach -t $sess"
   fi
 fi
@@ -441,5 +442,5 @@ ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" \
 echo
 echo "Launched. Instance $instance_id is at $ip; setup is running in tmux '$SESSION'."
 echo "Run branch: $BOX_BRANCH — review with: git fetch origin $BOX_BRANCH && git log --stat main..origin/$BOX_BRANCH"
-echo "Everything is viewable locally: tmux attach -t ${sess:-altrux} (windows: watch / train / agent)."
+echo "Everything is viewable locally: tmux attach -t ${sess:-altrux} (windows: watch / train / agent / work / shell)."
 echo "Direct ssh fallback: ssh -i $SSH_KEY_PATH $SSH_USER@$ip -t tmux attach -t <$SESSION|experimenter>"
