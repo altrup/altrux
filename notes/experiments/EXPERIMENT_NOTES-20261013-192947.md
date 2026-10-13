@@ -48,3 +48,12 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
 | 8200 | 1 | 3 | 3 | `thanks` (9) | 19.8 | 10 | 0 | 0 | 0 | probe 20:32-20:34. Stable; same EOC-first document. Dreams 10/10 `[USER]`, 0 copies. |
 
 - 20:41:45 warm-start training done: 9594 steps, 8144/8144 examples, 19:32 to 20:41 (69 min training), last running loss 0.93. Finalize moved `epoch-1/` into `checkpoints/ultra20k-v4/`; `ultra20k-v4/final -> epoch-1/step-9594`. Interval checkpoints: 910, 1820, 2732, 3644, 4555, 5467, 6377, 7289, 8200, 9114 (ten) plus the final step 9594. Tree size 3.3G. sha256 of final/trainable.pt: `7ba7972b308c70c777d4f592e46a781b4b9dad22717cec247a6f10821a054ad9` (pinned only after the gate). Fetch requested (`.watchdog-fetch`) for the checkpoint tree.
+| 9114 | 1 | 4 | 2 | `thanks` (6) | 22.2 | 10 | 0 | 0 | 0 | probe 20:39-20:41 (wrote probe.json 13 s before the finalize move). Same EOC-first document. |
+| **9594 (final)** | **1** | **1** | **2** | **`the` (12)** | 20.9 | 10 | 0 | 0 | 0 | probe 20:42-20:44 on `ultra20k-v4/epoch-1/step-9594` (= `final`). Content replies 48/50. The one EOC-first is the Covenant School document again; the one role-marker close is an empty reply to the Call of Duty document; the comma-list document now gets a content reply (an invented plot summary). Openers: the 12, okay 8, thanks 7, got 3, i 3. Replies are acknowledgements or one-sentence restatements, mean 21 tokens, 3 over 65. Dreams 10/10 open `[USER]` with UltraChat-style tasks ("Write a horror story…", "Given the text: …", "Can you paraphrase…"), 2 close on EOC, 0 copies, 0 empty, 0 assistant loops. |
+
+**PIN GATE: PASS** under the teammate's amendment (EOC-first 1 of 50 allowed; role markers 1 ≤ 4; forced 2 ≤ 9; top opener 12 ≤ 25). Pinned `sft/experiments/lama_ckl/warmstart.sha256` = `7ba7972b308c70c777d4f592e46a781b4b9dad22717cec247a6f10821a054ad9` (`ultra20k-v4/final -> epoch-1/step-9594`).
+
+- 20:45 step 2, split, in `train`:
+  ```
+  cd ~/altrux/sft && make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
+  ```
