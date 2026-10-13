@@ -129,7 +129,7 @@ def test_wake_census_counts_role_marker_closes_and_keeps_three_examples():
 
 
 def test_wake_census_opener_census_normalizes_first_word():
-    turns = [_turn("Sure, here"), _turn("sure!"), _turn("  "), _turn("The end.")]
+    turns = [_turn("Sure, here"), _turn("sure!"), _turn("<|endoftext|>"), _turn("The end.")]
 
     openers = wake_census(turns, eoc_id=EOC, asst_id=ASST, eos_id=EOS)["openers"]
 

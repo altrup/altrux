@@ -8,6 +8,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -55,7 +56,7 @@ def _length_bucket(length: int) -> str:
 
 
 def _opener(text: str) -> str:
-    words = text.split()
+    words = re.sub(r"<\|[^|]*\|>", " ", text).split()
     return words[0].lower().rstrip(".,!?:;") if words else "<empty>"
 
 
