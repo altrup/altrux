@@ -155,3 +155,11 @@ Read at 23:31 (cycle 7): the replies have shifted from acknowledgements to resta
 | 13 | 0.000 | 0.975 | 1 | 0 | 0 | 0 | 0.000 | | ` Mehdi Taouil (Arabic: مهدي طويل) (born 20 May 1983 in Villeneuve-Saint-Georges…` (a copy of the document), ` This is a good article. I really enjoyed learning about the life and work of Charles Palmer…` | dreams are now `[USER] <invented encyclopedic document>` for 511 tokens with no `[ASSISTANT]` turn and no close (`[USER] The Battle of Guadalcanal resulted in a decisive victory…`, `[USER] How long did it take to create the first Nintendo system?\n\nThe first Nintendo video game system…`) |
 
 Read at 23:41 (cycle 13): the dreams have taken the wake's own shape — one user turn that pastes a document — but with invented documents (copy fraction 0.000, subjects_mentioned 0), and every reply is a copy or restatement of its document. The same drift the third box saw at cycles 1-3 ("invented passages in the template of the first document"), slower and without the frame string so far (no dream opens with `Remember this for later`). Scores at the floor. Continuing: the full 100-cycle curve costs 2 h and is the registered result.
+| 14 | 0.000 | 0.974 | 0 | 0 | 0 | 1 | 0.000 | | | |
+| 15 | 0.002 | 0.975 | 1 | 0 | 0 | 1 | 0.032 / 0.965 | | | one dream a near-verbatim copy of a wake document |
+| 16 | 0.004 | 0.979 | 2 | 0 | 0 | 2 | 0.032 / 0.971 | | | |
+| 17 | 0.001 | 0.978 | 2 | 0 | 0 | 3 | 0.057 / 0.967 | | | |
+| 18 | 0.001 | 0.977 | 4 | 0 | 0 | 1 | 0.023 / 0.681 | | | forced closes 4/5 |
+| 19 | 0.000 | 0.978 | 1 | 0 | 0 | 1 | 0.000 | 0.0028 | ` Brian Gerard McNamee is a former New York City police officer…` (copies) | dreams no longer open with `[USER]`: bare document monologue after the boundary (`<|endofconversation|> The first photo of Tony Blair in a suit was taken in September 1987…`), 511 tokens each |
+
+Read at 23:50 (cycle 19): the role marker has dropped out of the dreams (cycle 13: `[USER] <document>`; cycle 19: `<document>` alone), replies are document copies with forced closes at 1-4 of 5, and the dreams' copy fraction spiked at cycles 15-18 (one dream per cycle at 0.68-0.97 of a wake document). Scores at the floor (to-learn ≤ 0.005). Continuing.
