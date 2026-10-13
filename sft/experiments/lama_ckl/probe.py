@@ -30,6 +30,7 @@ from experiments.lama_ckl.runner import (
     REPLY_TOKENS,
     file_sha,
 )
+from experiments.verbatim import copy_fraction
 from progress import heartbeat, ts
 
 
@@ -43,25 +44,53 @@ def _first_token_kind(reply: Sequence[int], eoc_id: int, asst_id: int, eos_id: i
     return {eoc_id: "eoc", asst_id: "assistant", eos_id: "eos"}.get(reply[0], "content")
 
 
+HISTOGRAM_EDGES = ((1, 1), (2, 4), (5, 16), (17, 64))
+
+
+def _length_bucket(length: int) -> str:
+    for low, high in HISTOGRAM_EDGES:
+        if length <= high:
+            return str(low) if low == high else f"{low}-{high}"
+    return f"{HISTOGRAM_EDGES[-1][1] + 1}+"
+
+
+def _opener(text: str) -> str:
+    words = text.split()
+    return words[0].lower().rstrip(".,!?:;") if words else "<empty>"
+
+
 def wake_census(
     turns: Sequence[Mapping[str, object]], *, eoc_id: int, asst_id: int, eos_id: int
 ) -> dict[str, object]:
-    """First reply token kinds, forced closes, and generated reply lengths"""
+    """First reply token kinds, closes, reply lengths, and reply openers"""
     first = Counter({"eoc": 0, "assistant": 0, "eos": 0, "content": 0})
     lengths: list[int] = []
     for turn in turns:
         reply = list(turn["assistant_token_ids"])
         first[_first_token_kind(reply, eoc_id, asst_id, eos_id)] += 1
         lengths.append(len(reply) - bool(turn["eos_forced"]))
+    marked = [turn for turn in turns if turn.get("role_marker_closed")]
+    histogram = Counter(_length_bucket(length) for length in lengths)
     return {
         "turns": len(turns),
         "first_token": dict(first),
         "forced_closes": sum(bool(turn["eos_forced"]) for turn in turns),
+        "role_marker_closes": len(marked),
+        "role_marker_examples": [
+            {"assistant": turn["assistant"], "document": str(turn["document"])[:200]}
+            for turn in marked[:3]
+        ],
         "reply_tokens": {
             "mean": sum(lengths) / len(lengths) if lengths else 0.0,
             "min": min(lengths, default=0),
             "max": max(lengths, default=0),
+            "histogram": {
+                bucket: histogram[bucket]
+                for bucket in map(_length_bucket, (1, 2, 5, 17, 65))
+                if histogram[bucket]
+            },
         },
+        "openers": dict(Counter(_opener(str(turn["assistant"])) for turn in turns).most_common(10)),
     }
 
 
@@ -75,12 +104,15 @@ def _assistant_loop(generated: Sequence[int], user_id: int, asst_id: int) -> boo
     return False
 
 
-def dream_census(dreams: Sequence[Dream], *, user_id: int, asst_id: int) -> dict[str, object]:
-    """Empty dreams, [USER] openers, [ASSISTANT] loops, and stop reasons"""
+def dream_census(
+    dreams: Sequence[Dream], transcript_ids: Sequence[int], *, user_id: int, asst_id: int
+) -> dict[str, object]:
+    """Empty and verbatim-copy dreams, [USER] openers, [ASSISTANT] loops, and stop reasons"""
     generated = [list(dream.dream_ids[dream.prefix_len :]) for dream in dreams]
     return {
         "dreams": len(dreams),
         "empty": sum(not ids for ids in generated),
+        "verbatim_copies": sum(copy_fraction(ids, transcript_ids) >= 0.9 for ids in generated),
         "user_opener": sum(bool(ids) and ids[0] == user_id for ids in generated),
         "assistant_loop": sum(_assistant_loop(ids, user_id, asst_id) for ids in generated),
         "stop_reasons": dict(Counter(dream.stop_reason for dream in dreams)),
@@ -90,17 +122,20 @@ def dream_census(dreams: Sequence[Dream], *, user_id: int, asst_id: int) -> dict
 
 def verdict(wake: Mapping[str, object], dreams: Mapping[str, object]) -> str:
     """One informational line against the expectations of a good checkpoint"""
-    turns = int(wake["turns"])
     eoc_first = int(wake["first_token"]["eoc"])
-    forced = 100 * int(wake["forced_closes"]) / turns if turns else 0.0
+    markers, forced = int(wake["role_marker_closes"]), int(wake["forced_closes"])
+    opener, opener_count = next(iter(wake["openers"].items()), ("<none>", 0))
     count, openers, loops = (
         int(dreams["dreams"]),
         int(dreams["user_opener"]),
         int(dreams["assistant_loop"]),
     )
+    # Thresholds are the pin gate over the 50 held-out replies (DISCUSSION-20261013 §3.2).
     checks = {
-        f"eoc_first {eoc_first}/{turns} (expect ~0)": eoc_first <= turns // 10,
-        f"forced {forced:.0f}% (expect <20%)": forced < 20,
+        f"eoc_first {eoc_first} (gate 0)": eoc_first == 0,
+        f"role_marker_closes {markers} (gate <=4)": markers <= 4,
+        f"forced {forced} (gate <=9)": forced <= 9,
+        f"top opener {opener!r} {opener_count} (gate <=25)": opener_count <= 25,
         f"user_opener {openers}/{count} (expect most)": openers * 2 > count,
         f"assistant_loop {loops} (expect 0)": loops == 0,
     }
@@ -159,6 +194,8 @@ def main() -> None:
             reply_tokens=REPLY_TOKENS,
             evidence_tokens=EVIDENCE_TOKENS,
             device=device,
+            temperature=DREAM_TEMPERATURE,
+            seed=args.seed + wake_index,
         )
         turns = artifact["turns"]
         all_turns.extend(turns)
@@ -174,6 +211,12 @@ def main() -> None:
             print(
                 f"[{ts()}] wake {wake_index} failure: document={turn['document'][:200]!r} "
                 f"assistant={turn['assistant']!r}",
+                flush=True,
+            )
+        for example in census["role_marker_examples"]:
+            print(
+                f"[{ts()}] wake {wake_index} role marker close: "
+                f"document={example['document']!r} assistant={example['assistant']!r}",
                 flush=True,
             )
         heartbeat()
@@ -194,6 +237,7 @@ def main() -> None:
     )
     dreams_summary = dream_census(
         dreams,
+        artifact["transcript_token_ids"],
         user_id=int(tokenizer.convert_tokens_to_ids(model_mod.USER_OPEN)),
         asst_id=ids["asst_id"],
     )

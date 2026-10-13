@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from experiments.lama_ckl.probe import dream_census, wake_census
+from experiments.lama_ckl.probe import dream_census, verdict, wake_census
 from experiments.lama_ckl.protocol import run_conversational_wake
 
 USER, ASST, EOC, EOS = 3, 4, 5, 2
@@ -84,13 +84,12 @@ def test_wake_census_counts_eos_first_replies():
     assert census["reply_tokens"]["max"] == 1
 
 
-@pytest.mark.parametrize("token", [ASST, 70])
-def test_wake_census_counts_forced_closes_and_excludes_the_fed_eos(token):
-    census = _census(token)
+def test_wake_census_counts_forced_closes_and_excludes_the_fed_eos():
+    census = _census(70)
 
     assert census["forced_closes"] == 3
-    assert census["first_token"]["assistant" if token == ASST else "content"] == 3
-    assert census["reply_tokens"] == {"mean": 4.0, "min": 4, "max": 4}
+    assert census["first_token"]["content"] == 3
+    assert census["reply_tokens"] == {"mean": 4.0, "min": 4, "max": 4, "histogram": {"2-4": 3}}
 
 
 def test_dream_census_counts_empty_user_opener_and_assistant_loop():
@@ -100,7 +99,7 @@ def test_dream_census_counts_empty_user_opener_and_assistant_loop():
         SimpleNamespace(dream_ids=[EOC, ASST, 70, ASST, 71], prefix_len=1, stop_reason="budget"),
     ]
 
-    census = dream_census(dreams, user_id=USER, asst_id=ASST)
+    census = dream_census(dreams, [], user_id=USER, asst_id=ASST)
 
     assert census["dreams"] == 3
     assert census["empty"] == 1
@@ -108,3 +107,80 @@ def test_dream_census_counts_empty_user_opener_and_assistant_loop():
     assert census["assistant_loop"] == 1
     assert census["stop_reasons"] == {"eoc": 2, "budget": 1}
     assert census["generated_tokens"] == pytest.approx(8 / 3)
+
+
+def _turn(text, ids=(70,), marker=False, document="doc"):
+    return {
+        "assistant": text,
+        "assistant_token_ids": list(ids),
+        "eos_forced": False,
+        "role_marker_closed": marker,
+        "document": document,
+    }
+
+
+def test_wake_census_counts_role_marker_closes_and_keeps_three_examples():
+    turns = [_turn(f"reply {i}", marker=i % 2 == 0, document=f"d{i}") for i in range(8)]
+
+    census = wake_census(turns, eoc_id=EOC, asst_id=ASST, eos_id=EOS)
+
+    assert census["role_marker_closes"] == 4
+    assert [example["document"] for example in census["role_marker_examples"]] == ["d0", "d2", "d4"]
+
+
+def test_wake_census_opener_census_normalizes_first_word():
+    turns = [_turn("Sure, here"), _turn("sure!"), _turn("  "), _turn("The end.")]
+
+    openers = wake_census(turns, eoc_id=EOC, asst_id=ASST, eos_id=EOS)["openers"]
+
+    assert openers == {"sure": 2, "<empty>": 1, "the": 1}
+    assert list(openers)[0] == "sure"
+
+
+def test_wake_census_reply_length_histogram():
+    turns = [_turn("x", ids=[70] * n) for n in (1, 2, 4, 5, 16, 17, 64, 65)]
+
+    histogram = wake_census(turns, eoc_id=EOC, asst_id=ASST, eos_id=EOS)["reply_tokens"][
+        "histogram"
+    ]
+
+    assert histogram == {"1": 1, "2-4": 2, "5-16": 2, "17-64": 2, "65+": 1}
+
+
+def test_dream_census_counts_verbatim_copies():
+    transcript = list(range(100, 140))
+    dreams = [
+        SimpleNamespace(dream_ids=[EOC, *transcript[5:25]], prefix_len=1, stop_reason="eoc"),
+        SimpleNamespace(dream_ids=[EOC, *range(200, 220)], prefix_len=1, stop_reason="eoc"),
+    ]
+
+    census = dream_census(dreams, transcript, user_id=USER, asst_id=ASST)
+
+    assert census["verbatim_copies"] == 1
+
+
+def _gate(dominant_opener):
+    turns = [_turn("Sure thing") for _ in range(dominant_opener)]
+    turns += [_turn(f"word{i} more") for i in range(50 - dominant_opener)]
+    wake = wake_census(turns, eoc_id=EOC, asst_id=ASST, eos_id=EOS)
+    dreams = {"dreams": 10, "user_opener": 10, "assistant_loop": 0}
+    return verdict(wake, dreams)
+
+
+def test_verdict_opener_gate_flips_at_26_of_50():
+    assert "OFF" not in _gate(25)
+    line = _gate(26)
+    assert line.count("OFF") == 1
+    assert "26" in line.split("OFF")[0].rsplit(";", 1)[-1]
+
+
+def test_verdict_flags_role_markers_and_forced_closes():
+    turns = [_turn(f"w{i}", marker=i < 5) for i in range(50)]
+    for turn in turns[:10]:
+        turn["eos_forced"] = True
+    wake = wake_census(turns, eoc_id=EOC, asst_id=ASST, eos_id=EOS)
+
+    line = verdict(wake, {"dreams": 10, "user_opener": 2, "assistant_loop": 1})
+
+    assert line.count("OFF") == 4
+    assert line.count("ok") == 2
