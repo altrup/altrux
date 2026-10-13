@@ -53,9 +53,12 @@ here.
 
 | Step | Command |
 |------|---------|
-| Retrain the warm start | `MODEL_NAME=mamba2_2_7b make warm-start` |
-| Build the split | `make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"` |
-| One cell (one per arm) | `make lama-ckl-run ARGS="--arm <frozen\|lora\|mix-review\|altrux> --model-name mamba2_2_7b --seed 42 --docs-per-wake <N> --dreams-per-cycle <D> --max-hours <H>"` |
+| Retrain the warm start | `MODEL_NAME=mamba2_2_7b make warm-start` (-> `models/mamba2_2_7b/checkpoints/ultra20k-v4/final`) |
+| Probe a checkpoint | `make warm-start-probe ARGS="--init-adapter <step dir>"` (see PROBE EVERY CHECKPOINT) |
+| Build the split | `make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"` (-> `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/`) |
+| Frozen cell, three times | `make lama-ckl-frozen-x3 SEED=42 ARGS="--model-name mamba2_2_7b"` (-> `.cache/lama_ckl/runs/frozen-seed-42-r{1,2,3}`) |
+| Acceptance | `make lama-ckl-run ARGS="--arm altrux --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/altrux-5"` |
+| One trained cell | `make lama-ckl-run ARGS="--arm <lora\|mix-review> --model-name mamba2_2_7b --seed 42 --max-hours <H>"` (30 epochs), or `... --arm altrux ... --epochs 1 --docs-per-wake 5 --dreams-per-cycle 10 --max-hours <H>"` |
 | Engineering smoke | `make lama-ckl-smoke ARGS="--arm <arm> --model-name mamba2_2_7b"` |
 | Llama-2 calibration | `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke`, then `... make lama-ckl-upstream-run`, then `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl` |
 | Aggregate report | `make lama-ckl-report` |
@@ -120,13 +123,15 @@ reading, not reasoning) as well as to you:
 - The warm-start corpus. `make warm-start` renders `data/warm_start.pt` and
   then trains on it in one go. Run
   `make sanity-sample ARGS="--data data/warm_start.pt"` in a `work` window
-  as soon as the file exists. Ask: "do the packs look like conversations
-  and Dolly context rows, with verbatim repeats at the pack boundaries and
-  no garbled splices?" If the sample is wrong, stop the training and treat
+  as soon as the file exists, and read the decoded example of every
+  first-occurrence shape, Dolly repeat variant and UltraChat (k, j) split
+  that the conversations log prints (DISCUSSION-20261013 §3.1). Ask: "do the
+  packs look like conversations and Dolly context rows, with each repeat
+  rendered as its variant and no garbled splices?" If the sample is wrong, stop the training and treat
   it as stop-and-report.
 - The first altrux cycle. Read the decoded samples in
   `epoch-01/cycle-00/wake.json` and `epoch-01/cycle-00/dreams.json` of the
-  first altrux run (the acceptance runs come first). Ask: "is each wake turn the frame string, the document, and
+  first altrux run (the acceptance run comes first). Ask: "is each wake turn the frame string, the document, and
   a reply; is each dream a conversation after `<|endofconversation|>`?"
 
 Anything suspicious: stop, decode more around it yourself, and treat a
@@ -134,28 +139,27 @@ confirmed structural problem as stop-and-report, not something to train
 through. Every data disaster in this project's history was visible in a
 decoded sample and invisible in every count.
 
-PROBE EVERY CHECKPOINT AS IT LANDS (DISCUSSION-20261011 §3.2). `make
+PROBE EVERY CHECKPOINT AS IT LANDS (DISCUSSION-20261013 §3.2). `make
 warm-start` saves a checkpoint every 2.6M tokens under
 `models/mamba2_2_7b/checkpoints/epoch-1/step-*` (ten plus the final save;
-the finished tree moves to `checkpoints/ultra20k/` and `ultra20k/final`
-links to the last step). While training continues, run in a `work` window
-`make warm-start-probe ARGS="--init-adapter <that step dir>"` on each new
-checkpoint and record its verdict line (EOC-first count of 50, forced
-closes %, `[USER]` openers of 10 dreams, `[ASSISTANT]` loops) in the run
-notes as a curve. Read the decoded EOC-first replies and the dreams it
-prints. The final checkpoint is the only candidate for the warm start; an
+the finished tree moves to `checkpoints/ultra20k-v4/` and
+`ultra20k-v4/final` links to the last step). While training continues, run
+in a `work` window `make warm-start-probe ARGS="--init-adapter <that step
+dir>"` on each new checkpoint and record its verdict line (EOC-first count
+of 50, role-marker closes, forced closes, the top opener and its count,
+`[USER]` openers of 10 dreams, `[ASSISTANT]` loops) and the empty and
+verbatim-copy dream counts in the run notes as a curve. Read the decoded
+role-marker and EOC-first replies and the dreams it prints. The final checkpoint is the only candidate for the warm start; an
 earlier one is never picked, whatever its probe says.
 
-TOP-UP RULE (§3.3 step 1). If the final checkpoint's probe shows EOC-first
-on more than half the documents (more than 25 of 50), run
-`make warm-start-topup` once (300 steps of acknowledgement rows resumed
-from `ultra20k/final`; it re-links `final`), then probe `ultra20k/final`
-again. If that probe still shows EOC-first on more than half, stop and
-report: the warm start is not fit for the protocol, and no split or cell
-runs this session.
+PIN GATE (DISCUSSION-20261013 §3.2). Over the final checkpoint's 50
+held-out replies: EOC-first 0, role-marker closes at most 4, forced closes
+at most 9, and no single opener on more than 25. A miss is stop-and-report:
+the warm start is not fit for the protocol, and no split or cell runs this
+session. There is no top-up stage.
 
-PIN THE WARM START. After the probe passes, write the SHA-256 of
-`models/mamba2_2_7b/checkpoints/ultra20k/final/trainable.pt` into
+PIN THE WARM START. After the pin gate passes, write the SHA-256 of
+`models/mamba2_2_7b/checkpoints/ultra20k-v4/final/trainable.pt` into
 `sft/experiments/lama_ckl/warmstart.sha256` (the hex digest only), commit
 and push it on the box branch, and record it in the run notes with the
 step the link resolves to. The split and the runner refuse to start while
@@ -201,10 +205,31 @@ knobs belong to the DISCUSSION file, not the utilization budget.
 
 Run the LAMA-CKL four-arm comparison registered in the governing debrief:
 frozen, lora, mix-review, and altrux on the 2.7B Mamba model, one shared
-500/500 split built on the ultra20k warm start, 30 epochs per cell. Seed
-42 of all four arms runs first. Seeds 43 and 44 run only on the rule in
-the debrief. The official acquisition and retention scores are primary;
-the dream and wake diagnostics are secondary process measurements.
+500/500 split built on the ultra20k-v4 warm start. Lora and mix-review run
+30 epochs. Altrux runs one epoch (`--epochs 1`): 100 cycles of 5 documents,
+each saving its adapter and scoring both fact sets into
+`epoch-01/cycle-NN/`. The frozen cell is scored three times; the spread of
+the three is the evaluation resolution. Seed 42 of all four arms runs first.
+Seeds 43 and 44 run only on the rule in the debrief. The official
+acquisition and retention scores are primary; the dream and wake
+diagnostics are secondary process measurements.
+
+SESSION ORDER (DISCUSSION-20261013 §3.4):
+
+1. Warm start, probe on each checkpoint, pin gate on the final one, pin
+   the SHA.
+2. Split (`--lama-root ../.cache/LAMA/data`).
+3. Frozen cell three times (`make lama-ckl-frozen-x3 SEED=42`); record the
+   spread in the run notes before any other cell.
+4. Acceptance (PRE-GRID ACCEPTANCE below).
+5. Smokes of all four arms.
+6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), altrux
+   (`--epochs 1`, 100 cycles).
+7. Seeds 43 and 44 for all three trained arms only if, at seed 42, altrux
+   differs from the best baseline by at least 0.05 absolute on peak
+   acquisition or paired retention at epoch 1 (altrux at cycle 100 against
+   each baseline's `epoch-01/result.json`). Otherwise seed 42 only.
+8. Shutdown checklist.
 
 ## How much of this is yours
 
@@ -219,36 +244,39 @@ The guardrails: a crash gets a bounded retry then stop (IF TRAINING
 CRASHES); stop on the conditions in WHEN TO STOP; don't idle a billed box;
 no Lambda credentials or unilateral hardware/resource changes.
 
-A BAD TREND IS DATA, NOT A REPAIR TARGET. A rising forced-close count, a
-rising duplicate count, a flat loss, or a flat epoch curve is a result of
+A BAD TREND IS DATA, NOT A REPAIR TARGET. A rising forced-close or
+role-marker-close count, a rising duplicate count, a flat loss, or a flat epoch curve is a result of
 the registered method. Record it with numbers in the run notes as it
 appears. Stop only on a stop-and-report condition. A technical fault (a
 non-finite loss, an OOM, a hang) is a bug: see IF TRAINING CRASHES.
 
 You may stop a cell early on your own judgment when further epochs cannot
 change the result (the model has degenerated, the curve sits at the floor).
-Finish the current epoch's eval first so the cell has at least one scored
-point past the point of no return. Write the reason in the run notes with
+Finish the current scored point first (the current cycle's evaluation for
+altrux, the current epoch's for lora and mix-review) so the cell has at
+least one scored point past the point of no return. There is no hard-coded
+collapse trigger. Write the reason in the run notes with
 the numbers and one decoded reply and dream, then treat it as
 STOP-AND-REPORT. Stopping is the only judgment call: never edit, resume,
 or relaunch to repair it.
 
-PRE-GRID ACCEPTANCE (the debrief §3.6 and its amendment). Run the runner
-with `--arm altrux --cycles 1 --output <dir outside .cache/lama_ckl/runs/>`
-once with the 10-document wake and once with `--docs-per-wake 5`. Each run
-does one wake-sleep cycle. The `subjects_mentioned` field in the
-diagnostics of `epoch-01/cycle-00/dreams.json` is the count for the debrief's wake
-size rule; the forced-close count in `wake.json` is the count for its 20%
-rule. Record both counts and the decision in the run notes before any
-cell. `make lama-ckl-smoke` is the engineering smoke only (2 documents, 2
+PRE-GRID ACCEPTANCE (DISCUSSION-20261013 §3.4 step 4). Run the runner once
+with `--arm altrux --cycles 1 --docs-per-wake 5 --output <dir outside
+.cache/lama_ckl/runs/>`. It does one wake-sleep cycle and saves the cycle
+adapter without an evaluation. It passes when, in `epoch-01/cycle-00/`,
+`wake.json` shows `internal_eoc` 0, `role_marker_closes` 0 of 5 and forced
+closes 0 of 5, and the dreams in `dreams.json` are non-empty with
+`subjects_mentioned` above 0 in its diagnostics. Read the five decoded
+replies and the ten dreams, and quote one of each in the run notes. A miss
+is stop-and-report. `make lama-ckl-smoke` is the engineering smoke only (2 documents, 2
 dreams, 32 tokens). It proves the code path runs; it proves nothing about
 dream quality.
 
-TIME THE FIRST CYCLE (DISCUSSION-20261011 §3.3 step 3). From the
-10-document acceptance run's log timestamps, record the wall time of the
-wake, the dream generation, and the distillation separately, and write
-the altrux ETA for 1500 cycles plus 31 evaluations in the run notes before
-any baseline starts. This is the fused single-token step's first timed
+TIME THE FIRST CYCLE (DISCUSSION-20261013 §3.4 step 4). From the
+acceptance run's log timestamps, record the wall time of the wake, the
+dream generation, and the distillation separately, and write the altrux
+ETA for 100 cycles, each with its evaluation, plus the initial
+evaluation (101 in all), in the run notes before any baseline starts. This is the fused single-token step's first timed
 cycle; if the ETA is far above the debrief's estimate, record it and
 continue.
 
@@ -272,8 +300,8 @@ billing past them:
   the artifacts are home. This is success.
 - SOFT CAP REACHED: the running cell stopped at `--max-hours`. Do not
   launch another cell.
-- STOP-AND-REPORT: a condition the debrief names — the pre-grid acceptance
-  fails, a split invariant is not zero, or the same crash happens twice.
+- STOP-AND-REPORT: a condition the debrief names — the pin gate fails, the
+  pre-grid acceptance fails, a split invariant is not zero, or the same crash happens twice.
 
 In every case, run the SHUTDOWN CHECKLIST below. There's no cheap way to
 hold an idle billed GPU until the team is back — the checkpoints, results,
@@ -292,7 +320,8 @@ cap reached, stop-and-report). In order:
 3. Commit and push this run's notes file and any code change (see
    PERSISTENCE). The LAMA-CKL results are
    `.cache/lama_ckl/runs/<cell>/summary.json`, each
-   `.cache/lama_ckl/runs/<cell>/epoch-EE/result.json`, and the upstream
+   `.cache/lama_ckl/runs/<cell>/epoch-EE/result.json` and altrux
+   `epoch-01/cycle-NN/result.json`, and the upstream
    pickle under `.cache/lama_ckl/upstream/`. They come home by the pull
    (`LAMBDA_CACHE_ARTIFACTS` must include `lama_ckl`). Do not commit
    them here; the branch fallback is step 5, for what the pull missed.
@@ -304,9 +333,9 @@ cap reached, stop-and-report). In order:
    `scripts/.pull-receipt` — the teammate's pull writes it back after every
    successful pull: UTC timestamp plus the size of every artifact AS IT
    EXISTS on their machine. Check every artifact this session produced
-   (the whole `checkpoints/ultra20k/` tree: all ten interval checkpoints,
-   the final step, `topup/` if it ran, and each `probe.json`; the split;
-   each cell's epoch dirs and
+   (the whole `checkpoints/ultra20k-v4/` tree: all ten interval
+   checkpoints, the final step, and each `probe.json`; the split; each
+   cell's epoch dirs, altrux's cycle dirs, and
    `summary.json`, the upstream pickle, this run's notes file) appears at a plausible size, and echo the receipt into the
    notes. "The pull carries it" is an unchecked invariant, and it cost the
    g2 session its entire cache set. A missing file or a stale header
@@ -451,7 +480,9 @@ Every event line wakes your session. Completion lines (a new `EXIT=`
 marker) → the thing you were waiting on is done; act on its result now
 (read the probe/prep log, start the next step) instead of waiting for a
 heartbeat. Error lines → investigate now.
-Heartbeats → glance at the carried metrics line; a growing "log idle" on a
+Heartbeats → glance at the carried metrics line (for altrux, the cycle
+line: forced closes, role-marker closes, duplicate dreams, loss, to-learn
+and not-to-forget accuracy, ETA); a growing "log idle" on a
 run that should be training means it hung or died without a signature —
 also investigate. On a heartbeat while nothing that heartbeats is running,
 touch `.watchdog-delay`. After an hour of stable training, TaskStop the
@@ -460,18 +491,21 @@ training.
 If a warning flood gets the monitor auto-suppressed, re-arm with a tighter
 filter; only if the Monitor tool is unavailable fall back to the old
 scheme (a background `sleep <interval>` task between manual checks).
-Healthy, per altrux cycle: the forced-close count in `wake.json` and the
-duplicate count in the `dreams.json` diagnostics, recorded and not
-trending toward every reply or every dream; finite distillation loss
-lines; and, per epoch, a `result.json` on the acquisition and retention
-curve. For lora and mix-review: finite loss lines and the epoch curve.
+Healthy, per altrux cycle: the forced-close and `role_marker_closes`
+counts in `wake.json` and the duplicate count in the `dreams.json`
+diagnostics, recorded and not trending toward every reply or every dream;
+finite distillation loss lines; and a cycle `result.json` on the
+acquisition and retention curve. Every check-in also reads the decoded
+replies in the latest `wake.json` and the dream samples the log prints,
+not only the counts: a reply that stops being an acknowledgement or a
+dream that stops mentioning wake subjects shows in the text first. For lora and mix-review: finite loss lines and the epoch curve.
 Repeated "non-finite" warnings are a technical fault: stop the cell and
 investigate (IF TRAINING CRASHES).
 
 CONTEXT BUDGET: the watch session may run for many hours — keep the main
 context lean. Delegate bulky low-judgment work to a subagent that returns a
-short summary (e.g. "summarize how the runner carries state across
-cycles", or reading a cycle's decoded samples), and pick a model tier to match —
+short summary (e.g. "summarize how the runner scores each cycle", or
+reading a cycle's decoded samples), and pick a model tier to match —
 a cheaper/faster model (e.g. haiku) for mechanical search-and-summarize,
 the session's own model only when the subagent's task itself needs
 judgment. Keep the actual debugging
