@@ -291,7 +291,9 @@ teacher (the current weights at dream time, logits recorded); AdamW 1e-4.
    phase and the dream-arm ETA for 100 cycles with per-cycle evaluation. A
    miss: stop and report.
 5. Smokes of all four arms.
-6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), dream
+6. Cells, seed 42, concurrently where the card holds them at their solo
+   rate (GH200; `sft/AGENTS.md` "Grid concurrency"): lora (30 epochs),
+   mix-review (30 epochs), dream
    (`--epochs 1`, 100 cycles, per-cycle save and score). Each cell launches
    with `--max-hours` set to the remaining session budget. The session soft
    cap is 20 h wall clock (confirmed 2026-10-13; it was an assumed value

@@ -63,11 +63,18 @@ here.
 | Llama-2 calibration | `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke`, then `... make lama-ckl-upstream-run`, then `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl` (not in this session's order, §3.4: the uploaded pickle is reused) |
 | Aggregate report | `make lama-ckl-report` |
 
-ONE TMUX RULE. GPU jobs go to the `train` session, one at a time: the
-warm-start training, the split, the runner (cells, acceptance, smokes), the
-upstream smoke and run, and `acceptance-check`. The one exception is the
-warm-start probe, which runs in a `work` window beside the training window:
-it is read-only and the box has VRAM headroom. CPU jobs go to named windows
+ONE TMUX RULE. GPU jobs go to the `train` session: the warm-start
+training, the split, the runner (cells, acceptance, smokes), the upstream
+smoke and run, and `acceptance-check`. The gate steps (warm start, split,
+frozen ×3, acceptance, smokes) run one at a time. The grid cells run
+concurrently where the card allows it (`sft/AGENTS.md`, "Grid concurrency":
+a GH200 holds three cells at their solo rate; an A10 does not): give each
+cell its own named window in `train` (`tmux new-window -t train -n <cell>
+'<command>'`) and launch all cells of a seed together, so the session
+reaches its verdict in the time of the longest cell, not the sum. Two
+exceptions: the warm-start probe runs in a `work` window beside the
+training window (read-only, VRAM headroom), and a card the note does not
+cover runs cells serially until one cell's utilisation has been measured. CPU jobs go to named windows
 in the `work` session: data prep, the LAMA archive download, the TAALM
 environment install, rsync, counting, `sanity-sample`. Create `work` if it
 is absent (`tmux new-session -d -s work`) and give each job its own window
@@ -243,8 +250,9 @@ SESSION ORDER (DISCUSSION-20261013 §3.4):
 4. Acceptance (PRE-GRID ACCEPTANCE below).
 5. Smokes of all four arms.
 6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), dream
-   (`--epochs 1`, 100 cycles). Then `make lama-ckl-report`, before any
-   seed-43 cell starts.
+   (`--epochs 1`, 100 cycles), launched together in their own `train`
+   windows where the card allows (ONE TMUX RULE). Then
+   `make lama-ckl-report`, before any seed-43 cell starts.
 7. Seeds 43 and 44 for all three trained arms only on this rule: compare
    dream's cycle-99 directory (the 100th cycle, equal to its
    `epoch-01/result.json`) against each baseline's `epoch-01/result.json`,
