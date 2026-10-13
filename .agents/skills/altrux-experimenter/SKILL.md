@@ -60,12 +60,14 @@ here.
 | Acceptance | `make lama-ckl-run ARGS="--arm altrux --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/altrux-5"` |
 | One trained cell | `make lama-ckl-run ARGS="--arm <lora\|mix-review> --model-name mamba2_2_7b --seed 42 --max-hours <H>"` (30 epochs), or `... --arm altrux ... --epochs 1 --docs-per-wake 5 --dreams-per-cycle 10 --max-hours <H>"` |
 | Engineering smoke | `make lama-ckl-smoke ARGS="--arm <arm> --model-name mamba2_2_7b"` |
-| Llama-2 calibration | `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke`, then `... make lama-ckl-upstream-run`, then `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl` |
+| Llama-2 calibration | `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke`, then `... make lama-ckl-upstream-run`, then `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl` (not in this session's order, §3.4: the uploaded pickle is reused) |
 | Aggregate report | `make lama-ckl-report` |
 
 ONE TMUX RULE. GPU jobs go to the `train` session, one at a time: the
 warm-start training, the split, the runner (cells, acceptance, smokes), the
-upstream smoke and run, and `acceptance-check`. CPU jobs go to named windows
+upstream smoke and run, and `acceptance-check`. The one exception is the
+warm-start probe, which runs in a `work` window beside the training window:
+it is read-only and the box has VRAM headroom. CPU jobs go to named windows
 in the `work` session: data prep, the LAMA archive download, the TAALM
 environment install, rsync, counting, `sanity-sample`. Create `work` if it
 is absent (`tmux new-session -d -s work`) and give each job its own window
@@ -91,8 +93,15 @@ go (see PERSISTENCE). One file per run; never append to a past run's file.
 A FRESH INSTANCE HAS NO PREPARED DATA — setup deliberately doesn't build any.
 Artifacts already archived on the local machine upload at launch (see
 `scripts/README.md`) — regenerate only what didn't arrive. The LAMA archive
-and the TAALM environment are built on the box with the commands in
-`sft/README.md` and the governing note.
+is built on the box with the commands in `sft/README.md` and the
+governing note. The Llama-2 upstream calibration is not part of this
+session's order (§3.4); its uploaded pickle is reused.
+
+OLD RUNS STAY HOME. Before launch, the person archives the previous box's
+`.cache/lama_ckl/runs/*` and `acceptance/*` locally (e.g. to
+`.cache/lama_ckl/archive-<warmstart>/`), so the upload does not carry cells
+that the new split would refuse. If the box still has them, move them aside
+on the box and record that in the run notes.
 
 NEVER redirect a run's output solely to a log file (`> log 2>&1`): the pane
 must show the live stream AND the log must capture it — that's
@@ -130,8 +139,8 @@ reading, not reasoning) as well as to you:
   rendered as its variant and no garbled splices?" If the sample is wrong, stop the training and treat
   it as stop-and-report.
 - The first altrux cycle. Read the decoded samples in
-  `epoch-01/cycle-00/wake.json` and `epoch-01/cycle-00/dreams.json` of the
-  first altrux run (the acceptance run comes first). Ask: "is each wake turn the frame string, the document, and
+  `cycle-00/wake.json` and `cycle-00/dreams.json` (under `work/` while
+  running) of the first altrux run (the acceptance run comes first). Ask: "is each wake turn the frame string, the document, and
   a reply; is each dream a conversation after `<|endofconversation|>`?"
 
 Anything suspicious: stop, decode more around it yourself, and treat a
@@ -148,9 +157,18 @@ in a `work` window `make warm-start-probe ARGS="--init-adapter <that step
 dir>"` on each new checkpoint and record its verdict line (EOC-first count
 of 50, role-marker closes, forced closes, the top opener and its count,
 `[USER]` openers of 10 dreams, `[ASSISTANT]` loops) and the empty and
-verbatim-copy dream counts in the run notes as a curve. Read the decoded
+verbatim-copy dream counts in the run notes as a curve. The probe defaults
+to `--docs-per-wake 5` (10 wakes of 5 over the 50 held-out contexts), the
+protocol wake; its counts are over the 50 replies. Read the decoded
 role-marker and EOC-first replies and the dreams it prints. The final checkpoint is the only candidate for the warm start; an
 earlier one is never picked, whatever its probe says.
+
+PROBE AT FINALIZE. A probe writes `<checkpoint>/probe.json` at its end, and
+`make warm-start` moves `checkpoints/epoch-*` into `ultra20k-v4/` when
+training finishes, so a probe still running on an interval checkpoint at
+that moment fails to write. Probe the final checkpoint only after the
+move, through `ultra20k-v4/final`; rerun any probe that lost its
+checkpoint path on the new path.
 
 PIN GATE (DISCUSSION-20261013 §3.2). Over the final checkpoint's 50
 held-out replies: EOC-first 0, role-marker closes at most 4, forced closes
@@ -208,7 +226,8 @@ frozen, lora, mix-review, and altrux on the 2.7B Mamba model, one shared
 500/500 split built on the ultra20k-v4 warm start. Lora and mix-review run
 30 epochs. Altrux runs one epoch (`--epochs 1`): 100 cycles of 5 documents,
 each saving its adapter and scoring both fact sets into
-`epoch-01/cycle-NN/`. The frozen cell is scored three times; the spread of
+`cycle-NN/` (under `work/` while running, `epoch-01/` once the epoch
+completes). The frozen cell is scored three times; the spread of
 the three is the evaluation resolution. Seed 42 of all four arms runs first.
 Seeds 43 and 44 run only on the rule in the debrief. The official
 acquisition and retention scores are primary; the dream and wake
@@ -224,11 +243,17 @@ SESSION ORDER (DISCUSSION-20261013 §3.4):
 4. Acceptance (PRE-GRID ACCEPTANCE below).
 5. Smokes of all four arms.
 6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), altrux
-   (`--epochs 1`, 100 cycles).
-7. Seeds 43 and 44 for all three trained arms only if, at seed 42, altrux
-   differs from the best baseline by at least 0.05 absolute on peak
-   acquisition or paired retention at epoch 1 (altrux at cycle 100 against
-   each baseline's `epoch-01/result.json`). Otherwise seed 42 only.
+   (`--epochs 1`, 100 cycles). Then `make lama-ckl-report`, before any
+   seed-43 cell starts.
+7. Seeds 43 and 44 for all three trained arms only on this rule: compare
+   altrux's cycle-99 directory (the 100th cycle, equal to its
+   `epoch-01/result.json`) against each baseline's `epoch-01/result.json`,
+   per metric (to-learn accuracy and not-to-forget accuracy); the best
+   baseline is the larger baseline value for that metric; seeds 43/44 run
+   if altrux differs from it by at least 0.05 absolute on either metric.
+   Otherwise seed 42 only. A 30-epoch cell cut short by the cap makes the
+   report refuse its arm, so launch a seed-43/44 cell only if its full
+   length fits the remaining budget.
 8. Shutdown checklist.
 
 ## How much of this is yours
@@ -263,7 +288,7 @@ or relaunch to repair it.
 PRE-GRID ACCEPTANCE (DISCUSSION-20261013 §3.4 step 4). Run the runner once
 with `--arm altrux --cycles 1 --docs-per-wake 5 --output <dir outside
 .cache/lama_ckl/runs/>`. It does one wake-sleep cycle and saves the cycle
-adapter without an evaluation. It passes when, in `epoch-01/cycle-00/`,
+adapter without an evaluation. It passes when, in `cycle-00/`,
 `wake.json` shows `internal_eoc` 0, `role_marker_closes` 0 of 5 and forced
 closes 0 of 5, and the dreams in `dreams.json` are non-empty with
 `subjects_mentioned` above 0 in its diagnostics. Read the five decoded
@@ -283,9 +308,15 @@ continue.
 SESSION SOFT CAP. The session has a wall-clock soft cap; the debrief states
 the hours. Launch every `lama-ckl-run` cell with `--max-hours` set to the
 hours that remain in the cap. The runner stops after the first epoch that
-ends past the cap, so a cell can overrun it by up to one epoch. A cell
-that stops at the cap resumes next
-session from its last `epoch-EE/` with the same command. After the stop,
+ends past the cap, so a cell can overrun it by up to one epoch. A 30-epoch
+baseline cell that stops at the cap resumes next session from its last
+`epoch-EE/` with the same command. A `--epochs 1` altrux cell has no
+resume point before its epoch ends: its cycles are written under
+`runs/<cell>/work/epoch-01.*/cycle-NN/` until cycle 100 completes, then
+moved to `epoch-01/`, and `--max-hours` cannot stop it mid-epoch. Start it
+only with enough session budget for its whole ETA (from the acceptance
+timing), and read its live cycle artifacts under `work/` during the cell.
+After the stop,
 run the shutdown checklist so the epoch dirs come home. If the measured
 ETA is far above the debrief's estimate, record it and continue; cost is
 not a stop reason.
@@ -321,8 +352,7 @@ cap reached, stop-and-report). In order:
    PERSISTENCE). The LAMA-CKL results are
    `.cache/lama_ckl/runs/<cell>/summary.json`, each
    `.cache/lama_ckl/runs/<cell>/epoch-EE/result.json` and altrux
-   `epoch-01/cycle-NN/result.json`, and the upstream
-   pickle under `.cache/lama_ckl/upstream/`. They come home by the pull
+   `epoch-01/cycle-NN/result.json`. They come home by the pull
    (`LAMBDA_CACHE_ARTIFACTS` must include `lama_ckl`). Do not commit
    them here; the branch fallback is step 5, for what the pull missed.
    A one-off script you wrote on the box lives under
@@ -336,7 +366,7 @@ cap reached, stop-and-report). In order:
    (the whole `checkpoints/ultra20k-v4/` tree: all ten interval
    checkpoints, the final step, and each `probe.json`; the split; each
    cell's epoch dirs, altrux's cycle dirs, and
-   `summary.json`, the upstream pickle, this run's notes file) appears at a plausible size, and echo the receipt into the
+   `summary.json`, this run's notes file) appears at a plausible size, and echo the receipt into the
    notes. "The pull carries it" is an unchecked invariant, and it cost the
    g2 session its entire cache set. A missing file or a stale header
    timestamp: touch `.watchdog-fetch` once more and re-check; still missing
@@ -448,17 +478,17 @@ terminated mid-work). Arm with `persistent: true`, shaped like:
 
     seen=0; beat=0; HB=300   # heartbeat 300s for the first hour, then re-arm with 900
     while true; do
-      # Command-completion wakes: every long command is launched as
-      # `cmd 2>&1 | tee <log>; echo "EXIT=$?" >> <log>`, so a new EXIT=
-      # line in any log means that command just finished. (Never detect
+      # Command-completion wakes: a new EXIT= line in any log means that
+      # command just finished. -a because log lines carry \r bytes, and
+      # grep without it prints "Binary file matches". (Never detect
       # completion via pane_current_command — it reads `bash` while
       # `uv run python` is working; see sft/CLAUDE.md.)
       for f in ~/altrux/sft/logs/*.log; do
         [ -f "$f" ] || continue
         k="/tmp/mon-$(basename "$f")"; old=$(cat "$k" 2>/dev/null || echo 0)
-        n=$(grep -c '^EXIT=' "$f" 2>/dev/null || echo 0)
+        n=$(grep -ac '^EXIT=' "$f" 2>/dev/null || echo 0)
         if [ "$n" -gt "$old" ]; then
-          echo "[$(basename "$f")] command finished: $(grep '^EXIT=' "$f" | tail -1); log tail:"
+          echo "[$(basename "$f")] command finished: $(grep -a '^EXIT=' "$f" | tail -1); log tail:"
           grep -v '^ *$' "$f" | tail -3
         fi
         echo "$n" > "$k"
@@ -475,6 +505,14 @@ terminated mid-work). Arm with `persistent: true`, shaped like:
       fi
       sleep 15
     done
+
+EXIT MARKERS. The long Makefile targets (`warm-start`, `warm-start-probe`,
+`lama-ckl-split`, `lama-ckl-run`, and so `lama-ckl-smoke` and
+`lama-ckl-frozen-x3`) append `EXIT=<status>` to their own tee'd log when
+the command finishes; do not wrap them with `; echo EXIT=$? >> <log>`. Any
+other long command you launch gets that wrapper by hand
+(`cmd 2>&1 | tee <log>; echo "EXIT=$?" >> <log>`). A command is finished
+only when its `EXIT=` marker is in its log.
 
 Every event line wakes your session. Completion lines (a new `EXIT=`
 marker) → the thing you were waiting on is done; act on its result now
