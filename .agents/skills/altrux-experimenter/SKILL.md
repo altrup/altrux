@@ -43,7 +43,7 @@ and a local session never compensates by starting box work itself.
 | Stop the GPU job | `tmux send-keys -t train C-c` |
 | Check it's alive | `tmux capture-pane -t train -p \| tail` or tail the newest log under `sft/logs/` |
 | Hold off the watchdog | `touch scripts/.watchdog-delay` (at least every 25 min while nothing that heartbeats is running — see "The watchdog") |
-| Save code or notes | `git add <files> && git commit -m '<what>' && git push` (this run's `box/` branch) |
+| Save a code change | `git add <files> && git commit -m '<what>' && git push` (this run's `box/` branch). Notes travel by the pull; commit them at shutdown (PERSISTENCE) |
 | Pull artifacts home now | `touch scripts/.watchdog-fetch`, then read `scripts/.pull-receipt` |
 | End the run (irreversible) | `touch scripts/.watchdog-terminate` — only after the shutdown checklist |
 
@@ -435,9 +435,13 @@ evidence a pull carried something. Read it; don't assume. Therefore:
   termination.
 - Write observations (health checks, anomalies, fixes, open questions) to
   this run's notes file (`notes/experiments/EXPERIMENT_NOTES-<timestamp>.md`, created
-  above) as you go, not at the end, and commit and push it each time you
-  write to it. The rsync pull also carries notes/ home; the commit is the
-  durable copy.
+  above) as you go, not at the end. The rsync pull carries notes/ home and
+  a fresh `scripts/.pull-receipt` naming the file at a plausible size is the
+  proof; that is the record. Do not commit or push the notes file while the
+  receipts keep coming: a commit per observation is noise in the branch
+  history the teammate reviews. Commit and push it once, at shutdown (step
+  3 of the checklist). Code changes and the warm-start pin are different:
+  nothing pulls them home, so they are committed and pushed at once.
 - The teammate's watchdog pulls every ~5 minutes, so anything you write needs
   the instance alive that much longer to survive. You can also ask for a pull
   RIGHT NOW — `touch scripts/.watchdog-fetch` — and should, whenever you've
@@ -451,8 +455,8 @@ evidence a pull carried something. Read it; don't assume. Therefore:
   minutes), the teammate's machine is down and the branch is the only route
   home. Keep working through the plan; nothing about the run changes. What
   changes is the record: `git add -f` each `summary.json`, each
-  `epoch-EE/result.json`, and each log under `sft/logs/` as it is produced
-  (50 MB per file, 1 GB total) and push; log
+  `epoch-EE/result.json`, each log under `sft/logs/`, and this run's notes
+  file as they are produced (50 MB per file, 1 GB total) and push; log
   every artifact too big for git as UNRETRIEVED with its size; keep touching
   `scripts/.watchdog-delay` so a watchdog that reconnects does not read the
   run as idle. When a fresh receipt appears, normal operation resumes. Touch
