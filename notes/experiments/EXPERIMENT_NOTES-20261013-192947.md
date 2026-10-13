@@ -123,3 +123,4 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm mix-review --model-name mamba2_2_7b --seed 42 --max-hours 17.6"
   ```
+- 22:18 mix-review epochs 1-8 (parallel with lora; 0.37 batch/s, ~2.9 min/epoch → 30 epochs ≈ 87 min, ETA ~23:21): to-learn 0.023, 0.031, 0.039, 0.045, 0.050, 0.059, 0.057, 0.037; not-to-forget 0.911, 0.908, 0.885, 0.790, 0.626, 0.553, 0.515, **0.396**. Retention falls faster and further than on the third box's base (mix-review there peaked 0.066 at 0.673 retained, plateau 0.630) while acquisition stays under 0.06. Finite losses (0.5-0.8). Recorded as a result of the registered method on this warm start; no intervention. lora at epoch 27: 0.087 / 0.500 (peak 0.098 at epoch 9, 0.538 retained).
