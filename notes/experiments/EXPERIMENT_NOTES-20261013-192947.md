@@ -92,3 +92,8 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 50 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5-d50"
   ```
+- 21:07-21:09 acceptance at 50 dreams: wake 1.08 turn/s (forced 0/5, role-marker 0/5); dreams 50 in one launch, 67 s (0.75 dream/s); diagnostics: unique 50, duplicates 0, min 34 tokens, mean 384, eoc_termination_rate 0.48, **subjects_mentioned 1 of 50**, mean_copy_fraction 0.010, max_copy_fraction 0.325 (one dream carries a third of a wake document), max_verbatim_run 13. **Distillation OOM**: the single batched step on 50 dreams asked for 3.6 GiB with 91 GiB in use (peak 90.7 GB observed); EXIT=1. Not a code fault: the batch does not fit. Memory arithmetic: 10 dreams distilled at 27 GB, 50 at >94 GB → about 1.7 GB per dream over the model; 40 → ~74 GB. The partial artifacts stay in `.cache/lama_ckl/acceptance/dream-5-d50/` as the record (its wake.json and dreams.json are complete).
+- 21:11 acceptance at 40 dreams (the largest count the arithmetic fits; 30 next if it fails), in `train`:
+  ```
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 40 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5-d40"
+  ```
