@@ -8,9 +8,11 @@ import torch
 from experiments.lama_ckl.protocol import lama_dream_diagnostics
 from experiments.lama_ckl.runner import (
     _write_epoch_result,
+    build_parser,
     compact_dream_payload,
     curve_summary,
     cycles_per_epoch,
+    parse_args,
     run_epochs,
 )
 from experiments.lama_ckl.split import pinned_warmstart_sha
@@ -69,16 +71,17 @@ class FakeSteps:
         self.fail_distil = fail_distil
         self.wake_invariants = wake_invariants
         self.wakes: list[tuple[int, object]] = []
-        self.carried: list[object] = []
         self.evaluated: list[int] = []
         self.trained: list[int] = []
+        self.distilled = 0
 
-    def wake(self, rows, state):
+    def wake(self, rows, state, epoch, cycle):
         self.wakes.append((len(rows), state))
         invariants = self.wake_invariants or {"turns": len(rows), "internal_eoc": 0}
         wake = {
             "invariants": invariants,
             "forced_closes": 1,
+            "role_marker_closes": 1,
             "transcript_sha256": f"wake-{len(self.wakes)}",
             "transcript_token_ids": [7] * len(rows),
         }
@@ -96,15 +99,11 @@ class FakeSteps:
             "diagnostics": lama_dream_diagnostics(dreams, rows, [7]),
         }
 
-    def carry(self, open_state):
-        state = object()
-        self.carried.append(state)
-        return state
-
     def distil(self, dreams, open_state, label):
         if self.fail_distil:
             raise RuntimeError("distillation failed")
-        return {"optimizer_steps": len(dreams), "token_gradients": 3, "generated_tokens": 1}
+        self.distilled += 1
+        return {"optimizer_steps": 1, "token_gradients": 3, "generated_tokens": 1, "loss": 0.5}
 
     def train_documents(self, epoch):
         self.trained.append(epoch)
@@ -112,7 +111,16 @@ class FakeSteps:
 
     def evaluate(self, epoch):
         self.evaluated.append(epoch)
-        return {"epoch": epoch, "to_learn_accuracy": 0.1 * epoch, "not_to_forget_accuracy": 1.0}
+        return {
+            "epoch": epoch,
+            "to_learn_accuracy": 0.1 * epoch,
+            "not_to_forget_accuracy": 1.0,
+            "evaluation_seconds": 0.0,
+        }
+
+    def save_cycle(self, directory):
+        (directory / "trainable.pt").write_bytes(b"adapter")
+        return "cycle-sha"
 
     def save(self, directory, result):
         (directory / "trainable.pt").write_bytes(b"adapter")
@@ -130,24 +138,21 @@ def test_cycles_per_epoch_rounds_up():
     assert cycles_per_epoch(5, 2) == 3
 
 
-def test_altrux_epoch_wakes_in_slices_and_carries_state_only_within_an_epoch(tmp_path: Path):
+def test_altrux_epoch_wakes_in_slices_from_fresh_state_every_cycle(tmp_path: Path):
     steps = FakeSteps()
 
     run_epochs(tmp_path, _settings("altrux"), ROWS, steps, [])
 
     assert [size for size, _ in steps.wakes] == [2, 2, 1, 2, 2, 1]
-    states = [state for _, state in steps.wakes]
-    assert states[0] is None and states[3] is None
-    assert states[1] is steps.carried[0] and states[2] is steps.carried[1]
-    assert states[4] is steps.carried[3]
+    assert all(state is None for _, state in steps.wakes)
 
 
-def test_evaluation_runs_once_per_epoch_not_per_cycle(tmp_path: Path):
+def test_altrux_saves_and_scores_every_cycle_and_every_epoch(tmp_path: Path):
     steps = FakeSteps()
 
     curve = run_epochs(tmp_path, _settings("altrux"), ROWS, steps, [])
 
-    assert steps.evaluated == [0, 1, 2]
+    assert steps.evaluated == [0, 1, 1, 1, 2, 2, 2]
     assert [row["epoch"] for row in curve] == [0, 1, 2]
     assert sorted(path.name for path in tmp_path.glob("epoch-*")) == [
         "epoch-00",
@@ -155,7 +160,30 @@ def test_evaluation_runs_once_per_epoch_not_per_cycle(tmp_path: Path):
         "epoch-02",
     ]
     assert len(list((tmp_path / "epoch-01").glob("cycle-*/wake.json"))) == 3
+    assert len(list((tmp_path / "epoch-01").glob("cycle-*/trainable.pt"))) == 3
+    cycle_result = json.loads((tmp_path / "epoch-01" / "cycle-02" / "result.json").read_text())
+    assert cycle_result["cycle"] == 2 and cycle_result["epoch"] == 1
+    record = curve[1]["treatment"]["cycles"][0]
+    for key in (
+        "role_marker_closes",
+        "to_learn_accuracy",
+        "not_to_forget_accuracy",
+        "evaluation_seconds",
+        "adapter_sha256",
+        "loss",
+    ):
+        assert key in record
+    assert record["role_marker_closes"] == 1
     assert json.loads((tmp_path / "summary.json").read_text())["checkpoint"]["epoch"] == 2
+
+
+@pytest.mark.parametrize("arm", ["lora", "mix-review"])
+def test_document_arms_evaluate_once_per_epoch(tmp_path: Path, arm: str):
+    steps = FakeSteps()
+
+    run_epochs(tmp_path, _settings(arm), ROWS, steps, [])
+
+    assert steps.evaluated == [0, 1, 2]
 
 
 def test_duplicate_dreams_train_and_are_counted(tmp_path: Path):
@@ -165,7 +193,7 @@ def test_duplicate_dreams_train_and_are_counted(tmp_path: Path):
 
     cycles = curve[1]["treatment"]["cycles"]
     assert all(cycle["duplicate_dreams"] == 1 for cycle in cycles)
-    assert curve[1]["treatment"]["optimizer_steps"] == 2 * len(cycles)
+    assert curve[1]["treatment"]["optimizer_steps"] == len(cycles)
 
 
 @pytest.mark.parametrize("arm", ["lora", "mix-review"])
@@ -208,7 +236,13 @@ def test_broken_wake_invariants_refuse_after_writing_artifacts(tmp_path: Path):
     cycle = next((tmp_path / "work").glob("epoch-01.*/cycle-00"))
     assert (cycle / "wake.json").exists()
     assert not (cycle / "dreams.json").exists()
-    assert steps.carried == []
+    assert steps.distilled == 0
+
+
+def test_role_marker_closes_do_not_refuse_the_wake(tmp_path: Path):
+    curve = run_epochs(tmp_path, _settings("altrux", epochs=1), ROWS, FakeSteps(), [])
+
+    assert curve[1]["treatment"]["role_marker_closes"] == 3
 
 
 def test_resume_starts_at_the_epoch_after_the_curve(tmp_path: Path):
@@ -217,7 +251,7 @@ def test_resume_starts_at_the_epoch_after_the_curve(tmp_path: Path):
 
     run_epochs(tmp_path, _settings("altrux", epochs=1), ROWS, steps, curve)
 
-    assert steps.evaluated == [1]
+    assert 0 not in steps.evaluated and steps.evaluated[-1] == 1
     assert steps.wakes[0][1] is None
 
 
@@ -240,6 +274,8 @@ def test_cycles_cap_writes_one_truncated_epoch_and_skips_its_evaluation(tmp_path
     assert steps.evaluated == [0]
     assert len(steps.wakes) == 1
     assert [path.name for path in (tmp_path / "epoch-01").glob("cycle-*")] == ["cycle-00"]
+    assert (tmp_path / "epoch-01" / "cycle-00" / "trainable.pt").exists()
+    assert not (tmp_path / "epoch-01" / "cycle-00" / "result.json").exists()
     assert (tmp_path / "epoch-01" / "result.json").exists()
     assert not (tmp_path / "epoch-02").exists()
 
@@ -266,3 +302,14 @@ def test_max_hours_stops_after_the_epoch_that_crosses_the_cap(tmp_path: Path, mo
     summary = json.loads((tmp_path / "summary.json").read_text())
     assert [row["epoch"] for row in summary["curve"]] == [0, 1]
     assert len(curve) == 2
+
+
+def test_epochs_flag_defaults_to_thirty():
+    assert build_parser().parse_args(["--arm", "altrux"]).epochs == 30
+    assert build_parser().parse_args(["--arm", "altrux", "--epochs", "1"]).epochs == 1
+
+
+def test_dream_batch_size_defaults_to_dreams_per_cycle():
+    assert parse_args(["--arm", "altrux", "--dreams-per-cycle", "7"]).dream_batch_size == 7
+    explicit = ["--arm", "altrux", "--dream-batch-size", "2"]
+    assert parse_args(explicit).dream_batch_size == 2

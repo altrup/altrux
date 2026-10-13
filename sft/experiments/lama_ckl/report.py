@@ -56,7 +56,6 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         "learning_rate",
         "evidence_tokens",
         "reply_tokens",
-        "reply_temperature",
         "eval_batch_size",
         "requested_dream_batch_size",
         "model_name",
@@ -73,6 +72,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             raise ValueError(f"runs use different {key} settings")
     for key, arms in (
         ("docs_per_wake", ("altrux",)),
+        ("reply_temperature", ("altrux",)),
         ("dreams_per_cycle", ("altrux",)),
         *(("epochs", (arm,)) for arm in TRAINED_ARMS),
     ):

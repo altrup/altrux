@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from experiments.lama_ckl.protocol import (
@@ -187,6 +188,80 @@ def test_conversational_wake_records_internal_eoc_for_the_runner_to_refuse():
 
     assert artifact["turns"][0]["assistant_token_ids"] == [5]
     assert artifact["invariants"]["internal_eoc"] == 1
+
+
+class FlatModel(Model):
+    def __call__(self, ids, state=None):
+        logits, state = super().__call__(ids, state)
+        logits[:, -1] = -1e9
+        logits[:, -1, 20:22] = 0
+        return logits, state
+
+
+def _wake(model, **kwargs):
+    return run_conversational_wake(
+        model,
+        Tokenizer(),
+        ["Ada in Rome", "Bob in Oslo"],
+        None,
+        "[USER]",
+        "[ASSISTANT]",
+        "<EOC>",
+        reply_tokens=16,
+        evidence_tokens=512,
+        device="cpu",
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("marker", [3, 4])
+def test_conversational_wake_closes_a_reply_on_a_role_marker_with_a_fed_eos(marker):
+    model = Model(next_token=marker)
+
+    artifact, _ = _wake(model)
+
+    for turn in artifact["turns"]:
+        assert turn["assistant_token_ids"] == [2]
+        assert turn["role_marker_closed"] is True
+        assert turn["eos_forced"] is False
+    assert artifact["role_marker_closes"] == 2
+    assert artifact["forced_closes"] == 0
+    replies = [ids for ids in model.fed if len(ids[0]) == 1]
+    assert replies == [[[2]], [[2]]]
+
+
+def test_conversational_wake_ordinary_reply_is_not_marker_closed():
+    artifact, _ = _wake(Model())
+
+    assert [turn["role_marker_closed"] for turn in artifact["turns"]] == [False, False]
+    assert artifact["role_marker_closes"] == 0
+
+
+def test_conversational_wake_samples_replies_reproducibly_per_seed():
+    def replies(seed):
+        artifact, _ = _wake(FlatModel(), temperature=0.7, seed=seed)
+        return artifact, [turn["assistant_token_ids"] for turn in artifact["turns"]]
+
+    first, first_replies = replies(42)
+    _, again = replies(42)
+    _, other = replies(43)
+
+    assert first_replies == again
+    assert first_replies != other
+    assert {token for reply in first_replies for token in reply[:-1]} == {20, 21}
+    assert first["reply_temperature"] == 0.7
+    assert first["wake_seed"] == 42
+    seeds = [turn["reply_seed"] for turn in first["turns"]]
+    assert all(isinstance(seed, int) for seed in seeds)
+    assert len(set(seeds)) == 2
+
+
+def test_conversational_wake_is_greedy_by_default():
+    artifact, _ = _wake(FlatModel())
+
+    assert all(turn["assistant_token_ids"] == [20] * 16 + [2] for turn in artifact["turns"])
+    assert artifact["reply_temperature"] == 0.0
+    assert [turn["reply_seed"] for turn in artifact["turns"]] == [None, None]
 
 
 def test_dream_prompt_is_the_wake_boundary_alone():

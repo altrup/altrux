@@ -255,6 +255,32 @@ def test_aggregate_runs_rejects_mixed_batch_settings(key: str):
         aggregate_runs(runs)
 
 
+def test_reply_temperature_is_an_altrux_setting_not_a_cross_arm_one():
+    settings = {
+        "epochs": 0,
+        "engineering_only": False,
+        "eval_batch_size": 16,
+        "requested_dream_batch_size": 10,
+        "split_manifest_sha256": "x",
+    }
+    runs = [
+        {
+            "arm": "frozen",
+            "seed": 42,
+            "settings": settings | {"reply_temperature": None},
+            "curve": [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}],
+        },
+        {
+            "arm": "altrux",
+            "seed": 42,
+            "settings": settings | {"reply_temperature": 0.7},
+            "curve": [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}],
+        },
+    ]
+
+    assert set(aggregate_runs(runs)["arms"]) == {"frozen", "altrux"}
+
+
 def test_scientific_runs_ignores_adjacent_smoke_directories():
     full = {"settings": {"engineering_only": False}}
     smoke = {"settings": {"engineering_only": True}}
