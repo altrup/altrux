@@ -57,8 +57,8 @@ here.
 | Probe a checkpoint | `make warm-start-probe ARGS="--init-adapter <step dir>"` (see PROBE EVERY CHECKPOINT) |
 | Build the split | `make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"` (-> `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/`) |
 | Frozen cell, three times | `make lama-ckl-frozen-x3 SEED=42 ARGS="--model-name mamba2_2_7b"` (-> `.cache/lama_ckl/runs/frozen-seed-42-r{1,2,3}`) |
-| Acceptance | `make lama-ckl-run ARGS="--arm altrux --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/altrux-5"` |
-| One trained cell | `make lama-ckl-run ARGS="--arm <lora\|mix-review> --model-name mamba2_2_7b --seed 42 --max-hours <H>"` (30 epochs), or `... --arm altrux ... --epochs 1 --docs-per-wake 5 --dreams-per-cycle 10 --max-hours <H>"` |
+| Acceptance | `make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5"` |
+| One trained cell | `make lama-ckl-run ARGS="--arm <lora\|mix-review> --model-name mamba2_2_7b --seed 42 --max-hours <H>"` (30 epochs), or `... --arm dream ... --epochs 1 --docs-per-wake 5 --dreams-per-cycle 10 --max-hours <H>"` |
 | Engineering smoke | `make lama-ckl-smoke ARGS="--arm <arm> --model-name mamba2_2_7b"` |
 | Llama-2 calibration | `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke`, then `... make lama-ckl-upstream-run`, then `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl` (not in this session's order, §3.4: the uploaded pickle is reused) |
 | Aggregate report | `make lama-ckl-report` |
@@ -138,9 +138,9 @@ reading, not reasoning) as well as to you:
   packs look like conversations and Dolly context rows, with each repeat
   rendered as its variant and no garbled splices?" If the sample is wrong, stop the training and treat
   it as stop-and-report.
-- The first altrux cycle. Read the decoded samples in
+- The first dream cycle. Read the decoded samples in
   `cycle-00/wake.json` and `cycle-00/dreams.json` (under `work/` while
-  running) of the first altrux run (the acceptance run comes first). Ask: "is each wake turn the frame string, the document, and
+  running) of the first dream run (the acceptance run comes first). Ask: "is each wake turn the frame string, the document, and
   a reply; is each dream a conversation after `<|endofconversation|>`?"
 
 Anything suspicious: stop, decode more around it yourself, and treat a
@@ -222,7 +222,7 @@ knobs belong to the DISCUSSION file, not the utilization budget.
 ## The goal
 
 Run the LAMA-CKL four-arm comparison registered in the governing debrief:
-frozen, lora, mix-review, and altrux on the 2.7B Mamba model, one shared
+frozen, lora, mix-review, and dream on the 2.7B Mamba model, one shared
 500/500 split built on the ultra20k-v4 warm start. Lora and mix-review run
 30 epochs. Altrux runs one epoch (`--epochs 1`): 100 cycles of 5 documents,
 each saving its adapter and scoring both fact sets into
@@ -242,15 +242,15 @@ SESSION ORDER (DISCUSSION-20261013 §3.4):
    spread in the run notes before any other cell.
 4. Acceptance (PRE-GRID ACCEPTANCE below).
 5. Smokes of all four arms.
-6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), altrux
+6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), dream
    (`--epochs 1`, 100 cycles). Then `make lama-ckl-report`, before any
    seed-43 cell starts.
 7. Seeds 43 and 44 for all three trained arms only on this rule: compare
-   altrux's cycle-99 directory (the 100th cycle, equal to its
+   dream's cycle-99 directory (the 100th cycle, equal to its
    `epoch-01/result.json`) against each baseline's `epoch-01/result.json`,
    per metric (to-learn accuracy and not-to-forget accuracy); the best
    baseline is the larger baseline value for that metric; seeds 43/44 run
-   if altrux differs from it by at least 0.05 absolute on either metric.
+   if dream differs from it by at least 0.05 absolute on either metric.
    Otherwise seed 42 only. A 30-epoch cell cut short by the cap makes the
    report refuse its arm, so launch a seed-43/44 cell only if its full
    length fits the remaining budget.
@@ -278,7 +278,7 @@ non-finite loss, an OOM, a hang) is a bug: see IF TRAINING CRASHES.
 You may stop a cell early on your own judgment when further epochs cannot
 change the result (the model has degenerated, the curve sits at the floor).
 Finish the current scored point first (the current cycle's evaluation for
-altrux, the current epoch's for lora and mix-review) so the cell has at
+dream, the current epoch's for lora and mix-review) so the cell has at
 least one scored point past the point of no return. There is no hard-coded
 collapse trigger. Write the reason in the run notes with
 the numbers and one decoded reply and dream, then treat it as
@@ -286,7 +286,7 @@ STOP-AND-REPORT. Stopping is the only judgment call: never edit, resume,
 or relaunch to repair it.
 
 PRE-GRID ACCEPTANCE (DISCUSSION-20261013 §3.4 step 4). Run the runner once
-with `--arm altrux --cycles 1 --docs-per-wake 5 --output <dir outside
+with `--arm dream --cycles 1 --docs-per-wake 5 --output <dir outside
 .cache/lama_ckl/runs/>`. It does one wake-sleep cycle and saves the cycle
 adapter without an evaluation. It passes when, in `cycle-00/`,
 `wake.json` shows `internal_eoc` 0, `role_marker_closes` 0 of 5 and forced
@@ -299,7 +299,7 @@ dream quality.
 
 TIME THE FIRST CYCLE (DISCUSSION-20261013 §3.4 step 4). From the
 acceptance run's log timestamps, record the wall time of the wake, the
-dream generation, and the distillation separately, and write the altrux
+dream generation, and the distillation separately, and write the dream
 ETA for 100 cycles, each with its evaluation, plus the initial
 evaluation (101 in all), in the run notes before any baseline starts. This is the fused single-token step's first timed
 cycle; if the ETA is far above the debrief's estimate, record it and
@@ -310,7 +310,7 @@ the hours. Launch every `lama-ckl-run` cell with `--max-hours` set to the
 hours that remain in the cap. The runner stops after the first epoch that
 ends past the cap, so a cell can overrun it by up to one epoch. A 30-epoch
 baseline cell that stops at the cap resumes next session from its last
-`epoch-EE/` with the same command. A `--epochs 1` altrux cell has no
+`epoch-EE/` with the same command. A `--epochs 1` dream cell has no
 resume point before its epoch ends: its cycles are written under
 `runs/<cell>/work/epoch-01.*/cycle-NN/` until cycle 100 completes, then
 moved to `epoch-01/`, and `--max-hours` cannot stop it mid-epoch. Start it
@@ -351,7 +351,7 @@ cap reached, stop-and-report). In order:
 3. Commit and push this run's notes file and any code change (see
    PERSISTENCE). The LAMA-CKL results are
    `.cache/lama_ckl/runs/<cell>/summary.json`, each
-   `.cache/lama_ckl/runs/<cell>/epoch-EE/result.json` and altrux
+   `.cache/lama_ckl/runs/<cell>/epoch-EE/result.json` and dream
    `epoch-01/cycle-NN/result.json`. They come home by the pull
    (`LAMBDA_CACHE_ARTIFACTS` must include `lama_ckl`). Do not commit
    them here; the branch fallback is step 5, for what the pull missed.
@@ -365,7 +365,7 @@ cap reached, stop-and-report). In order:
    EXISTS on their machine. Check every artifact this session produced
    (the whole `checkpoints/ultra20k-v4/` tree: all ten interval
    checkpoints, the final step, and each `probe.json`; the split; each
-   cell's epoch dirs, altrux's cycle dirs, and
+   cell's epoch dirs, dream's cycle dirs, and
    `summary.json`, this run's notes file) appears at a plausible size, and echo the receipt into the
    notes. "The pull carries it" is an unchecked invariant, and it cost the
    g2 session its entire cache set. A missing file or a stale header
@@ -518,7 +518,7 @@ Every event line wakes your session. Completion lines (a new `EXIT=`
 marker) → the thing you were waiting on is done; act on its result now
 (read the probe/prep log, start the next step) instead of waiting for a
 heartbeat. Error lines → investigate now.
-Heartbeats → glance at the carried metrics line (for altrux, the cycle
+Heartbeats → glance at the carried metrics line (for dream, the cycle
 line: forced closes, role-marker closes, duplicate dreams, loss, to-learn
 and not-to-forget accuracy, ETA); a growing "log idle" on a
 run that should be training means it hung or died without a signature —
@@ -529,7 +529,7 @@ training.
 If a warning flood gets the monitor auto-suppressed, re-arm with a tighter
 filter; only if the Monitor tool is unavailable fall back to the old
 scheme (a background `sleep <interval>` task between manual checks).
-Healthy, per altrux cycle: the forced-close and `role_marker_closes`
+Healthy, per dream cycle: the forced-close and `role_marker_closes`
 counts in `wake.json` and the duplicate count in the `dreams.json`
 diagnostics, recorded and not trending toward every reply or every dream;
 finite distillation loss lines; and a cycle `result.json` on the

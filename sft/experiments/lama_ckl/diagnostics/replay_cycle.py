@@ -1,4 +1,4 @@
-"""Replay one altrux cycle's distillation locally from the saved wake transcript and dreams.
+"""Replay one dream cycle's distillation locally from the saved wake transcript and dreams.
 
 Rebuilds the open state from wake.json, recomputes each dream's teacher logits from
 that state, reports the KL and LoRA gradient norm of every dream at fixed weights,
@@ -6,7 +6,7 @@ runs the cycle's optimizer steps as the runner did, and prints the wake frame's
 log-probability after the dream prompt before and after.
 
     uv run --no-sync python -u -m experiments.lama_ckl.diagnostics.replay_cycle \
-        --run-dir ../.cache/lama_ckl/runs/altrux-seed-42 --epoch 1 --cycle 0
+        --run-dir ../.cache/lama_ckl/runs/dream-seed-42 --epoch 1 --cycle 0
 """
 
 from __future__ import annotations

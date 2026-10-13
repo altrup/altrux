@@ -40,7 +40,7 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
             "curve": [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}],
         },
         {
-            "arm": "altrux",
+            "arm": "dream",
             "seed": 42,
             "settings": settings,
             "curve": [
@@ -78,38 +78,38 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
 
     report = aggregate_runs(runs)
 
-    assert report["arms"]["altrux"]["top_accuracy"]["mean"] == 0.2
-    assert report["arms"]["altrux"]["final_forgetting"]["mean"] == pytest.approx(0.1)
-    assert report["arms"]["altrux"]["source_tokens"]["mean"] == 400
-    assert report["arms"]["altrux"]["wake_tokens"]["mean"] == 500
-    assert report["arms"]["altrux"]["review_tokens"]["mean"] == 100
+    assert report["arms"]["dream"]["top_accuracy"]["mean"] == 0.2
+    assert report["arms"]["dream"]["final_forgetting"]["mean"] == pytest.approx(0.1)
+    assert report["arms"]["dream"]["source_tokens"]["mean"] == 400
+    assert report["arms"]["dream"]["wake_tokens"]["mean"] == 500
+    assert report["arms"]["dream"]["review_tokens"]["mean"] == 100
     assert report["runs"][1]["gpu_model"] == "NVIDIA GH200"
     assert report["runs"][1]["gpu_count"] == 1
     assert report["runs"][1]["lora_rank"] == 8
     assert report["runs"][1]["total_parameters"] == 2_700_000_000
     assert report["arms"]["frozen"]["final_forgetting"]["mean"] == 0.0
-    assert report["epochs"] == {"frozen": 0, "altrux": 1, "lora": 2}
+    assert report["epochs"] == {"frozen": 0, "dream": 1, "lora": 2}
     matched = report["matched_epoch"]
     assert matched["epoch"] == 1
-    assert set(matched["arms"]) == {"frozen", "altrux", "lora"}
+    assert set(matched["arms"]) == {"frozen", "dream", "lora"}
     assert matched["arms"]["lora"]["to_learn_accuracy"]["mean"] == 0.4
-    assert matched["arms"]["altrux"]["not_to_forget_accuracy"]["mean"] == 0.9
+    assert matched["arms"]["dream"]["not_to_forget_accuracy"]["mean"] == 0.9
     assert matched["arms"]["frozen"]["not_to_forget_accuracy"]["mean"] == 1.0
     assert report["evaluation_resolution"] == {
         "to_learn_accuracy": None,
         "not_to_forget_accuracy": None,
     }
-    cycles = report["cycle_curves"]["altrux"]
+    cycles = report["cycle_curves"]["dream"]
     assert set(cycles) == {"1", "2", "3"}
     assert cycles["2"]["to_learn_accuracy"]["mean"] == 0.3
     assert cycles["2"]["subjects_mentioned"]["mean"] == 4
     assert cycles["3"]["mean_copy_fraction"]["mean"] == 0.25
     assert cycles["1"]["forced_closes"]["mean"] == 1
     assert cycles["1"]["loss"]["mean"] == 0.5
-    altrux = report["arms"]["altrux"]
-    assert altrux["peak_cycle_accuracy"]["mean"] == 0.3
-    assert altrux["peak_cycle"]["mean"] == 2
-    assert altrux["retention_at_peak_cycle"]["mean"] == 0.85
+    dream_arm = report["arms"]["dream"]
+    assert dream_arm["peak_cycle_accuracy"]["mean"] == 0.3
+    assert dream_arm["peak_cycle"]["mean"] == 2
+    assert dream_arm["retention_at_peak_cycle"]["mean"] == 0.85
     assert "peak_cycle" not in report["arms"]["lora"]
 
 
@@ -146,7 +146,7 @@ def test_acceptance_cycle_records_without_accuracies_are_skipped():
     point = {"to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}
     acceptance = {"cycle": 1, "loss": 0.5, "diagnostics": {"subjects_mentioned": 1}}
     run = {
-        "arm": "altrux",
+        "arm": "dream",
         "seed": 42,
         "settings": {"split_manifest_sha256": "x", "epochs": 1},
         "curve": [
@@ -158,7 +158,7 @@ def test_acceptance_cycle_records_without_accuracies_are_skipped():
     report = aggregate_runs([run])
 
     assert report["cycle_curves"] == {}
-    assert "peak_cycle" not in report["arms"]["altrux"]
+    assert "peak_cycle" not in report["arms"]["dream"]
 
 
 def test_aggregate_runs_rejects_smokes_and_mixed_splits():
@@ -255,7 +255,7 @@ def test_aggregate_runs_rejects_mixed_batch_settings(key: str):
         aggregate_runs(runs)
 
 
-def test_reply_temperature_is_an_altrux_setting_not_a_cross_arm_one():
+def test_reply_temperature_is_a_dream_setting_not_a_cross_arm_one():
     settings = {
         "epochs": 0,
         "engineering_only": False,
@@ -271,14 +271,14 @@ def test_reply_temperature_is_an_altrux_setting_not_a_cross_arm_one():
             "curve": [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}],
         },
         {
-            "arm": "altrux",
+            "arm": "dream",
             "seed": 42,
             "settings": settings | {"reply_temperature": 0.7},
             "curve": [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}],
         },
     ]
 
-    assert set(aggregate_runs(runs)["arms"]) == {"frozen", "altrux"}
+    assert set(aggregate_runs(runs)["arms"]) == {"frozen", "dream"}
 
 
 def test_scientific_runs_ignores_adjacent_smoke_directories():
@@ -315,7 +315,7 @@ def test_aggregate_runs_accepts_a_one_point_frozen_curve_beside_trained_arms():
             "curve": [{"epoch": 0, "wake_tokens": None, **point}],
         },
         {
-            "arm": "altrux",
+            "arm": "dream",
             "seed": 42,
             "settings": settings,
             "curve": [{"epoch": 0, **point}, {"epoch": 1, "wake_tokens": 30, **point}],
@@ -325,7 +325,7 @@ def test_aggregate_runs_accepts_a_one_point_frozen_curve_beside_trained_arms():
     report = aggregate_runs(runs)
 
     assert report["arms"]["frozen"]["final_forgetting"]["mean"] == 0.0
-    assert report["arms"]["altrux"]["wake_tokens"]["mean"] == 30
+    assert report["arms"]["dream"]["wake_tokens"]["mean"] == 30
 
 
 def _cell(arm: str, seed: int) -> dict[str, object]:
@@ -339,7 +339,7 @@ def _cell(arm: str, seed: int) -> dict[str, object]:
 
 
 def test_build_report_aggregates_the_seed_42_cells_and_lists_the_rest_as_missing():
-    arms = ("frozen", "lora", "mix-review", "altrux")
+    arms = ("frozen", "lora", "mix-review", "dream")
 
     report = build_report([_cell(arm, 42) for arm in arms])
 

@@ -12,7 +12,7 @@ from experiments.lama_ckl.runner import ARMS, curve_summary
 from progress import ts
 
 SEEDS = (42, 43, 44)
-TRAINED_ARMS = ("lora", "mix-review", "altrux")
+TRAINED_ARMS = ("lora", "mix-review", "dream")
 SCORES = ("to_learn_accuracy", "not_to_forget_accuracy")
 CYCLE_METRICS = (*SCORES, "role_marker_closes", "forced_closes", "loss")
 CYCLE_DIAGNOSTICS = ("subjects_mentioned", "mean_copy_fraction")
@@ -71,9 +71,9 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         if len({run["settings"].get(key) for run in runs}) != 1:
             raise ValueError(f"runs use different {key} settings")
     for key, arms in (
-        ("docs_per_wake", ("altrux",)),
-        ("reply_temperature", ("altrux",)),
-        ("dreams_per_cycle", ("altrux",)),
+        ("docs_per_wake", ("dream",)),
+        ("reply_temperature", ("dream",)),
+        ("dreams_per_cycle", ("dream",)),
         *(("epochs", (arm,)) for arm in TRAINED_ARMS),
     ):
         if len({run["settings"].get(key) for run in runs if run["arm"] in arms}) > 1:
@@ -153,7 +153,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
                 matched_scores.setdefault(arm, {}).setdefault(key, []).append(
                     float(matched_row[key])
                 )
-        # Cycle numbers restart every epoch; altrux's comparison epoch is epoch 1.
+        # Cycle numbers restart every epoch; dream's comparison epoch is epoch 1.
         scored = [
             record
             for row in curve
@@ -217,7 +217,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         },
         "cycle_curves": (
             {
-                "altrux": {
+                "dream": {
                     str(cycle): {key: _stats(values) for key, values in cell.items()}
                     for cycle, cell in sorted(cycle_cells.items())
                 }
@@ -287,13 +287,13 @@ def main() -> None:
         f"to-learn {spread['to_learn_accuracy']} retained {spread['not_to_forget_accuracy']}",
         flush=True,
     )
-    altrux = report["arms"].get("altrux", {})
-    if "peak_cycle" in altrux:
+    dream_arm = report["arms"].get("dream", {})
+    if "peak_cycle" in dream_arm:
         print(
-            f"[{ts()}] altrux peak cycle {altrux['peak_cycle']['mean']:.2f}: to-learn "
-            f"{altrux['peak_cycle_accuracy']['mean']:.6f} retained "
-            f"{altrux['retention_at_peak_cycle']['mean']:.6f} over "
-            f"{len(report['cycle_curves']['altrux'])} cycles",
+            f"[{ts()}] dream peak cycle {dream_arm['peak_cycle']['mean']:.2f}: to-learn "
+            f"{dream_arm['peak_cycle_accuracy']['mean']:.6f} retained "
+            f"{dream_arm['retention_at_peak_cycle']['mean']:.6f} over "
+            f"{len(report['cycle_curves']['dream'])} cycles",
             flush=True,
         )
     missing = report["missing_cells"]

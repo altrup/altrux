@@ -434,6 +434,9 @@ Open:
 - Per-cycle resume for the one-epoch altrux cell (a crash at cycle n
   restarts at cycle 0): not implemented; decide before a box with less than
   a full ETA of budget.
+- Done 2026-10-13: the arm is `--arm dream` in code, tests, README and the
+  experimenter skill. Notes up to this one say `altrux` for the same arm;
+  the repository name is unchanged.
 - Done 2026-10-13: the third-box `runs/`, `acceptance/` and both old splits
   moved to `.cache/lama_ckl_archive/third-box-ultra20k/`, outside the
   `lama_ckl` upload pattern.

@@ -479,7 +479,7 @@ where applicable, and one epoch, and writes to a separate `-smoke` directory:
 make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm frozen --seed 42"
 make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm lora --seed 42"
 make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42"
-make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm altrux --seed 42"
+make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm dream --seed 42"
 ```
 
 After the smoke fixes batch sizes for that rented machine, run the registered
@@ -488,7 +488,7 @@ the frozen Mamba replication seeds; the split itself stays the one seed-42
 artifact. Seed 42 runs first. The frozen arm is scored three times by
 `make lama-ckl-frozen-x3 SEED=42` into `runs/frozen-seed-42-r1`, `-r2` and
 `-r3`; the report reads them as one arm and their spread is the evaluation
-resolution. Lora and mix-review run the default 30 epochs; Altrux runs one
+resolution. Lora and mix-review run the default 30 epochs; the dream arm runs one
 epoch of 100 cycles:
 
 ```bash
@@ -497,18 +497,18 @@ for arm in lora mix-review; do
   make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm $arm --seed 42 \
     --eval-batch-size 16"
 done
-make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 \
+make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm dream --seed 42 \
   --epochs 1 --docs-per-wake 5 --dreams-per-cycle 10 --eval-batch-size 16"
 ```
 
-Seeds `43` and `44` run for the three trained arms only if, at seed 42, Altrux
+Seeds `43` and `44` run for the three trained arms only if, at seed 42, the dream arm
 differs from the best baseline by at least 0.05 absolute on acquisition or
-paired retention at the matched epoch (epoch 1: Altrux's last cycle against
-each baseline's `epoch-01/result.json`). Altrux's per-cycle peak is reported
+paired retention at the matched epoch (epoch 1: the dream arm's last cycle against
+each baseline's `epoch-01/result.json`). The dream arm's per-cycle peak is reported
 but is not the comparison point.
 
 `--epochs` sets the number of epochs (default 30), and every epoch is one pass
-over the 500 evidence documents in the official frozen order. Only Altrux
+over the 500 evidence documents in the official frozen order. Only the dream arm
 wakes. Its epoch is a series of wake-sleep cycles of `--docs-per-wake`
 documents (code default 10; the registered cells pass 5, so 100 cycles per
 epoch; the last cycle is shorter when the count does not divide 500). Every
@@ -526,7 +526,7 @@ with a fed EOS; `wake.json` flags each such turn as `eos_forced` and counts
 them as `forced_closes`. Both are per-cycle diagnostics. A reply that emits
 `<|endofconversation|>` stops the run after the cycle's artifacts are saved.
 From copies of that cycle's open post-wake state plus one
-`<|endofconversation|>`, Altrux generates `--dreams-per-cycle` uncued 512-token
+`<|endofconversation|>`, the dream arm generates `--dreams-per-cycle` uncued 512-token
 dreams (default 10) at temperature `0.7`, `--dream-batch-size` per generation
 launch (default `--dreams-per-cycle`, so one launch). It distils all of them in
 one batched forward and one AdamW step at KL temperature `1.0`
@@ -546,19 +546,19 @@ epoch. Mix-Review pairs that pass with the 500 retention documents in the
 official fixed seed-0 review order. Neither wakes. The frozen arm is the initial
 evaluation alone, a one-point curve. All trainable arms use AdamW at `1e-4`;
 evaluation uses the published descriptive object-token accuracy from fresh
-state, after every epoch (and, for Altrux, after every cycle; the last cycle's
+state, after every epoch (and, for the dream arm, after every cycle; the last cycle's
 score is the epoch's, so one epoch of 100 cycles is 101 evaluations).
 
-Before the grid, an Altrux acceptance check reads one wake and its dreams
+Before the grid, a dream-arm acceptance check reads one wake and its dreams
 without a full epoch: `--cycles N` runs the initial evaluation, then only the
 first `N` cycles of epoch 1, saves `epoch-01/` with its cycle artifacts and
 cycle adapters but no evaluation (no cycle `result.json`), and stops. It needs
-`--arm altrux` and a fresh `--output` outside `runs/`, and it does not resume:
+`--arm dream` and a fresh `--output` outside `runs/`, and it does not resume:
 
 ```bash
-make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm altrux --seed 42 \
+make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm dream --seed 42 \
   --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 \
-  --output ../.cache/lama_ckl/acceptance/altrux-5"
+  --output ../.cache/lama_ckl/acceptance/dream-5"
 ```
 
 Runs resume from the last atomically completed `epoch-EE/`. A partial epoch
@@ -568,7 +568,7 @@ per-cycle adapters carry no optimizer and are not resume points.
 hours after the session started; rerun the same command to continue. A resumed
 session may pass a different `--max-hours`.
 Each epoch stores the adapter and optimizer, metric vectors, resource counts,
-and hashes in `epoch-EE/result.json`; each Altrux cycle stores
+and hashes in `epoch-EE/result.json`; each dream cycle stores
 `epoch-EE/cycle-CC/wake.json` (every prompt and reply token, the reply seeds,
 the forced-close and role-marker-close counts), `dreams.json` (exact dream token IDs, text, seeds, stop reasons,
 diagnostics, teacher adapter hash, and set hash), the cycle adapter, and
@@ -593,12 +593,12 @@ make lama-ckl-report
 The report ignores adjacent smoke directories and rejects incomplete epoch
 curves (against each run's own `epochs`), mixed split hashes, evaluation or
 dream batch sizes, other shared settings, or duplicate trained arm/seed cells.
-Arms may run different epoch counts (altrux 1, the baselines 30):
+Arms may run different epoch counts (dream 1, the baselines 30):
 `matched_epoch` compares every trained arm at the smallest trained `epochs`,
 with the frozen epoch-0 score as the floor. Frozen replicates of one seed
 (`frozen-seed-42-r1`..`-r3`) aggregate into the one frozen arm, and their
 max − min spread is `evaluation_resolution` (`null` below two replicates).
-`cycle_curves` holds altrux's per-cycle acquisition, retention,
+`cycle_curves` holds dream's per-cycle acquisition, retention,
 `subjects_mentioned`, `role_marker_closes`, `forced_closes`,
 `mean_copy_fraction` and loss across seeds from epoch 1's scored cycles
 (unscored acceptance cycles are skipped); `peak_cycle`,

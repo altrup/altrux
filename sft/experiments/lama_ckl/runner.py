@@ -1,13 +1,13 @@
 """Run one frozen LAMA-CKL Mamba arm with resumable epoch artifacts.
 
 An epoch reads the 500 to-learn documents once in the official frozen order;
---epochs sets the count (altrux cells run one). Only the altrux arm wakes: it
+--epochs sets the count (dream cells run one). Only the dream arm wakes: it
 reads them as wake-sleep cycles of --docs-per-wake documents, every wake from
 fresh state with sampled replies. Each cycle dreams --dreams-per-cycle dreams
 from that cycle's open post-wake state and distils them in one optimizer step,
 then saves the adapter and scores both fact sets into epoch-EE/cycle-NN/.
 lora and mix-review train one document epoch instead; frozen is the initial
-evaluation alone. Both fact sets are evaluated after every epoch; for altrux
+evaluation alone. Both fact sets are evaluated after every epoch; for dream
 the last scored cycle's result is the epoch's.
 
 Runs resume at epoch granularity from the last completed epoch-EE/: a partial
@@ -17,7 +17,7 @@ stops a session after the first epoch that ends past the cap; the same command
 resumes it.
 
 --cycles N is a pre-grid acceptance check, not a grid cell: after the initial
-evaluation, epoch 1 runs only its first N altrux cycles, saves their adapters
+evaluation, epoch 1 runs only its first N dream cycles, saves their adapters
 without an evaluation, and the run stops. It needs a fresh --output outside
 runs/.
 """
@@ -52,7 +52,7 @@ from experiments.lama_ckl.split import DEFAULT_SPLIT, DEFAULT_WARMSTART, pinned_
 from experiments.lama_ckl.training import epoch_batches, train_document_epoch
 from progress import fmt_duration, heartbeat, ts
 
-ARMS = ("frozen", "lora", "mix-review", "altrux")
+ARMS = ("frozen", "lora", "mix-review", "dream")
 EPOCHS = 30
 DOCS_PER_WAKE = 10
 DREAMS_PER_CYCLE = 10
@@ -194,7 +194,7 @@ class EpochSteps(Protocol):
     def save(self, directory: Path, result: dict[str, object]) -> None: ...
 
 
-def _altrux_epoch(
+def _dream_epoch(
     epoch: int,
     directory: Path,
     rows: Sequence[Mapping[str, object]],
@@ -225,7 +225,7 @@ def _altrux_epoch(
             )
         dreams, dream_payload = steps.dream(epoch, cycle, cycle_rows, open_state, wake)
         _write_json(cycle_dir / "dreams.json", dream_payload)
-        distilled = steps.distil(dreams, open_state, f"altrux epoch {epoch} cycle {cycle}")
+        distilled = steps.distil(dreams, open_state, f"dream epoch {epoch} cycle {cycle}")
         adapter_sha = steps.save_cycle(cycle_dir)
         scores: dict[str, object] = {}
         if max_cycles is None:
@@ -278,7 +278,7 @@ def _altrux_epoch(
         return sum(int(cycle[key]) for cycle in cycles)
 
     return {
-        "kind": "altrux",
+        "kind": "dream",
         "cycles": cycles,
         "optimizer_steps": total("optimizer_steps"),
         "token_gradients": total("token_gradients"),
@@ -333,8 +333,8 @@ def run_epochs(
         treatment: dict[str, object]
         if epoch == 0:
             treatment = {"kind": "initial", "optimizer_steps": 0, "review_tokens": 0}
-        elif arm == "altrux":
-            treatment = _altrux_epoch(
+        elif arm == "dream":
+            treatment = _dream_epoch(
                 epoch, work, rows, int(settings["docs_per_wake"]), steps, max_cycles
             )
             cycles = treatment["cycles"]
@@ -643,13 +643,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--docs-per-wake",
         type=int,
         default=DOCS_PER_WAKE,
-        help="documents per altrux wake-sleep cycle",
+        help="documents per dream wake-sleep cycle",
     )
     parser.add_argument(
         "--dreams-per-cycle",
         type=int,
         default=DREAMS_PER_CYCLE,
-        help="dreams generated and distilled per altrux wake-sleep cycle",
+        help="dreams generated and distilled per dream wake-sleep cycle",
     )
     parser.add_argument(
         "--dream-batch-size", type=int, help="dreams per generation launch; --dreams-per-cycle"
@@ -664,7 +664,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cycles",
         type=int,
-        help="altrux acceptance check: after the initial evaluation, run the first N "
+        help="dream acceptance check: after the initial evaluation, run the first N "
         "cycles of epoch 1, save them unevaluated, and stop; needs a fresh --output",
     )
     parser.add_argument(
@@ -694,8 +694,8 @@ def main() -> None:
     if args.dreams_per_cycle < 1:
         raise SystemExit("--dreams-per-cycle must be positive")
     if args.cycles is not None:
-        if args.arm != "altrux" or args.output is None or args.cycles < 1:
-            raise SystemExit("--cycles needs --arm altrux, --output, and a positive N")
+        if args.arm != "dream" or args.output is None or args.cycles < 1:
+            raise SystemExit("--cycles needs --arm dream, --output, and a positive N")
         if (args.output / "run.json").exists():
             raise SystemExit(f"--cycles needs a fresh --output: {args.output}")
     pinned = pinned_warmstart_sha()
@@ -708,7 +708,7 @@ def main() -> None:
         epochs, docs_per_wake, dreams_per_cycle, dream_tokens = 1, min(docs_per_wake, 2), 2, 32
     if args.arm == "frozen":
         epochs = 0
-    altrux = args.arm == "altrux"
+    dream_arm = args.arm == "dream"
     output = args.output or Path("../.cache/lama_ckl/runs") / (
         f"{args.arm}-seed-{args.seed}{'-smoke' if args.smoke else ''}"
     )
@@ -725,18 +725,18 @@ def main() -> None:
         "seed": args.seed,
         "engineering_only": args.smoke,
         "epochs": epochs,
-        "docs_per_wake": docs_per_wake if altrux else None,
-        "cycles_per_epoch": cycles_per_epoch(len(learned), docs_per_wake) if altrux else 0,
-        "wake_frame": WAKE_FRAME if altrux else None,
+        "docs_per_wake": docs_per_wake if dream_arm else None,
+        "cycles_per_epoch": cycles_per_epoch(len(learned), docs_per_wake) if dream_arm else 0,
+        "wake_frame": WAKE_FRAME if dream_arm else None,
         "train_batch_size": min(TRAIN_BATCH_SIZE, len(learned)),
         "learning_rate": LEARNING_RATE,
         "evidence_tokens": EVIDENCE_TOKENS,
         "reply_tokens": REPLY_TOKENS,
-        "reply_temperature": DREAM_TEMPERATURE if altrux else None,
-        "dreams_per_cycle": dreams_per_cycle if altrux else 0,
-        "dream_tokens": dream_tokens if altrux else 0,
-        "dream_temperature": DREAM_TEMPERATURE if altrux else None,
-        "kl_temperature": KL_TEMPERATURE if altrux else None,
+        "reply_temperature": DREAM_TEMPERATURE if dream_arm else None,
+        "dreams_per_cycle": dreams_per_cycle if dream_arm else 0,
+        "dream_tokens": dream_tokens if dream_arm else 0,
+        "dream_temperature": DREAM_TEMPERATURE if dream_arm else None,
+        "kl_temperature": KL_TEMPERATURE if dream_arm else None,
         "requested_dream_batch_size": args.dream_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "model_name": args.model_name,
