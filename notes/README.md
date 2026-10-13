@@ -61,6 +61,7 @@ Read [the 2026-10-13 LAMA-CKL third box run debrief](discussion/DISCUSSION-20261
 
 ## Research notes
 
+- [2026-10-13 — native speech-to-speech models](research/RESEARCH-20261013-native-speech-to-speech-models.md): Background, not a plan. Surveys neural audio codecs (12.5 Hz causal RVQ with a semantic first codebook is the standard), depth-transformer and flow-matching output schemes, Moshi through Qwen3.5-Omni, text-in-the-loop training and the modality gap, spoken-dialogue benchmarks, and what a codec front end would mean for a Mamba2 continual learner.
 - [2026-09-26 — CKL as stage two](research/RESEARCH-20260926-ckl-benchmark-as-stage-two.md): Describes the CKL benchmark (CC-RecentNews stream, four LAMA probes, FUAR), registers it as roadmap stage two after LAMA-CKL, and ranks its risks, led by the 2020 news window.
 - [2026-09-25 — LMs Need Sleep evaluation](research/RESEARCH-20260925-lms-need-sleep-evaluation.md): Reviews the evaluation of arXiv 2606.03979, finds end-point scores with no retention matrix, seeds, or token accounting, and keeps the LAMA-CKL scorer and aggregates unchanged.
 - [2026-08-25 — desktop multimodal action-state tokenization](research/RESEARCH-20260825-desktop-multimodal-action-state-tokenization.md): Surveys multimodal and GUI-agent representations, defines synchronized screen-action transitions, and registers a fixed-grammar baseline with forward-dynamics and tokenizer ablations as a separate branch from LAMA-CKL.
