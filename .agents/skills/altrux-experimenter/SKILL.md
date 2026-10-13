@@ -224,7 +224,7 @@ knobs belong to the DISCUSSION file, not the utilization budget.
 Run the LAMA-CKL four-arm comparison registered in the governing debrief:
 frozen, lora, mix-review, and dream on the 2.7B Mamba model, one shared
 500/500 split built on the ultra20k-v4 warm start. Lora and mix-review run
-30 epochs. Altrux runs one epoch (`--epochs 1`): 100 cycles of 5 documents,
+30 epochs. The dream arm runs one epoch (`--epochs 1`): 100 cycles of 5 documents,
 each saving its adapter and scoring both fact sets into
 `cycle-NN/` (under `work/` while running, `epoch-01/` once the epoch
 completes). The frozen cell is scored three times; the spread of
@@ -251,8 +251,9 @@ SESSION ORDER (DISCUSSION-20261013 §3.4):
    per metric (to-learn accuracy and not-to-forget accuracy); the best
    baseline is the larger baseline value for that metric; seeds 43/44 run
    if dream differs from it by at least 0.05 absolute on either metric.
-   Otherwise seed 42 only. A 30-epoch cell cut short by the cap makes the
-   report refuse its arm, so launch a seed-43/44 cell only if its full
+   Otherwise seed 42 only. A 30-epoch cell cut short by the cap makes
+   `make lama-ckl-report` refuse the whole report (incomplete epoch curve),
+   not only that arm, so launch a seed-43/44 cell only if its full
    length fits the remaining budget.
 8. Shutdown checklist.
 

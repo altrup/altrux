@@ -284,21 +284,23 @@ teacher (the current weights at dream time, logits recorded); AdamW 1e-4.
 2. Split (`--lama-root ../.cache/LAMA/data`).
 3. Frozen cell three times (§3.3.8); record the spread before any other
    cell.
-4. Acceptance, `--arm altrux --cycles 1 --docs-per-wake 5`: `internal_eoc`
+4. Acceptance, `--arm dream --cycles 1 --docs-per-wake 5`: `internal_eoc`
    0, `role_marker_closes` 0 of 5, forced closes 0 of 5, dreams non-empty
    with `subjects_mentioned` above 0; read the five replies and ten dreams
    and quote one of each in the run notes. Record the cycle's wall time per
-   phase and the altrux ETA for 100 cycles with per-cycle evaluation. A
+   phase and the dream-arm ETA for 100 cycles with per-cycle evaluation. A
    miss: stop and report.
 5. Smokes of all four arms.
-6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), altrux
+6. Cells, seed 42: lora (30 epochs), mix-review (30 epochs), dream
    (`--epochs 1`, 100 cycles, per-cycle save and score). Each cell launches
    with `--max-hours` set to the remaining session budget. The session soft
    cap is 20 h wall clock (confirmed 2026-10-13; it was an assumed value
    since 2026-10-10).
-7. Seeds 43 and 44 for all three trained arms if, at seed 42, altrux differs
-   from the best baseline by at least 0.05 on peak acquisition or paired
-   retention at epoch 1. Otherwise seed 42 only.
+7. Seeds 43 and 44 for all three trained arms if, at seed 42, the dream arm
+   differs from the best baseline by at least 0.05 on acquisition or paired
+   retention at the end of epoch 1 (§3.3.8: cycle 100 against each
+   baseline's `epoch-01/result.json`; the per-cycle peak is not the
+   comparison point). Otherwise seed 42 only.
 8. Shutdown checklist.
 
 Stopping mid-cell stays the experimenter's judgment under the rule committed
