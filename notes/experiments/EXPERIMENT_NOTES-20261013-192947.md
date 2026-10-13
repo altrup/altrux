@@ -119,3 +119,7 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   (`--max-hours 18.1` = the session cap at 15:28 UTC 2026-10-14 minus now.)
 - 21:25-21:29 lora cell running: epoch 0 (initial evaluation in this process) to-learn 0.002 / not-to-forget 0.977 — note 0.977 against the frozen-x3 runs' 0.984-0.987: cross-process evaluation noise is about 0.01 here, larger than the x3 spread (0.003), as the third box saw. Epoch 1: 0.021 / 0.899 (finite losses ~1.9-2.2, 0.57 batch/s, 63 batches of 8, ~2 min/epoch → 30 epochs ≈ 60 min, ETA ~22:25). Epoch 2: 0.030 / 0.895. GPU 20 % util, 23.5 GB (latency-bound at the registered batch 8; left as registered).
+- 21:53 **Teammate instruction (in session): "can you try running the experiment cells in parallel."** Applied within VRAM: lora (23.5 GB) and mix-review run side by side (two windows of the `train` session, a deviation from the one-GPU-job rule on the teammate's instruction); the dream cell (70.5 GB peak at 30 dreams) does not fit beside a baseline on the 94.5 GB card and starts after both baselines finish. mix-review cell seed 42, in `train:mix` (started fresh; warm start sha256 7ba7972b…, split manifest sha256 f829ea48…):
+  ```
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm mix-review --model-name mamba2_2_7b --seed 42 --max-hours 17.6"
+  ```
