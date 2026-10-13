@@ -112,3 +112,9 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   cd ~/altrux/sft && for a in frozen lora mix-review dream; do make lama-ckl-smoke ARGS="--arm $a --model-name mamba2_2_7b" || break; done
   ```
+- 21:14-21:17 smokes: frozen, lora, mix-review, dream all EXIT=0 (2 documents, 2 dreams, 32 tokens; engineering only).
+- 21:24 step 6, lora cell seed 42, in `train` (started fresh, no epoch dir; warm start sha256 7ba7972b…, split manifest sha256 f829ea48…):
+  ```
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm lora --model-name mamba2_2_7b --seed 42 --max-hours 18.1"
+  ```
+  (`--max-hours 18.1` = the session cap at 15:28 UTC 2026-10-14 minus now.)
