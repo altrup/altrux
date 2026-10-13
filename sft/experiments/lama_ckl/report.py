@@ -12,6 +12,10 @@ from experiments.lama_ckl.runner import ARMS, curve_summary
 from progress import ts
 
 SEEDS = (42, 43, 44)
+TRAINED_ARMS = ("lora", "mix-review", "altrux")
+SCORES = ("to_learn_accuracy", "not_to_forget_accuracy")
+CYCLE_METRICS = (*SCORES, "role_marker_closes", "forced_closes", "loss")
+CYCLE_DIAGNOSTICS = ("subjects_mentioned", "mean_copy_fraction")
 
 
 def _stats(values: Sequence[float]) -> dict[str, object]:
@@ -68,12 +72,18 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         if len({run["settings"].get(key) for run in runs}) != 1:
             raise ValueError(f"runs use different {key} settings")
     for key, arms in (
-        ("epochs", ("lora", "mix-review", "altrux")),
         ("docs_per_wake", ("altrux",)),
         ("dreams_per_cycle", ("altrux",)),
+        *(("epochs", (arm,)) for arm in TRAINED_ARMS),
     ):
         if len({run["settings"].get(key) for run in runs if run["arm"] in arms}) > 1:
             raise ValueError(f"runs use different {key} settings")
+    epochs = {str(run["arm"]): int(run["settings"]["epochs"]) for run in runs}
+    trained_epochs = [epochs[arm] for arm in TRAINED_ARMS if arm in epochs]
+    matched = min(trained_epochs) if trained_epochs else None
+    matched_scores: dict[str, dict[str, list[float]]] = {}
+    frozen_scores: dict[int, dict[str, list[float]]] = {}
+    cycle_cells: dict[int, dict[str, list[float]]] = {}
 
     raw: dict[str, dict[str, list[float]]] = {}
     per_run: list[dict[str, object]] = []
@@ -81,7 +91,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     seen: set[tuple[str, int]] = set()
     for run in runs:
         arm, seed = str(run["arm"]), int(run["seed"])
-        if (arm, seed) in seen:
+        if arm in TRAINED_ARMS and (arm, seed) in seen:
             raise ValueError(f"duplicate run for {arm} seed {seed}")
         seen.add((arm, seed))
         curve = run["curve"]
@@ -130,6 +140,38 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             "optimizer_parameters": float(run["settings"].get("optimizer_parameters", 0.0)),
             "peak_vram_bytes": max(float(row.get("peak_vram_bytes", 0.0)) for row in curve),
         }
+        if arm == "frozen":
+            for key in SCORES:
+                frozen_scores.setdefault(seed, {}).setdefault(key, []).append(float(initial[key]))
+        matched_row = (
+            initial
+            if arm == "frozen"
+            else next((row for row in curve if int(row["epoch"]) == matched), None)
+        )
+        if matched_row is not None:
+            for key in SCORES:
+                matched_scores.setdefault(arm, {}).setdefault(key, []).append(
+                    float(matched_row[key])
+                )
+        # Cycle numbers restart every epoch; altrux's comparison epoch is epoch 1.
+        scored = [
+            record
+            for row in curve
+            if int(row["epoch"]) == 1
+            for record in row.get("treatment", {}).get("cycles", [])
+            if "to_learn_accuracy" in record
+        ]
+        for record in scored:
+            cell = cycle_cells.setdefault(int(record["cycle"]), {})
+            for key in CYCLE_METRICS:
+                cell.setdefault(key, []).append(float(record[key]))
+            for key in CYCLE_DIAGNOSTICS:
+                cell.setdefault(key, []).append(float(record["diagnostics"][key]))
+        if scored:
+            peak = max(scored, key=lambda record: float(record["to_learn_accuracy"]))
+            metrics["peak_cycle_accuracy"] = float(peak["to_learn_accuracy"])
+            metrics["peak_cycle"] = float(peak["cycle"])
+            metrics["retention_at_peak_cycle"] = float(peak["not_to_forget_accuracy"])
         for name, value in metrics.items():
             raw.setdefault(arm, {}).setdefault(name, []).append(value)
         per_run.append(
@@ -155,8 +197,34 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             )
             cell["to_learn_accuracy"].append(float(row["to_learn_accuracy"]))
             cell["not_to_forget_accuracy"].append(float(row["not_to_forget_accuracy"]))
+    spreads = [
+        {key: max(values[key]) - min(values[key]) for key in SCORES}
+        for values in frozen_scores.values()
+        if len(values["to_learn_accuracy"]) > 1
+    ]
     return {
         "split_manifest_sha256": next(iter(split_hashes)),
+        "epochs": epochs,
+        "matched_epoch": {
+            "epoch": matched,
+            "arms": {
+                arm: {key: _stats(values) for key, values in scores.items()}
+                for arm, scores in matched_scores.items()
+            },
+        },
+        "evaluation_resolution": {
+            key: max((spread[key] for spread in spreads), default=None) for key in SCORES
+        },
+        "cycle_curves": (
+            {
+                "altrux": {
+                    str(cycle): {key: _stats(values) for key, values in cell.items()}
+                    for cycle, cell in sorted(cycle_cells.items())
+                }
+            }
+            if cycle_cells
+            else {}
+        ),
         "runs": per_run,
         "arms": {
             arm: {name: _stats(values) for name, values in metrics.items()}
@@ -199,6 +267,33 @@ def main() -> None:
             f"epoch={metrics['peak_epoch']['mean']:.2f} "
             f"retained={metrics['retention_at_peak']['mean']:.6f} "
             f"final_forgetting={metrics['final_forgetting']['mean']:.6f}",
+            flush=True,
+        )
+    matched = report["matched_epoch"]
+    for arm, scores in matched["arms"].items():
+        epoch = 0 if arm == "frozen" else matched["epoch"]
+        print(
+            f"[{ts()}] {arm} epoch {epoch}: to-learn "
+            f"{scores['to_learn_accuracy']['mean']:.6f} retained "
+            f"{scores['not_to_forget_accuracy']['mean']:.6f}",
+            flush=True,
+        )
+    spread = {
+        key: "n/a (fewer than 2 frozen replicates)" if value is None else f"{value:.6f}"
+        for key, value in report["evaluation_resolution"].items()
+    }
+    print(
+        f"[{ts()}] evaluation resolution (frozen replicate spread): "
+        f"to-learn {spread['to_learn_accuracy']} retained {spread['not_to_forget_accuracy']}",
+        flush=True,
+    )
+    altrux = report["arms"].get("altrux", {})
+    if "peak_cycle" in altrux:
+        print(
+            f"[{ts()}] altrux peak cycle {altrux['peak_cycle']['mean']:.2f}: to-learn "
+            f"{altrux['peak_cycle_accuracy']['mean']:.6f} retained "
+            f"{altrux['retention_at_peak_cycle']['mean']:.6f} over "
+            f"{len(report['cycle_curves']['altrux'])} cycles",
             flush=True,
         )
     missing = report["missing_cells"]

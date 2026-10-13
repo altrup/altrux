@@ -6,6 +6,18 @@ import pytest
 from experiments.lama_ckl.report import _load_run, aggregate_runs, build_report, scientific_runs
 
 
+def _cycle(cycle: int, learned: float, retained: float, subjects: int) -> dict[str, object]:
+    return {
+        "cycle": cycle,
+        "to_learn_accuracy": learned,
+        "not_to_forget_accuracy": retained,
+        "loss": 0.5,
+        "role_marker_closes": 0,
+        "forced_closes": 1,
+        "diagnostics": {"subjects_mentioned": subjects, "mean_copy_fraction": 0.25},
+    }
+
+
 def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
     settings = {
         "epochs": 1,
@@ -24,11 +36,8 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
         {
             "arm": "frozen",
             "seed": 42,
-            "settings": settings | {"optimizer_parameters": 0},
-            "curve": [
-                {"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-                {"epoch": 1, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
-            ],
+            "settings": settings | {"epochs": 0, "optimizer_parameters": 0},
+            "curve": [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}],
         },
         {
             "arm": "altrux",
@@ -46,8 +55,23 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
                         "review_tokens": 100,
                         "token_gradients": 300,
                         "generated_tokens": 200,
+                        "cycles": [
+                            _cycle(1, 0.1, 0.95, 2),
+                            _cycle(2, 0.3, 0.85, 4),
+                            _cycle(3, 0.3, 0.8, 0),
+                        ],
                     },
                 },
+            ],
+        },
+        {
+            "arm": "lora",
+            "seed": 42,
+            "settings": settings | {"epochs": 2},
+            "curve": [
+                {"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0},
+                {"epoch": 1, "to_learn_accuracy": 0.4, "not_to_forget_accuracy": 0.7},
+                {"epoch": 2, "to_learn_accuracy": 0.6, "not_to_forget_accuracy": 0.5},
             ],
         },
     ]
@@ -64,6 +88,77 @@ def test_aggregate_runs_reports_acquisition_and_forgetting_by_arm():
     assert report["runs"][1]["lora_rank"] == 8
     assert report["runs"][1]["total_parameters"] == 2_700_000_000
     assert report["arms"]["frozen"]["final_forgetting"]["mean"] == 0.0
+    assert report["epochs"] == {"frozen": 0, "altrux": 1, "lora": 2}
+    matched = report["matched_epoch"]
+    assert matched["epoch"] == 1
+    assert set(matched["arms"]) == {"frozen", "altrux", "lora"}
+    assert matched["arms"]["lora"]["to_learn_accuracy"]["mean"] == 0.4
+    assert matched["arms"]["altrux"]["not_to_forget_accuracy"]["mean"] == 0.9
+    assert matched["arms"]["frozen"]["not_to_forget_accuracy"]["mean"] == 1.0
+    assert report["evaluation_resolution"] == {
+        "to_learn_accuracy": None,
+        "not_to_forget_accuracy": None,
+    }
+    cycles = report["cycle_curves"]["altrux"]
+    assert set(cycles) == {"1", "2", "3"}
+    assert cycles["2"]["to_learn_accuracy"]["mean"] == 0.3
+    assert cycles["2"]["subjects_mentioned"]["mean"] == 4
+    assert cycles["3"]["mean_copy_fraction"]["mean"] == 0.25
+    assert cycles["1"]["forced_closes"]["mean"] == 1
+    assert cycles["1"]["loss"]["mean"] == 0.5
+    altrux = report["arms"]["altrux"]
+    assert altrux["peak_cycle_accuracy"]["mean"] == 0.3
+    assert altrux["peak_cycle"]["mean"] == 2
+    assert altrux["retention_at_peak_cycle"]["mean"] == 0.85
+    assert "peak_cycle" not in report["arms"]["lora"]
+
+
+def _frozen(seed: int, learned: float, retained: float) -> dict[str, object]:
+    return {
+        "arm": "frozen",
+        "seed": seed,
+        "settings": {"split_manifest_sha256": "x", "epochs": 0},
+        "curve": [{"epoch": 0, "to_learn_accuracy": learned, "not_to_forget_accuracy": retained}],
+    }
+
+
+def test_frozen_replicates_aggregate_and_their_spread_is_the_resolution():
+    report = aggregate_runs(
+        [_frozen(42, 0.01, 0.90), _frozen(42, 0.03, 0.88), _frozen(42, 0.02, 0.91)]
+    )
+
+    assert report["arms"]["frozen"]["final_accuracy"]["values"] == [0.01, 0.03, 0.02]
+    assert report["evaluation_resolution"]["to_learn_accuracy"] == pytest.approx(0.02)
+    assert report["evaluation_resolution"]["not_to_forget_accuracy"] == pytest.approx(0.03)
+    assert report["matched_epoch"]["arms"]["frozen"]["to_learn_accuracy"]["mean"] == (
+        pytest.approx(0.02)
+    )
+
+
+def test_duplicate_trained_seeds_still_refuse():
+    lora = {**_frozen(42, 0.0, 1.0), "arm": "lora"}
+
+    with pytest.raises(ValueError, match="duplicate"):
+        aggregate_runs([lora, lora])
+
+
+def test_acceptance_cycle_records_without_accuracies_are_skipped():
+    point = {"to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}
+    acceptance = {"cycle": 1, "loss": 0.5, "diagnostics": {"subjects_mentioned": 1}}
+    run = {
+        "arm": "altrux",
+        "seed": 42,
+        "settings": {"split_manifest_sha256": "x", "epochs": 1},
+        "curve": [
+            {"epoch": 0, **point},
+            {"epoch": 1, **point, "treatment": {"cycles": [acceptance]}},
+        ],
+    }
+
+    report = aggregate_runs([run])
+
+    assert report["cycle_curves"] == {}
+    assert "peak_cycle" not in report["arms"]["altrux"]
 
 
 def test_aggregate_runs_rejects_smokes_and_mixed_splits():

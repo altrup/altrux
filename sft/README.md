@@ -562,8 +562,19 @@ make lama-ckl-report
 ```
 
 The report ignores adjacent smoke directories and rejects incomplete epoch
-curves, mixed split hashes, evaluation or dream batch sizes, other shared
-settings, or duplicate arm/seed cells. It reports the cells that exist and
+curves (against each run's own `epochs`), mixed split hashes, evaluation or
+dream batch sizes, other shared settings, or duplicate trained arm/seed cells.
+Arms may run different epoch counts (altrux 1, the baselines 30):
+`matched_epoch` compares every trained arm at the smallest trained `epochs`,
+with the frozen epoch-0 score as the floor. Frozen replicates of one seed
+(`frozen-seed-42-r1`..`-r3`) aggregate into the one frozen arm, and their
+max − min spread is `evaluation_resolution` (`null` below two replicates).
+`cycle_curves` holds altrux's per-cycle acquisition, retention,
+`subjects_mentioned`, `role_marker_closes`, `forced_closes`,
+`mean_copy_fraction` and loss across seeds from epoch 1's scored cycles
+(unscored acceptance cycles are skipped); `peak_cycle`,
+`peak_cycle_accuracy` and `retention_at_peak_cycle` are reported, but the
+matched epoch is the comparison point. It reports the cells that exist and
 lists the missing registered cells (`missing_cells` in `report.json`); the
 seed-42-first order (`DISCUSSION-20261011` §3.3) makes a four-cell report the
 normal case.
