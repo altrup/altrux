@@ -57,3 +57,9 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   cd ~/altrux/sft && make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"
   ```
+- 20:51 split done (20:45-20:51, 6 min; final scoring line: `[20:51:16] scored 13645/13645  zeros=8223 ones=2542  81.9 item/s  ETA 0s`). Source candidates 13645 (sha256 6d787847…), warm start sha256 7ba7972b… read from the pin. Wrote `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/`: variant.jsonl rows=500 sha256 fc753410…, invariant_descriptive.jsonl rows=500 sha256 fde0d5fb…, manifest.json. Invariants: duplicate_uuid 0, missing_subject_or_object 0 (both sets). Samples read (task + evidence pairs are LAMA sentences with their Wikipedia evidence). Fetch requested.
+- 20:54 step 3, frozen cell ×3, in `train`:
+  ```
+  cd ~/altrux/sft && make lama-ckl-frozen-x3 SEED=42 ARGS="--model-name mamba2_2_7b"
+  ```
+  (expands to `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm frozen --seed 42 --output ../.cache/lama_ckl/runs/frozen-seed-42-r{1,2,3}"`). Started fresh; warm start sha256 7ba7972b…; split manifest `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/manifest.json`.
