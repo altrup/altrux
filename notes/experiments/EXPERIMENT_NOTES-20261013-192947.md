@@ -40,3 +40,4 @@ Probe command per checkpoint (run by a loop in `work:probe`, one at a time, in s
 | 4555 | 1 | 2 | 0 | `the` (8) | 14.8 | 10 | 0 | 0 | 0 | probe 20:06-20:08. First checkpoint inside every gate but EOC-first (1). Openers spread (the 8, okay 6, thanks 6, kenneth 4). Dreams 10/10 `[USER]`, 0 copies. |
 
 Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is always the same held-out context (the 2023 Covenant School shooting document), and the comma-list context ("Forgiven,X-Men,Generation X,X-Corps,…") always closes on a role marker with an empty reply. If the final checkpoint's only EOC-first is that one document, the gate as written (EOC-first 0) still fails; recorded here before the pin so the call is not made after the fact.
+| 5467 | 1 | 3 | 4 | `the` (13) | 33.8 | 7 | 0 | 1 | 0 | probe 20:12-20:15. Mean reply length up (8 replies over 65 tokens, 4 forced); same EOC-first document. Dreams 7/10 `[USER]`, 1 empty, 0 copies. |
