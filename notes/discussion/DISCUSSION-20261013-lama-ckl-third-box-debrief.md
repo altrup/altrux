@@ -367,18 +367,18 @@ This is the debrief's work, done here with the teammate under the standing
 go-ahead gate; an experimenter session that finds it undone stops and
 reports (dry run, 2026-10-13). Tests first. In order:
 
-1. `preparation/dolly.py`: emit rows carrying `context`, `instruction`,
+1. Done (`fa803f2`). `preparation/dolly.py`: emit rows carrying `context`, `instruction`,
    `response`, `summary` (summarization rows) as separate fields; the three
    first-occurrence shapes with the shares in §3.1; openers, prefaces and
    recall-request sets of at least 40 each with a test on size and on the
    absence of the protocol frame; delete `ACK_TEMPLATES` and
    `--acknowledge`. Held-out partition unchanged (test pins it).
-2. `preparation/conversations.py`: repeat variants for Dolly rows and the
+2. Done (`fa803f2`). `preparation/conversations.py`: repeat variants for Dolly rows and the
    (k, j) split-and-replay for UltraChat; `--repeat-rate` keeps its name
    and now draws variants; per-shape and per-variant counters and one
    decoded example of each in the log; invariants (role adjacency,
    unanswered user turns) extended to the new shapes.
-3. `experiments/lama_ckl/probe.py`: role-marker count with full prints,
+3. Done (`ef8e8c1`, `1693e96`). `experiments/lama_ckl/probe.py`: role-marker count with full prints,
    reply length, opener census, verbatim-copy and empty-dream counts.
 4. PROTECTED EDITS, listed for the teammate's review and commit: `runner.py`
    (one-epoch altrux, per-cycle save and score, state reset, dream batch =
@@ -386,11 +386,12 @@ reports (dry run, 2026-10-13). Tests first. In order:
    seed, role-marker close and count), `dream_distillation.py` (batched
    single step, per-turn weights, terminal EOC dropped), `report.py`
    (one-epoch curves, matched-epoch comparison). Tests for each live beside
-   the existing ones.
-5. `sft/Makefile`: `warm-start` target with the new flags and no
-   `--repeat-rate 0.3`; remove `warm-start-topup`; a `frozen-x3` convenience
+   the existing ones. `report.py` is not protected: done (`0189519`). The
+   protected files are in the working tree, awaiting the teammate's review.
+5. Done (`fa803f2`). `sft/Makefile`: `warm-start` target with the new recipe
+   (flags unchanged, `--repeat-rate 0.3` kept); remove `warm-start-topup`; a `frozen-x3` convenience
    if the runner does not provide it.
-6. `.agents/skills/altrux-experimenter/SKILL.md`, stale against this note
+6. Done (`dbc0848`). `.agents/skills/altrux-experimenter/SKILL.md`, stale against this note
    in these places (dry run): the top-up rule (gone), the pin gate (§3.2's
    four counts), acceptance (5 documents only), cell length (one epoch, 100
    cycles, ETA for 100 cycles plus 101 evaluations), session order (frozen
@@ -398,10 +399,17 @@ reports (dry run, 2026-10-13). Tests first. In order:
    quick-reference paths (`ultra20k-v4`), `role_marker_closes` in the
    healthy-cycle check and the monitor line, and the check-in reading decoded
    replies and dreams.
-7. `sft/README.md` and `sft/.env.example` for every flag above.
+7. Done (`fa803f2`, `ef8e8c1`, `0189519`). `sft/README.md` and `sft/.env.example` for every flag above.
 8. Dry run by a fresh experimenter session (debrief skill step 5), again
    after items 1 to 7 are in; the first dry run (2026-10-13, before any of
-   them) is folded in above.
+   them) is folded in above. The second dry run ran 2026-10-13; its
+   findings are folded into the skill: EXIT markers in the Makefile targets,
+   `grep -a`, no cap or resume inside the one-epoch cell, probe at finalize,
+   probe default 5 per wake, seed-rule wording, report before seed 43,
+   archive old runs. Code fixes from it: the report compared
+   `reply_temperature` across arms and refused any report holding altrux
+   beside a baseline (`84bd7ac`); probe defaults (`6c4e7b3`); EXIT markers
+   (`074d0cc`).
 
 ## 6. Housekeeping
 
@@ -424,3 +432,7 @@ Open:
 
 - The three stale local stashes and the local `altrux` tmux session.
 - The watchdog delay-file change agreed 2026-10-10, still after this run.
+- Per-cycle resume for the one-epoch altrux cell (a crash at cycle n
+  restarts at cycle 0): not implemented; decide before a box with less than
+  a full ETA of budget.
+- Archive the third-box `runs/` and `acceptance/` locally before upload.
