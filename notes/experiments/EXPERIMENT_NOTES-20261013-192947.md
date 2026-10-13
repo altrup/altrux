@@ -97,3 +97,10 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 40 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5-d40"
   ```
+- 21:10-21:11 acceptance at 40 dreams: EXIT=0. Wake 1.09 turn/s, forced 0/5, role-marker 0/5; dreams 40 in one launch, 58 s (0.69 dream/s), unique 40, min 34 tokens, mean 369, **subjects_mentioned 1 of 40** (the same dream as in the 50 set: max_copy_fraction 0.325, max_verbatim_run 13); distillation 26 s, one step, loss 0.0034; 89.5 s/cycle. **Peak VRAM 91.5 GB of 94.5** — 3 GB of headroom, with dream lengths varying per cycle (max 511 tokens each). Too tight for a 100-cycle cell that has no resume point. Per-dream distillation memory from the two points: (91.5 − 27) / 30 ≈ 2.1 GB → 30 dreams ≈ 70 GB.
+
+**DECISION amended: 30 dreams per cycle** (inside the rule's 20-50 range; the largest count with a safe margin on this card). The gate is read on an acceptance at exactly 30, the cell's configuration.
+- 21:13 acceptance at 30 dreams, in `train`:
+  ```
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 30 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5-d30"
+  ```
