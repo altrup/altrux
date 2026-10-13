@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import random
 import sys
+from collections import Counter
 from pathlib import Path
 
 import torch
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from models.common import build_tokenizer
 
+from preparation import dolly
 from progress import ts
 
 _worker_tokenizer = None
@@ -135,32 +137,115 @@ def format_conversation(
     return ids, mask, question_offset
 
 
+def _repeatable(record: dict) -> bool:
+    """Dolly records repeat as a variant; UltraChat needs >= 6 turns to split."""
+    return "dolly" in record or len(record.get("messages", [])) >= 6
+
+
 def pack_records(
     records: list[dict], rng: random.Random, repeat_rate: float
-) -> list[list[tuple[str, list[dict]]]]:
-    """Group conversations into examples of 2-5, each element tagged `fresh`
-    (the next pool record) or `repeat` (the same messages list as an earlier
-    fresh conversation of the pack, never repeated twice). A repeat does not
-    consume a pool record."""
-    groups: list[list[tuple[str, list[dict]]]] = []
-    pending = [r.get("messages", []) for r in records]
+) -> list[list[tuple[str, dict]]]:
+    """Group records into examples of 2-5, each element tagged `fresh` (the
+    next pool record) or `repeat` (the same record as an earlier fresh slot of
+    the pack, never repeated twice; only `_repeatable` records are sources). A
+    repeat does not consume a pool record; render_pack decides what each slot's
+    messages are."""
+    groups: list[list[tuple[str, dict]]] = []
+    pending = records
     at = 0
     while at < len(pending):
         size = rng.randint(2, 5)
-        group: list[tuple[str, list[dict]]] = [("fresh", pending[at])]
+        group: list[tuple[str, dict]] = [("fresh", pending[at])]
         at += 1
-        unrepeated = [pending[at - 1]]
+        unrepeated = [pending[at - 1]] if _repeatable(pending[at - 1]) else []
         while len(group) < size:
             if unrepeated and rng.random() < repeat_rate:
                 group.append(("repeat", unrepeated.pop(rng.randrange(len(unrepeated)))))
             elif at < len(pending):
                 group.append(("fresh", pending[at]))
-                unrepeated.append(pending[at])
+                if _repeatable(pending[at]):
+                    unrepeated.append(pending[at])
                 at += 1
             else:
                 break
         groups.append(group)
     return groups
+
+
+def _question(row: dict) -> list[dict]:
+    return [
+        {"role": "user", "content": row["instruction"]},
+        {"role": "assistant", "content": row["response"]},
+    ]
+
+
+def _recall(row: dict, rng: random.Random) -> list[dict]:
+    if row.get("summary"):
+        request, answer = rng.choice(dolly.RECALL_GIST_REQUESTS), row["summary"]
+    else:
+        request, answer = rng.choice(dolly.RECALL_REQUESTS), row["context"]
+    return [{"role": "user", "content": request}, {"role": "assistant", "content": answer}]
+
+
+def _dolly_repeat(record: dict, rng: random.Random) -> tuple[str, list[dict]]:
+    """A second occurrence drawn uniformly over the variants available to the
+    record (DISCUSSION-20261013 sec 3.1)."""
+    shape, rows = record["dolly"]["shape"], record["dolly"]["rows"]
+    variants = ["verbatim", "question", "recall", "multi-turn"]
+    if shape != "plain" and any(row.get("summary") for row in rows):
+        variants.append("summary")
+    variant = rng.choice(variants)
+    if variant == "verbatim":
+        return variant, record["messages"]
+    if variant == "question":
+        return variant, [m for row in rows for m in _question(row)]
+    if variant == "recall":
+        return variant, [m for row in rows for m in _recall(row, rng)]
+    if variant == "summary":
+        return variant, [
+            m
+            for row in rows
+            for m in dolly.render_document(
+                {**row, "context": row["summary"]} if row.get("summary") else row, rng
+            )
+        ]
+    if len(rows) == 1:
+        row = rows[0]
+        exchanges = [dolly.render_document(row, rng), _question(row)]
+        if row.get("summary"):
+            exchanges.append(_recall(row, rng))
+    else:
+        exchanges = [
+            rng.choice((dolly.render_document, lambda r, _: _question(r), _recall))(row, rng)
+            for row in rng.sample(rows, min(3, len(rows)))
+        ]
+    rng.shuffle(exchanges)
+    return variant, [m for exchange in exchanges for m in exchange]
+
+
+def render_pack(group: list[tuple[str, dict]], rng: random.Random) -> list[tuple[str, list[dict]]]:
+    """Resolve each slot of a pack_records group to (label, messages). A fresh
+    slot is labelled `fresh`; a Dolly repeat by its variant; a repeated
+    UltraChat conversation of >= 6 turns is split at an exchange boundary k,
+    its fresh slot is turns 1..k and its repeat replays the last j of those and
+    continues (`ultrachat k=<k> j=<j>`)."""
+    cuts: dict[int, int] = {}
+    rendered: list[tuple[str, list[dict]]] = []
+    for kind, record in group:
+        messages = record.get("messages", [])
+        if kind == "fresh":
+            splittable = "dolly" not in record and len(messages) >= 6
+            if splittable and any(k == "repeat" and r is record for k, r in group):
+                cuts[id(record)] = rng.randrange(2, len(messages) - 1, 2)
+                messages = messages[: cuts[id(record)]]
+            rendered.append(("fresh", messages))
+        elif "dolly" in record:
+            rendered.append(_dolly_repeat(record, rng))
+        else:
+            k = cuts[id(record)]
+            j = rng.randrange(0, k + 1, 2)
+            rendered.append((f"ultrachat k={k} j={j}", messages[k - j :]))
+    return rendered
 
 
 def format_pack(
@@ -223,11 +308,12 @@ def iter_records(args) -> list[dict]:
 
 
 def report_packing(
-    groups, packed_counts, all_ids, tokenizer, eoc: str | None, user_open: str
+    groups, rendered, packed_counts, all_ids, tokenizer, eoc: str | None, user_open: str
 ) -> None:
     """Structural invariants whose correct value is zero, plus decoded text
     either side of one boundary of each kind (root CLAUDE.md: counts confirm
-    the generator did what it was told, never that what it was told was right)."""
+    the generator did what it was told, never that what it was told was right).
+    `groups` is pack_records' structure, `rendered` render_pack's output."""
     eoc_id = tokenizer.convert_tokens_to_ids(eoc)
     user_id = tokenizer.convert_tokens_to_ids(user_open)
     unterminated = sum(1 for ids in all_ids if not len(ids) or int(ids[-1]) != eoc_id)
@@ -244,16 +330,17 @@ def report_packing(
     )
     dropped = sum(len(group) - packed for group, packed in zip(groups, packed_counts, strict=True))
 
+    def source(group, j: int) -> int | None:
+        record = group[j][1]
+        return next((k for k in range(j) if group[k][0] == "fresh" and group[k][1] is record), None)
+
     def label(group, j: int) -> str:
-        kind, messages = group[j]
-        if kind == "fresh":
+        if group[j][0] == "fresh":
             return "fresh"
-        source = next(
-            (k for k in range(j) if group[k][0] == "fresh" and group[k][1] is messages), None
-        )
-        if source is None:
+        src = source(group, j)
+        if src is None:
             return "orphan"
-        return "adjacent" if source == j - 1 else "gapped"
+        return "adjacent" if src == j - 1 else "gapped"
 
     orphaned = sum(label(group, j) == "orphan" for group in groups for j in range(len(group)))
     twice = sum(
@@ -278,6 +365,63 @@ def report_packing(
     print(f"[{ts()}]   sources repeated twice in a pack  : {twice}  (must be 0)")
     print(f"[{ts()}]   conversations dropped by --max-len: {dropped}  (informational)")
 
+    slots = [
+        (label, messages)
+        for group, packed in zip(rendered, packed_counts, strict=True)
+        for label, messages in group[:packed]
+    ]
+    roles = [[m["role"] for m in messages] for _, messages in slots]
+    unanswered = sum(
+        1
+        for r in roles
+        for i, role in enumerate(r)
+        if role == "user" and (i + 1 == len(r) or r[i + 1] != "assistant")
+    )
+    adjacent_roles = sum(1 for r in roles for a, b in zip(r, r[1:]) if a == b)
+    bad_replays = sum(
+        1
+        for (label, _), r in zip(slots, roles, strict=True)
+        if label.startswith("ultrachat k=") and r[:1] != ["user"]
+    )
+    shapes = Counter(
+        record["dolly"]["shape"] if "dolly" in record else "ultrachat"
+        for group in groups
+        for kind, record in group
+        if kind == "fresh"
+    )
+    variants = Counter(label for label, _ in slots if label != "fresh")
+    print(f"[{ts()}]   user turns not answered next      : {unanswered}  (must be 0)")
+    print(f"[{ts()}]   adjacent same-role turns          : {adjacent_roles}  (must be 0)")
+    print(f"[{ts()}]   split replays not opening on user : {bad_replays}  (must be 0)")
+    print(f"[{ts()}]   first occurrences by shape: {dict(sorted(shapes.items()))}")
+    print(f"[{ts()}]   repeats by variant: {dict(sorted(variants.items()))}")
+
+    def boundary(ids, j: int) -> int:
+        return [i for i in range(len(ids)) if int(ids[i]) == eoc_id][j - 1]
+
+    def kind_of(label: str) -> str:
+        return "ultrachat split" if label.startswith("ultrachat k=") else label
+
+    shown: set[str] = set()
+    for group, rgroup, packed, ids in zip(groups, rendered, packed_counts, all_ids, strict=True):
+        for j in range(1, packed):
+            want = kind_of(rgroup[j][0])
+            if want == "fresh" or want in shown:
+                continue
+            shown.add(want)
+            at = boundary(ids, j)
+            head = ""
+            src = source(group, j)
+            if want == "ultrachat split" and src is not None and src + 1 != j:
+                end = boundary(ids, src + 1)
+                tail = tokenizer.decode(ids[max(0, end - 60) : end])
+                head = f"    end of the k-turn first occurrence: ...{tail!r}\n"
+            print(
+                f"[{ts()}]   sample of a {rgroup[j][0]} repeat:\n{head}"
+                f"    ...{tokenizer.decode(ids[max(0, at - 60) : at])!r} "
+                f">>{eoc}>> {tokenizer.decode(ids[at + 1 : at + 60])!r}..."
+            )
+
     for want in ("fresh", "adjacent", "gapped"):
         found = next(
             (
@@ -292,7 +436,7 @@ def report_packing(
             print(f"[{ts()}]   no {want} boundary in this dataset")
             continue
         ids, j = found
-        at = [i for i in range(len(ids)) if int(ids[i]) == eoc_id][j - 1]
+        at = boundary(ids, j)
         print(
             f"[{ts()}]   sample around a {want} boundary:\n"
             f"    ...{tokenizer.decode(ids[max(0, at - 60) : at])!r} "
@@ -330,8 +474,10 @@ def main() -> None:
         "--repeat-rate",
         type=float,
         default=0.3,
-        help="Probability that a packed slot after the first is a verbatim repeat of an "
-        "earlier, not yet repeated conversation of the same pack (default: %(default)s)",
+        help="Probability that a packed slot after the first repeats an earlier, not yet "
+        "repeated conversation of the same pack: a Dolly record as a drawn variant "
+        "(verbatim, question, summary, recall, multi-turn), an UltraChat conversation of "
+        ">= 6 turns as a (k, j) split and replay; shorter ones never repeat (default: %(default)s)",
     )
     parser.add_argument(
         "--seed",
@@ -370,12 +516,15 @@ def main() -> None:
             f"--pack needs a conversation-boundary token; models.{model_name} defines no EOC"
         )
 
+    rng = random.Random(args.seed)
     groups = (
-        pack_records(records, random.Random(args.seed), args.repeat_rate)
+        pack_records(records, rng, args.repeat_rate)
         if args.pack
-        else [[("fresh", r.get("messages", []))] for r in records]
+        else [[("fresh", r)] for r in records]
     )
-    kept_groups: list[list[tuple[str, list[dict]]]] = []
+    rendered = [render_pack(group, rng) for group in groups]
+    kept_groups: list[list[tuple[str, dict]]] = []
+    kept_rendered: list[list[tuple[str, list[dict]]]] = []
     packed_counts: list[int] = []
     tokenizer = build_tokenizer(model_mod)
 
@@ -386,9 +535,9 @@ def main() -> None:
                 initializer=_worker_init,
                 initargs=(model_name, args.max_len, args.train_user_turns),
             ) as pool:
-                yield from pool.imap(_worker_format, groups)
+                yield from pool.imap(_worker_format, rendered)
         else:
-            for group in groups:
+            for group in rendered:
                 yield format_pack(
                     group,
                     tokenizer,
@@ -403,13 +552,22 @@ def main() -> None:
         print(f"\r[{ts()}] {i + 1}/{len(groups)}", end="", flush=True)
         if keep(ids, mask, qoff):
             kept_groups.append(groups[i])
+            kept_rendered.append(rendered[i])
             packed_counts.append(packed)
         else:
             skipped += 1
     print()
 
     if eoc:
-        report_packing(kept_groups, packed_counts, all_ids, tokenizer, eoc, model_mod.USER_OPEN)
+        report_packing(
+            kept_groups,
+            kept_rendered,
+            packed_counts,
+            all_ids,
+            tokenizer,
+            eoc,
+            model_mod.USER_OPEN,
+        )
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -424,6 +582,7 @@ def main() -> None:
 __all__ = [
     "format_conversation",
     "pack_records",
+    "render_pack",
     "format_pack",
     "iter_records",
     "report_packing",

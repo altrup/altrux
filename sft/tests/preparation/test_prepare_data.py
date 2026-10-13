@@ -14,7 +14,7 @@ from models.common import build_tokenizer
 
 import pytest
 
-from preparation.conversations import format_conversation, format_pack, pack_records
+from preparation.conversations import format_conversation, format_pack, pack_records, render_pack
 
 USER_OPEN = "[USER]"
 ASST_OPEN = "[ASSISTANT]"
@@ -184,14 +184,16 @@ def test_packing_at_repeat_rate_zero_uses_every_record_once_two_to_five_per_pack
     assert 1 <= len(groups[-1]) <= 5
     assert {len(g) for g in groups[:-1]} == {2, 3, 4, 5}
     assert {kind for g in groups for kind, _ in g} == {"fresh"}
-    used = [messages for g in groups for _, messages in g]
+    used = [record for g in groups for _, record in g]
     assert len(used) == len(records)
-    assert all(a is r["messages"] for a, r in zip(used, records, strict=True))
+    assert all(a is r for a, r in zip(used, records, strict=True))
 
     eoc_id = tokenizer.convert_tokens_to_ids(EOC)
     user_id = tokenizer.convert_tokens_to_ids(USER_OPEN)
+    rng = random.Random(0)
     for group in groups:
-        ids, mask, _, _ = format_pack(group, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
+        rendered = render_pack(group, rng)
+        ids, mask, _, _ = format_pack(rendered, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
         assert len(ids) == len(mask)
         assert ids[-1] == eoc_id
         assert ids.count(eoc_id) == len(group)
@@ -229,7 +231,7 @@ def _repeat_sources(group) -> list[int | None]:
 def test_at_repeat_rate_one_every_later_slot_repeats_while_a_source_is_eligible():
     import random
 
-    records = [{"messages": _conv(i)} for i in range(60)]
+    records = [{"messages": _long_conv(6)} for _ in range(60)]
     groups = pack_records(records, random.Random(0), repeat_rate=1.0)
 
     assert any(kind == "repeat" for g in groups for kind, _ in g)
@@ -246,7 +248,7 @@ def test_at_repeat_rate_one_every_later_slot_repeats_while_a_source_is_eligible(
 def test_repeats_occur_both_adjacent_and_gapped():
     import random
 
-    records = [{"messages": _conv(i)} for i in range(400)]
+    records = [{"messages": _long_conv(6)} for _ in range(400)]
     groups = pack_records(records, random.Random(0), repeat_rate=0.3)
 
     adjacent = gapped = 0
@@ -260,17 +262,237 @@ def test_repeats_occur_both_adjacent_and_gapped():
     assert sum(kind == "fresh" for g in groups for kind, _ in g) == len(records)
 
 
-def test_a_repeat_renders_token_identical_to_its_source(tokenizer):
+def _long_conv(n_turns: int) -> list[dict]:
+    return [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"Turn {i}."}
+        for i in range(n_turns)
+    ]
+
+
+def test_an_ultrachat_repeat_splits_at_an_exchange_and_replays_a_suffix_of_the_prefix():
+    import random
+
+    original = _long_conv(10)
+    record, other = {"messages": original}, {"messages": _conv(0)}
+    cuts: set[int] = set()
+    for seed in range(400):
+        rendered = render_pack(
+            [("fresh", record), ("fresh", other), ("repeat", record)], random.Random(seed)
+        )
+        prefix, continuation = rendered[0][1], rendered[2][1]
+        k = len(prefix)
+        assert k % 2 == 0 and 2 <= k <= len(original) - 2
+        j = len(continuation) - (len(original) - k)
+        assert j % 2 == 0 and 0 <= j <= k
+        assert continuation[0]["role"] == "user"
+        assert continuation[:j] == prefix[k - j :]
+        assert prefix + continuation[j:] == original
+        cuts.add(k)
+        assert rendered[1][1] == other["messages"]
+    assert cuts == {2, 4, 6, 8}
+
+
+def test_a_full_replay_and_a_pure_continuation_both_occur():
+    import random
+
+    original = _long_conv(6)
+    record = {"messages": original}
+    seen = set()
+    for seed in range(200):
+        rendered = render_pack([("fresh", record), ("repeat", record)], random.Random(seed))
+        k = len(rendered[0][1])
+        j = len(rendered[1][1]) - (len(original) - k)
+        seen.add("pure" if j == 0 else "full" if j == k else "partial")
+    assert seen == {"pure", "full", "partial"}
+
+
+def test_a_conversation_under_six_turns_is_never_a_repeat_source():
+    import random
+
+    records = [{"messages": _conv(i)} for i in range(100)]
+    records += [{"messages": _long_conv(6)} for _ in range(100)]
+    random.Random(0).shuffle(records)
+    groups = pack_records(records, random.Random(0), repeat_rate=1.0)
+
+    repeated = [r for g in groups for kind, r in g if kind == "repeat"]
+    assert repeated and all(len(r["messages"]) >= 6 for r in repeated)
+    assert sum(kind == "fresh" for g in groups for kind, _ in g) == len(records)
+
+
+def test_an_unrepeated_ultrachat_conversation_renders_whole():
+    import random
+
+    long, short = {"messages": _long_conv(8)}, {"messages": _conv(0)}
+    for seed in range(50):
+        rendered = render_pack([("fresh", long), ("fresh", short)], random.Random(seed))
+        assert rendered[0][1] == long["messages"] and rendered[1][1] == short["messages"]
+
+
+@pytest.fixture
+def dolly_helpers(monkeypatch):
+    """The real preparation.dolly helpers when they exist, else stand-ins with
+    the same contract."""
+    from preparation import dolly
+
+    if not hasattr(dolly, "render_document"):
+        monkeypatch.setattr(
+            dolly,
+            "render_document",
+            lambda row, rng: [
+                {"role": "user", "content": row["context"]},
+                {"role": "assistant", "content": rng.choice(("Okay.", "Got it."))},
+            ],
+            raising=False,
+        )
+        monkeypatch.setattr(
+            dolly, "RECALL_REQUESTS", ("Repeat it.", "What did I send?"), raising=False
+        )
+        monkeypatch.setattr(
+            dolly, "RECALL_GIST_REQUESTS", ("Gist of it?", "Sum it up."), raising=False
+        )
+    return dolly
+
+
+def _row(i: int, summary: str | None = None) -> dict:
+    return {
+        "context": f"Context {i} about lighthouses.",
+        "instruction": f"Instruction {i}?",
+        "response": f"Response {i}.",
+        "summary": summary,
+    }
+
+
+def _dolly_record(dolly, shape: str, rows: list[dict]) -> dict:
+    import random
+
+    if shape == "plain":
+        messages = [
+            {"role": "user", "content": rows[0]["context"] + "\n\n" + rows[0]["instruction"]},
+            {"role": "assistant", "content": rows[0]["response"]},
+        ]
+    else:
+        rng = random.Random(0)
+        messages = [m for row in rows for m in dolly.render_document(row, rng)]
+    return {"messages": messages, "dolly": {"shape": shape, "rows": rows}}
+
+
+def _variants(record: dict, draws: int = 300) -> dict[str, list[list[dict]]]:
+    import random
+
+    out: dict[str, list[list[dict]]] = {}
+    for seed in range(draws):
+        rendered = render_pack([("fresh", record), ("repeat", record)], random.Random(seed))
+        assert rendered[0][1] == record["messages"]
+        out.setdefault(rendered[1][0], []).append(rendered[1][1])
+    return out
+
+
+def _alternates(messages: list[dict]) -> bool:
+    roles = [m["role"] for m in messages]
+    return roles == ["user", "assistant"] * (len(roles) // 2) and len(roles) % 2 == 0
+
+
+def test_every_dolly_variant_occurs_and_summary_only_where_available(dolly_helpers):
+    summarised = _dolly_record(dolly_helpers, "document", [_row(0, "Summary 0.")])
+    assert len(_variants(summarised)) == 5
+    for record in (
+        _dolly_record(dolly_helpers, "plain", [_row(0, "Summary 0.")]),
+        _dolly_record(dolly_helpers, "document", [_row(0)]),
+        _dolly_record(dolly_helpers, "multi", [_row(0), _row(1)]),
+    ):
+        variants = _variants(record)
+        assert len(variants) == 4 and "summary" not in variants
+    for record in (summarised, _dolly_record(dolly_helpers, "multi", [_row(0), _row(1)])):
+        for rendered in (r for found in _variants(record).values() for r in found):
+            assert _alternates(rendered)
+
+
+def test_dolly_verbatim_question_recall_and_summary_render_what_they_name(dolly_helpers):
+    rows = [_row(0, "Summary 0."), _row(1)]
+    variants = _variants(_dolly_record(dolly_helpers, "multi", rows))
+    record = _dolly_record(dolly_helpers, "multi", rows)
+
+    assert all(r == record["messages"] for r in variants["verbatim"])
+    for rendered in variants["question"]:
+        assert rendered == [
+            m
+            for row in rows
+            for m in (
+                {"role": "user", "content": row["instruction"]},
+                {"role": "assistant", "content": row["response"]},
+            )
+        ]
+        assert not any("lighthouses" in m["content"] for m in rendered)
+    for rendered in variants["recall"]:
+        gist, exact = rendered[0:2], rendered[2:4]
+        assert gist[0]["content"] in dolly_helpers.RECALL_GIST_REQUESTS
+        assert gist[1]["content"] == rows[0]["summary"]
+        assert exact[0]["content"] in dolly_helpers.RECALL_REQUESTS
+        assert exact[1]["content"] == rows[1]["context"]
+    for rendered in variants["summary"]:
+        users = [m["content"] for m in rendered if m["role"] == "user"]
+        assert "Summary 0." in users[0] and rows[0]["context"] not in users[0]
+        assert rows[1]["context"] in users[1]
+
+
+def test_dolly_multi_turn_stacks_the_records_distinct_exchanges(dolly_helpers):
+    cases = [
+        ("plain", [_row(0)], 4),
+        ("document", [_row(0, "Summary 0.")], 6),
+        ("multi", [_row(0), _row(1)], 4),
+        ("multi", [_row(0), _row(1), _row(2)], 6),
+    ]
+    for shape, rows, turns in cases:
+        found = _variants(_dolly_record(dolly_helpers, shape, rows))["multi-turn"]
+        assert found
+        for rendered in found:
+            assert len(rendered) == turns and _alternates(rendered)
+    orders = {
+        tuple(m["content"] for m in r if m["role"] == "user")
+        for r in _variants(_dolly_record(dolly_helpers, "plain", [_row(0)]))["multi-turn"]
+    }
+    assert len(orders) > 1
+
+
+def test_a_dolly_verbatim_repeat_renders_token_identical_to_its_source(tokenizer, dolly_helpers):
+    import random
+
     eoc_id = tokenizer.convert_tokens_to_ids(EOC)
-    first, second = _conv(0), _conv(1)
-    group = [("fresh", first), ("fresh", second), ("repeat", first)]
-    ids, _, _, packed = format_pack(group, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
+    record = _dolly_record(dolly_helpers, "document", [_row(0)])
+    group = [("fresh", record), ("fresh", {"messages": _conv(1)}), ("repeat", record)]
+    rendered = next(
+        r
+        for r in (render_pack(group, random.Random(seed)) for seed in range(100))
+        if r[2][0] == "verbatim"
+    )
+    ids, _, _, packed = format_pack(rendered, tokenizer, 4096, USER_OPEN, ASST_OPEN, EOC)
 
     assert packed == 3
     cuts = [i + 1 for i, t in enumerate(ids) if t == eoc_id]
     parts = [ids[a:b] for a, b in zip([0] + cuts, cuts)]
     assert parts[2] == parts[0]
     assert parts[1] != parts[0]
+
+
+def test_rendered_packs_alternate_roles_and_open_fresh(dolly_helpers):
+    import random
+
+    records = [
+        _dolly_record(dolly_helpers, "document", [_row(i, f"Summary {i}.")]) for i in range(200)
+    ]
+    records += [{"messages": _long_conv(6 + 2 * (i % 4))} for i in range(40)]
+    records += [{"messages": _conv(i)} for i in range(40)]
+    random.Random(1).shuffle(records)
+    rng = random.Random(0)
+    groups = pack_records(records, rng, repeat_rate=0.5)
+    labels = set()
+    for group in groups:
+        rendered = render_pack(group, rng)
+        assert rendered[0][0] == "fresh"
+        for label, messages in rendered:
+            assert messages and _alternates(messages)
+            labels.add(label.split(" k=")[0])
+    assert {"fresh", "ultrachat", "verbatim", "question", "recall", "summary"} <= labels
 
 
 def test_iter_records_pools_input_and_hf_dataset_shuffled_by_seed(tmp_path, monkeypatch):
