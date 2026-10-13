@@ -63,3 +63,16 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   cd ~/altrux/sft && make lama-ckl-frozen-x3 SEED=42 ARGS="--model-name mamba2_2_7b"
   ```
   (expands to `make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm frozen --seed 42 --output ../.cache/lama_ckl/runs/frozen-seed-42-r{1,2,3}"`). Started fresh; warm start sha256 7ba7972b…; split manifest `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/manifest.json`.
+- 20:54-20:56 frozen ×3 done (each run ~20 s of scoring after the model load):
+
+| run | to-learn | not-to-forget | total |
+|---|---|---|---|
+| frozen-seed-42-r1 | 0.001 | 0.987 | 0.988 |
+| frozen-seed-42-r2 | 0.001 | 0.987 | 0.988 |
+| frozen-seed-42-r3 | 0.001 | 0.984 | 0.985 |
+
+  **Evaluation resolution (spread of three): to-learn 0.000, not-to-forget 0.003.** Floor: to-learn 0.001, not-to-forget 0.986 (mean). Frozen-x3 wrote `.cache/lama_ckl/runs/frozen-seed-42-r{1,2,3}`.
+- 20:57 step 4, acceptance, in `train`:
+  ```
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5"
+  ```
