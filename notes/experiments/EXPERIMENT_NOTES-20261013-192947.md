@@ -41,3 +41,4 @@ Probe command per checkpoint (run by a loop in `work:probe`, one at a time, in s
 
 Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is always the same held-out context (the 2023 Covenant School shooting document), and the comma-list context ("Forgiven,X-Men,Generation X,X-Corps,…") always closes on a role marker with an empty reply. If the final checkpoint's only EOC-first is that one document, the gate as written (EOC-first 0) still fails; recorded here before the pin so the call is not made after the fact.
 | 5467 | 1 | 3 | 4 | `the` (13) | 33.8 | 7 | 0 | 1 | 0 | probe 20:12-20:15. Mean reply length up (8 replies over 65 tokens, 4 forced); same EOC-first document. Dreams 7/10 `[USER]`, 1 empty, 0 copies. |
+| 6377 | 1 | 1 | 5 | `the` (8) | 30.8 | 8 | 0 | 1 | 0 | probe 20:19-20:22. Content replies 49/50; the comma-list document now gets a content reply. Same EOC-first document. Dreams 8/10 `[USER]`, 1 empty, 0 copies. |
