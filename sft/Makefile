@@ -260,13 +260,13 @@ lama-ckl-upstream-summarize:
 
 lama-ckl-split:
 	@mkdir -p logs
-	set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u -m experiments.lama_ckl.split $(ARGS) 2>&1 | tee logs/lama-ckl-split-$(shell date +%Y%m%d-%H%M%S).log
+	log=logs/lama-ckl-split-$(shell date +%Y%m%d-%H%M%S).log; set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.split $(ARGS) 2>&1 | tee $$log; s=$${PIPESTATUS[0]}; echo "EXIT=$$s" >> $$log; exit $$s
 
 lama-ckl-run:
 	@mkdir -p logs
-	set -o pipefail; HF_HOME=$(HF_CACHE) PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u -m experiments.lama_ckl.runner $(ARGS) 2>&1 | tee logs/lama-ckl-run-$(shell date +%Y%m%d-%H%M%S).log
+	log=logs/lama-ckl-run-$(shell date +%Y%m%d-%H%M%S).log; set -o pipefail; HF_HOME=$(HF_CACHE) PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.runner $(ARGS) 2>&1 | tee $$log; s=$${PIPESTATUS[0]}; echo "EXIT=$$s" >> $$log; exit $$s
 
 # The frozen cell three times (DISCUSSION-20261013 sec 3.3.8); the spread of the
 # three scores is the evaluation resolution.
@@ -312,7 +312,7 @@ warm-start:
 	@mkdir -p logs
 	@if compgen -G '$(WARM_START_CKPTS)/epoch-*' >/dev/null || [ -e '$(WARM_START_DIR)' ]; then \
 		echo "warm-start: move $(WARM_START_CKPTS)/epoch-* and $(WARM_START_DIR) aside first"; exit 1; fi
-	@set -o pipefail; { HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
+	@log=logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log; set -o pipefail; { HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
 	   uv run --no-sync python -u -m preparation.dolly \
 		--output data/dolly_context.jsonl --held-out-output data/dolly_heldout.json && \
 	   HF_HOME=$(HF_CACHE) PYTHONPATH=$(PYTHONPATH) \
@@ -323,15 +323,15 @@ warm-start:
 	   $(WARM_START_TRAIN) --data data/warm_start.pt --epochs 1 \
 		--ckpt-every-tokens 2600000 --keep-ckpts 11 $(ARGS) && \
 	   $(call WARM_START_FINALIZE,$(WARM_START_DIR)); \
-	 } 2>&1 | tee logs/warm-start-$(shell date +%Y%m%d-%H%M%S).log
+	 } 2>&1 | tee $$log; s=$${PIPESTATUS[0]}; echo "EXIT=$$s" >> $$log; exit $$s
 
 # Probe one warm-start checkpoint (DISCUSSION-20261013 sec 3.2): wake frame on
 # the 50 held-out Dolly contexts, ten dreams from the last wake. Read-only;
 # runs beside training on a box with VRAM headroom.
 warm-start-probe:
 	@mkdir -p logs
-	HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
-	uv run --no-sync python -u -m experiments.lama_ckl.probe $(ARGS) 2>&1 | tee logs/warm-start-probe-$(shell date +%Y%m%d-%H%M%S).log
+	log=logs/warm-start-probe-$(shell date +%Y%m%d-%H%M%S).log; set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.probe $(ARGS) 2>&1 | tee $$log; s=$${PIPESTATUS[0]}; echo "EXIT=$$s" >> $$log; exit $$s
 
 # In-context capacity ladder: the largest fact count whose in-context control
 # still clears 0.8, i.e. the N at which consolidation-null has a valid premise.
