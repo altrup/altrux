@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from experiments.dream_generation import copy_state
+from experiments.dream_generation import _repeat_state, copy_state
 from experiments.dream_types import CachedDream, Dream, DreamCache
 from experiments.inference import kl_loss, replay_step
 
@@ -115,10 +115,112 @@ def distill_dream_set(
     return tokens
 
 
+def turn_weights(
+    cached: CachedDream, *, user_id: int, asst_id: int, eos_id: int, eoc_id: int
+) -> dict[int, float]:
+    """Map each scored position to its loss weight; the weights of a scored dream sum to 1.
+
+    Position ``p`` predicts token ``p + 1`` and belongs to that token's turn. In the
+    generated part a role marker opens a turn and belongs to it, EOS belongs to the
+    turn it closes, and a token after EOS that is not a marker opens an unmarked
+    turn. Tokens before the first marker form turn 0. A turn with no token other
+    than its marker and EOS gets no weight; each of the T other turns gets 1/T,
+    split evenly over its scored positions. The position predicting the terminal
+    EOC is never scored.
+    """
+    ids, start = cached.dream_ids, cached.prefix_len
+    end = len(ids)
+    appended = end > start and ids[-1] == eoc_id
+    end -= appended
+    # The generator stops on EOC without appending it, so its last row predicts the EOC.
+    end -= appended or cached.stop_reason == "eoc"
+    markers = (user_id, asst_id)
+    turn, closed = 0, False
+    turn_of: dict[int, int] = {}
+    content: set[int] = set()
+    for index in range(start, len(ids)):
+        token = ids[index]
+        if token in markers or closed:
+            turn, closed = turn + 1, False
+        turn_of[index] = turn
+        if token == eos_id:
+            closed = True
+        elif token not in markers:
+            content.add(turn)
+    keep = scored_keep(cached.cue_flags, start)
+    groups: dict[int, list[int]] = {}
+    for position in range(end):
+        owner = turn_of.get(position + 1, turn)
+        if keep[position] and owner in content:
+            groups.setdefault(owner, []).append(position)
+    return {
+        position: 1 / (len(groups) * len(group)) for group in groups.values() for position in group
+    }
+
+
+def distill_dream_batch(
+    model,
+    opt,
+    dreams: Sequence[CachedDream],
+    init_state,
+    kl_temp: float,
+    *,
+    user_id: int,
+    asst_id: int,
+    eos_id: int,
+    eoc_id: int,
+) -> dict[str, object]:
+    """Distill every dream in one batched forward and one optimizer step, weighted per turn."""
+    import torch
+    import torch.nn.functional as F
+
+    weights = [
+        turn_weights(d, user_id=user_id, asst_id=asst_id, eos_id=eos_id, eoc_id=eoc_id)
+        for d in dreams
+    ]
+    scored = sum(bool(w) for w in weights)
+    out: dict[str, object] = {
+        "loss": 0.0,
+        "token_gradients": sum(map(len, weights)),
+        "scored_dreams": scored,
+        "scored_tokens": [len(w) for w in weights],
+    }
+    if not scored:
+        return out
+    device = init_state.ssm_states[0].device
+    length = max(len(d.dream_ids) for d in dreams)
+    tokens = torch.tensor(
+        [d.dream_ids + [d.dream_ids[-1]] * (length - len(d.dream_ids)) for d in dreams],
+        dtype=torch.long,
+        device=device,
+    )
+    logits, _ = model(tokens, state=_repeat_state(init_state, len(dreams)))
+    rows = [row for row, w in enumerate(weights) for _ in w]
+    cols = [position for w in weights for position in w]
+    teacher = torch.cat(
+        [d.teacher_logits[list(w)] for d, w in zip(dreams, weights, strict=True) if w]
+    )
+    weight = torch.tensor([v for w in weights for v in w.values()], device=device) / scored
+    per_position = F.kl_div(
+        F.log_softmax(logits[rows, cols].float() / kl_temp, dim=-1),
+        F.log_softmax(teacher.to(device).float() / kl_temp, dim=-1),
+        log_target=True,
+        reduction="none",
+    ).sum(-1)
+    loss = (weight * per_position).sum() * kl_temp**2
+    loss.backward()
+    opt.step()
+    opt.zero_grad(set_to_none=True)
+    out["loss"] = loss.item()
+    return out
+
+
 __all__ = [
+    "distill_dream_batch",
     "distill_dream_set",
     "distill_replay",
     "dream_from_cached",
     "scored_keep",
     "target_keep_mask",
+    "turn_weights",
 ]

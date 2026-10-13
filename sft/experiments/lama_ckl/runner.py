@@ -1,22 +1,25 @@
 """Run one frozen LAMA-CKL Mamba arm with resumable epoch artifacts.
 
-An epoch reads the 500 to-learn documents once in the official frozen order.
-Only the altrux arm wakes: it reads them as wake-sleep cycles of
---docs-per-wake documents, carrying the recurrent state across the cycles of
-an epoch and starting every epoch from fresh state. Each cycle dreams
---dreams-per-cycle dreams from the open post-wake state and distils them.
+An epoch reads the 500 to-learn documents once in the official frozen order;
+--epochs sets the count (altrux cells run one). Only the altrux arm wakes: it
+reads them as wake-sleep cycles of --docs-per-wake documents, every wake from
+fresh state with sampled replies. Each cycle dreams --dreams-per-cycle dreams
+from that cycle's open post-wake state and distils them in one optimizer step,
+then saves the adapter and scores both fact sets into epoch-EE/cycle-NN/.
 lora and mix-review train one document epoch instead; frozen is the initial
-evaluation alone. Both fact sets are evaluated once per epoch, after its last
-cycle.
+evaluation alone. Both fact sets are evaluated after every epoch; for altrux
+the last scored cycle's result is the epoch's.
 
-Runs resume at epoch granularity from the last completed epoch-EE/. The state
-at an epoch end is the fresh state, so a partial epoch restarts from its first
-cycle with the saved adapter and optimizer. --max-hours stops a session after
-the first epoch that ends past the cap; the same command resumes it.
+Runs resume at epoch granularity from the last completed epoch-EE/: a partial
+epoch restarts from its first cycle with the saved adapter and optimizer. The
+per-cycle adapters carry no optimizer and are not resume points. --max-hours
+stops a session after the first epoch that ends past the cap; the same command
+resumes it.
 
 --cycles N is a pre-grid acceptance check, not a grid cell: after the initial
-evaluation, epoch 1 runs only its first N altrux cycles, is saved without an
-evaluation, and the run stops. It needs a fresh --output outside runs/.
+evaluation, epoch 1 runs only its first N altrux cycles, saves their adapters
+without an evaluation, and the run stops. It needs a fresh --output outside
+runs/.
 """
 
 from __future__ import annotations
@@ -41,7 +44,6 @@ from experiments.dream_types import dream_set_sha
 from experiments.lama_ckl.evaluation import score_records
 from experiments.lama_ckl.protocol import (
     WAKE_FRAME,
-    apply_dream_prompt,
     dream_prompt_ids,
     lama_dream_diagnostics,
     run_conversational_wake,
@@ -167,7 +169,7 @@ class EpochSteps(Protocol):
     """The model-side steps of an epoch; run_epochs owns their order."""
 
     def wake(
-        self, rows: Sequence[Mapping[str, object]], state: object | None
+        self, rows: Sequence[Mapping[str, object]], state: object | None, epoch: int, cycle: int
     ) -> tuple[dict[str, object], object]: ...
 
     def dream(
@@ -179,8 +181,6 @@ class EpochSteps(Protocol):
         wake: Mapping[str, object],
     ) -> tuple[Sequence[object], dict[str, object]]: ...
 
-    def carry(self, open_state: object) -> object: ...
-
     def distil(
         self, dreams: Sequence[object], open_state: object, label: str
     ) -> dict[str, object]: ...
@@ -188,6 +188,8 @@ class EpochSteps(Protocol):
     def train_documents(self, epoch: int) -> dict[str, object]: ...
 
     def evaluate(self, epoch: int) -> dict[str, object]: ...
+
+    def save_cycle(self, directory: Path) -> str: ...
 
     def save(self, directory: Path, result: dict[str, object]) -> None: ...
 
@@ -200,19 +202,22 @@ def _altrux_epoch(
     steps: EpochSteps,
     max_cycles: int | None = None,
 ) -> dict[str, object]:
-    """Wake-sleep cycles over rows in order; wake.json is saved before the wake is checked."""
+    """
+    Wake-sleep cycles over rows in order; wake.json is saved before the wake is checked
+
+    Every cycle saves its adapter; unless max_cycles is set, it is also scored.
+    """
     count = cycles_per_epoch(len(rows), docs_per_wake)
     if max_cycles is not None:
         count = min(count, max_cycles)
     cycles: list[dict[str, object]] = []
-    state: object | None = None
     started = time.time()
     for cycle in range(count):
         cycle_started = time.time()
         cycle_rows = rows[cycle * docs_per_wake : (cycle + 1) * docs_per_wake]
         cycle_dir = directory / f"cycle-{cycle:02d}"
         cycle_dir.mkdir()
-        wake, open_state = steps.wake(cycle_rows, state)
+        wake, open_state = steps.wake(cycle_rows, None, epoch, cycle)
         _write_json(cycle_dir / "wake.json", wake)
         if wake["invariants"] != {"turns": len(cycle_rows), "internal_eoc": 0}:
             raise RuntimeError(
@@ -220,8 +225,16 @@ def _altrux_epoch(
             )
         dreams, dream_payload = steps.dream(epoch, cycle, cycle_rows, open_state, wake)
         _write_json(cycle_dir / "dreams.json", dream_payload)
-        state = steps.carry(open_state)
         distilled = steps.distil(dreams, open_state, f"altrux epoch {epoch} cycle {cycle}")
+        adapter_sha = steps.save_cycle(cycle_dir)
+        scores: dict[str, object] = {}
+        if max_cycles is None:
+            evaluation = {**steps.evaluate(epoch), "cycle": cycle}
+            _write_json(cycle_dir / "result.json", evaluation)
+            scores = {
+                key: evaluation[key]
+                for key in ("to_learn_accuracy", "not_to_forget_accuracy", "evaluation_seconds")
+            }
         diagnostics = dream_payload["diagnostics"]
         record: dict[str, object] = {
             "cycle": cycle,
@@ -229,11 +242,14 @@ def _altrux_epoch(
             "wake_sha256": wake["transcript_sha256"],
             "wake_tokens": len(wake["transcript_token_ids"]),
             "forced_closes": int(wake["forced_closes"]),
+            "role_marker_closes": int(wake["role_marker_closes"]),
             "dreams": len(dreams),
             "duplicate_dreams": int(diagnostics["duplicate_dreams"]),
             "set_sha256": dream_payload["set_sha256"],
             "diagnostics": diagnostics,
             **distilled,
+            **scores,
+            "adapter_sha256": adapter_sha,
             "seconds": time.time() - cycle_started,
         }
         cycles.append(record)
@@ -242,10 +258,18 @@ def _altrux_epoch(
         heartbeat()
         done = cycle + 1
         elapsed = time.time() - started
+        accuracy = (
+            f"to-learn {scores['to_learn_accuracy']:.6f}, "
+            f"not-to-forget {scores['not_to_forget_accuracy']:.6f}, "
+            if scores
+            else ""
+        )
         print(
             f"[{ts()}] epoch {epoch} cycle {done}/{count}: "
             f"forced closes {record['forced_closes']}/{len(cycle_rows)}, "
+            f"role-marker closes {record['role_marker_closes']}/{len(cycle_rows)}, "
             f"duplicate dreams {record['duplicate_dreams']}/{record['dreams']}, "
+            f"loss {float(record['loss']):.4f}, {accuracy}"
             f"{elapsed / done:.1f} s/cycle ETA {fmt_duration(elapsed / done * (count - done))}",
             flush=True,
         )
@@ -262,6 +286,7 @@ def _altrux_epoch(
         "review_tokens": 0,
         "dreams": total("dreams"),
         "forced_closes": total("forced_closes"),
+        "role_marker_closes": total("role_marker_closes"),
         "duplicate_dreams": total("duplicate_dreams"),
     }
 
@@ -323,7 +348,15 @@ def run_epochs(
         else:
             raise ValueError(f"the {arm} arm has no treatment epochs")
         acceptance = max_cycles is not None and epoch > 0
-        result = {"epoch": epoch} if acceptance else steps.evaluate(epoch)
+        last_cycle = work / f"cycle-{len(treatment.get('cycles', [])) - 1:02d}" / "result.json"
+        if acceptance:
+            result = {"epoch": epoch}
+        elif last_cycle.exists():
+            # The last cycle scored these same weights; its result is the epoch's.
+            result = {**json.loads(last_cycle.read_text()), "epoch": epoch}
+            result.pop("cycle")
+        else:
+            result = steps.evaluate(epoch)
         result.update(
             {
                 "arm": arm,
@@ -453,7 +486,7 @@ class _BoxSteps:
         self.learned_batches = epoch_batches(len(learned), batch_size, 42)
         self.review_batches = epoch_batches(len(retained), batch_size, 0)
 
-    def wake(self, rows, state):
+    def wake(self, rows, state, epoch, cycle):
         return run_conversational_wake(
             self.model,
             self.tokenizer,
@@ -463,6 +496,8 @@ class _BoxSteps:
             reply_tokens=REPLY_TOKENS,
             evidence_tokens=EVIDENCE_TOKENS,
             device=self.device,
+            temperature=DREAM_TEMPERATURE,
+            seed=dream_set_seed(self.args.seed, epoch, cycle),
         )
 
     def dream(self, epoch, cycle, rows, open_state, wake):
@@ -500,30 +535,31 @@ class _BoxSteps:
         )
         return dreams, payload
 
-    def carry(self, open_state):
-        return apply_dream_prompt(
-            self.model, self.tokenizer, open_state, *self.markers, self.device
-        )
-
     def distil(self, dreams, open_state, label):
-        from experiments.dream_distillation import distill_dream_set
+        from experiments.dream_distillation import distill_dream_batch
 
         started = time.time()
-        token_gradients = distill_dream_set(
+        user_id, asst_id, eoc_id = map(self.tokenizer.convert_tokens_to_ids, self.markers)
+        distilled = distill_dream_batch(
             self.model,
             self.optimizer,
             dreams,
             open_state,
-            1,
             KL_TEMPERATURE,
-            lambda step, loss: print(
-                f"[{ts()}] {label} dream {step + 1}/{len(dreams)} loss {loss:.4f}", flush=True
-            ),
-            lambda index, epoch, step: None,
+            user_id=int(user_id),
+            asst_id=int(asst_id),
+            eos_id=int(self.tokenizer.eos_token_id),
+            eoc_id=int(eoc_id),
+        )
+        print(
+            f"[{ts()}] {label} distilled {distilled['scored_dreams']}/{len(dreams)} dreams, "
+            f"loss {distilled['loss']:.4f}",
+            flush=True,
         )
         return {
-            "optimizer_steps": len(dreams),
-            "token_gradients": token_gradients,
+            "optimizer_steps": 1 if distilled["scored_dreams"] > 0 else 0,
+            "token_gradients": distilled["token_gradients"],
+            "loss": distilled["loss"],
             "generated_tokens": sum(len(dream.dream_ids) - dream.prefix_len for dream in dreams),
             "distil_seconds": time.time() - started,
         }
@@ -564,6 +600,11 @@ class _BoxSteps:
             epoch,
         )
 
+    def save_cycle(self, directory):
+        rank, alpha = int(self.settings["lora_rank"]), float(self.settings["lora_alpha"])
+        self.teacher_sha = _save_trainable(self.model, directory / "trainable.pt", rank, alpha)
+        return self.teacher_sha
+
     def save(self, directory, result):
         import torch
 
@@ -597,6 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-name", default="mamba2_2_7b")
     parser.add_argument("--init-adapter", type=Path, default=DEFAULT_WARMSTART)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument(
         "--docs-per-wake",
         type=int,
@@ -609,7 +651,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DREAMS_PER_CYCLE,
         help="dreams generated and distilled per altrux wake-sleep cycle",
     )
-    parser.add_argument("--dream-batch-size", type=int, default=8)
+    parser.add_argument(
+        "--dream-batch-size", type=int, help="dreams per generation launch; --dreams-per-cycle"
+    )
     parser.add_argument("--eval-batch-size", type=int, default=16)
     parser.add_argument(
         "--smoke",
@@ -632,8 +676,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    args = build_parser().parse_args(argv)
+    if args.dream_batch_size is None:
+        args.dream_batch_size = args.dreams_per_cycle
+    return args
+
+
 def main() -> None:
-    args = build_parser().parse_args()
+    args = parse_args()
     import torch
 
     if not torch.cuda.is_available() or torch.version.hip is not None:
@@ -650,7 +701,7 @@ def main() -> None:
     pinned = pinned_warmstart_sha()
     torch.cuda.reset_peak_memory_stats()
     learned, retained, split_manifest = _load_split(args.split)
-    epochs, docs_per_wake = EPOCHS, args.docs_per_wake
+    epochs, docs_per_wake = args.epochs, args.docs_per_wake
     dreams_per_cycle, dream_tokens = args.dreams_per_cycle, DREAM_TOKENS
     if args.smoke:
         learned, retained = learned[:2], retained[:2]
@@ -681,7 +732,7 @@ def main() -> None:
         "learning_rate": LEARNING_RATE,
         "evidence_tokens": EVIDENCE_TOKENS,
         "reply_tokens": REPLY_TOKENS,
-        "reply_temperature": 0.0,
+        "reply_temperature": DREAM_TEMPERATURE if altrux else None,
         "dreams_per_cycle": dreams_per_cycle if altrux else 0,
         "dream_tokens": dream_tokens if altrux else 0,
         "dream_temperature": DREAM_TEMPERATURE if altrux else None,

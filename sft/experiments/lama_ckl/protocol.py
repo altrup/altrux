@@ -11,7 +11,7 @@ from typing import Protocol, Self, TypedDict
 
 import torch
 
-from experiments.dream_generation import copy_state, sample_next
+from experiments.dream_generation import copy_state, dream_generation_seed, sample_next
 from experiments.verbatim import copy_fraction, longest_verbatim_run
 from progress import fmt_duration, heartbeat, ts
 
@@ -211,25 +211,33 @@ def run_conversational_wake(
     reply_tokens: int,
     evidence_tokens: int,
     device: str | torch.device,
+    temperature: float = 0.0,
+    seed: int | None = None,
 ) -> tuple[dict[str, object], State]:
     """
-    Feed one document per user turn, then generate each assistant reply greedily
+    Feed one document per user turn, then generate each assistant reply
 
     documents: one evidence text per turn
     state: recurrent state to continue from, None for fresh
     eoc: the conversation-boundary marker string
     reply_tokens: max tokens per reply; evidence_tokens: truncation limit per document
+    temperature: reply sampling temperature, <= 0 for argmax
+    seed: wake seed; turn i samples from a CPU generator seeded with
+          dream_generation_seed(seed, i, 0), unseeded when None
     Raises ValueError if either limit is < 1
 
     Per turn the prompt is user_open + " " + WAKE_FRAME + document (truncated)
     + "\n" + asst_open: the warm-start corpus rendering
     (preparation/conversations.py format_conversation) up to the reply, whose
     first token carries the separating space. The frame is tokenized apart
-    from the document, so its tokens are identical in every turn. The reply is argmax tokens until EOS
-    or EOC. Each token goes back into the model so the state holds the full
-    turn. A reply with neither within reply_tokens is closed with a fed EOS and
-    flagged eos_forced. An EOC ends the reply and is counted in internal_eoc,
-    which the caller refuses after it saves the artifact.
+    from the document, so its tokens are identical in every turn. The reply is
+    sampled tokens until EOS or EOC. Each token goes back into the model so the
+    state holds the full turn. A sampled user_open or asst_open marker ends the
+    reply: the marker is neither kept nor fed, EOS is appended and fed in its
+    place, and the turn is flagged role_marker_closed. A reply with no close
+    within reply_tokens is closed with a fed EOS and flagged eos_forced. An EOC
+    ends the reply and is counted in internal_eoc, which the caller refuses
+    after it saves the artifact.
 
     Runs in eval mode under no_grad on the model's device.
     Prints the first 3 turns decoded, and a rate/ETA line
@@ -237,11 +245,14 @@ def run_conversational_wake(
 
     Returns (artifact, state). artifact has:
       turns: per turn document, prompt_token_ids, assistant_token_ids (EOS
-             included), assistant (decoded), eos_forced
+             included), assistant (decoded), eos_forced, role_marker_closed,
+             reply_seed (None when unseeded or greedy)
       transcript_token_ids: all prompts and replies in order
       transcript_sha256: sha256 of the ids joined with ","
       frame: WAKE_FRAME
       forced_closes: number of eos_forced turns
+      role_marker_closes: number of role_marker_closed turns
+      reply_temperature, wake_seed: the temperature and seed arguments
       invariants: turns, internal_eoc (replies that emitted EOC)
     """
     if reply_tokens < 1 or evidence_tokens < 1:
@@ -249,6 +260,10 @@ def run_conversational_wake(
 
     eoc_id = tokenizer.convert_tokens_to_ids(eoc)
     eos_id = tokenizer.eos_token_id
+    marker_ids = {
+        tokenizer.convert_tokens_to_ids(user_open),
+        tokenizer.convert_tokens_to_ids(asst_open),
+    }
 
     frame_ids = _encode(tokenizer, " " + WAKE_FRAME.rstrip())
     turns: list[dict[str, object]] = []
@@ -275,18 +290,33 @@ def run_conversational_wake(
                 torch.tensor([prompt_ids], dtype=torch.long, device=device), current_state
             )
 
+            reply_seed = (
+                dream_generation_seed(seed, index, 0)
+                if temperature > 0 and seed is not None
+                else None
+            )
+            generator = (
+                None
+                if reply_seed is None
+                else torch.Generator(device="cpu").manual_seed(reply_seed)
+            )
             reply: list[int] = []
+            role_marker_closed = False
             for _ in range(reply_tokens):
-                token = int(sample_next(logits[:, -1], 0.0).item())
+                # CPU logits keep a seed's draws identical across devices.
+                token = int(sample_next(logits[:, -1].cpu(), temperature, generator).item())
+                if token in marker_ids:
+                    role_marker_closed = True
+                    break
                 reply.append(token)
                 logits, current_state = model(
                     torch.tensor([[token]], dtype=torch.long, device=device), state=current_state
                 )
                 if token in (eos_id, eoc_id):
                     break
-            eos_forced = reply[-1] not in (eos_id, eoc_id)
-            if eos_forced:
-                # The backstop closes the turn: EOS is fed so the state holds a
+            eos_forced = not role_marker_closed and reply[-1] not in (eos_id, eoc_id)
+            if eos_forced or role_marker_closed:
+                # The backstop or a role marker closes the turn: EOS is fed so the state holds a
                 # complete turn, and the count is reported, not a crash.
                 reply.append(eos_id)
                 logits, current_state = model(
@@ -300,6 +330,8 @@ def run_conversational_wake(
                     "assistant_token_ids": reply,
                     "assistant": tokenizer.decode(reply),
                     "eos_forced": eos_forced,
+                    "role_marker_closed": role_marker_closed,
+                    "reply_seed": reply_seed,
                 }
             )
 
@@ -330,6 +362,9 @@ def run_conversational_wake(
         ).hexdigest(),
         "frame": WAKE_FRAME,
         "forced_closes": sum(bool(turn["eos_forced"]) for turn in turns),
+        "role_marker_closes": sum(bool(turn["role_marker_closed"]) for turn in turns),
+        "reply_temperature": temperature,
+        "wake_seed": seed,
         "invariants": {
             "turns": len(turns),
             "internal_eoc": sum(eoc_id in turn["assistant_token_ids"] for turn in turns),
