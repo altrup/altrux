@@ -147,3 +147,11 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
 | 7 | — | — | 0 | 0 | 0 | 3 | 0.024 / 0.409 | | ` Red House - A Way To Cry`, ` RAF Chenies is a former Royal Air Force radar intercept station…`, ` Solomon Schechter was a prominent rabbi…` | **all 30 dreams at 511 tokens, eoc_termination_rate 0.0** (cycle 0: 0.57); dreams still UltraChat-style tasks (essays, letters) |
 
 Read at 23:31 (cycle 7): the replies have shifted from acknowledgements to restatements or copies of the document (no ` Got it` among the five), and the dreams have stopped closing on EOC (every dream runs to the 512-token cap). Both are the registered method's own trend after seven single-step distillations of the model's own conversations; recorded, not repaired. The scorer still reads floor values (to-learn 0.000-0.002, not-to-forget 0.971-0.982, inside the 0.01 cross-process noise).
+| 8 | 0.000 | 0.974 | 0 | 0 | 0 | 0 | 0.000 | | | all dreams 511 tokens |
+| 9 | 0.003 | 0.979 | 3 | 0 | 0 | 1 | 0.000 | | | |
+| 10 | 0.000 | 0.974 | 0 | 0 | 0 | 0 | 0.000 | | | |
+| 11 | 0.005 | 0.972 | 0 | 0 | 0 | 0 | 0.000 | | | |
+| 12 | 0.002 | 0.975 | 0 | 0 | 0 | 0 | 0.000 | | | |
+| 13 | 0.000 | 0.975 | 1 | 0 | 0 | 0 | 0.000 | | ` Mehdi Taouil (Arabic: مهدي طويل) (born 20 May 1983 in Villeneuve-Saint-Georges…` (a copy of the document), ` This is a good article. I really enjoyed learning about the life and work of Charles Palmer…` | dreams are now `[USER] <invented encyclopedic document>` for 511 tokens with no `[ASSISTANT]` turn and no close (`[USER] The Battle of Guadalcanal resulted in a decisive victory…`, `[USER] How long did it take to create the first Nintendo system?\n\nThe first Nintendo video game system…`) |
+
+Read at 23:41 (cycle 13): the dreams have taken the wake's own shape — one user turn that pastes a document — but with invented documents (copy fraction 0.000, subjects_mentioned 0), and every reply is a copy or restatement of its document. The same drift the third box saw at cycles 1-3 ("invented passages in the template of the first document"), slower and without the frame string so far (no dream opens with `Remember this for later`). Scores at the floor. Continuing: the full 100-cycle curve costs 2 h and is the registered result.
