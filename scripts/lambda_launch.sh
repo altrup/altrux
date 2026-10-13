@@ -183,6 +183,16 @@ if [[ "$RUN_SETUP" == 1 && "$DRY_RUN" == 0 ]]; then
   else
     echo "Cache artifacts to upload: none"
   fi
+  # The pull (lambda_pull.sh) rsyncs the box's models/*/checkpoints/ into the
+  # same local paths without deleting, so a local epoch-* tree gets the box's
+  # files merged over it, step directory by step directory.
+  local_trees=()
+  for p in "$ROOT"/models/*/checkpoints/epoch-*; do [[ -d "$p" ]] && local_trees+=("${p#"$ROOT"/}"); done
+  if (( ${#local_trees[@]} )); then
+    echo "WARNING: the pull will merge the box's checkpoints into these existing local trees (move them aside first to keep them intact):"
+    for p in "${local_trees[@]}"; do printf '  %5s  %s
+' "$(du -sh "$ROOT/$p" | cut -f1)" "$p"; done
+  fi
   if [[ -t 0 ]]; then
     read -r -p "Proceed? [Y/n] " reply
     [[ "$reply" =~ ^[Nn] ]] && { echo "aborted — edit scripts/.env and relaunch"; exit 1; }

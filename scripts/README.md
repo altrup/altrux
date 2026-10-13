@@ -60,7 +60,10 @@ The pre-launch confirm screen is the guard: it lists every artifact it's about
 to upload, with sizes, before anything bills. What's listed there does not need
 regenerating on the box, and `lambda_setup.sh` prints the same list again as it
 places the files. There's no manifest or hashing — rsync's own change detection
-decides what moves, so re-running either direction is free.
+decides what moves, so re-running either direction is free. The same screen
+warns when a local `models/*/checkpoints/epoch-*` tree exists: the pull merges
+the box's checkpoints into that path without deleting, so move the tree aside
+first if it must stay intact.
 
 `scripts/lambda_data_artifacts.sh` holds the one include list both ends read
 (`LAMBDA_DATA_ARTIFACTS` in `scripts/.env` overrides it; empty syncs no data).

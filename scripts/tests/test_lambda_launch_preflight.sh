@@ -48,4 +48,10 @@ if launch ""; then fail "launch proceeded with no token"; fi
 launch good || true
 grep -q instance-types "$work/curl.log" 2>/dev/null || fail "a working token did not reach the rent step: $(cat "$work/out")"
 
+# The pull merges the box's models/*/checkpoints/epoch-* into the same local
+# paths, so an existing local tree there is named before renting.
+mkdir -p "$work/repo/models/m/checkpoints/epoch-1/step-1"
+launch good || true
+grep -q "models/m/checkpoints/epoch-1" "$work/out" || fail "an existing local epoch-* tree was not named in the preflight: $(cat "$work/out")"
+
 echo "lambda launch preflight tests passed"
