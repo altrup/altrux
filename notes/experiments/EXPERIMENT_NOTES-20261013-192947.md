@@ -138,3 +138,12 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
 | cycle | to-learn | not-to-forget | forced /5 | role-marker /5 | dup /30 | subjects_mentioned | copy frac (mean/max) | loss | reply sample | dream note |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 0 | 0.000 | 0.971 | 0 | 0 | 0 | 1 | 0.014 / 0.325 | 0.0034 | ` Got it, thanks for passing that along.` ×5 | UltraChat-style tasks; one Lystad rehearsal |
+| 1 | 0.002 | 0.982 | 0 | 0 | 0 | 0 | 0.009 | 0.0035 | | |
+| 2 | 0.000 | 0.972 | 0 | 0 | 0 | 0 | 0.002 | 0.0033 | | |
+| 3 | 0.000 | 0.977 | 0 | 0 | 0 | 0 | 0.000 | | | |
+| 4 | 0.000 | 0.977 | 0 | 0 | 0 | 2 | 0.021 | | | |
+| 5 | 0.000 | 0.977 | 0 | 0 | 0 | 0 | 0.000 | 0.0030 | | |
+| 6 | 0.000 | 0.975 | 1 | 0 | 0 | 1 | 0.095 | | | first forced close |
+| 7 | — | — | 0 | 0 | 0 | 3 | 0.024 / 0.409 | | ` Red House - A Way To Cry`, ` RAF Chenies is a former Royal Air Force radar intercept station…`, ` Solomon Schechter was a prominent rabbi…` | **all 30 dreams at 511 tokens, eoc_termination_rate 0.0** (cycle 0: 0.57); dreams still UltraChat-style tasks (essays, letters) |
+
+Read at 23:31 (cycle 7): the replies have shifted from acknowledgements to restatements or copies of the document (no ` Got it` among the five), and the dreams have stopped closing on EOC (every dream runs to the 512-token cap). Both are the registered method's own trend after seven single-step distillations of the model's own conversations; recorded, not repaired. The scorer still reads floor values (to-learn 0.000-0.002, not-to-forget 0.971-0.982, inside the 0.01 cross-process noise).
