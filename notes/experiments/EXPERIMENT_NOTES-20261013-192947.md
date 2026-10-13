@@ -131,3 +131,10 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --epochs 1 --docs-per-wake 5 --dreams-per-cycle 30 --max-hours 16.1"
   ```
   ETA 100 cycles ≈ 2.4 h → ~01:45 UTC. Cycles land under `runs/dream-seed-42/work/epoch-01.*/cycle-NN/`.
+- 23:21 dream cell cycle 0 (under `work/epoch-01.6l3qrro_/cycle-00/`): identical to the 30-dream acceptance (same seed: five replies ` Got it, thanks for passing that along.`, `internal_eoc` 0, forced 0/5, role-marker 0/5; dreams unique 30, subjects_mentioned 1, copy fraction 0.014; loss 0.0034). **First-dream-cycle sanity gate: PASS** — each wake turn is the frame, the document and an acknowledgement reply; each dream is a conversation opening `[USER]` after `<|endofconversation|>`. **Cycle 0 score: to-learn 0.000, not-to-forget 0.971** (this process's cycle-less initial evaluation read 0.002 / 0.977). 84.4 s/cycle, runner ETA 139 min → cycle 99 at ~01:40 UTC.
+
+## Dream cell curve (seed 42, 30 dreams, 5 documents per cycle)
+
+| cycle | to-learn | not-to-forget | forced /5 | role-marker /5 | dup /30 | subjects_mentioned | copy frac (mean/max) | loss | reply sample | dream note |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0.000 | 0.971 | 0 | 0 | 0 | 1 | 0.014 / 0.325 | 0.0034 | ` Got it, thanks for passing that along.` ×5 | UltraChat-style tasks; one Lystad rehearsal |
