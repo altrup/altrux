@@ -33,6 +33,16 @@ The model is selected via `MODEL_NAME` in `.env`. This controls which package in
 
 `preparation/cram.py` needs NER and the next-run plan called for spaCy, but this venv is Python 3.14 and spaCy publishes no cp314 wheels — `uv pip install spacy` resolves, then source-builds thinc/blis/murmurhash/preshed/cymem/srsly, on top of the standing risk that any `uv` install re-resolves torch off the ROCm build (root `AGENTS.md`). It uses `transformers`' CoNLL-03 token classifier instead (already a dependency, PER/ORG/LOC is all a same-type entity swap needs). Don't re-attempt spaCy without checking for cp314 wheels first.
 
+## No hard-coded phrases in training data
+
+A training string is human-written text already in the source data, or it is
+drawn from a set diverse enough that no single phrasing dominates. Never one
+literal the model sees hundreds of times (an acknowledgement template, a fixed
+preface, a fixed opener). A literal becomes a tic, and under self-distillation
+a tic becomes the whole output ("Yes," collapsed to `YesYesYes…` in the
+2026-10-12 altrux cell). Protocol strings the model is probed under, such as
+the wake frame, stay out of the corpus so the probe measures generalisation.
+
 ## Data-shape gotcha: mid-conversation sleeps need episodes that don't exist
 
 `--sleep-chain-rate` (0.1) gates *all* of the below: an episode's rates only apply if its chain drew into the sleeping fraction, so every sleep/split/fact count in a regen log is ~10% of what the per-episode rates alone imply. Then `preparation/chains.py --mid-sleep-rate` only fires on episodes ≥ `--mid-sleep-min-len` (4096 default; 1536 used in practice) that have a turn boundary in their middle third. LongAlign/babilong episodes are single-QA (turn boundaries only at position 0 and the answer start) so they never qualify; ultrachat only qualifies when tokenized uncapped (`preparation/conversations.py --max-len`, default 32768 — the old 1024 cap made the set empty and mid-sleep a silent no-op in every dataset before 2026-07-21). Always check the regen log's mid-conversation counter before assuming the signal exists. `--split-episode-rate` (with `--split-min-part`) creates natural-continuation-across-sleep signal from multi-turn corpora; single-QA episodes only split (`--split-qa-rate`) when they carry a `question_offsets` entry from `preparation/conversations.py` (babilong yes, LongAlign never — fail closed); babilong's question+answer tail is only 8–12 tokens (the document is thousands), so any length floor applied to *both* sides of a split-QA cut disqualifies the entire corpus at once — a zero split-tail counter in a regen log means a constraint reached the tail, not bad luck; `--sentence-sleep-rate` reaches inside single-QA document turns via sentence boundaries (built 2026-07-21, deliberately unused until the 396-reproduction question is settled — see `notes/discussion/DISCUSSION-20260721-peak-reproducibility.md`).

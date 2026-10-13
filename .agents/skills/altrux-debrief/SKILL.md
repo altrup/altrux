@@ -27,7 +27,14 @@ act on.
    then read the completed run note and the governing DISCUSSION note. Use
    the index and `rg` to open older decisions relevant to a live question.
    Read whatever these notes reference under `sft/logs/` (train logs, probe
-   outputs) when a claim needs checking against the raw numbers. Form your own
+   outputs) when a claim needs checking against the raw numbers. Before you
+   interpret any count from the run (forced closes, subjects mentioned, copy
+   fraction, a score), read the decoded text behind it: the wake replies and
+   the dreams of the cycles the count describes. A count says the loop did
+   what it was told; only the text says what the model did (2026-10-12: the
+   first wake reply of the altrux cell was a `[USER]` turn the model wrote
+   itself, visible in `wake.json`, and it sat behind a probe statistic for a
+   day). Form your own
    position before the conversation: what the run actually established
    versus what it merely suggests, which conclusions are load-bearing for
    the next step, and a proposed direction for the next run with reasoning.
