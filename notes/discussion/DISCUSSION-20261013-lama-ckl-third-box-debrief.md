@@ -380,14 +380,13 @@ reports (dry run, 2026-10-13). Tests first. In order:
    unanswered user turns) extended to the new shapes.
 3. Done (`ef8e8c1`, `1693e96`). `experiments/lama_ckl/probe.py`: role-marker count with full prints,
    reply length, opener census, verbatim-copy and empty-dream counts.
-4. PROTECTED EDITS, listed for the teammate's review and commit: `runner.py`
+4. Done (`0ff672d`, committed by the teammate). PROTECTED EDITS: `runner.py`
    (one-epoch altrux, per-cycle save and score, state reset, dream batch =
    dreams per cycle, frozen ×3 target), `protocol.py` (wake temperature and
    seed, role-marker close and count), `dream_distillation.py` (batched
    single step, per-turn weights, terminal EOC dropped), `report.py`
    (one-epoch curves, matched-epoch comparison). Tests for each live beside
-   the existing ones. `report.py` is not protected: done (`0189519`). The
-   protected files are in the working tree, awaiting the teammate's review.
+   the existing ones. `report.py` is not protected: done (`0189519`).
 5. Done (`fa803f2`). `sft/Makefile`: `warm-start` target with the new recipe
    (flags unchanged, `--repeat-rate 0.3` kept); remove `warm-start-topup`; a `frozen-x3` convenience
    if the runner does not provide it.
@@ -435,4 +434,6 @@ Open:
 - Per-cycle resume for the one-epoch altrux cell (a crash at cycle n
   restarts at cycle 0): not implemented; decide before a box with less than
   a full ETA of budget.
-- Archive the third-box `runs/` and `acceptance/` locally before upload.
+- Done 2026-10-13: the third-box `runs/`, `acceptance/` and both old splits
+  moved to `.cache/lama_ckl_archive/third-box-ultra20k/`, outside the
+  `lama_ckl` upload pattern.
