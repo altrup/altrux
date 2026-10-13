@@ -134,6 +134,9 @@ Unless `--no-watch` is passed, launch also starts a **local tmux session
   one named window per job. Same wait-then-attach — the experimenter creates
   that session the first time it needs one, so this window usually waits
   longer than the other two.
+- window `shell` — your own ssh shell on the box at `~/altrux/sft`, outside
+  every remote tmux, so nothing typed there reaches the experimenter or the
+  training session. Keep GPU work out of it while a run holds the card.
 
 Set `LAMBDA_RESUME_CHECKPOINT` to one or more local checkpoint step dirs
 (space-separated, e.g.
