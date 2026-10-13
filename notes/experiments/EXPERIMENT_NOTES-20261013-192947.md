@@ -104,3 +104,11 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
   ```
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 30 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5-d30"
   ```
+- 21:12-21:13 acceptance at 30 dreams (seed 42): EXIT=0. **PRE-GRID ACCEPTANCE: PASS.** `internal_eoc` 0; `role_marker_closes` 0/5; `forced_closes` 0/5; dreams 30 unique, 0 duplicates, 0 empty (min 34 tokens, mean 359), eoc_termination_rate 0.57, mean_copy_fraction 0.014, max 0.325; **subjects_mentioned 1**; distillation one step, loss 0.0034; **peak VRAM 70.5 GB**. Quoted reply (all five identical this run): ` Got it, thanks for passing that along.` Quoted dream 20 (the subject mention, a rehearsal not a copy): `[USER] Can you provide some information about KLM's role in the comedy trio KLM?\n[ASSISTANT] KLM is a comedy trio that was formed in Sweden during the 1970s and 1980s. The group consisted of Trond Kirkvaag (born 1958), Lars Mjøen (born 1957), and Knut Ove Lystad (born 1951). …` (the wake document said Lystad was born 31 January 1946 and is Norwegian; the dream invents 1951 and Sweden — a rehearsal with wrong details, which is what the distillation will teach).
+  - **Cycle wall time at 30 dreams**: wake 1.13 turn/s (~4 s); dreams 50 s (0.61 dream/s, one launch); distillation 23 s; runner 77.4 s/cycle; per-cycle evaluation 8 s. **Dream-arm ETA: 100 × (77 + 8) s + 8 s ≈ 2.4 h** (101 evaluations). Far under the debrief's 4 h/epoch estimate.
+  - Observation (reproducibility, not a gate): with the same `--seed 42` the five wake replies differ between the 10-dream run (` Got it.`) and the 30-dream run (` Got it, thanks for passing that along.`), and within a run all five replies are identical though sampled at 0.7 with distinct per-turn seeds. Worth a look at how the reply seed is consumed; recorded for the debrief.
+  - The dream cell runs with `--dreams-per-cycle 30` (decision above); lora and mix-review are unaffected by the dream count.
+- 21:15 step 5, smokes of all four arms, chained in `train`:
+  ```
+  cd ~/altrux/sft && for a in frozen lora mix-review dream; do make lama-ckl-smoke ARGS="--arm $a --model-name mamba2_2_7b" || break; done
+  ```
