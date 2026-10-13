@@ -45,3 +45,4 @@ Persistent per-document failures (steps 1820 to 4555): the EOC-first reply is al
 
 **Gate amendment from the teammate (20:27 UTC, in session):** "if it's just like 1 of 50 i think that's fine too … we can continue doesn't have to be 100%, but we should still train to end." Applied: an EOC-first count of 1 of 50 on the final checkpoint (the persistent Covenant School document) passes the pin gate; the other three counts stay as registered (role markers ≤4, forced ≤9, no opener >25). Training runs to its end; the final checkpoint remains the only candidate.
 | 7289 | 1 | 1 | 2 | `the` (15) | 26.8 | 7 | 0 | 1 | 0 | probe 20:25-20:28. Stable; same EOC-first document. Dreams 7/10 `[USER]`, 1 empty, 0 copies. |
+| 8200 | 1 | 3 | 3 | `thanks` (9) | 19.8 | 10 | 0 | 0 | 0 | probe 20:32-20:34. Stable; same EOC-first document. Dreams 10/10 `[USER]`, 0 copies. |
