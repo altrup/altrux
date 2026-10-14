@@ -195,3 +195,15 @@ Read at 01:20 (cycle 72): the frame-opened dream is now common (2/5 sampled, vs 
 | 73-85 | 0.000-0.004 | 0.963-0.976 | 0-4 | 0 | 0-9 | 1-3 | 0.04-0.65 / 0.56-1.00 | ~0.002 | cycle 85: replies 1 and 2 identical (` The cardinals present at Rome assembled in Septizodium…`: reply 2 copies document 1), others copy their own document | 4 of 5 shown are the last wake document (Marpessa Dawn) verbatim or paraphrased |
 
 Read at 01:41 (cycle 85): unchanged. 14 cycles left, EXIT due ~02:05 UTC.
+| 86-99 | 0.000-0.004 | 0.963-0.973 | 0-2 | 0 | 0-1 | — | — | ~0.002 | | cycle 98 dream sample: `Gaetano Vitali was a castrato who performed in many Italian theatres…<|endoftext|>He made his debut in 180…` (document monologue, EOS inside, continues) |
+
+- 02:00 **dream seed 42 complete** (23:19-02:00, 161 min = 9670 s epoch time, 100 cycles, EXIT=0). `epoch-01/` holds 100 `cycle-NN/` dirs (each with trainable.pt, wake.json, dreams.json, result.json) and `result.json`; `epoch-00/` and `summary.json` present. Peak VRAM 71.5 GB. **Cycle 99 (= `epoch-01/result.json`): to-learn 0.002, not-to-forget 0.971.** Per-cycle peak over 100 cycles: to-learn 0.006 (cycle 27), inside the frozen floor (0.001) plus the x3 resolution (0.003) plus cross-process noise (~0.01) — no acquisition at any cycle. Retention 0.963-0.988 throughout, i.e. the frozen floor. The four §3.5 curves: acquisition flat at the floor; reply stays an acknowledgement only through cycle ~6 and is a document copy/restatement from cycle 7 on (forced closes 0-5/5, role-marker closes 0/5 at every cycle); dreams mention wake subjects at 0-5 per cycle (mostly 1-3) but as copies: copy fraction rises from 0.01 (cycle 0) to 0.2-0.9 (cycles 20-99), the role marker leaves the dreams by cycle 19, the frame opens dreams from cycle 48. Fetch requested.
+
+**Seed-43/44 rule (DISCUSSION-20261013 §3.4 step 7 / §3.3.8), computed at 02:02:**
+
+| metric | dream cycle 99 | lora epoch 1 | mix-review epoch 1 | best baseline | difference |
+|---|---|---|---|---|---|
+| to-learn | 0.002 | 0.021 | 0.023 | 0.023 | 0.021 |
+| not-to-forget | 0.971 | 0.899 | 0.911 | 0.911 | **0.060** |
+
+The retention difference is at least 0.05 absolute, so **seeds 43 and 44 run for lora, mix-review and dream** (the rule reads "differs … on either metric"; the direction is not part of it — dream retains more because it learns nothing). Budget: 13.4 h to the cap; per seed, lora ∥ mix-review (~1.5 h, two `train` windows as for seed 42) then dream (~2.7 h; cannot share the card) ≈ 4.2 h; both seeds ≈ 8.4 h, inside the cap. Order: `make lama-ckl-report` first (`work:report`, log `sft/logs/lama-ckl-report.log`), then seed 43, then seed 44, then the report again.
