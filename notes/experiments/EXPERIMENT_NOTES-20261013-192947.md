@@ -223,3 +223,33 @@ The retention difference is at least 0.05 absolute, so **seeds 43 and 44 run for
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm mix-review --model-name mamba2_2_7b --seed 43 --max-hours 13.4"
   ```
   Both launched in the same second, so both `make lama-ckl-run` invocations tee into one log, `sft/logs/lama-ckl-run-20261014-020255.log` (interleaved lines, two EXIT markers at the end). The run dirs (`runs/lora-seed-43`, `runs/mix-review-seed-43`) are separate and are the record. Lora 0.26 batch/s, mix-review 0.20 batch/s at start (both slower than solo while they share the card). Dream seed 43 launches automatically when both EXIT markers are in that log.
+- 02:44 **Teammate instruction (in session): "I think let's pause it here for now."** Applied: both seed-43 cells stopped with C-c (lora at epoch 20 complete, mix-review at epoch 13 complete, each `epoch-EE/result.json` present; the shared log holds two EXIT lines from the interrupted makes), the dream-43 launcher cancelled, nothing else launched. Shutdown checklist follows.
+
+## Closing section (02:45 UTC, 2026-10-14)
+
+**What ran.** Fourth warm start (`ultra20k-v4`, 9594 steps, 69 min; probe curve above; pin gate passed under the teammate's 1-of-50 EOC-first allowance; sha256 7ba7972b…). Split (`mamba2_2_7b_ultra20k-v4`, 500/500, invariants 0). Frozen ×3 (resolution 0.000 / 0.003). Acceptance: 0 of 20 dreams at 10 per cycle mentioned a wake subject over two seeds → dream count raised to 30 by the 2026-10-10 rule (50 OOMs in the single distillation step, 40 peaks at 91.5 GB) → acceptance at 30 passed (subjects_mentioned 1). Smokes ×4. Seed-42 grid complete: lora 30 epochs, mix-review 30 epochs, dream 100 cycles. Report written. Seed rule triggered on retention (0.060 ≥ 0.05). Seed 43: lora to epoch 20, mix-review to epoch 13, then paused on the teammate's instruction; dream 43 and all of seed 44 not started.
+
+**Resume points for seed 43** (same commands, the runner resumes from the last complete `epoch-EE/`):
+```
+cd ~/altrux/sft && make lama-ckl-run ARGS="--arm lora --model-name mamba2_2_7b --seed 43 --max-hours <H>"        # resumes from epoch-20
+cd ~/altrux/sft && make lama-ckl-run ARGS="--arm mix-review --model-name mamba2_2_7b --seed 43 --max-hours <H>"  # resumes from epoch-13
+cd ~/altrux/sft && make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 43 --epochs 1 --docs-per-wake 5 --dreams-per-cycle 30 --max-hours <H>"
+```
+and the same three with `--seed 44`; then `make lama-ckl-report`. Warm start sha256 7ba7972b…, split manifest sha256 f829ea48…, 30 dreams per cycle (needs ~71.5 GB; do not share the card with a baseline).
+
+**What the curves show (seed 42).**
+- The dream arm did not acquire anything in 100 cycles: to-learn 0.000-0.006 at every cycle (floor 0.001, resolution 0.003, cross-process noise ~0.01); retention stayed at the floor (0.963-0.988). It is, measured by the scorer, the frozen model.
+- The loop still drifts toward its own text, slower than on the third box and in a different order: acknowledgement replies for ~6 cycles, then document restatements/copies (forced closes 0-5/5, role-marker closes 0/5 throughout — the role-marker close rule never fired); dreams lose their EOC close by cycle 7, lose the `[USER]` marker by cycle 19 (bare document monologues at the 512-token cap), become last-document copies from cycle ~20 (mean copy fraction 0.2-0.9, duplicates up to 11/30), and open with the frame from cycle 48 (common by cycle 72). No `Yes`/newline/`20`/`e` ladder within 100 cycles. Distillation loss 0.0004-0.0035.
+- The distillation signal is tiny from cycle 0: dreams at 10 per cycle carried no wake subject at all (0/20 over two seeds), and at 30 per cycle 0-5 mentions per cycle, mostly as copies. The warm start removed the copy habit from the probe dreams (0 copies at every checkpoint) but the loop re-creates it within 20 cycles.
+- Baselines on this warm start: lora peak 0.098 at epoch 9 (0.538 retained), plateau 0.083 / 0.496; mix-review peak 0.067 at epoch 11 (0.502 retained), plateau 0.052 / 0.441 — mix-review retains 0.19 less than on the third box's base (0.630 plateau), so the review mixture's protection depends on the warm start. Epoch-1 comparison: lora 0.021 / 0.899, mix-review 0.023 / 0.911, dream 0.002 / 0.971.
+- Seed 43 so far: lora epoch 20 at 0.079 / 0.511 (epoch 1: 0.023 / 0.913), mix-review epoch 13 at 0.064 / 0.507 — same shapes as seed 42.
+
+**Things to discuss.**
+1. The acceptance condition `subjects_mentioned > 0` and the dream-count rule interact: at 10 dreams the gate fails outright on this warm start; at 30 it passes with 1 mention. Whether a count of 1 in 30 is a meaningful carrier, and whether the seed rule should fire on a retention difference that only reflects "learned nothing", are both protocol questions.
+2. The distillation step's memory (≈2.1 GB per 511-token dream, single batch) caps the dream count at ~40 on a 94.5 GB card; micro-batching with gradient accumulation inside the one step would lift it (protected file).
+3. Wake replies at seed 42 came out identical across all five turns in two of three acceptance runs (sampled at 0.7 with distinct per-turn seeds) and differed between runs that shared `--seed 42` but not `--dreams-per-cycle`; worth checking how the reply seed is consumed.
+4. Warm-start GPU utilization (60 %, 27 of 98 GB at batch 6) and the baselines' (20 %, batch 8): a larger batch with the LR revisited is a cheap speed-up for the next box, decided before launch.
+5. The one held-out document that returns EOC-first at every checkpoint (Covenant School shooting) and the probe's "role marker inside a reply" count that ran 27 → 1 over training.
+6. Two makes launched in the same second share a log file name (`lama-ckl-run-<s>.log`); a PID or arm suffix in the Makefile's log name would avoid it.
+
+**Artifacts.** `models/mamba2_2_7b/checkpoints/ultra20k-v4/` (11 checkpoints, probe.json each), `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/` (split), `.cache/lama_ckl/acceptance/{dream-5,dream-5-seed43,dream-5-d50,dream-5-d40,dream-5-d30}`, `.cache/lama_ckl/runs/{frozen-seed-42-r1,r2,r3,lora-seed-42,mix-review-seed-42,dream-seed-42,lora-seed-43,mix-review-seed-43,*-smoke}`, `runs/report.json`, logs under `sft/logs/`, this file. Code: `d4a05b4` (report fix) on `box/20261013-185224`. No protected file edited.
