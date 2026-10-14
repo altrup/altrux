@@ -1,0 +1,1 @@
+../../.agents/skills/altrux-adversarial-read/SKILL.md
