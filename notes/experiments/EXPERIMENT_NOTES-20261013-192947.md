@@ -189,3 +189,6 @@ Read at 00:40 (cycle 48): the collapse is now the third box's cycle-1/2 picture,
 | 49-60 | 0.000-0.005 | 0.964-0.979 | 1-4 | 0 | 0-5 | 1-4 | 0.01-0.60 / 0.19-1.00 | ~0.002 | cycle 60: ` Gustave Flourens was a French Revolutionary leader and writer…`, ` Ghoneim studied piano with E. Puglisi…` (document copies) | mix of last-document copies and invented passages, 511 tokens; frame-opened dreams not seen in the samples read |
 
 Read at 01:00 (cycle 60): unchanged. 98 s/cycle; cycle 99 due ~02:05 UTC.
+| 61-72 | 0.000-0.004 | 0.966-0.983 | 0-4 | 0 | 0-11 | 0-4 | 0.13-0.87 / 0.97-1.00 | ~0.002 | cycle 72: ` Communalism Combat is an organization founded in 1993…` (copy); reply 5 continues its document (` The team also included midfielder Ivan Rakitić…`) | cycle 64: 11 duplicates, copy fraction 0.87. cycle 72: **2 of 5 shown open with the frame** (`Remember this for later: Manager Felix Magath formed an attacking lineup…`, the last wake document verbatim); the rest are the same document continued or paraphrased (Grafite, Džeko) |
+
+Read at 01:20 (cycle 72): the frame-opened dream is now common (2/5 sampled, vs 1/5 at cycle 48, none before). Scores at the floor through 73 cycles. 98.5 s/cycle; cycle 99 due ~02:05 UTC.
