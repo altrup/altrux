@@ -163,3 +163,11 @@ Read at 23:41 (cycle 13): the dreams have taken the wake's own shape — one use
 | 19 | 0.000 | 0.978 | 1 | 0 | 0 | 1 | 0.000 | 0.0028 | ` Brian Gerard McNamee is a former New York City police officer…` (copies) | dreams no longer open with `[USER]`: bare document monologue after the boundary (`<|endofconversation|> The first photo of Tony Blair in a suit was taken in September 1987…`), 511 tokens each |
 
 Read at 23:50 (cycle 19): the role marker has dropped out of the dreams (cycle 13: `[USER] <document>`; cycle 19: `<document>` alone), replies are document copies with forced closes at 1-4 of 5, and the dreams' copy fraction spiked at cycles 15-18 (one dream per cycle at 0.68-0.97 of a wake document). Scores at the floor (to-learn ≤ 0.005). Continuing.
+| 20 | 0.000 | 0.984 | 5 | 0 | 0 | 3 | 0.176 / 0.986 | | | forced 5/5 |
+| 21 | 0.002 | 0.983 | 3 | 0 | 0 | 1 | 0.129 / 0.998 | | | |
+| 22 | 0.004 | 0.977 | 2 | 0 | 0 | 2 | 0.006 / 0.168 | | | |
+| 23 | 0.002 | 0.970 | 2 | 0 | 0 | 2 | 0.309 / 0.969 | | | |
+| 24 | 0.002 | 0.977 | 2 | 0 | 3 | 2 | 0.569 / 0.984 | | | first duplicate dreams |
+| 25 | 0.002 | 0.980 | 3 | 0 | 3 | 1 | **0.698** / 0.988 | | ` The Gotthard Road Tunnel is one of three tunnels…` (restatement of the document) | dreams 1-4 of 5 shown are the last wake document (Gotthard tunnel) copied or lightly paraphrased, 511 tokens each |
+
+Read at 00:00 (cycle 25): the copy stage. Mean copy fraction climbed 0.18 → 0.31 → 0.57 → 0.70 over cycles 20-25; most dreams reproduce the last document of the wake; duplicates appear (3/30). The frame string has not appeared in a dream. Scores at the floor (to-learn ≤ 0.004). Continuing — copies are the carrier the debrief kept (§4.3), and whether distilling them moves to-learn is the question the curve answers.
