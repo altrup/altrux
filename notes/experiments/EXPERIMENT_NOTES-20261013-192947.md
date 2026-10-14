@@ -207,3 +207,18 @@ Read at 01:41 (cycle 85): unchanged. 14 cycles left, EXIT due ~02:05 UTC.
 | not-to-forget | 0.971 | 0.899 | 0.911 | 0.911 | **0.060** |
 
 The retention difference is at least 0.05 absolute, so **seeds 43 and 44 run for lora, mix-review and dream** (the rule reads "differs … on either metric"; the direction is not part of it — dream retains more because it learns nothing). Budget: 13.4 h to the cap; per seed, lora ∥ mix-review (~1.5 h, two `train` windows as for seed 42) then dream (~2.7 h; cannot share the card) ≈ 4.2 h; both seeds ≈ 8.4 h, inside the cap. Order: `make lama-ckl-report` first (`work:report`, log `sft/logs/lama-ckl-report.log`), then seed 43, then seed 44, then the report again.
+- 02:02 `make lama-ckl-report` first refused: "runs use different requested_dream_batch_size settings" — the baselines record the runner's default (10) and never use it, the dream cell has 30. Fixed in `report.py` (not protected), test first: the key is compared across dream runs only, beside `dreams_per_cycle` (commit `d4a05b4`, 16 report tests pass, lint clean). Rerun, EXIT=0, wrote `runs/report.json`:
+
+  | arm | peak to-learn (epoch) | retained at peak | epoch-1 to-learn | epoch-1 retained |
+  |---|---|---|---|---|
+  | frozen (×3) | 0.001 | 0.986 | — | — |
+  | lora | 0.098 (9) | 0.538 | 0.021 | 0.899 |
+  | mix-review | 0.067 (11) | 0.502 | 0.023 | 0.911 |
+  | dream (100 cycles) | 0.006 (cycle 27) | 0.988 | 0.002 | 0.971 |
+
+  Evaluation resolution 0.000 / 0.003. The report lists frozen/43 and frozen/44 as missing; the rule (§3.4 step 7) runs seeds 43/44 for the three trained arms only, so those two stay missing by design.
+- 02:02 seed 43, lora in `train:0` and mix-review in `train:mix`, parallel as for seed 42 (started fresh; warm start sha256 7ba7972b…, split manifest sha256 f829ea48…):
+  ```
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm lora --model-name mamba2_2_7b --seed 43 --max-hours 13.4"
+  cd ~/altrux/sft && make lama-ckl-run ARGS="--arm mix-review --model-name mamba2_2_7b --seed 43 --max-hours 13.4"
+  ```
