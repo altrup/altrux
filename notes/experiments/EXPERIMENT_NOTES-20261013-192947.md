@@ -222,3 +222,4 @@ The retention difference is at least 0.05 absolute, so **seeds 43 and 44 run for
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm lora --model-name mamba2_2_7b --seed 43 --max-hours 13.4"
   cd ~/altrux/sft && make lama-ckl-run ARGS="--arm mix-review --model-name mamba2_2_7b --seed 43 --max-hours 13.4"
   ```
+  Both launched in the same second, so both `make lama-ckl-run` invocations tee into one log, `sft/logs/lama-ckl-run-20261014-020255.log` (interleaved lines, two EXIT markers at the end). The run dirs (`runs/lora-seed-43`, `runs/mix-review-seed-43`) are separate and are the record. Lora 0.26 batch/s, mix-review 0.20 batch/s at start (both slower than solo while they share the card). Dream seed 43 launches automatically when both EXIT markers are in that log.
