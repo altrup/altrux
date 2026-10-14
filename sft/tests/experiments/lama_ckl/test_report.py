@@ -232,7 +232,7 @@ def test_aggregate_runs_rejects_incomplete_epoch_curves(epochs: list[int]):
         aggregate_runs([run])
 
 
-@pytest.mark.parametrize("key", ["eval_batch_size", "requested_dream_batch_size"])
+@pytest.mark.parametrize("key", ["eval_batch_size"])
 def test_aggregate_runs_rejects_mixed_batch_settings(key: str):
     settings = {
         "epochs": 0,
@@ -253,6 +253,34 @@ def test_aggregate_runs_rejects_mixed_batch_settings(key: str):
 
     with pytest.raises(ValueError, match=key):
         aggregate_runs(runs)
+
+
+def test_dream_batch_size_is_a_dream_setting_not_a_cross_arm_one():
+    settings = {
+        "epochs": 0,
+        "engineering_only": False,
+        "eval_batch_size": 16,
+        "split_manifest_sha256": "x",
+    }
+    point = [{"epoch": 0, "to_learn_accuracy": 0.0, "not_to_forget_accuracy": 1.0}]
+    frozen = {
+        "arm": "frozen",
+        "seed": 42,
+        "settings": settings | {"requested_dream_batch_size": 10},
+        "curve": point,
+    }
+    dream = {
+        "arm": "dream",
+        "seed": 42,
+        "settings": settings | {"requested_dream_batch_size": 30},
+        "curve": point,
+    }
+
+    assert set(aggregate_runs([frozen, dream])["arms"]) == {"frozen", "dream"}
+
+    other_dream = dream | {"seed": 43, "settings": settings | {"requested_dream_batch_size": 10}}
+    with pytest.raises(ValueError, match="requested_dream_batch_size"):
+        aggregate_runs([frozen, dream, other_dream])
 
 
 def test_reply_temperature_is_a_dream_setting_not_a_cross_arm_one():

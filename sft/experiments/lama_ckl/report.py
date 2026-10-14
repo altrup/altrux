@@ -57,7 +57,6 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         "evidence_tokens",
         "reply_tokens",
         "eval_batch_size",
-        "requested_dream_batch_size",
         "model_name",
         "warmstart_sha256",
         "split_manifest_sha256",
@@ -74,6 +73,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
         ("docs_per_wake", ("dream",)),
         ("reply_temperature", ("dream",)),
         ("dreams_per_cycle", ("dream",)),
+        ("requested_dream_batch_size", ("dream",)),
         *(("epochs", (arm,)) for arm in TRAINED_ARMS),
     ):
         if len({run["settings"].get(key) for run in runs if run["arm"] in arms}) > 1:
