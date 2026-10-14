@@ -192,3 +192,6 @@ Read at 01:00 (cycle 60): unchanged. 98 s/cycle; cycle 99 due ~02:05 UTC.
 | 61-72 | 0.000-0.004 | 0.966-0.983 | 0-4 | 0 | 0-11 | 0-4 | 0.13-0.87 / 0.97-1.00 | ~0.002 | cycle 72: ` Communalism Combat is an organization founded in 1993…` (copy); reply 5 continues its document (` The team also included midfielder Ivan Rakitić…`) | cycle 64: 11 duplicates, copy fraction 0.87. cycle 72: **2 of 5 shown open with the frame** (`Remember this for later: Manager Felix Magath formed an attacking lineup…`, the last wake document verbatim); the rest are the same document continued or paraphrased (Grafite, Džeko) |
 
 Read at 01:20 (cycle 72): the frame-opened dream is now common (2/5 sampled, vs 1/5 at cycle 48, none before). Scores at the floor through 73 cycles. 98.5 s/cycle; cycle 99 due ~02:05 UTC.
+| 73-85 | 0.000-0.004 | 0.963-0.976 | 0-4 | 0 | 0-9 | 1-3 | 0.04-0.65 / 0.56-1.00 | ~0.002 | cycle 85: replies 1 and 2 identical (` The cardinals present at Rome assembled in Septizodium…`: reply 2 copies document 1), others copy their own document | 4 of 5 shown are the last wake document (Marpessa Dawn) verbatim or paraphrased |
+
+Read at 01:41 (cycle 85): unchanged. 14 cycles left, EXIT due ~02:05 UTC.
