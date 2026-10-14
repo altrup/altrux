@@ -68,6 +68,19 @@ branch reaches `main` only through the person's review. The rented-box
 experimenter's mid-run limits are in
 `.agents/skills/altrux-experimenter/SKILL.md`.
 
+A protected edit that adds or changes a forward pass, a loss, or a training
+step is specified by the mechanism spec block of the governing DISCUSSION
+note (ledger of forward passes with initial state and weights, loss formula,
+event sequence, cycle-0 live reading; see
+`.agents/skills/altrux-debrief/SKILL.md` step 4). The brief to whoever
+implements it quotes that block verbatim, never a paraphrase, and the
+`PROTECTED EDIT` report maps every ledger row to `file:line` so the person
+reviews the mapping and not only the diff. A forward pass whose initial
+state the brief does not name is not implemented until it does. (2026-10-13:
+a brief said "from `init_state`" without saying which state; the runner
+passed the teacher's wake state, and the distillation loss was rounding noise
+for a hundred billed cycles.)
+
 ## Always update READMEs and .env.example
 
 Whenever you change user-facing behaviour — a new endpoint, a new CLI flag, changed defaults, a removed feature — update the relevant README(s) in the same change. The READMEs to keep in sync are:

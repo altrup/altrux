@@ -48,14 +48,16 @@ act on.
    already rejected unless one of you has new evidence. Disagreements get
    resolved or recorded as open questions.
 
-   The one formal moment: before a mechanism is registered, restate it as
-   math plus a numbered event sequence and get sign-off on that block, not
-   on a paraphrase. The details are the experiment: which state a logit is
-   trained from, what carries versus what is discarded, what fires before
-   what inside a step. When your teammate's words admit two readings, name
-   the difference and ask (08-06: "B1" ran as generate-while-draining when
-   the intent was train-on-shared-dream; nobody put the sequence in front
-   of the teammate).
+   The one formal moment: before a mechanism is registered, put the
+   mechanism spec block (step 4) in front of your teammate and get sign-off
+   on that block, not on a paraphrase. The details are the experiment:
+   which state a logit is trained from, what carries versus what is
+   discarded, what fires before what inside a step. When your teammate's
+   words admit two readings, name the difference and ask (08-06: "B1" ran
+   as generate-while-draining when the intent was train-on-shared-dream;
+   nobody put the sequence in front of the teammate. 10-13: the note never
+   said which state the student replays from; the implementation used the
+   teacher's state and the loss was rounding noise for a hundred cycles).
 
 4. **Write the DISCUSSION file as you converge** —
    `notes/discussion/DISCUSSION-YYYYMMDD-<topic>.md` (see the existing ones for the
@@ -64,7 +66,23 @@ act on.
    rejected" section (so the next session doesn't re-derive dead ends), and
    a housekeeping section. It must be self-contained and actionable by an
    autonomous experimenter session reading it cold: concrete commands,
-   flags, checkpoint names, and thresholds — not vibes.
+   flags, checkpoint names, and thresholds — not vibes. Nothing in it may
+   be left to "the existing code": the implementer rewrites that code with
+   only this file in hand.
+
+   **Every mechanism the file registers or changes carries a mechanism
+   spec block.** It contains at least, and may contain more than:
+   - a ledger with one row per forward pass (wake, dream generation,
+     teacher logits, student replay, scorer, baseline training): initial
+     state, weights, gradient on or off, what is recorded;
+   - the loss, as a formula whose every input names its ledger row;
+   - the numbered event sequence inside one cycle or step;
+   - the cycle-0 live reading: the observable that proves the training
+     signal exists before anything has been learned, the value that means
+     it is dead, and what the runner does on that value.
+   The block is what the teammate signs off on in step 3, what the
+   implementer's brief quotes verbatim, and what the PROTECTED EDIT report
+   maps to `file:line` (root `AGENTS.md`, "Protected paths").
 
    Details alone are not enough: **register the GOAL with the same rigor
    as the mechanism** — what each apparatus is FOR, what quantity every
@@ -76,8 +94,29 @@ act on.
    eraser goal block (prime directive → measurable proxies → lexicographic
    decision procedure → non-goals) is the reference shape.
 
-5. **Dry-run the file before committing it.** Spawn a subagent (Opus-class,
-   no conversation context — only the codebase, like a real experimenter
+5. **Adversarial read, then back to the teammate.** Run
+   `/altrux-adversarial-read <path of the file>` as an Opus-class subagent
+   with no conversation context (`.agents/skills/altrux-adversarial-read/SKILL.md`
+   is the whole brief; give it the path and nothing else). It reads the
+   file alone first, then the repo, and returns findings in four
+   categories: pointless, wrong, unsupported, unclear. Bring the report to
+   your teammate with your position on each finding (accept, or reject
+   with the reason); the teammate decides; fold the accepted ones in.
+   Repeat steps 3–5 until the read returns nothing above cosmetic and you
+   are both satisfied. Commit the file at that point.
+
+6. **Implement, by mutual consent.** The local work the file registers
+   (protocol edits, script fixes, altrux-experimenter/altrux-debrief/
+   altrux-adversarial-read skill updates, data-prep tweaks, tests): propose
+   each item, implement only what you both agree to, commit per
+   sub-feature, and record them in the file's housekeeping section. A
+   change to a protected file follows root `AGENTS.md`: the brief quotes
+   the mechanism spec block verbatim, and the PROTECTED EDIT report maps
+   each ledger row to `file:line` so the teammate reviews the mapping, not
+   only the diff.
+
+7. **Dry-run after implementation.** Spawn a subagent (Opus-class, no
+   conversation context — only the codebase, like a real experimenter
    session) that loads the altrux-experimenter skill in explicit DRY-RUN
    mode. Replicate the production setup as closely as possible: give it
    ONLY what a real experimenter session would get — the skill and the
@@ -85,18 +124,15 @@ act on.
    do instead of executing anything" and "state anything you'd have to
    guess or decide yourself". Do NOT hand it a reading list, a report
    structure, or hints about what matters — steering it hides exactly the
-   misreadings the dry run exists to surface. Fold its findings back into
-   the file. The file is done when the dry run contains no surprises —
-   misreadings surface here, not on a rented box.
+   misreadings the dry run exists to surface. It runs after step 6 because
+   the experimenter reads the real code and the real Makefile. Fold its
+   findings into the file or the code and rerun it. The file is done when
+   the dry run contains no surprises — misreadings surface here, not on a
+   rented box.
 
-6. **Housekeeping last, by mutual consent.** After the direction is agreed,
-   propose any small local changes that fell out of the discussion (script
-   fixes, altrux-experimenter/altrux-debrief command updates, data-prep tweaks). Implement
-   only what you both agree to, commit them, and record them in the notes'
-   housekeeping section.
-
-7. **Close.** Commit the DISCUSSION file. This is the local machine —
-   notes are committed here directly (no watchdog or rsync race).
+8. **Close.** Commit (or amend, if unpushed and yours) the DISCUSSION file
+   with the dry-run fixes. This is the local machine — notes are committed
+   here directly (no watchdog or rsync race).
 
 ## Small tests locally, big tests on the box
 
