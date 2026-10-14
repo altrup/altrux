@@ -171,3 +171,11 @@ Read at 23:50 (cycle 19): the role marker has dropped out of the dreams (cycle 1
 | 25 | 0.002 | 0.980 | 3 | 0 | 3 | 1 | **0.698** / 0.988 | | ` The Gotthard Road Tunnel is one of three tunnels…` (restatement of the document) | dreams 1-4 of 5 shown are the last wake document (Gotthard tunnel) copied or lightly paraphrased, 511 tokens each |
 
 Read at 00:00 (cycle 25): the copy stage. Mean copy fraction climbed 0.18 → 0.31 → 0.57 → 0.70 over cycles 20-25; most dreams reproduce the last document of the wake; duplicates appear (3/30). The frame string has not appeared in a dream. Scores at the floor (to-learn ≤ 0.004). Continuing — copies are the carrier the debrief kept (§4.3), and whether distilling them moves to-learn is the question the curve answers.
+| 26 | 0.002 | 0.973 | 4 | 0 | 7 | 4 | 0.522 / 1.000 | | | 7 duplicates; exact copies (max 1.000) |
+| 27 | 0.006 | 0.988 | 4 | 0 | 0 | 2 | 0.177 / 1.000 | | | |
+| 28 | 0.005 | 0.981 | 5 | 0 | 3 | 2 | 0.370 / 1.000 | | | |
+| 29 | 0.000 | 0.969 | 3 | 0 | 0 | 2 | 0.407 / 0.908 | | | |
+| 30 | 0.003 | 0.978 | 5 | 0 | 0 | 1 | 0.044 / 1.000 | | | |
+| 31 | 0.002 | 0.979 | 4 | 0 | 0 | 1 | 0.434 / 0.984 | 0.0016 | ` The Automatic Computing Engine (ACE) was an early electronic stored-program computer design…` (restatements, 4/5 forced) | 3 of 5 shown copy the last wake document (Grey Nuns of Montreal); one is `Where did the Athenians hold their Olympic Games…` + invented passage |
+
+Read at 00:11 (cycle 31): steady copy stage, 95 s/cycle (dreams at the cap), distillation loss down to 0.0016 (the teacher agrees with itself more as dreams become copies). No frame string, no `Yes`/newline ladder so far. Scores at the floor.
