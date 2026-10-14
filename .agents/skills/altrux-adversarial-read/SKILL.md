@@ -20,7 +20,11 @@ the note. Finish and record this pass before opening any other file.
 
 **Pass two: the note against the repo.** Now open the code, the logs, the
 artifacts, and the earlier notes the note names or relies on, and anything
-else you need to check a claim. This pass judges truth and support,
+else you need to check a claim. A value that an artifact or a log records
+(a score in a `result.json`, a loss on a log line, a sha in a manifest) is
+taken as recorded; you recompute nothing. A derived number the note gives
+without saying what computed it is a category-3 finding (unsupported),
+whatever it says; a notes file is an interpretation, not a record. This pass judges truth and support,
 categories 2 and 3:
 
 1. For every statement the note makes about the code ("the student replays
@@ -33,12 +37,41 @@ categories 2 and 3:
    08-23 protocol adopted the existing treatment"), open that note and say
    whether it made that decision.
 
+4. Check the note against itself: a number, a cycle, or a rule stated in
+   two sections must agree (a timeline in the summary against the table in
+   the direction; a threshold in the rules against the same threshold in
+   the session order).
+
 Pass-one findings are append-only. Pass two may add "the current code
 resolves this as X; the note does not say so" to a finding; it never
 removes or demotes one. The code doing it correctly today is never a reason
 to drop a finding: on 2026-10-13 the code ran the student from a fresh
 state, the note did not say so, and the note-driven rewrite replaced it
 with the wake state.
+
+## Lenses
+
+You are the merger. Spawn three sub-readers in parallel, each an agent of
+your own model class with no context but this skill file, the note's path
+and one lens from the list below; each runs both passes under its lens
+and returns its findings. You then read the note yourself for anything
+the lenses leave uncovered, merge the three reports, drop duplicates
+(keep the better-evidenced copy), rank within each category, and return
+one report. When a caller names a lens on you directly, you are a
+sub-reader: read with that lens, report only what it covers, spawn
+nothing. The three lenses:
+
+- **mechanism and goal**: every forward pass, loss, optimizer step and
+  decision rule; what each is for and whether it can do it; categories 1
+  and 2 mostly.
+- **numbers against artifacts**: every count, range, table and citation,
+  checked against the artifact, log or earlier note it rests on, and the
+  note against itself; categories 2 and 3 mostly.
+- **implementability**: every command, flag, path, test name and
+  checkpoint; every decision an implementer or an experimenter would have
+  to make; category 4 mostly.
+
+Without a lens on you, you are the merger.
 
 ## What you report
 

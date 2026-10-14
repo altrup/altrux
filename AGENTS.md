@@ -153,3 +153,5 @@ So a generator's log needs:
 - **Decoded text** — a few hundred characters either side of one instance of every structural event the generator creates (each join type, each splice, each boundary). Three samples read in ten seconds beats any aggregate.
 
 The same applies to probes: a probe that reports a number without ever showing the tokens it scored can be measuring something other than what its name says.
+
+A number a note derives from a run (a count over the dreams, a step norm from saved adapters) comes from a computation over the whole artifact, never from the samples a runner prints or from memory, and the note says what produced it. A run note's reading of three printed dreams per cycle put the first frame-opened dream at cycle 48; the thirty in `dreams.json` had it at cycle 24, and the wrong timeline was about to be registered as a control (2026-10-14).

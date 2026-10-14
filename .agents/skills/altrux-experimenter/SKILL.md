@@ -48,8 +48,10 @@ and a local session never compensates by starting box work itself.
 | End the run (irreversible) | `touch scripts/.watchdog-terminate` — only after the shutdown checklist |
 
 The LAMA-CKL session commands, from `~/altrux/sft`, in the session order of
-the governing note. The debrief's verbatim command supersedes any example
-here.
+the governing note. The governing note's commands AND its rules (session
+order, gates, stop conditions, what to record) supersede anything in this
+skill where they differ; the blocks below describe the shape of a session
+and apply only where the governing note is silent.
 
 | Step | Command |
 |------|---------|
@@ -57,8 +59,9 @@ here.
 | Probe a checkpoint | `make warm-start-probe ARGS="--init-adapter <step dir>"` (see PROBE EVERY CHECKPOINT) |
 | Build the split | `make lama-ckl-split ARGS="--model-name mamba2_2_7b --lama-root ../.cache/LAMA/data"` (-> `.cache/lama_ckl/mamba2_2_7b_ultra20k-v4/`) |
 | Frozen cell, three times | `make lama-ckl-frozen-x3 SEED=42 ARGS="--model-name mamba2_2_7b"` (-> `.cache/lama_ckl/runs/frozen-seed-42-r{1,2,3}`) |
-| Acceptance | `make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 10 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5"` |
-| One trained cell | `make lama-ckl-run ARGS="--arm <lora\|mix-review> --model-name mamba2_2_7b --seed 42 --max-hours <H>"` (30 epochs), or `... --arm dream ... --epochs 1 --docs-per-wake 5 --dreams-per-cycle 10 --max-hours <H>"` |
+| Acceptance | `make lama-ckl-run ARGS="--arm dream --model-name mamba2_2_7b --seed 42 --docs-per-wake 5 --dreams-per-cycle 30 --cycles 1 --output ../.cache/lama_ckl/acceptance/dream-5"` |
+| One trained cell | `make lama-ckl-run ARGS="--arm <lora\|mix-review> --model-name mamba2_2_7b --seed 42 --max-hours <H>"` (30 epochs), or `... --arm dream ... --epochs 1 --docs-per-wake 5 --dreams-per-cycle 30"` (no `--max-hours`: it cannot stop a one-epoch cell) |
+| Dream census of a cell | `make lama-ckl-census ARGS="../.cache/lama_ckl/runs/<cell>/work/<epoch-01.* dir>"` (or an `epoch-NN/`); writes `census.json` there; the census columns of the curve table come from it, never from the three dreams the runner prints |
 | Engineering smoke | `make lama-ckl-smoke ARGS="--arm <arm> --model-name mamba2_2_7b"` |
 | Llama-2 calibration | `PATH="$PWD/../.cache/TAALM/.venv/bin:$PATH" make lama-ckl-upstream-smoke`, then `... make lama-ckl-upstream-run`, then `make lama-ckl-upstream-summarize RESULT=/results/lamackl/finetune_qlora.pkl` (not in this session's order, §3.4: the uploaded pickle is reused) |
 | Aggregate report | `make lama-ckl-report` |
@@ -236,11 +239,19 @@ each saving its adapter and scoring both fact sets into
 `cycle-NN/` (under `work/` while running, `epoch-01/` once the epoch
 completes). The frozen cell is scored three times; the spread of
 the three is the evaluation resolution. Seed 42 of all four arms runs first.
-Seeds 43 and 44 run only on the rule in the debrief. The official
-acquisition and retention scores are primary; the dream and wake
-diagnostics are secondary process measurements.
+Seeds 43 and 44 run only on the rule in the debrief (none for the
+2026-10-14 session). The official acquisition and retention scores are
+primary; the dream and wake diagnostics are secondary process
+measurements. The dream cell's curve table in the run notes carries, per
+cycle, both accuracies, the maximum per-dream loss and `subjects_mentioned`
+(from the distil log line / `cycle-NN/distil.json`), forced and
+role-marker closes, and the census columns from `make lama-ckl-census`
+(frame-anywhere, frame-early, frame-strict, no `[USER]`, `[ASSISTANT]`
+present, EOC stops, duplicates, copy fraction, step norm).
 
-SESSION ORDER (DISCUSSION-20261013 §3.4):
+SESSION ORDER (the 2026-10-13 §3.4 shape; the governing note's own
+session order replaces this list when it gives one, as the 2026-10-14
+note §3.2 does):
 
 1. Warm start, probe on each checkpoint, pin gate on the final one, pin
    the SHA.
@@ -297,12 +308,15 @@ or relaunch to repair it.
 PRE-GRID ACCEPTANCE (DISCUSSION-20261013 §3.4 step 4). Run the runner once
 with `--arm dream --cycles 1 --docs-per-wake 5 --output <dir outside
 .cache/lama_ckl/runs/>`. It does one wake-sleep cycle and saves the cycle
-adapter without an evaluation. It passes when, in `cycle-00/`,
-`wake.json` shows `internal_eoc` 0, `role_marker_closes` 0 of 5 and forced
-closes 0 of 5, and the dreams in `dreams.json` are non-empty with
-`subjects_mentioned` above 0 in its diagnostics. Read the five decoded
-replies and the ten dreams, and quote one of each in the run notes. A miss
-is stop-and-report. `make lama-ckl-smoke` is the engineering smoke only (2 documents, 2
+adapter without an evaluation. Under the 10-13 rules it passes when, in
+`cycle-00/`, `wake.json` shows `internal_eoc` 0, `role_marker_closes` 0 of
+5 and forced closes 0 of 5, and the dreams in `dreams.json` are non-empty
+with `subjects_mentioned` above 0 in its diagnostics, and a miss is
+stop-and-report. **Under the 2026-10-14 note (§3.2 step 2, §4.2) those pass
+conditions and the dream-count rule are suspended: the only stop is the
+per-dream loss maximum under 0.01 on the distil log line; everything else
+is read and recorded.** Read the five decoded replies and every dream, and
+quote one of each in the run notes. `make lama-ckl-smoke` is the engineering smoke only (2 documents, 2
 dreams, 32 tokens). It proves the code path runs; it proves nothing about
 dream quality.
 
@@ -315,8 +329,9 @@ cycle; if the ETA is far above the debrief's estimate, record it and
 continue.
 
 SESSION SOFT CAP. The session has a wall-clock soft cap; the debrief states
-the hours. Launch every `lama-ckl-run` cell with `--max-hours` set to the
-hours that remain in the cap. The runner stops after the first epoch that
+the hours. Launch every multi-epoch `lama-ckl-run` cell with `--max-hours`
+set to the hours that remain in the cap; a `--epochs 1` dream cell takes no
+`--max-hours` (see below: the cap cannot stop it). The runner stops after the first epoch that
 ends past the cap, so a cell can overrun it by up to one epoch. A 30-epoch
 baseline cell that stops at the cap resumes next session from its last
 `epoch-EE/` with the same command. A `--epochs 1` dream cell has no

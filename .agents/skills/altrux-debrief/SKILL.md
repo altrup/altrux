@@ -84,6 +84,14 @@ act on.
    implementer's brief quotes verbatim, and what the PROTECTED EDIT report
    maps to `file:line` (root `AGENTS.md`, "Protected paths").
 
+   **Every derived number in the file comes from a computation over the
+   whole artifact, run in this session, and names what produced it**
+   (root `AGENTS.md`, "Sanity-check the artifact"); never from a run note's
+   reading of printed samples or from memory. (10-14: a collapse timeline
+   copied from the run note, which was read off the three dreams the runner
+   prints per cycle, was 24 cycles late against the thirty in `dreams.json`
+   and cost four review rounds.)
+
    Details alone are not enough: **register the GOAL with the same rigor
    as the mechanism** — what each apparatus is FOR, what quantity every
    knob-decision optimizes, and the named non-goals (what must NOT be
@@ -95,11 +103,13 @@ act on.
    decision procedure → non-goals) is the reference shape.
 
 5. **Adversarial read, then back to the teammate.** Run
-   `/altrux-adversarial-read <path of the file>` as an Opus-class subagent
-   with no conversation context (`.agents/skills/altrux-adversarial-read/SKILL.md`
-   is the whole brief; give it the path and nothing else). It reads the
-   file alone first, then the repo, and returns findings in four
-   categories: pointless, wrong, unsupported, unclear. Bring the report to
+   `/altrux-adversarial-read <path of the file>` as one Opus-class
+   subagent with no conversation context
+   (`.agents/skills/altrux-adversarial-read/SKILL.md` is the whole brief;
+   give it the path and nothing else). It fans out to the skill's three
+   lenses itself, reads the file alone first and then the repo, and
+   returns one merged report in four categories: pointless, wrong,
+   unsupported, unclear. Bring the report to
    your teammate with your position on each finding (accept, or reject
    with the reason); the teammate decides; fold the accepted ones in.
    Repeat steps 3–5 until the read returns nothing above cosmetic and you
