@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 import torch
 
@@ -9,20 +11,16 @@ VOCAB = 16
 IDS = {"user_id": USER, "asst_id": ASST, "eos_id": EOS, "eoc_id": EOC}
 
 
-class State:
-    def __init__(self):
-        self.conv_states = [torch.zeros(1, 2)]
-        self.ssm_states = [torch.zeros(1, 3)]
-
-
 class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.table = torch.nn.Parameter(
             torch.randn(VOCAB, VOCAB, generator=torch.Generator().manual_seed(0))
         )
+        self.states: list[object] = []
 
     def forward(self, tokens, state=None):
+        self.states.append(state)
         return self.table[tokens], state
 
 
@@ -60,7 +58,7 @@ def run(dreams, lr=0.0):
     model = Model()
     opt = CountingSGD(model.parameters(), lr=lr)
     before = model.table.detach().clone()
-    out = distill_dream_batch(model, opt, dreams, State(), 1.0, **IDS)
+    out = distill_dream_batch(model, opt, dreams, 1.0, **IDS)
     return out, opt, model, before
 
 
@@ -109,3 +107,40 @@ def test_padding_positions_are_never_scored():
     both, *_ = run([short, long])
     assert both["loss"] == pytest.approx((a["loss"] + b["loss"]) / 2)
     assert both["token_gradients"] == a["token_gradients"] + b["token_gradients"]
+
+
+def test_student_state_is_empty_in_batch():
+    assert not {"init_state", "state"} & set(inspect.signature(distill_dream_batch).parameters)
+    _, _, model, _ = run([dream(TWO_TURNS)])
+    assert model.states == [None]
+
+
+def test_dream_losses_recorded_and_floor_warning_in_batch():
+    first, unscored, second = (
+        dream(TWO_TURNS, seed=2),
+        dream([EOC]),
+        dream([EOC, ASST, 7, 8], seed=3),
+    )
+    alone = [run([d])[0]["loss"] for d in (first, second)]
+    out, *_ = run([first, unscored, second])
+    assert out["dream_losses"] == [pytest.approx(alone[0]), None, pytest.approx(alone[1])]
+    assert out["max_dream_loss"] == pytest.approx(max(alone))
+    assert out["loss"] == pytest.approx(sum(alone) / 2)
+
+    # A dream's loss is its weighted KL with weights summing to 1: identical
+    # per-position KL everywhere gives that KL back whatever the dream length.
+    model = Model()
+    flat = dream(TWO_TURNS)
+    flat.teacher_logits = torch.zeros(len(TWO_TURNS), VOCAB)
+    with torch.no_grad():
+        model.table.copy_(torch.arange(VOCAB, dtype=torch.float).expand(VOCAB, VOCAB))
+    out = distill_dream_batch(model, CountingSGD(model.parameters(), lr=0.0), [flat], 1.0, **IDS)
+    log_p = torch.log_softmax(torch.zeros(VOCAB), -1)
+    kl = (
+        log_p.exp() * (log_p - torch.log_softmax(torch.arange(VOCAB, dtype=torch.float), -1))
+    ).sum()
+    assert out["dream_losses"] == [pytest.approx(kl.item())]
+
+    none, *_ = run([dream([EOC])])
+    assert none["dream_losses"] == [None] and none["max_dream_loss"] is None
+    assert none["loss"] == 0.0

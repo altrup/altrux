@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from experiments.dream_generation import _repeat_state, copy_state
+from experiments.dream_generation import copy_state
 from experiments.dream_types import CachedDream, Dream, DreamCache
 from experiments.inference import kl_loss, replay_step
 
@@ -162,7 +162,6 @@ def distill_dream_batch(
     model,
     opt,
     dreams: Sequence[CachedDream],
-    init_state,
     kl_temp: float,
     *,
     user_id: int,
@@ -170,7 +169,12 @@ def distill_dream_batch(
     eos_id: int,
     eoc_id: int,
 ) -> dict[str, object]:
-    """Distill every dream in one batched forward and one optimizer step, weighted per turn."""
+    """Distill every dream in one batched forward and one optimizer step, weighted per turn.
+
+    The student replays each dream from an empty state. A dream's loss is its
+    weighted KL (its weights sum to 1), None when it has no scored position;
+    the batch loss is their mean over scored dreams.
+    """
     import torch
     import torch.nn.functional as F
 
@@ -184,34 +188,44 @@ def distill_dream_batch(
         "token_gradients": sum(map(len, weights)),
         "scored_dreams": scored,
         "scored_tokens": [len(w) for w in weights],
+        "dream_losses": [None] * len(dreams),
+        "max_dream_loss": None,
     }
     if not scored:
         return out
-    device = init_state.ssm_states[0].device
+    device = next(model.parameters()).device
     length = max(len(d.dream_ids) for d in dreams)
     tokens = torch.tensor(
         [d.dream_ids + [d.dream_ids[-1]] * (length - len(d.dream_ids)) for d in dreams],
         dtype=torch.long,
         device=device,
     )
-    logits, _ = model(tokens, state=_repeat_state(init_state, len(dreams)))
+    logits, _ = model(tokens, state=None)
     rows = [row for row, w in enumerate(weights) for _ in w]
     cols = [position for w in weights for position in w]
     teacher = torch.cat(
         [d.teacher_logits[list(w)] for d, w in zip(dreams, weights, strict=True) if w]
     )
-    weight = torch.tensor([v for w in weights for v in w.values()], device=device) / scored
+    weight = torch.tensor([v for w in weights for v in w.values()], device=device)
     per_position = F.kl_div(
         F.log_softmax(logits[rows, cols].float() / kl_temp, dim=-1),
         F.log_softmax(teacher.to(device).float() / kl_temp, dim=-1),
         log_target=True,
         reduction="none",
     ).sum(-1)
-    loss = (weight * per_position).sum() * kl_temp**2
+    per_dream = torch.zeros(len(dreams), device=device).index_add(
+        0, torch.tensor(rows, device=device), weight * per_position * kl_temp**2
+    )
+    loss = per_dream.sum() / scored
     loss.backward()
     opt.step()
     opt.zero_grad(set_to_none=True)
+    dream_losses = [
+        value if w else None for value, w in zip(per_dream.tolist(), weights, strict=True)
+    ]
     out["loss"] = loss.item()
+    out["dream_losses"] = dream_losses
+    out["max_dream_loss"] = max(value for value in dream_losses if value is not None)
     return out
 
 

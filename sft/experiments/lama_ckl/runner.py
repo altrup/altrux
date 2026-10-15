@@ -63,6 +63,8 @@ REPLY_TOKENS = 128
 DREAM_TOKENS = 512
 DREAM_TEMPERATURE = 0.7
 KL_TEMPERATURE = 1.0
+DREAM_LOSS_FLOOR = 0.01
+DISTIL_KEYS = ("loss", "dream_losses", "max_dream_loss", "scored_dreams", "optimizer_steps")
 
 
 def file_sha(path: str | Path) -> str:
@@ -181,9 +183,7 @@ class EpochSteps(Protocol):
         wake: Mapping[str, object],
     ) -> tuple[Sequence[object], dict[str, object]]: ...
 
-    def distil(
-        self, dreams: Sequence[object], open_state: object, label: str
-    ) -> dict[str, object]: ...
+    def distil(self, dreams: Sequence[object], label: str) -> dict[str, object]: ...
 
     def train_documents(self, epoch: int) -> dict[str, object]: ...
 
@@ -225,7 +225,13 @@ def _dream_epoch(
             )
         dreams, dream_payload = steps.dream(epoch, cycle, cycle_rows, open_state, wake)
         _write_json(cycle_dir / "dreams.json", dream_payload)
-        distilled = steps.distil(dreams, open_state, f"dream epoch {epoch} cycle {cycle}")
+        diagnostics = dream_payload["diagnostics"]
+        distilled = steps.distil(dreams, f"dream epoch {epoch} cycle {cycle}")
+        distil_record = {
+            **{key: distilled[key] for key in DISTIL_KEYS},
+            "subjects_mentioned": diagnostics["subjects_mentioned"],
+        }
+        _write_json(cycle_dir / "distil.json", distil_record)
         adapter_sha = steps.save_cycle(cycle_dir)
         scores: dict[str, object] = {}
         if max_cycles is None:
@@ -235,7 +241,6 @@ def _dream_epoch(
                 key: evaluation[key]
                 for key in ("to_learn_accuracy", "not_to_forget_accuracy", "evaluation_seconds")
             }
-        diagnostics = dream_payload["diagnostics"]
         record: dict[str, object] = {
             "cycle": cycle,
             "documents": len(cycle_rows),
@@ -248,6 +253,7 @@ def _dream_epoch(
             "set_sha256": dream_payload["set_sha256"],
             "diagnostics": diagnostics,
             **distilled,
+            **distil_record,
             **scores,
             "adapter_sha256": adapter_sha,
             "seconds": time.time() - cycle_started,
@@ -440,11 +446,17 @@ def _evaluate(
     return result
 
 
-def _save_trainable(model, path: Path, rank: int, alpha: float) -> str:
+def _save_trainable(model, path: Path, rank: int, alpha: float, optimizer=None) -> str:
+    """Save the trainable tensors, the fp32 master copies where optimizer holds them."""
     import torch
 
+    masters = (
+        {}
+        if optimizer is None
+        else dict(zip(map(id, optimizer.params), optimizer.masters, strict=True))
+    )
     state = {
-        name: value.detach().cpu()
+        name: masters.get(id(value), value).detach().cpu()
         for name, value in model.named_parameters()
         if value.requires_grad
     }
@@ -535,7 +547,7 @@ class _BoxSteps:
         )
         return dreams, payload
 
-    def distil(self, dreams, open_state, label):
+    def distil(self, dreams, label):
         from experiments.dream_distillation import distill_dream_batch
 
         started = time.time()
@@ -544,22 +556,35 @@ class _BoxSteps:
             self.model,
             self.optimizer,
             dreams,
-            open_state,
             KL_TEMPERATURE,
             user_id=int(user_id),
             asst_id=int(asst_id),
             eos_id=int(self.tokenizer.eos_token_id),
             eoc_id=int(eoc_id),
         )
+        peak = distilled["max_dream_loss"]
+        losses = " ".join(
+            "-" if value is None else f"{value:.4f}" for value in distilled["dream_losses"]
+        )
         print(
             f"[{ts()}] {label} distilled {distilled['scored_dreams']}/{len(dreams)} dreams, "
-            f"loss {distilled['loss']:.4f}",
+            f"loss {distilled['loss']:.4f}, max {'n/a' if peak is None else f'{peak:.4f}'}, "
+            f"dream losses [{losses}]",
             flush=True,
         )
+        if peak is not None and peak < DREAM_LOSS_FLOOR:
+            print(
+                f"[{ts()}] WARNING: {label} max dream loss {peak:.4f} is under "
+                f"{DREAM_LOSS_FLOOR}; are teacher and student the same function?",
+                flush=True,
+            )
         return {
             "optimizer_steps": 1 if distilled["scored_dreams"] > 0 else 0,
             "token_gradients": distilled["token_gradients"],
             "loss": distilled["loss"],
+            "dream_losses": distilled["dream_losses"],
+            "max_dream_loss": peak,
+            "scored_dreams": distilled["scored_dreams"],
             "generated_tokens": sum(len(dream.dream_ids) - dream.prefix_len for dream in dreams),
             "distil_seconds": time.time() - started,
         }
@@ -602,14 +627,18 @@ class _BoxSteps:
 
     def save_cycle(self, directory):
         rank, alpha = int(self.settings["lora_rank"]), float(self.settings["lora_alpha"])
-        self.teacher_sha = _save_trainable(self.model, directory / "trainable.pt", rank, alpha)
+        self.teacher_sha = _save_trainable(
+            self.model, directory / "trainable.pt", rank, alpha, self.optimizer
+        )
         return self.teacher_sha
 
     def save(self, directory, result):
         import torch
 
         rank, alpha = int(self.settings["lora_rank"]), float(self.settings["lora_alpha"])
-        self.teacher_sha = _save_trainable(self.model, directory / "trainable.pt", rank, alpha)
+        self.teacher_sha = _save_trainable(
+            self.model, directory / "trainable.pt", rank, alpha, self.optimizer
+        )
         result["adapter_sha256"] = self.teacher_sha
         if self.optimizer is not None:
             torch.save(self.optimizer.state_dict(), directory / "optimizer.pt")
@@ -618,6 +647,19 @@ class _BoxSteps:
         )
         result["peak_vram_bytes"] = int(torch.cuda.max_memory_allocated())
         torch.cuda.reset_peak_memory_stats()
+
+
+def _resume(model, optimizer, last: Path) -> None:
+    """Load the last epoch's adapter; a trained arm also restores its fp32 masters."""
+    import torch
+
+    from training.checkpoints import load_checkpoint
+
+    load_checkpoint(model, last)
+    if optimizer is not None:
+        optimizer.load_state_dict(
+            torch.load(last / "optimizer.pt", map_location="cpu", weights_only=True)
+        )
 
 
 def _completed_epochs(output: Path) -> list[Path]:
@@ -744,6 +786,7 @@ def main() -> None:
         "split_manifest_sha256": file_sha(args.split / "manifest.json"),
         "cycles": args.cycles,
         "max_hours": args.max_hours,
+        "adapter_dtype": None if args.arm == "frozen" else "fp32-master",
     }
     device = torch.device("cuda")
     torch.manual_seed(args.seed)
@@ -755,13 +798,14 @@ def main() -> None:
     from models.common import build_tokenizer
 
     from training.checkpoints import load_checkpoint
+    from training.master_weights import MasterAdamW
 
     load_checkpoint(model, args.init_adapter)
     tokenizer = build_tokenizer(model_mod)
     optimizer = (
         None
         if args.arm == "frozen"
-        else torch.optim.AdamW(trainable, lr=LEARNING_RATE, weight_decay=0.01)
+        else MasterAdamW(trainable, lr=LEARNING_RATE, weight_decay=0.01)
     )
     if hasattr(model, "set_grad_checkpoint"):
         model.set_grad_checkpoint(True, 64)
@@ -785,6 +829,8 @@ def main() -> None:
         existing = json.loads(manifest_path.read_text())
         current = json.loads(json.dumps(settings))
         existing.setdefault("cycles", None)
+        # A run without the key is bf16 (refused) or frozen (no adapter to train).
+        existing.setdefault("adapter_dtype", None)
         if {**existing, "max_hours": None} != {**current, "max_hours": None}:
             raise SystemExit(f"existing run uses different settings: {manifest_path}")
     manifest_path.write_text(json.dumps(settings, indent=1, sort_keys=True) + "\n")
@@ -794,11 +840,7 @@ def main() -> None:
     teacher_sha = warm_sha
     if completed:
         last = completed[-1]
-        load_checkpoint(model, last)
-        if optimizer is not None:
-            optimizer.load_state_dict(
-                torch.load(last / "optimizer.pt", map_location="cpu", weights_only=True)
-            )
+        _resume(model, optimizer, last)
         teacher_sha = str(curve[-1]["adapter_sha256"])
         print(f"[{ts()}] resumed after epoch {len(curve) - 1} from {last}", flush=True)
     steps = _BoxSteps(

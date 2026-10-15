@@ -482,6 +482,18 @@ make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm mix-review --seed 42"
 make lama-ckl-smoke ARGS="--model-name mamba2_2_7b --arm dream --seed 42"
 ```
 
+`make lama-ckl-census ARGS="<epoch-NN or work/epoch-NN.* directory>"`
+(`experiments/lama_ckl/diagnostics/dream_census.py`) counts, over all the
+dreams of every completed cycle in a dream run, the frame (anywhere, within
+the first 60 characters, as the opener), `[USER]` absent, `[ASSISTANT]`
+present and EOC stops, copies the runner's duplicate and copy-fraction
+diagnostics, reads `max_dream_loss` from `cycle-NN/distil.json` when present,
+and reports the adapter step norm, its cosines to the steps 1, 5 and 20
+cycles earlier, and the distance from the warm start (`--warm-start`, default
+the pinned adapter) from the saved `trainable.pt` files; it writes
+`census.json` in the given directory. The runner prints three dreams per
+cycle; the census is how the other twenty-seven get read.
+
 After the smoke fixes batch sizes for that rented machine, run the registered
 cells serially (`DISCUSSION-20261013` §3.3–3.4). Seeds `42`, `43`, and `44` are
 the frozen Mamba replication seeds; the split itself stays the one seed-42
@@ -530,22 +542,39 @@ From copies of that cycle's open post-wake state plus one
 dreams (default 10) at temperature `0.7`, `--dream-batch-size` per generation
 launch (default `--dreams-per-cycle`, so one launch). It distils all of them in
 one batched forward and one AdamW step at KL temperature `1.0`
-(`distill_dream_batch`). The KL is weighted per turn: each dream splits into
+(`distill_dream_batch`). The student replays each recorded dream from an empty
+state (`state=None`), not from the wake state the teacher generated it from
+(`DISCUSSION-20261014` §3.1). The KL is weighted per turn: each dream splits into
 turns at its role markers (EOS closes a turn), each turn with content gets 1/T
 of the dream's weight, split evenly over its tokens, a turn with nothing after
 its marker gets none, and the position that predicts the dream's terminal
-`<|endofconversation|>` is not scored. An empty dream contributes nothing; a
-cycle with no scored dream takes no step. Duplicate dreams train like any other
+`<|endofconversation|>` is not scored, so each scored dream's weights sum to 1.
+That weighted sum is the dream's loss; the batch loss, the one backpropagated,
+is their mean over scored dreams. An empty dream contributes nothing and its
+loss is `null`; a cycle with no scored dream takes no step. The distil log line
+prints the batch loss, the maximum per-dream loss (`max n/a` when nothing
+scored) and every per-dream loss, and a `WARNING` line follows when the maximum
+is under `0.01` (a smoke alarm for a student that matches its teacher; the run
+continues). Before the adapter is saved, `epoch-EE/cycle-CC/distil.json`
+records `loss`, `dream_losses` (one per dream in `dreams.json` order),
+`max_dream_loss`, `scored_dreams`, `optimizer_steps` and `subjects_mentioned`
+(from the dream diagnostics); the cycle's record in `result.json`
+(`treatment.cycles[]`) carries the same keys. Duplicate dreams train like any other
 and are counted in the diagnostics. After the step the cycle saves its adapter
-(`trainable.pt` and `lora_config.json`, no optimizer, about 43 MB) and scores
+(`trainable.pt` and `lora_config.json`, no optimizer, about 85 MB) and scores
 both fact sets into `epoch-EE/cycle-CC/result.json`, so a one-epoch cell is a
 100-point curve.
 
 Native LoRA trains one fixed seed-42 pass over the 500 evidence documents per
 epoch. Mix-Review pairs that pass with the 500 retention documents in the
 official fixed seed-0 review order. Neither wakes. The frozen arm is the initial
-evaluation alone, a one-point curve. All trainable arms use AdamW at `1e-4`;
-evaluation uses the published descriptive object-token accuracy from fresh
+evaluation alone, a one-point curve. All trainable arms use AdamW at `1e-4`
+(weight decay 0.01) on fp32 master copies of the bf16 adapter
+(`training/master_weights.py`): gradients are copied up, AdamW steps the
+copies, and the copies are cast back into the model, so a step below one bf16
+spacing accumulates instead of rounding away. Every saved `trainable.pt` holds
+the fp32 copies, and `run.json` records `adapter_dtype: "fp32-master"` (`null` for frozen).
+Evaluation uses the published descriptive object-token accuracy from fresh
 state, after every epoch (and, for the dream arm, after every cycle; the last cycle's
 score is the epoch's, so one epoch of 100 cycles is 101 evaluations).
 
@@ -563,7 +592,11 @@ make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm dream --seed 42 \
 
 Runs resume from the last atomically completed `epoch-EE/`. A partial epoch
 restarts from its first cycle with the saved adapter and optimizer; the
-per-cycle adapters carry no optimizer and are not resume points.
+per-cycle adapters carry no optimizer and are not resume points. A trained
+arm's resume restores the fp32 master copies and the AdamW state from that
+epoch's `optimizer.pt` and stops with an error if the file is missing. A trained
+arm's run directory written before the fp32 masters (no `adapter_dtype` in its
+`run.json`) fails the settings check and does not resume.
 `--max-hours H` stops a session after the first epoch that ends more than `H`
 hours after the session started; rerun the same command to continue. A resumed
 session may pass a different `--max-hours`.
@@ -571,8 +604,9 @@ Each epoch stores the adapter and optimizer, metric vectors, resource counts,
 and hashes in `epoch-EE/result.json`; each dream cycle stores
 `epoch-EE/cycle-CC/wake.json` (every prompt and reply token, the reply seeds,
 the forced-close and role-marker-close counts), `dreams.json` (exact dream token IDs, text, seeds, stop reasons,
-diagnostics, teacher adapter hash, and set hash), the cycle adapter, and
-(outside an acceptance check) `result.json`. `wake.json` is written
+diagnostics, teacher adapter hash, and set hash), `distil.json` (the
+per-dream losses, above), the cycle adapter, and (outside an acceptance check)
+`result.json`. `wake.json` is written
 before the wake invariants are checked, and `dreams.json` before any training
 step, so a refused cycle leaves its artifacts. The teacher is the current adapter at dream time: the
 previous cycle's saved adapter, or the epoch's starting adapter for its first

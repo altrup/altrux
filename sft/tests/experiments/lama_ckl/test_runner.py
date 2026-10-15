@@ -7,6 +7,9 @@ import torch
 
 from experiments.lama_ckl.protocol import lama_dream_diagnostics
 from experiments.lama_ckl.runner import (
+    _BoxSteps,
+    _resume,
+    _save_trainable,
     _write_epoch_result,
     build_parser,
     compact_dream_payload,
@@ -16,6 +19,7 @@ from experiments.lama_ckl.runner import (
     run_epochs,
 )
 from experiments.lama_ckl.split import pinned_warmstart_sha
+from training.master_weights import MasterAdamW
 
 
 def test_compact_dream_payload_keeps_reconstruction_data_but_not_logits():
@@ -99,11 +103,19 @@ class FakeSteps:
             "diagnostics": lama_dream_diagnostics(dreams, rows, [7]),
         }
 
-    def distil(self, dreams, open_state, label):
+    def distil(self, dreams, label):
         if self.fail_distil:
             raise RuntimeError("distillation failed")
         self.distilled += 1
-        return {"optimizer_steps": 1, "token_gradients": 3, "generated_tokens": 1, "loss": 0.5}
+        return {
+            "optimizer_steps": 1,
+            "token_gradients": 3,
+            "generated_tokens": 1,
+            "loss": 0.5,
+            "dream_losses": [0.5, None],
+            "max_dream_loss": 0.5,
+            "scored_dreams": 1,
+        }
 
     def train_documents(self, epoch):
         self.trained.append(epoch)
@@ -313,3 +325,125 @@ def test_dream_batch_size_defaults_to_dreams_per_cycle():
     assert parse_args(["--arm", "dream", "--dreams-per-cycle", "7"]).dream_batch_size == 7
     explicit = ["--arm", "dream", "--dream-batch-size", "2"]
     assert parse_args(explicit).dream_batch_size == 2
+
+
+USER, ASST, EOC, EOS, VOCAB = 1, 2, 3, 4, 8
+
+
+class State:
+    def __init__(self, conv, ssm):
+        self.conv_states, self.ssm_states = [conv], [ssm]
+
+
+class StateModel(torch.nn.Module):
+    """Records the state of every forward; logits never pick EOC."""
+
+    def __init__(self):
+        super().__init__()
+        table = torch.randn(VOCAB, VOCAB, generator=torch.Generator().manual_seed(0))
+        table[:, EOC] = -1e4
+        self.table = torch.nn.Parameter(table)
+        self.states: list[object] = []
+
+    def forward(self, tokens, state=None):
+        self.states.append(state)
+        return self.table[tokens], state
+
+
+class Tokenizer:
+    eos_token_id, pad_token_id = EOS, 0
+
+    def __call__(self, text, **kwargs):
+        return {"input_ids": [EOC]}
+
+    def convert_tokens_to_ids(self, token):
+        return {"[U]": USER, "[A]": ASST, "<EOC>": EOC}[token]
+
+    def decode(self, ids):
+        return f"<{ids[0]}>"
+
+
+def _box(model, optimizer=None, dreams=3):
+    return _BoxSteps(
+        args=SimpleNamespace(seed=42, dream_batch_size=dreams),
+        settings={"train_batch_size": 2, "dreams_per_cycle": dreams, "dream_tokens": 4},
+        model=model,
+        tokenizer=Tokenizer(),
+        optimizer=optimizer or torch.optim.SGD(model.parameters(), lr=0.0),
+        markers=("[U]", "[A]", "<EOC>"),
+        learned=ROWS,
+        retained=ROWS,
+        device="cpu",
+        teacher_sha="warm",
+    )
+
+
+def test_student_state_is_empty():
+    model = StateModel()
+    steps = _box(model)
+    wake_state = State(torch.arange(2.0).view(1, 2), torch.arange(3.0).view(1, 3) + 1)
+    wake = {"transcript_token_ids": [7]}
+
+    dreams, _ = steps.dream(1, 0, ROWS[:2], wake_state, wake)
+    first = model.states[0]
+    assert torch.equal(first.conv_states[0], wake_state.conv_states[0].repeat(3, 1))
+    assert torch.equal(first.ssm_states[0], wake_state.ssm_states[0].repeat(3, 1))
+
+    model.states.clear()
+    steps.distil(dreams, "test")
+    assert model.states == [None]
+
+
+def test_dream_losses_recorded_and_floor_warning(tmp_path: Path, capsys):
+    run_epochs(tmp_path, {**_settings("dream", epochs=1), "cycles": 1}, ROWS, FakeSteps(), [])
+    recorded = json.loads((tmp_path / "epoch-01" / "cycle-00" / "distil.json").read_text())
+    assert recorded == {
+        "loss": 0.5,
+        "dream_losses": [0.5, None],
+        "max_dream_loss": 0.5,
+        "scored_dreams": 1,
+        "optimizer_steps": 1,
+        "subjects_mentioned": 0,
+    }
+    epoch = json.loads((tmp_path / "epoch-01" / "result.json").read_text())
+    cycle = epoch["treatment"]["cycles"][0]
+    assert {key: cycle[key] for key in recorded} == recorded
+
+    model = StateModel()
+    steps = _box(model)
+    wake_state = State(torch.zeros(1, 2), torch.zeros(1, 3))
+    dreams, _ = steps.dream(1, 0, ROWS[:2], wake_state, {"transcript_token_ids": [7]})
+    capsys.readouterr()
+
+    # The student matches the teacher it was generated from: every loss is zero.
+    distilled = steps.distil(dreams, "floor")
+    assert distilled["max_dream_loss"] == pytest.approx(0.0, abs=1e-6)
+    assert "WARNING" in capsys.readouterr().out
+
+    for dream in dreams:
+        dream.teacher_logits = torch.randn(dream.teacher_logits.shape) * 10
+    distilled = steps.distil(dreams, "signal")
+    assert distilled["max_dream_loss"] > 0.01
+    assert "WARNING" not in capsys.readouterr().out
+
+    for dream in dreams:
+        dream.dream_ids, dream.token_texts = dream.dream_ids[:1], dream.token_texts[:1]
+        dream.teacher_logits = dream.teacher_logits[:1]
+    distilled = steps.distil(dreams, "empty")
+    assert distilled["dream_losses"] == [None] * 3 and distilled["max_dream_loss"] is None
+    out = capsys.readouterr().out
+    assert "max n/a" in out and "WARNING" not in out
+
+
+def test_fp32_master_weights_saved_and_required_on_resume(tmp_path: Path):
+    model = torch.nn.Linear(2, 2, bias=False).to(torch.bfloat16)
+    optimizer = MasterAdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
+
+    _save_trainable(model, tmp_path / "trainable.pt", 4, 8.0, optimizer)
+    saved = torch.load(tmp_path / "trainable.pt", weights_only=True)
+    assert saved["weight"].dtype == torch.float32
+
+    with pytest.raises(FileNotFoundError):
+        _resume(model, optimizer, tmp_path)
+    torch.save(optimizer.state_dict(), tmp_path / "optimizer.pt")
+    _resume(model, optimizer, tmp_path)
