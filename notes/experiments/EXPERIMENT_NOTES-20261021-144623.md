@@ -281,3 +281,19 @@ protected edits, no code changes. Session 14:46–~17:05 UTC (≈2.3 h of the 8 
 - The GPU-nondeterministic wake: acceptance and cell cycle 0 share seeds and adapter but sampled
   different replies, so cycle-0 readings are not reproducible to the dream; per-cycle readings
   should be treated as one draw.
+
+## Shutdown (checklist), 16:56 UTC
+
+1. lora `epoch-30/result.json` and mix-review `epoch-30/result.json` present; dream has no
+   `epoch-01/` (stopped; cycles 0–9 under `work/epoch-01.nnmqucxb/`).
+2. Closing section above.
+3. Notes committed and pushed on `box/20261021-140642` (`2ef2502`, plus this receipt commit). No
+   code changes; `sft/uv.lock` left modified by setup's re-resolve, uncommitted.
+4. Pull receipt `2026-10-21T16:55:17 UTC`: notes 22717 B; `runs/lora-seed-42/summary.json`
+   304161 B and 31 epoch `result.json`; `runs/mix-review-seed-42/summary.json` 303870 B and 31
+   epoch `result.json`; dream `work/epoch-01.nnmqucxb/` 10 cycle `result.json`, `census.json`
+   5481 B, `cycle-09/trainable.pt` 85373579 B, `cycle-09/dreams.json` 195786 B;
+   `acceptance/dream-5/epoch-01/cycle-00/distil.json` 845 B; logs
+   `lama-ckl-run-20261021-163654-1795999.log` 110725 B, `census-dream-seed-42-final.log` 1999 B.
+5. Nothing UNRETRIEVED; no fallback commit.
+6. `.watchdog-terminate` touched after this commit.
