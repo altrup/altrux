@@ -29,8 +29,8 @@ Two overrides for machines where the defaults don't fit:
 ruff (spaces, 100 columns); `make lint` checks without writing. `make hooks` installs a
 pre-commit hook that runs `make lint`, so an unformatted commit fails until
 you run `make fmt` and restage. `make test` runs the whole
-suite; for one file use `uv run --no-sync pytest tests/<path>` with the same
-`HF_HOME` and `PYTHONPATH` the Makefile sets.
+suite and forwards `ARGS` to pytest, so one file is
+`make test ARGS="tests/<path>"`.
 
 ## Source layout
 
@@ -187,12 +187,11 @@ Everything is plain tensors, lists, dicts and primitives, so the files load unde
 make train                      # start fresh
 make resume                     # resume from latest checkpoint
 make resume ARGS="--epochs 2"   # resume and train an extra epoch
-make preflight                  # load the real model+data, run the preflight gradient check, exit
 ```
 
 Pass any training flag through these targets with `ARGS="..."` (for example, `make train ARGS="--eos-weight 10"`).
 
-`make preflight` is worth running before a real training run, especially after touching a model's `train_hooks.py` or `model.py`: it loads the actual model and dataset (so it still pays for that, unlike the synthetic-model unit test in `models/tests/`) and runs one example through the same chunked forward+backward path training uses, asserting gradients actually reached every trainable parameter — then exits before the full loop. This is what would have caught this model's "the gated-delta merge never actually ran" and "k_proj/v_proj never received gradient" bugs immediately, instead of after a full run.
+After touching a model's `train_hooks.py` or `model.py`, run `make test` first: `models/tests/test_grad_checkpoint.py` and the per-model `train_hooks` tests assert on a synthetic model that gradients reach every trainable parameter through the same chunked forward+backward path training uses. This is what catches "the gated-delta merge never actually ran" and "k_proj/v_proj never received gradient" bugs before a full run.
 
 **Slot-based batching** (`--batch-size`, default 4): `training/loop.py` runs `B` examples in parallel using a slot-based loop. Each slot independently advances through its own example; when a slot finishes, it resets and picks up the next example. All slots are processed in one batched forward+backward per chunk, so the GPU sees a `(B, chunk_len)` tensor every step rather than `(1, chunk_len)` — the primary mechanism for saturating GPU utilisation on stateful models like `mamba2_2_7b_memory`, whose per-token step prevents the parallel-scan kernel from helping. Gradient accumulation (`--accum-tokens`, default 256) is specified in real tokens per slot, not chunk count, so it means the same amount of real training regardless of `--chunk-len` (same reasoning as `--ckpt-every-tokens` being token-based). The optimizer step fires every `round(accum_tokens / chunk_len)` chunks, i.e. after roughly `accum_tokens × B` real tokens (minus any padding).
 
@@ -254,13 +253,13 @@ For models whose `train_hooks.py` carries state across chunks via `init_state` (
 
 Run `make train ARGS="--help"` for all options (learning rate, rank, accumulation steps, etc.).
 
-`training/loop.py` is generic across every model in `models/` — it dispatches to that model's `train_hooks.py` (`models/{name}/train_hooks.py`) for the only part that genuinely differs: how to load/wrap the model for training, and how to compute loss for one chunk. Everything else — chunk iteration, shuffling, accumulation counting, checkpoint cadence/rotation (including mid-example resume), evaluation, preflight, non-finite checks — is shared, since both models here are chunked, state-threaded ones (just with very different `--chunk-len`s).
+`training/loop.py` is generic across every model in `models/` — it dispatches to that model's `train_hooks.py` (`models/{name}/train_hooks.py`) for the only part that genuinely differs: how to load/wrap the model for training, and how to compute loss for one chunk. Everything else — chunk iteration, shuffling, accumulation counting, checkpoint cadence/rotation (including mid-example resume), evaluation, non-finite checks — is shared, since both models here are chunked, state-threaded ones (just with very different `--chunk-len`s).
 
 ### Training `mamba2_2_7b_memory`
 
 This model's `train_hooks.py` differs from `mamba2_780m`'s in two ways, both visible in its module docstring: `Model.forward(input_ids, state)` is stateful, so `training/loop.py` processes examples in `--chunk-len`-token chunks with `state` carried (and detached) across chunks of the *same* example — never across different examples — bounding training RAM by chunk length rather than example length (see the "Long-context data" section above for why examples themselves aren't truncated at prep time instead). And loss is computed over every token, not just assistant turns, since for this model the content worth exercising long-range recall on is mostly in the long user turns.
 
-The default `--batch-size 4` and `--chunk-len 12` are tuned for this model on an H100 (80 GB); the 2.7B model's per-token fast-weight snapshot is ~210 MB, so a single chunk of length 12 with B=4 costs roughly 10 GB of backward graph on top of the 5–6 GB model weight floor. Benchmark with `make preflight` before raising either.
+The default `--batch-size 4` and `--chunk-len 12` are tuned for this model on an H100 (80 GB); the 2.7B model's per-token fast-weight snapshot is ~210 MB, so a single chunk of length 12 with B=4 costs roughly 10 GB of backward graph on top of the 5–6 GB model weight floor. Benchmark with a short `make train` before raising either.
 
 ```bash
 MODEL_NAME=mamba2_2_7b_memory make train ARGS="--data data/train_memory.pt"
@@ -668,6 +667,8 @@ make gate-pilot ARGS="data/dream_set_s1234.pilot.pt"   # the sec 2.10.7 scheme t
 make summarize-grid    # scores logs/g2_*_s*.jsonl
 make summarize-grid ARGS="--curves 'logs/g2_*_s1234.jsonl'"   # per-probe-step curves
 ```
+
+Earlier drivers from the same A/B stay as targets for the record: `make grid` (`scripts/run_grid.sh`, the single-sleep primary of DISCUSSION-20260805, one seed per invocation), `make install-probe` (`scripts/install_probe.sh`, asks whether any budget installs a fact after that grid's 0/4) and `make cue-sweep` through `make cue-sweep5` (`scripts/cue_sweep*.sh`, the rehearsal-cue sweeps of the 2026-08-06 dream A/B). Diagnostics with no section of their own: `make eligibility-check` (`preparation/eligibility.py`, counts conversations eligible for a gist eval across a prefix-by-continuation grid), `make topic-choice` (`diagnostics/topic_choice.py`, which fact a wake state picks as its next topic) and `make user-generator` (`providers/user_generator.py`, normalises a Claude Code or Codex CLI session into wake-user JSON for `adaptive-multisleep`). All take `ARGS`.
 
 **`make grid2` / `make ladder`** — the box-side drivers, one seed (resp. one rung) per invocation. Both **refuse to start without `INIT_ADAPTER`**: the warm start is registered for the whole session — cache, battery and every arm — so a cold grid has to be asked for by name with `INIT_ADAPTER=none`. `ERASE_OP` (default `deflated`) picks the erase operator and is echoed at start; the erase-family cells carry it in their filename, so the operator picker can run raw beside deflated at the same seed. `CUE_EVERY` (default 32) rebuilds an under-binding seed's cache at 24. The grid emits the `nosleep` floor cell every Δ metric is read against; the ladder does not and pools against the grid's.
 
