@@ -13,15 +13,17 @@ act on.
 
 ## Flow
 
-1. **Bank the run.** Check `git status` and compare local `main` with its
-   upstream before interpretation. The box can push commits mid-session, so
-   local `main` may be behind. If synchronization would move or rewrite the
-   branch, get the teammate's explicit permission in this conversation before
-   running `git pull --rebase` or another branch-changing command. Then check
-   for uncommitted pulled artifacts —
-   `notes/experiments/EXPERIMENT_NOTES-*.md` and anything else the rsync pull left — and
-   commit the notes first, before any discussion. The run's record is
-   preserved before it's interpreted.
+1. **Bank the run.** `git fetch`, then `git status` and compare local
+   `main` with `origin/main`. The box commits its run note and shutdown
+   receipt to its own `origin/box/<id>` branch; the rsync pull also leaves
+   a copy of the note in the working tree, untracked. Banking is the
+   teammate's merge of that branch into `main`. The analyst does not commit
+   the note, merge, pull, or move any branch. If the newest `origin/box/*`
+   is not yet in `main`, say so, confirm the untracked note is identical to
+   the branch copy (`git show origin/box/<id>:<path> | diff -q - <path>`),
+   and wait for the teammate to merge before interpreting. If the note
+   differs from the branch copy, or there is no branch, report that and let
+   the teammate decide what to commit.
 
 2. **Analyze first.** Read `notes/README.md`, follow its current debrief path,
    then read the completed run note and the governing DISCUSSION note. Use
