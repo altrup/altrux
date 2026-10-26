@@ -16,11 +16,15 @@ altrux/
 └── scripts/         # Standalone helper scripts (e.g. Lambda Cloud instance termination)
 ```
 
-## Hand-written code
+## Protected paths — the person commits
 
 `PROTECTED_PATHS` lists the files that decide the science (the LAMA-CKL
-protocol: dreams, distillation, baselines, scorer, split, runner). Agents review and test them but do
-not edit them — a Claude Code hook enforces it locally; see `AGENTS.md`.
+protocol: dreams, distillation, baselines, scorer, split, runner). Agents
+may edit them but never commit them: a Claude Code hook refuses any
+`git commit` that carries one, the agent reports every protected change
+under a `PROTECTED EDIT` heading with each ledger row mapped to
+`file:line`, and the person reviews the diff and commits it. See
+`AGENTS.md`.
 
 ## Adding a new model
 
