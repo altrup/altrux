@@ -49,7 +49,8 @@ stack-pop (structured memory).
 - Shin et al. 2017, *Continual Learning with Deep Generative Replay*,
   NeurIPS — the modern canonical cite.
 - LLM era: *Self-Synthesized Rehearsal* (SSR, arXiv:2403.01244, ACL 2024);
-  **SEAL** (arXiv:2506.10943) — model generates its own fine-tuning data;
+  **SEAL** (arXiv:2506.10943) — model generates its own fine-tuning data
+  (read in full 2026-10-24: see `RESEARCH-20261024-learned-dreamers.md` §2);
   on-policy replay for continual SFT (arXiv:2605.29495).
 
 **Context/state → weights distillation — established:**
