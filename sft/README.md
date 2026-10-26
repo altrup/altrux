@@ -493,6 +493,30 @@ the pinned adapter) from the saved `trainable.pt` files; it writes
 `census.json` in the given directory. The runner prints three dreams per
 cycle; the census is how the other twenty-seven get read.
 
+`make lama-ckl-corpus` (`experiments/lama_ckl/dreamer_corpus.py`) builds the
+dreamer corpus (`DISCUSSION-20261024` §3.3) and has two subcommands. Both need
+a GPU.
+
+```bash
+make lama-ckl-corpus ARGS="generate --lama-root ../.cache/LAMA/data"
+make lama-ckl-corpus ARGS="retained-pool --init-adapter <checkpoint>/final"
+```
+
+`generate` reads SQuAD 2.0, UltraChat and `data/dolly_context.jsonl`
+(`--dolly`; `python -m preparation.dolly` writes it with its fixed seed). It
+removes every row that matches a LAMA `build_candidates` subject or object
+(word-bounded, case-insensitive), then scores the first question of each
+passage on the pinned v4 adapter (`--init-adapter`) to select the fixed sets.
+It writes `dreamer_corpus.jsonl`, `dreamer_abstentions.json` and
+`dreamer_fixed_sets.json` to `--out-dir` (default `data/`).
+`--conversations` (1000) sets the number of UltraChat conversation candidates
+to keep, `--abstention-rows` (200) the number of abstention rows, and `--seed`
+(0) the draw seed. `retained-pool` scores 2,000 (`--size`) fact-pool questions
+with no passage on the checkpoint. It excludes the passage ids in
+`--exclude-passages` (a JSON list) and writes
+`data/retained_pool-<sha8>.json`, where sha8 comes from the checkpoint's
+`trainable.pt`.
+
 After the smoke fixes batch sizes for that rented machine, run the registered
 cells serially (`DISCUSSION-20261013` §3.3–3.4). Seeds `42`, `43`, and `44` are
 the frozen Mamba replication seeds; the split itself stays the one seed-42
