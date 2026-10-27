@@ -523,7 +523,8 @@ make lama-ckl-corpus ARGS="retained-pool --init-adapter <checkpoint>/final"
 (`--dolly`; `python -m preparation.dolly` writes it with its fixed seed). It
 removes every row that matches a LAMA `build_candidates` subject or object
 (word-bounded, case-insensitive), then scores the first question of each
-passage on the pinned v4 adapter (`--init-adapter`) to select the fixed sets.
+passage on the pinned v4 adapter (`--init-adapter`) to select the fixed sets
+(prod and gate rows at accuracy 0, held-out rows the 50 highest accuracies).
 It writes `dreamer_corpus.jsonl`, `dreamer_abstentions.json` and
 `dreamer_fixed_sets.json` to `--out-dir` (default `data/`).
 `--conversations` (1000) sets the number of UltraChat conversation candidates
@@ -532,7 +533,34 @@ to keep, `--abstention-rows` (200) the number of abstention rows, and `--seed`
 with no passage on the checkpoint. It excludes the passage ids in
 `--exclude-passages` (a JSON list) and writes
 `data/retained_pool-<sha8>.json`, where sha8 comes from the checkpoint's
-`trainable.pt`.
+`trainable.pt`. Each row records its accuracy, its answer-token positions and
+the positions the checkpoint predicts correctly. A row with no correct token is
+unknown; all other rows are known.
+
+`make lama-ckl-gate` (`experiments/lama_ckl/diagnostics/alignment_gate.py`)
+is the alignment gate (`DISCUSSION-20261024` §3.5 item 2). It needs a GPU, the
+corpus files above and the hand-written dreams in
+`experiments/lama_ckl/diagnostics/gate_dreams.json` (schema in the module
+docstring). Log: `logs/alignment_gate-<timestamp>.log`.
+
+```bash
+make lama-ckl-gate ARGS="--tokens 128"                                   # local smoke
+make lama-ckl-gate ARGS="--tokens 512 --fp32-forward --output <dir>"     # box verdict
+make lama-ckl-gate ARGS="--tokens 512 --fp32-forward --instrument-only --init-adapter <ckpt> --output <dir>"
+make lama-ckl-gate ARGS="double-backward"                                # item 2b, 780M
+```
+
+It runs the retained-pool pass first (reused when
+`data/retained_pool-<sha8>.json` exists) and reports the batch-1 memory fit at
+`--tokens` next. Then it runs the lr sweep (alpha, c), the noise floor (it
+starts the second process itself), the per-dream scalars, the discrimination
+test and the h fit (kappa). The summary table and verdict come last.
+`--instrument-only` runs the sweep, floor, fit and retained pool with no
+verdict. `--output` writes `gate.json`. `--fp32-forward` casts the model to
+fp32 for all forwards (about 11 GB). `--init-adapter` (default v4), `--corpus`,
+`--fixed-sets`, `--gate-dreams`, `--seed`, `--dream-batch-size` (9) and
+`--batch-size` (4, rows per g_old forward) have defaults. `double-backward`
+takes `--model-name` (`mamba2_780m`), `--tokens` (128) and `--block` (64).
 
 After the smoke fixes batch sizes for that rented machine, run the registered
 cells serially (`DISCUSSION-20261013` §3.3–3.4). Seeds `42`, `43`, and `44` are
@@ -630,16 +658,46 @@ make lama-ckl-run ARGS="--model-name mamba2_2_7b --arm dream --seed 42 \
   --output ../.cache/lama_ckl/acceptance/dream-5"
 ```
 
-Runs resume from the last atomically completed `epoch-EE/`. A partial epoch
-restarts from its first cycle with the saved adapter and optimizer; the
-per-cycle adapters carry no optimizer and are not resume points. A trained
-arm's resume restores the fp32 master copies and the AdamW state from that
-epoch's `optimizer.pt` and stops with an error if the file is missing. A trained
-arm's run directory written before the fp32 masters (no `adapter_dtype` in its
-`run.json`) fails the settings check and does not resume.
-`--max-hours H` stops a session after the first epoch that ends more than `H`
-hours after the session started; rerun the same command to continue. A resumed
-session may pass a different `--max-hours`.
+Runs resume from the last atomically completed `epoch-EE/`, built in
+`work/epoch-EE/`. A dream epoch also resumes per cycle: each cycle is written to
+`cycle-NNN.tmp/` and renamed to `cycle-NNN/` last, with its fp32 master
+`trainable.pt` and, for an optimizer that holds state (AdamW), `optimizer.pt`;
+a rerun deletes any `.tmp` cycle, loads the last complete cycle's masters
+directly into the optimizer (no bf16 cast) and continues at the next cycle. A
+trained arm's epoch resume restores the fp32 master copies and the optimizer
+state from that epoch's `optimizer.pt` and stops with an error if the file is
+missing. A run directory whose `run.json` differs from the current settings
+(other than `max_hours` and `cycles_per_run`) does not resume.
+`--max-hours H` stops a session after the first cycle or epoch that ends more
+than `H` hours after the session started; `--cycles-per-run N` stops after
+cycle `N-1` of the epoch (absolute, not N more). Both stops leave the epoch
+in `work/`, write `summary.json` with `cycles_run`, and resume with the same
+command; a later session may pass a different `--max-hours` or a larger
+`--cycles-per-run`.
+
+Dream cell flags (`DISCUSSION-20261024` §3.4), all recorded in `run.json`:
+`--dream-temperature T` (default `0.7`) samples the wake replies and the dreams
+(`reply_temperature`, `dream_temperature`); `--wake-frames set` draws each
+wake's frame from `protocol.WAKE_FRAMES` with a generator seeded by (epoch,
+cycle) alone, recorded in `wake.json` (`single`, the default, is the fixed frame
+above; `run.json` `wake_frame` holds the mode and, under `set`, the set's
+sha256); `--dream-loss-weights uniform` weighs a dream's scored positions
+equally instead of per turn; `--fp32-forward` holds the whole model in fp32 so
+the masters are the parameters; `--optimizer sgd --lr A --clip-norm C` steps the
+dream arm with plain SGD (no momentum or weight decay) on the gradient clipped
+to norm `C` (`dream_lr`, `clip_norm`; both are required under `sgd` and refused
+under `adamw`; the baselines keep AdamW `1e-4`), and `distil.json` gains the
+pre-clip `grad_norm` and `clipped`; `--eval-every N` scores a cycle when
+`(cycle + 1) % N == 0` and on the epoch's last cycle. The 100-cycle cell:
+
+```bash
+make lama-ckl-run ARGS="--arm dream --split <split dir> --init-adapter <ckpt>/final \
+  --output ../.cache/lama_ckl/runs/dream-<ckpt name>-seed-42 \
+  --docs-per-wake 1 --dreams-per-cycle 10 --dream-batch-size 10 --dream-temperature 1.0 \
+  --wake-frames set --dream-loss-weights uniform --fp32-forward --optimizer sgd \
+  --lr <α> --clip-norm <c> --eval-every 5 --cycles-per-run 100 --epochs 1 --seed 42 \
+  --max-hours 4"
+```
 Each epoch stores the adapter and optimizer, metric vectors, resource counts,
 and hashes in `epoch-EE/result.json`; each dream cycle stores
 `epoch-EE/cycle-CC/wake.json` (every prompt and reply token, the reply seeds,

@@ -11,7 +11,7 @@ TORCH_BACKEND ?= auto
 # low-memory box (the ROCm dev box) if the compile OOMs: MAX_JOBS=12.
 MAX_JOBS ?= $(shell nproc)
 
-.PHONY: sync data data-memory warm-start warm-start-probe prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-smoke lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split lama-ckl-run lama-ckl-frozen-x3 lama-ckl-smoke lama-ckl-report lama-ckl-census lama-ckl-corpus summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
+.PHONY: sync data data-memory warm-start warm-start-probe prepare prepare-interference prepare-chains prepare-cram prepare-needles filter-items probe-recall consolidation-null capacity-ladder erase-probe dream-sleep adaptive-multisleep lama-ckl-upstream-check lama-ckl-upstream-smoke lama-ckl-upstream-run lama-ckl-upstream-summarize lama-ckl-split lama-ckl-run lama-ckl-frozen-x3 lama-ckl-smoke lama-ckl-report lama-ckl-census lama-ckl-corpus lama-ckl-gate summarize-grid train resume detect-anomaly smoke-test test acceptance-check eligibility-check measure-knobs topic-choice gate-pilot adaptive-wake-smoke user-generator cue-sweep cue-sweep2 cue-sweep3 cue-sweep4 cue-sweep5 install-probe grid grid2 ladder
 
 sync:
 	uv sync --inexact
@@ -293,6 +293,13 @@ lama-ckl-corpus:
 	@mkdir -p logs
 	log=logs/lama-ckl-corpus-$(shell date +%Y%m%d-%H%M%S).log; set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
 	uv run --no-sync python -u -m experiments.lama_ckl.dreamer_corpus $(ARGS) 2>&1 | tee $$log; s=$${PIPESTATUS[0]}; echo "EXIT=$$s" >> $$log; exit $$s
+
+# Alignment gate (DISCUSSION-20261024 sec 3.5 item 2): ARGS="--tokens 128" locally,
+# ARGS="--tokens 512 --fp32-forward --output <dir>" on the box; ARGS="double-backward" is item 2b.
+lama-ckl-gate:
+	@mkdir -p logs
+	log=logs/alignment_gate-$(shell date +%Y%m%d-%H%M%S).log; set -o pipefail; HF_HOME=$(HF_CACHE) HSA_ENABLE_INTERRUPT=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$(PYTHONPATH) \
+	uv run --no-sync python -u -m experiments.lama_ckl.diagnostics.alignment_gate $(ARGS) 2>&1 | tee $$log; s=$${PIPESTATUS[0]}; echo "EXIT=$$s" >> $$log; exit $$s
 
 # Warm-start SFT, fourth recipe (DISCUSSION-20261013 sec 3.1): 20000 ultrachat
 # conversations plus every Dolly context row (summarization, closed_qa,

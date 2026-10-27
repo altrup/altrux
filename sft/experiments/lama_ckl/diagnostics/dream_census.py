@@ -55,7 +55,7 @@ def short_turns(text: str) -> list[str]:
 def _flat(path: Path) -> torch.Tensor:
     state = torch.load(path, map_location="cpu", weights_only=True)
     return torch.cat(
-        [state[k].float().flatten() for k in sorted(state) if state[k].is_floating_point()]
+        [state[k].double().flatten() for k in sorted(state) if state[k].is_floating_point()]
     )
 
 
