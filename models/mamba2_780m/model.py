@@ -6,9 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
-from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn
 
 from ..common import MarkerDelta, blockwise_checkpoint
+from ..norms import add_norm, gated_norm
 
 MODEL_ID = "state-spaces/mamba2-780m"
 TOKENIZER_ID = "EleutherAI/gpt-neox-20b"
@@ -167,6 +167,11 @@ class Model(nn.Module):
         # (see set_grad_checkpoint). Plain attribute, never checkpointed.
         self.grad_checkpoint_block = 0
 
+        # True runs every norm in plain torch ops (models/norms.py), so a
+        # create_graph=True gradient through the manual path keeps its
+        # second-order terms. Default off: the Triton norms are faster.
+        self.torch_norms = False
+
         # When set to a list, _mixer_step appends each layer's post-conv read
         # query C (detached) -- one entry per layer per token, token-major.
         # Used by sft/experiments/erasure/probe.py (and the dream-sleep loop) to address the
@@ -191,19 +196,20 @@ class Model(nn.Module):
     def _prenorm(self, layer, hidden_states: torch.Tensor, residual: torch.Tensor | None):
         if not layer.fused_add_norm:
             residual = (hidden_states + residual) if residual is not None else hidden_states
-            normed = layer.norm(residual.to(dtype=layer.norm.weight.dtype))
+            normed = residual.to(dtype=layer.norm.weight.dtype)
+            normed = (
+                add_norm(layer.norm, normed, plain=True) if self.torch_norms else layer.norm(normed)
+            )
             if layer.residual_in_fp32:
                 residual = residual.to(torch.float32)
             return normed, residual
-        return layer_norm_fn(
+        return add_norm(
+            layer.norm,
             hidden_states,
-            layer.norm.weight,
-            layer.norm.bias,
-            residual=residual,
+            residual,
             prenorm=True,
             residual_in_fp32=layer.residual_in_fp32,
-            eps=layer.norm.eps,
-            is_rms_norm=isinstance(layer.norm, RMSNorm),
+            plain=self.torch_norms,
         )
 
     def _mixer_step(
@@ -260,7 +266,7 @@ class Model(nn.Module):
         if not mixer.rmsnorm:
             y = y * mixer.act(z)
         else:
-            y = mixer.norm(y, z)
+            y = gated_norm(mixer.norm, y, z, plain=self.torch_norms)
         if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1)
         out = mixer.out_proj(y)
@@ -320,7 +326,7 @@ class Model(nn.Module):
         )
         y = rearrange(y, "b h p -> b (h p)")
         if mixer.rmsnorm:
-            y = mixer.norm(y, z)
+            y = gated_norm(mixer.norm, y, z, plain=self.torch_norms)
         if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1)
         out = mixer.out_proj(y)
@@ -381,7 +387,7 @@ class Model(nn.Module):
         if not mixer.rmsnorm:
             y = y * mixer.act(z)
         else:
-            y = mixer.norm(y, z)
+            y = gated_norm(mixer.norm, y, z, plain=self.torch_norms)
         if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1)
         out = mixer.out_proj(y)
@@ -389,17 +395,16 @@ class Model(nn.Module):
 
     def _apply_norm_f(self, h: torch.Tensor, residual: torch.Tensor | None) -> torch.Tensor:
         if not self.fused_add_norm:
-            combined = (h + residual) if residual is not None else h
-            return self.norm_f(combined.to(self.norm_f.weight.dtype))
-        return layer_norm_fn(
+            combined = ((h + residual) if residual is not None else h).to(self.norm_f.weight.dtype)
+            if self.torch_norms:
+                return add_norm(self.norm_f, combined, plain=True)
+            return self.norm_f(combined)
+        return add_norm(
+            self.norm_f,
             h,
-            self.norm_f.weight,
-            self.norm_f.bias,
-            eps=self.norm_f.eps,
-            residual=residual,
-            prenorm=False,
+            residual,
             residual_in_fp32=self.residual_in_fp32,
-            is_rms_norm=isinstance(self.norm_f, RMSNorm),
+            plain=self.torch_norms,
         )
 
     def forward(
