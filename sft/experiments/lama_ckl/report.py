@@ -16,6 +16,13 @@ TRAINED_ARMS = ("lora", "mix-review", "dream")
 SCORES = ("to_learn_accuracy", "not_to_forget_accuracy")
 CYCLE_METRICS = (*SCORES, "role_marker_closes", "forced_closes", "loss")
 CYCLE_DIAGNOSTICS = ("subjects_mentioned", "mean_copy_fraction")
+SHOWN_ROW_ASYMMETRIES = (
+    (
+        "dream: one optimizer step per shown document (100 steps on 100 documents); "
+        "baselines: epoch 1 over all 500 documents"
+    ),
+    "dream: fp32 forward; baselines: bf16 forward with fp32 master weights",
+)
 
 
 def _stats(values: Sequence[float]) -> dict[str, object]:
@@ -29,12 +36,23 @@ def _stats(values: Sequence[float]) -> dict[str, object]:
     return {"mean": mean, "stderr": stderr, "values": list(values)}
 
 
+def _shown(row: Mapping[str, object], rows: int) -> float:
+    """To-learn accuracy over the first `rows` documents, the ones a partial dream epoch showed."""
+    return sum(row["to_learn_scores"][:rows]) / rows
+
+
 def scientific_runs(runs: Sequence[Mapping[str, object]]) -> list[Mapping[str, object]]:
     return [run for run in runs if not bool(run["settings"].get("engineering_only"))]
 
 
 def _load_run(path: Path) -> dict[str, object]:
     run = json.loads(path.read_text())
+    run["name"] = path.parent.name
+    if "cycles_run" in run:
+        work = path.parent / "work" / f"epoch-{len(run['curve']):02d}"
+        run["cycle_results"] = [
+            json.loads(result.read_text()) for result in sorted(work.glob("cycle-*/result.json"))
+        ]
     run["persistent_artifact_bytes"] = sum(
         artifact.stat().st_size
         for artifact in path.parent.rglob("*")
@@ -88,13 +106,19 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     raw: dict[str, dict[str, list[float]]] = {}
     per_run: list[dict[str, object]] = []
     curves: dict[str, dict[int, dict[str, list[float]]]] = {}
-    seen: set[tuple[str, int]] = set()
+    seen: set[object] = set()
+    partial: list[Mapping[str, object]] = []
+    epoch_rows: dict[str, list[Mapping[str, object]]] = {}
     for run in runs:
         arm, seed = str(run["arm"]), int(run["seed"])
-        if arm in TRAINED_ARMS and (arm, seed) in seen:
-            raise ValueError(f"duplicate run for {arm} seed {seed}")
-        seen.add((arm, seed))
+        key = run.get("name", (arm, seed))
+        if (arm in TRAINED_ARMS or "name" in run) and key in seen:
+            raise ValueError(f"duplicate run {key}")
+        seen.add(key)
         curve = run["curve"]
+        if "cycles_run" in run:
+            partial.append(run)
+            continue
         expected_epochs = list(range(int(run["settings"]["epochs"]) + 1))
         if [int(row["epoch"]) for row in curve] != expected_epochs:
             raise ValueError(f"{arm} seed {seed} has an incomplete epoch curve")
@@ -149,6 +173,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             else next((row for row in curve if int(row["epoch"]) == matched), None)
         )
         if matched_row is not None:
+            epoch_rows.setdefault(arm, []).append(matched_row)
             for key in SCORES:
                 matched_scores.setdefault(arm, {}).setdefault(key, []).append(
                     float(matched_row[key])
@@ -176,6 +201,7 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             raw.setdefault(arm, {}).setdefault(name, []).append(value)
         per_run.append(
             {
+                "name": run.get("name"),
                 "arm": arm,
                 "seed": seed,
                 "gpu_model": run["settings"].get("gpu_model"),
@@ -197,6 +223,39 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             )
             cell["to_learn_accuracy"].append(float(row["to_learn_accuracy"]))
             cell["not_to_forget_accuracy"].append(float(row["not_to_forget_accuracy"]))
+    partial_runs, shown_rows = [], []
+    for run in partial:
+        results = sorted(run["cycle_results"], key=lambda result: int(result["cycle"]))
+        if not results:
+            raise ValueError(f"{run.get('name')} has no evaluated cycle")
+        points = [{**run["curve"][0], "cycle": None}, *results]
+        partial_runs.append(
+            {
+                "name": run.get("name"),
+                "arm": run["arm"],
+                "seed": run["seed"],
+                "cycles_run": run["cycles_run"],
+                "curve": [
+                    {"cycle": point["cycle"], **{key: float(point[key]) for key in SCORES}}
+                    for point in points
+                ],
+            }
+        )
+        last = results[-1]
+        rows = (int(last["cycle"]) + 1) * int(run["settings"]["docs_per_wake"])
+        shown_rows.append(
+            {
+                "name": run.get("name"),
+                "cycle": int(last["cycle"]),
+                "rows": rows,
+                "to_learn_accuracy": _shown(last, rows),
+                "baselines": {
+                    arm: _stats([_shown(row, rows) for row in arm_rows])
+                    for arm, arm_rows in epoch_rows.items()
+                    if arm != "dream"
+                },
+            }
+        )
     spreads = [
         {key: max(values[key]) - min(values[key]) for key in SCORES}
         for values in frozen_scores.values()
@@ -226,6 +285,9 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
             else {}
         ),
         "runs": per_run,
+        "partial_runs": partial_runs,
+        "shown_rows": shown_rows,
+        "shown_row_asymmetries": list(SHOWN_ROW_ASYMMETRIES),
         "arms": {
             arm: {name: _stats(values) for name, values in metrics.items()}
             for arm, metrics in raw.items()
@@ -240,8 +302,24 @@ def aggregate_runs(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
     }
 
 
-def build_report(runs: Sequence[Mapping[str, object]]) -> dict[str, object]:
+def build_report(
+    runs: Sequence[Mapping[str, object]],
+    gates: Mapping[str, Mapping[str, object]] | None = None,
+) -> dict[str, object]:
+    """gates: gate.json bodies by dream run name; the run's dream_lr is the common alpha."""
     report = aggregate_runs(runs)
+    by_name = {run.get("name"): run for run in runs}
+    report["alpha"] = {}
+    for name, gate in (gates or {}).items():
+        if name not in by_name:
+            raise ValueError(f"--gate names no loaded run: {name}")
+        common = float(by_name[name]["settings"]["dream_lr"])
+        own = gate["alpha"]
+        report["alpha"][name] = {
+            "alpha": own,
+            "common": common,
+            "ratio": None if own is None else float(own) / common,
+        }
     present = {(str(run["arm"]), int(run["seed"])) for run in runs}
     expected = {(arm, seed) for arm in ARMS for seed in SEEDS}
     report["present_cells"] = [list(cell) for cell in sorted(present)]
@@ -253,12 +331,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path, nargs="?", default=Path("../.cache/lama_ckl/runs"))
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--runs", nargs="+", default=["*"], help="output-name globs under root (default all)"
+    )
+    parser.add_argument(
+        "--gate",
+        action="append",
+        default=[],
+        metavar="RUN=GATE_JSON",
+        help="a dream run's checkpoint gate.json, to report its own alpha against the run's",
+    )
     args = parser.parse_args()
-    paths = sorted(args.root.glob("*/summary.json"))
+    paths = sorted({path for runs in args.runs for path in args.root.glob(f"{runs}/summary.json")})
     runs = scientific_runs([_load_run(path) for path in paths])
     if not runs:
         raise SystemExit(f"no scientific runs under {args.root}; nothing to report")
-    report = build_report(runs)
+    gates = {
+        name: json.loads(Path(gate).read_text())
+        for name, gate in (entry.split("=", 1) for entry in args.gate)
+    }
+    report = build_report(runs, gates)
     output = args.output or args.root / "report.json"
     output.write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     for arm, metrics in report["arms"].items():
@@ -294,6 +386,34 @@ def main() -> None:
             f"{dream_arm['peak_cycle_accuracy']['mean']:.6f} retained "
             f"{dream_arm['retention_at_peak_cycle']['mean']:.6f} over "
             f"{len(report['cycle_curves']['dream'])} cycles",
+            flush=True,
+        )
+    for partial in report["partial_runs"]:
+        last = partial["curve"][-1]
+        print(
+            f"[{ts()}] {partial['name']} partial, {partial['cycles_run']} cycles run, "
+            f"{len(partial['curve']) - 1} evaluated; last cycle {last['cycle']}: to-learn "
+            f"{last['to_learn_accuracy']:.6f} retained {last['not_to_forget_accuracy']:.6f}",
+            flush=True,
+        )
+    for shown in report["shown_rows"]:
+        baselines = ", ".join(
+            f"{arm} {stats['mean']:.6f}" for arm, stats in shown["baselines"].items()
+        )
+        print(
+            f"[{ts()}] {shown['name']} shown rows 0-{shown['rows'] - 1} at cycle "
+            f"{shown['cycle']}: to-learn {shown['to_learn_accuracy']:.6f}; "
+            f"baselines at epoch 1 (frozen at 0): {baselines or 'none'}",
+            flush=True,
+        )
+    if report["shown_rows"]:
+        for line in report["shown_row_asymmetries"]:
+            print(f"[{ts()}]   asymmetry: {line}", flush=True)
+    for name, alpha in report["alpha"].items():
+        ratio = "n/a" if alpha["ratio"] is None else f"{alpha['ratio']:.3g}"
+        print(
+            f"[{ts()}] {name} own alpha {alpha['alpha']} vs common {alpha['common']}: "
+            f"ratio {ratio}",
             flush=True,
         )
     missing = report["missing_cells"]

@@ -388,3 +388,103 @@ def test_build_report_accepts_a_two_arm_subset():
 def test_build_report_refuses_an_empty_set():
     with pytest.raises(ValueError):
         build_report([])
+
+
+def _scores(learned: list[float]) -> dict[str, object]:
+    return {
+        "to_learn_accuracy": sum(learned) / len(learned),
+        "not_to_forget_accuracy": 1.0,
+        "to_learn_scores": learned,
+    }
+
+
+def _write_run(
+    root: Path,
+    name: str,
+    run: dict[str, object],
+    cycles: dict[int, list[float] | None] | None = None,
+) -> Path:
+    directory = root / name
+    directory.mkdir(parents=True)
+    for cycle, learned in (cycles or {}).items():
+        cycle_dir = directory / "work" / "epoch-01" / f"cycle-{cycle:03d}"
+        cycle_dir.mkdir(parents=True)
+        if learned is not None:
+            result = {"epoch": 1, "cycle": cycle, **_scores(learned)}
+            (cycle_dir / "result.json").write_text(json.dumps(result))
+    (directory / "summary.json").write_text(json.dumps(run))
+    return directory / "summary.json"
+
+
+_SETTINGS = {"split_manifest_sha256": "x", "epochs": 1, "docs_per_wake": 1, "dream_lr": 1e-3}
+
+
+def _partial_dream(root: Path, name: str = "dream-ckpt-seed-42", **extra: object) -> dict:
+    run = {
+        "arm": "dream",
+        "seed": 42,
+        "settings": _SETTINGS,
+        "curve": [{"epoch": 0, **_scores([0.0, 0.0, 0.0])}],
+        **extra,
+    }
+    cycles = {0: [1.0, 0.0, 0.0], 1: [0.0, 1.0, 0.0], 2: None}
+    return _load_run(_write_run(root, name, run, cycles))
+
+
+def _baseline(arm: str, name: str, epoch_1: list[float]) -> dict[str, object]:
+    return {
+        "arm": arm,
+        "seed": 42,
+        "name": name,
+        "settings": _SETTINGS,
+        "curve": [{"epoch": 0, **_scores([0.0, 0.0, 0.0])}, {"epoch": 1, **_scores(epoch_1)}],
+    }
+
+
+def test_partial_run_is_accepted_only_with_cycles_run(tmp_path: Path):
+    with pytest.raises(ValueError, match="epoch curve"):
+        aggregate_runs([_partial_dream(tmp_path / "a")])
+
+    report = aggregate_runs([_partial_dream(tmp_path / "b", cycles_run=3)])
+
+    (partial,) = report["partial_runs"]
+    assert partial["name"] == "dream-ckpt-seed-42"
+    assert [point["cycle"] for point in partial["curve"]] == [None, 0, 1]
+    assert [point["to_learn_accuracy"] for point in partial["curve"]] == pytest.approx(
+        [0.0, 1 / 3, 1 / 3]
+    )
+
+
+def test_runs_are_distinguished_by_output_name_not_seed(tmp_path: Path):
+    lora = _baseline("lora", "lora-ckpt-seed-42", [0.0, 0.0, 0.0])
+    other = _baseline("lora", "lora-other-seed-42", [0.0, 0.0, 0.0])
+
+    assert aggregate_runs([lora, other])["arms"]["lora"]["final_accuracy"]["values"] == [0.0, 0.0]
+    with pytest.raises(ValueError, match="duplicate"):
+        aggregate_runs([lora, dict(lora)])
+
+
+def test_shown_rows_compare_the_last_evaluation_against_baselines_at_epoch_1(tmp_path: Path):
+    dream = _partial_dream(tmp_path, cycles_run=3)
+    lora = _baseline("lora", "lora-ckpt-seed-42", [0.0, 1.0, 1.0])
+    frozen = _baseline("frozen", "frozen-ckpt-seed-42-r1", [0.0, 0.0, 0.0])
+    frozen.update(settings={**_SETTINGS, "epochs": 0}, curve=frozen["curve"][:1])
+
+    (shown,) = aggregate_runs([dream, lora, frozen])["shown_rows"]
+
+    # Row 0 was learned at cycle 0 and forgotten by cycle 1, the last evaluation.
+    assert shown["rows"] == 2
+    assert shown["cycle"] == 1
+    assert shown["to_learn_accuracy"] == 0.5
+    assert shown["baselines"]["lora"]["mean"] == 0.5
+    assert shown["baselines"]["frozen"]["mean"] == 0.0
+
+
+def test_alpha_is_reported_against_the_common_alpha(tmp_path: Path):
+    dream = _partial_dream(tmp_path, cycles_run=3)
+
+    report = build_report([dream], {"dream-ckpt-seed-42": {"alpha": 3e-3, "c": 1.0}})
+
+    alpha = report["alpha"]["dream-ckpt-seed-42"]
+    assert alpha["common"] == 1e-3
+    assert alpha["ratio"] == pytest.approx(3.0)
