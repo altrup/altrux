@@ -307,9 +307,7 @@ gradients with an outer edit loss. No published instance at LLM scale with
 the model as its own generator was found this session.
 
 Engineering: the double backward must pass through the manual Mamba2
-mixer path (pure PyTorch ops, so supported in principle) and gradient
-checkpointing (`use_reentrant=False`); the fused CUDA kernels have no double
-backward. Unverified on this stack as of this note.
+mixer path and gradient checkpointing (`use_reentrant=False`); the fused CUDA kernels have no double backward. **Checked 2026-10-26 (gate 2b entry point, `alignment_gate.py`):** the manual path is not twice differentiable as it stands. Every norm it calls (`layer_norm_fn`, the block and final `RMSNorm`, the mixer's gated `RMSNorm`) is a mamba_ssm Triton `autograd.Function` whose backward returns tensors with no graph, so `create_graph=True` loses the second-order path at each norm and raises no error: on a tiny model a finite-difference check of d⟨G, g⟩/dπ had relative error 0.997 with the Triton norms and 0.002 with plain-torch norms (`sft/tests/experiments/lama_ckl/test_alignment_gate.py`). Arm (b) needs a plain-torch norm path in `models/` before gate 2b can pass (added the same day: `model.torch_norms = True` routes every norm through `models/norms.py`'s plain-torch reference norms, parity 4.9e-7 relative in fp32 on a tiny model, finite-difference error 0.003 on against 0.90 off, `models/tests/test_mamba2_780m_torch_norms.py`); the 10-24 reading "pure PyTorch ops, so supported in principle" was wrong for the norms.
 
 ## 7. Why self-training loops collapse, and what stabilises them
 

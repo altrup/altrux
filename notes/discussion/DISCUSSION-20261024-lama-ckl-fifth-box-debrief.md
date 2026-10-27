@@ -491,9 +491,9 @@ turns included. The wake **frame** is drawn per wake from the frame set
 | 1. wake: W rendered as the cell renders it — for a fact row: a drawn frame + the passage as the one user turn, reply sampled at 1.0, EOC; for a conversation row: the prefix turns teacher-forced as written, **no frame, no sampled reply** (the prefix ends on an assistant turn), then EOC. Fact passages are cut at `EVIDENCE_TOKENS` (512) as the cell cuts them; the fact wake is built by the protocol's own token builder (`run_conversational_wake`, `protocol.py:202`, frame and document joins tokenized as the cell tokenizes them, imported by the dreamer module, §6.6); the conversation prefix is rendered by the warm start's `format_conversation` (`preparation/conversations.py:58`), the renderer the markers were trained under; the wake's closing EOC **is** the dream prompt of row 2, written once | empty | θ | off | transcript, S_W |
 | 2. dream pool: K·n dreams from the EOC prompt in one launch, sampled at 1.0, `DREAM_TOKENS` 512 | a copy of S_W per dream | θ | off | dream tokens, teacher logits per generated position |
 | 3. continuation gradient g_new, **contrast form**: C rendered alone through the warm start's `format_conversation` (`preparation/conversations.py:58`, the renderer the markers were trained under; not the scorer's cloze), per-token mean cross-entropy over the row's target tokens, **`<eos>` and `<eoc>` excluded** (the stop tokens would weigh 2/(|a|+2) and leave a "stop here" component when C and C⁻ differ in length; stopping is protected on the g_old side, never paid for here); the same for C⁻, rendered after **this row's** context (fact row: the same question, another fact row's answer; conversation row: the same user follow-up as context, another conversation row's assistant reply as the target; the wrong text is scored under this row's prefix, so lowering it here touches nothing in its own context, §4.35); **g_new = ∇L(C) − ∇L(C⁻)**; both row kinds. The contrast is the **direction**; every measured drop, floor and curvature in the gate is on the true-reply loss **L(C)** (§4.47) | empty, both | θ | on, two backwards per row | g_new (∇L(C) alone is a gate quantity on the gate rows, §3.5 item 2, and is not kept for the P rows) |
-| 4. reference gradients g_old^k, **one per source k** (decided 10-25: one pooled direction lets a step that damages kept dreams pass when it helps the facts by more): per row, the per-token mean cross-entropy over that row's loss tokens; g_old^k is the gradient of the mean over the source's rows, so a four-token fact weighs as much as a 500-token dream. R = 100 rows drawn fresh each round, 25 from each of four sources (§3.3), 200 draws over two rounds from a corpus of 175 g_old rows (§3.3; round 1's kept-dream source is not in the corpus): **retained-pool facts** (`[USER] q [ASSISTANT] a<eos><eoc>`, loss on the reply and both stop tokens, from empty); **abstention rows** (`[USER] q [ASSISTANT] <abstention><eos><eoc>`, the unanswerable question **without its passage**, loss on the reply and both stop tokens, from empty; the behaviour the dreams must not erode); **warm-start rows** (Dolly plain rows and trained-on UltraChat rows in the warm start's own proportion, about 1:4 by conversation count (≈ 4,500 Dolly rows against 20,000 UltraChat), one conversation each, unpacked, with the `<eoc>` the packer appends (`conversations.py:258-263`; `format_conversation` alone does not emit it, so every renderer here appends it explicitly), **loss on user and assistant turns** as the warm start trained them, from empty; R and the replay draw are disjoint within a round); **the previous round's kept dreams** (25 drawn at random from the kept batches of rows with a positive SFT weight; zero-weight rows' batches are excluded, since row 6 did not train toward them; **in the two registered rounds this source guards nothing**: round 0 has no previous round, and in round 1 θ was just fit to those strings, so the source has no slope, and with no gradient through the prefix it cannot see a step that damages how the wake is read; it is specified here for a third round and for the kept-dream likelihood reading, not as a guard the cells rely on, research note §5), each teacher-forced after its **recorded** wake transcript under the current θ with no gradient through the prefix, **cross-entropy** on the dream's scored positions (no teacher logits are kept across rounds). Round 0: the first three sources, 34/33/33 | empty / empty / empty / the dream's wake state | θ | on, four backwards once per round | g_old^facts, g_old^abst, g_old^warm, g_old^dreams |
+| 4. reference gradients g_old^k, **one per source k** (decided 10-25: one pooled direction lets a step that damages kept dreams pass when it helps the facts by more): per row, the per-token mean cross-entropy over that row's loss tokens; g_old^k is the gradient of the mean over the source's rows, so a four-token fact weighs as much as a 500-token dream. R = 100 rows drawn fresh each round, 25 from each of four sources (§3.3), 200 draws over two rounds from a corpus of 175 g_old rows (§3.3; round 1's kept-dream source is not in the corpus): **retained-pool facts** (`[USER] q [ASSISTANT] a<eos><eoc>`, loss on the answer tokens the checkpoint predicts correctly in the (vii) pass and both stop tokens, §4.51, from empty); **abstention rows** (`[USER] q [ASSISTANT] <abstention><eos><eoc>`, the unanswerable question **without its passage**, loss on the reply and both stop tokens, from empty; the behaviour the dreams must not erode); **warm-start rows** (Dolly plain rows and trained-on UltraChat rows in the warm start's own proportion, about 1:4 by conversation count (≈ 4,500 Dolly rows against 20,000 UltraChat), one conversation each, unpacked, with the `<eoc>` the packer appends (`conversations.py:258-263`; `format_conversation` alone does not emit it, so every renderer here appends it explicitly), **loss on user and assistant turns** as the warm start trained them, from empty; R and the replay draw are disjoint within a round); **the previous round's kept dreams** (25 drawn at random from the kept batches of rows with a positive SFT weight; zero-weight rows' batches are excluded, since row 6 did not train toward them; **in the two registered rounds this source guards nothing**: round 0 has no previous round, and in round 1 θ was just fit to those strings, so the source has no slope, and with no gradient through the prefix it cannot see a step that damages how the wake is read; it is specified here for a third round and for the kept-dream likelihood reading, not as a guard the cells rely on, research note §5), each teacher-forced after its **recorded** wake transcript under the current θ with no gradient through the prefix, **cross-entropy** on the dream's scored positions (no teacher logits are kept across rounds). Round 0: the first three sources, 34/33/33 | empty / empty / empty / the dream's wake state | θ | on, four backwards once per round | g_old^facts, g_old^abst, g_old^warm, g_old^dreams |
 | 5. per-dream student gradient ∇ᵢ: dream i teacher-forced from empty, the cycle's KL loss (`KL_TEMPERATURE` 1.0) with the recorded teacher logits as soft targets, **uniform weight 1/N over the dream's N scored positions**, the set `turn_weights` already weights (content-free turns and the position that predicts the terminal EOC excluded, `dream_distillation.py:118-158`; the flag changes the weights, never the set); a dream with N = 0 is not scored and not counted in n's divisor, as the cell does (`:219`) | **empty** | θ | on, one backward per dream, no `create_graph` | ∇ᵢ, and the pool's Gram matrix ⟨∇ᵢ, ∇ⱼ⟩ |
-| 4b. readings with gradient off: the held-out loss (200 warm-start rows) and the abstention rate (50 held-out **v4-known** fact rows, no passage, greedy decoding to `<eos>`, detector = the mined stems; the rows are facts the checkpoint answers, so an abstention on them is over-abstention and a rising rate is the damage reading; on unknown rows an abstention would be correct and the reading would have the wrong sign) are forward passes of the round checkpoint. The gate's sweep, floor and step rows take steps and are §3.5 item 2's, not this row's; the retained-pool pass is gradient-off and is §3.5 item 2 (vii) | empty | θ | off | readings |
+| 4b. readings with gradient off: the held-out loss (200 warm-start rows) and the abstention rate (50 held-out **v4-best-known** fact rows, §4.51, no passage, greedy decoding to `<eos>`, detector = the mined stems; the rows are facts the checkpoint answers, so an abstention on them is over-abstention and a rising rate is the damage reading; on unknown rows an abstention would be correct and the reading would have the wrong sign) are forward passes of the round checkpoint. The gate's sweep, floor and step rows take steps and are §3.5 item 2's, not this row's; the retained-pool pass is gradient-off and is §3.5 item 2 (vii) | empty | θ | off | readings |
 | 6. policy update: SFT of θ on (wake transcript → each dream of the kept batch) pairs, cross-entropy on the dream tokens only (the frame is in the input, never in the loss; the frame-string count among kept dreams is a round reading, §4.31), mixed 1:1 with replay rows (Dolly plain and trained-on UltraChat rows, one conversation each, unpacked, loss on user and assistant turns); trained set = LoRA + `marker_delta` with fp32 masters, **continuing from round r−1's checkpoint** (not re-fine-tuned from v4 each round as ReST-EM's paper does: the warm start's conversational behaviour is the thing replay protects, and a fresh start would discard round r−1's dreaming); input = wake transcript through the EOC prompt token, targets = the dream tokens with their `<eos>` and `<eoc>`; max length 2,560 (prefix ≤ 2,048 + dream ≤ 512); **loss per pair = per-token mean over that pair's target tokens, batch loss = the SFT-weighted mean over the pairs** (one pair, one experience, as §3.4 weights dreams; a 500-token dream does not outweigh a 50-token one), replay rows weight 1, zero-weight pairs dropped before the 1:1 mix is formed; **gradient through the whole prefix in one unchunked backward** (decided 10-26, §4.48: the warm start's loop detaches the state at every 512-token chunk boundary, `training/loop.py:627`, and with the loss on the dream only a chunk that holds prefix alone gets no gradient, so under chunking most of a 2,048-token prefix is never trained on; the full backward over ≤ 2,560 tokens is what lets the SFT teach reading W; its memory at batch 8 is unmeasured, the gate's local run measures it at 128 tokens first, and the batch drops, with gradient accumulation to the same 8 pairs, if 2,560 tokens do not fit); AdamW 1e-4, weight decay 0.01 (the runner's, `runner.py:808`), through `MasterAdamW`, no warmup, constant lr, optimizer state fresh per round, LoRA dropout 0, 2 epochs, batch 8 (dreamer pins, §4.29; not the warm start's settings, which were 1 epoch, batch 6); a short loop in the dreamer module, since `training/loop.py` has neither the master-weight wrapper's interface (`loop.py:718,951` reads `param_groups`) nor per-example weights | empty | θ | on | round checkpoint |
 
 Per-dream scalars, from rows 3–5 (one backward per dream, then dot
@@ -656,7 +656,7 @@ set, never in P, never trained on):
    the frame-string and acknowledgement counts among kept dreams; held-out
    loss on 200 warm-start rows (disjoint from the replay rows) under the
    round checkpoint (the drift reading for the replay guard); over-abstention
-   rate of the round checkpoint on the 50 held-out v4-known fact rows with
+   rate of the round checkpoint on the 50 held-out v4-best-known fact rows with
    no passage (row 4b; detector: the mined abstention stems, §3.3); the dream
    census (§6.1) over all pool dreams; five decoded kept dreams and five
    rejected per round. Rounds: 2 as SEAL, a third only if the prod reading still rises (the
@@ -731,9 +731,7 @@ The same stems are the abstention detector of the round readings.
 
 **g_old and replay rows:** the **retained pool** (facts the checkpoint
 already knows: SQuAD 2.0 train answerable questions, disjoint from every
-g_new, prod and held-out row, **known** by the one rule of §3.5 item 2
-(vii), teacher-forced token accuracy 1.0 on the answer with no passage in
-context; recomputed on every checkpoint a dreamer round starts from, since the round SFT installs facts (a cell does not use g_old); written to
+g_new, prod and held-out row, **known** by the one rule of §3.5 item 2 (vii): at least one answer token the checkpoint predicts correctly, teacher-forced with no passage in context, and its g_old loss is the cross-entropy on those currently-correct answer tokens and the two stop tokens (decided 10-26, §4.51: the accuracy-1.0 rule found 4 known passages in 879 on v4); recomputed on every checkpoint a dreamer round starts from, since the round SFT installs facts (a cell does not use g_old); written to
 `data/retained_pool-<sha8>.json`); the **abstention rows** (above); the
 **Dolly plain rows** (`data/dolly_context.jsonl`, shape `plain`,
 regenerated locally by `preparation/dolly.py` with its fixed seed); the
@@ -744,8 +742,7 @@ never as an absolute). Dolly's document and multi shapes are not used
 anywhere: their targets are acknowledgements. Multi-document rows of any source are left out because of recency (§1.3): a five-document state concentrates revisits on the last document, and the first dreamer measurement should not carry that. Conversation rows are also a wake the cell never runs (a frameless teacher-forced prefix) and are kept on purpose as §3.1's second format, the one the long goal is about.
 
 **Fixed sets, all disjoint from each other and from every round's P:** 20
-prod rows (fact, v4-unknown), 50 held-out **v4-known** fact rows (the
-over-abstention reading, row 4b), 200 held-out warm-start rows (from the
+prod rows (fact, v4-unknown), 50 held-out **v4-best-known** fact rows (the 50 highest-accuracy rows of the v4 scan, §4.51; the over-abstention reading, row 4b), 200 held-out warm-start rows (from the
 warm-start UltraChat rows, outside the replay draw), 5 gate rows (fact,
 v4-unknown). Disjointness is at the **passage** level across every set
 and every round: an abstention row never shares a passage with any P row
@@ -1035,7 +1032,7 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
    in-run check. (vi) The gradient norms of revisit
    against acknowledgement dreams, a reading for §2's optimizer paragraph.
    (vii) The **retained pool** pass for this checkpoint (§3.3): 2,000 answerable questions drawn from the overlap-checked corpus pool outside every fixed set, rendered
-   `[USER] q [ASSISTANT]` with no passage, teacher-forced token accuracy on the answer as the scorer computes it (`evaluation.py:65-84`) (SQuAD has one question per fact and no schematic template, so the scorer's rule `data.py:110-113` is applied on the one rendering): known at accuracy 1.0, unknown at 0.0, the middle used for neither (the unknown side is the fact-row supply; a fact row's drawn q must be unknown, and "≥ 2 questions" counts the passage's answerable questions; the 2,000 candidates are redrawn per checkpoint, disjoint from the fixed sets).
+   `[USER] q [ASSISTANT]` with no passage, teacher-forced token accuracy on the answer as the scorer computes it (`evaluation.py:65-84`) (SQuAD has one question per fact and no schematic template, so the scorer's rule `data.py:110-113` is applied on the one rendering): unknown at accuracy 0.0, known when at least one answer token is predicted correctly, the per-token correctness recorded for the retained-pool loss and the accuracy for the held-out ranking (§4.51) (the unknown side is the fact-row supply; a fact row's drawn q must be unknown, and "≥ 2 questions" counts the passage's answerable questions; the 2,000 candidates are redrawn per checkpoint, disjoint from the fixed sets).
       Steps (i), (ii), (v) and (vii) rerun on the box at 512 tokens on every
    checkpoint a dreamer round starts from and on the last round's final
    checkpoint (§3.2 step 1), and (i), (ii), (v)
@@ -1049,8 +1046,7 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
    θ, create_graph=True)` followed by a backward of the research note §6
    loss into the dreamer's logits runs through the manual Mamba2 mixer
    with gradient checkpointing (`use_reentrant=False`); the memory per
-   128-token dream is recorded and extrapolated to 512. Fail → arm (b) is
-   not built; nothing else changes.
+   128-token dream is recorded and extrapolated to 512; the entry point carries a finite-difference check of d⟨G, g⟩/dπ, since the Triton norms drop the second-order path without an error (research note §6, checked 10-26: fails as the models stand; the prerequisite is `model.torch_norms = True`, `models/norms.py`, added 10-26, and the 2b entry point sets it). Fail → arm (b) is not built; nothing else changes.
 3. **Dreamer session (box, one session of 12 h or less):** arm (a), two
    rounds per §3.2 with the live reading before round 0's update; arm (b)
    in a second dreamer session if 2b passed and (a)'s round-0 specificity
@@ -1093,8 +1089,7 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
    three-way comparison (selection, dense, untrained) is the cleanest
    reading of which signal makes dreams worth distilling. Gate §3.5 2b. Its
    math, with the sign convention corrected this session (a helpful token
-   has ⟨∇ log p(v), g_new⟩ < 0), is research note §6; the KL guard to v4
-   is load-bearing for it (soup optimum), where arm (a) uses replay.
+   has ⟨∇ log p(v), g_new⟩ < 0), is research note §6; the KL guard to v4 is load-bearing for it (soup optimum), where arm (a) uses replay. Decided 10-26: arm (b)'s block carries the four g_old hinges of §3.2 in the same linear form beside its KL guard, so the arms differ in the learning signal and not in the guard.
 4. **SEAL's reward (fine-tune, evaluate, grade).** Rejected: 30–45 s per
    dream for a scalar; the first-order alignment is the same quantity for
    one step at a small fraction of the cost (estimate: a fourteenth to a two-hundredth, 0.17–2.1 s against 30–45 s) and
@@ -1266,7 +1261,7 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
 29. **The constants this note carries**, each a pin or a reading, none a
     keep rule on the dreamer's own outcome: the half in the lr rule (§3.4,
     a pin); "4 of 5 rows" in the gate's pass (§3.5, a pin on a 5-row
-    test); the scorer's known-or-unknown rule for the retained pool (accuracy 1.0 known, 0.0 unknown, on SQuAD's one rendering, `data.py:110-113`); the 2,048-token prefix cap and the 100-cycle cell length (scheduling
+    test); the scorer's known-or-unknown rule for the retained pool (0.0 unknown; known at one or more correct answer tokens, §4.51; on SQuAD's one rendering, `data.py:110-113`); the 2,048-token prefix cap and the 100-cycle cell length (scheduling
     pins, §3.4); p ≤ 0.05 in the gate's permutation test (top 4 of 84 labellings; a verdict needs a cut, and the per-row p is logged beside it) and three hand-written dreams per kind per row (a sample size); 20 random batches for the
     specificity reading and K = 4 (sample sizes, readings); at most 30
     words and under 20 phrasings
@@ -1451,6 +1446,101 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
     "survived, acquired zero" in every arm is a step-size result and not
     a content result, read at the debrief.
 
+51. **The known rule for the retained pool and the held-out rows** (10-26,
+    after the generator's first scan). The pinned rule, answer accuracy
+    1.0 with no passage, found 4 known passages among the 879 LAMA-clean
+    SQuAD passages on v4 (`sft/logs/lama-ckl-corpus-20261026-193741.log`:
+    291 unknown, 584 middle, 4 known), so the retained pool and the 50
+    held-out rows could not be filled. SQuAD answers are multi-token spans
+    and v4 reproduces few exactly; most facts are partly known. Revised,
+    both relative, no new constant: (1) a retained-pool row is a question
+    with at least one answer token the checkpoint predicts correctly, and
+    its g_old loss is the cross-entropy on those currently-correct answer
+    tokens and the two stop tokens, so the guard holds what the model has,
+    token by token; a question with no correct token has nothing to retain
+    (the unknown side, accuracy 0.0, stays the fact-row supply); (2) the
+    50 held-out over-abstention rows are the 50 highest-accuracy rows of
+    the v4 scan, ties in the seeded order, excluded from every pool.
+    Consequences, stated: the guard protects partial knowledge, charging a
+    step that raises the loss on a token the model already gets right and
+    reading nothing on the tokens it gets wrong; the held-out rows are the
+    facts v4 knows best, not facts it answers exactly, so the
+    over-abstention rate is read as a change across rounds, like the
+    held-out loss. Considered and not taken: "answered" by the greedy
+    reply's abstention stem (no correctness in the selection, and a
+    greedy decode of every candidate); accuracy-weighted row losses (the
+    gradient then carries the tokens the model gets wrong, a learning
+    direction inside a retention guard).
+
+52. **Arm (b) outline** (10-26, agreed in conversation; its mechanism
+    spec block is still to be written into §3.2 and read before it is
+    built, §6.6). (1) Built, after gate 2b under `model.torch_norms = True` (research note §6, the plain-torch norm path added 10-26). (2) Objective: arm
+    (a)'s score(B) exactly (learn term, quadratic term, clip, four
+    hinges) on the sampled batch of n dreams, maximised by gradient
+    through the teacher logits πᵢ instead of by selection: policy forward
+    from S_W over the sampled dream with the graph kept gives πᵢ; the
+    student forward from empty gives ∇ᵢ = `autograd.grad(KL(πᵢ, student),
+    θ, create_graph=True)`; G_B, the clip and the score as in arm (a)
+    with g_new and g_old^k constants; `(−score(B) + KL guard).backward()`
+    steps θ. (3) The student is the fixed instrument: it runs on a
+    detached copy of θ (`torch.func.functional_call`), so the score moves
+    θ through πᵢ only. (4) Credit flows into the soft targets at the
+    scored positions the sample visited, uniform 1/N as row 5; the token
+    choices are sampled and not differentiated, so a dream on the wrong
+    topic gets no signal to change topic (the research note's known
+    limit, the reason arm (a) stays beside it). (5) The KL guard to v4
+    on the dream distribution, its coefficient set at each round start so
+    that its gradient norm on the pool equals the learn term's (a
+    normalisation measured in the gate, no constant; open to a better
+    normaliser). (6) Same replay 1:1, rounds, optimizer, lr and corpus
+    rows as arm (a), so the arms differ in the optimiser of the same
+    score. Known costs: a double backward over 2.7B per dream, memory two
+    to three times the single backward, slower norms; gate 2b measures
+    them, and its finite-difference pass is read against the two-process
+    noise of the same quantity rather than a fixed relative error.
+
+53. **Corpus generator readings, 10-26, three open decisions for the
+    teammate** (generator built and run on v4, §6.3; logs
+    `sft/logs/lama-ckl-corpus-20261026-223225.log` and
+    `-220427.log`). (a) **The LAMA filter removes almost everything
+    conversational.** The word-bounded match of every candidate subject
+    and object string (11,599 distinct) hits common words: the most
+    frequent first matches over the 20,000 warm-start conversations are
+    "life" (886), "language" (805), "word" (638), "many" (489), "key"
+    (434), "home", "history", "brand", "yes", "management". Survivors: 127
+    of 20,000 warm-start UltraChat conversations, 60 of 1,771 Dolly plain
+    rows, 1,000 conversation candidates from 154,190 read (0.6%, leaning
+    to code help), 975 of 19,029 SQuAD passages. So the **warm-start
+    replay pool is empty** and the held-out warm-start set holds 127 of
+    200. Analyst's recommendation: a text teaches a LAMA fact only if it
+    carries both its subject and its object, so match the filter on the
+    **pair** (subject and object of one candidate both present,
+    word-bounded, case-insensitive) rather than on either string alone; a
+    conversation that says "yes" or "many" leaks nothing. The fixed sets
+    drawn under the current filter stay valid under the pair rule (it is
+    strictly looser), so the gate rows and dreams keep. (b) **The mined
+    abstention set is the wrong kind of refusal.** The six stems find 20
+    phrasings after the filter, 19 of them "I don't have ..." and nearly
+    all capability refusals of the chat model ("I don't have the
+    capability to visit places", "I don't have childhood memories"), so an
+    abstention row reads `Why is Symbol not useful for all instances?` →
+    "I don't have childhood memories." Recommendation: keep only stems in
+    the knowledge sense (`I don't know`, `I'm not sure`, `I don't have
+    (enough |any )?information`, `I'm not aware`, `I cannot (say|tell)`)
+    and read the set size again; if it is under ten, the abstention source
+    is a reading and the hinge runs on three sources until a better set
+    exists. (c) **One-token known rows.** Of 1,271 known retained-pool
+    rows, 531 are known on one answer token, often punctuation or an
+    article (`"clean picture"` correct only on the closing quote; `from a
+    pre-industrial …` on ` a`, `-`, `industrial`). Recommendation: a
+    correct token counts for the known rule and the guard loss only if it
+    contains a letter or a digit (no constant; punctuation and
+    whitespace carry no fact). Also recorded: the v4 scan at batch 4 gave
+    290 unknown where batch 8 gave 291 (bf16 padding numerics); the 50
+    held-out rows span accuracy 0.72–1.00; the retained pool is 1,271
+    known / 729 unknown of 2,000; §4.44's reading is 58.9% of fact
+    questions with no capitalised word after the first.
+
 ## 5. Process
 
 - **Banking** (done, the teammate's merge `dbc78a8`; `7b863a0` is the
@@ -1579,7 +1669,7 @@ imports it):
    round's rows from the pools (fact rows from the checkpoint's unknown
    side, C⁻ paired at draw time, duplicate passages allowed and counted),
    and the shared read covers the pools' decoded samples. Prod, gate and
-   held-out rows are fixed under v4 and not re-filtered; the generator runs the known-or-unknown pass on v4 locally (the 2.7B forward fits in 8 GB in bf16) so the prod and gate rows are v4-unknown and the 50 held-out fact rows are **v4-known** (they read over-abstention: an abstention on a fact the model answers is the damage; on an unknown fact it would be correct, and the reading would have the wrong sign). The corpus file materialises **every row the dreamer reads**: the P pools, the g_old sources (retained-pool candidates, abstention rows, Dolly plain rows, the warm-start UltraChat rows), the replay draw's pool and the fixed sets, so nothing is loaded from HF on the box. The decoded-sample
+   held-out rows are fixed under v4 and not re-filtered; the generator runs the known-or-unknown pass on v4 locally (the 2.7B forward fits in 8 GB in bf16) so the prod and gate rows are v4-unknown and the 50 held-out fact rows are **v4-best-known** (the 50 highest-accuracy rows of the scan, §4.51; they read over-abstention: an abstention on a fact the model answers is the damage; on an unknown fact it would be correct, and the reading would have the wrong sign). The corpus file materialises **every row the dreamer reads**: the P pools, the g_old sources (retained-pool candidates, abstention rows, Dolly plain rows, the warm-start UltraChat rows), the replay draw's pool and the fixed sets, so nothing is loaded from HF on the box. The decoded-sample
    log for the shared read.
 4. **Master-weight wrapper generalised** (`sft/training/master_weights.py`,
    unprotected): `MasterAdamW` becomes a wrapper over any optimizer class,
@@ -1610,7 +1700,7 @@ imports it):
    until it writes a loss the cell depends on): §3.2 arm (a) after
    sign-off, with the round readings of step 5 and the §6.1 census over
    the pool. The gate script gets `make lama-ckl-gate ARGS=...` with
-   `--tokens 128|512` for the local and box modes. Arm (b) as a second mode behind gate 2b, **after its own mechanism spec block** (ledger, loss with the projection form of §4.17, KL-guard coefficient, lr, rounds, the manual-mixer requirement for the double backward) is written and signed off; research note §6 is a derivation, not that block. `dreamer.py` and `alignment_gate.py` set the cells' starting checkpoint, α and c, and `master_weights.py` will carry the SGD step every dream cell takes, so all three are proposed for `PROTECTED_PATHS` from their first commit (teammate's call; until then they are unprotected).
+   `--tokens 128|512` for the local and box modes. Arm (b) as a second mode behind gate 2b, **after its own mechanism spec block** (ledger, loss with the projection form of §4.17, the four g_old hinges of §3.2 (§4.3, decided 10-26), KL-guard coefficient, lr, rounds, the manual-mixer requirement for the double backward) is written and signed off; research note §6 is a derivation, not that block. `dreamer.py` and `alignment_gate.py` set the cells' starting checkpoint, α and c, and `master_weights.py` will carry the SGD step every dream cell takes, so all three are proposed for `PROTECTED_PATHS` from their first commit (teammate's call; until then they are unprotected).
 7. **Protected edits** (the teammate commits; brief quotes §3.2 and §3.4
    verbatim; the PROTECTED EDIT report maps each ledger row to
    `file:line`). **7a, first, before the gate script and the dreamer
