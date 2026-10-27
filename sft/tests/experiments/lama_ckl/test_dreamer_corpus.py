@@ -1,6 +1,8 @@
 import random
 
 import pytest
+import torch
+
 from experiments.lama_ckl.dreamer_corpus import (
     Passage,
     is_acknowledgement,
@@ -8,6 +10,7 @@ from experiments.lama_ckl.dreamer_corpus import (
     mine_abstentions,
     pair_negatives,
     partition_passages,
+    token_correctness,
     valid_boundaries,
 )
 
@@ -119,21 +122,31 @@ def _passage(pid: str, answerable: int, unanswerable: int) -> Passage:
 def test_partition_is_disjoint_at_the_passage_level():
     passages = [_passage(str(i), answerable=i % 4, unanswerable=i % 3) for i in range(60)]
     eligible = [p for p in passages if len(p.answerable) >= 2]
-    scores = {p.pid: (1.0 if k % 3 == 0 else 0.0) for k, p in enumerate(eligible)}
+    scores = {p.pid: (k % 4) / 4 for k, p in enumerate(eligible)}
     sets = partition_passages(passages, scores, prod=4, gate=2, held_out=3, abstention_rows=5)
 
     assert [len(sets[k]) for k in ("prod", "gate", "held_out_facts")] == [4, 2, 3]
     assert all(scores[p.pid] == 0.0 for p in sets["prod"] + sets["gate"])
-    assert all(scores[p.pid] == 1.0 for p in sets["held_out_facts"])
+    best = [p.pid for p in eligible if scores[p.pid] == 0.75][:3]
+    assert [p.pid for p in sets["held_out_facts"]] == best
     assert sum(len(p.unanswerable) for p in sets["abstention"]) >= 5
     assert all(len(p.answerable) >= 2 for p in sets["facts"])
     ids = [p.pid for rows in sets.values() for p in rows]
     assert len(ids) == len(set(ids))
 
 
+def test_token_correctness_lists_the_correctly_predicted_answer_positions():
+    ids = torch.tensor([[5, 6, 7, 8], [5, 6, 7, 8]])
+    logits = torch.zeros(2, 4, 10)
+    for row, predicted in enumerate(([6, 7, 1, 0], [6, 2, 8, 0])):
+        for position, token in enumerate(predicted):
+            logits[row, position, token] = 1.0
+    assert token_correctness(logits, ids, [[2, 3], [1, 2, 3]]) == [[2], [1, 3]]
+
+
 def test_partition_raises_when_fixed_supply_is_short():
     passages = [_passage(str(i), answerable=2, unanswerable=1) for i in range(5)]
     with pytest.raises(ValueError):
         partition_passages(
-            passages, {p.pid: 0.0 for p in passages}, prod=4, gate=2, held_out=1, abstention_rows=1
+            passages, {p.pid: 0.5 for p in passages}, prod=4, gate=2, held_out=1, abstention_rows=1
         )

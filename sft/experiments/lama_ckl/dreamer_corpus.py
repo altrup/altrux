@@ -25,7 +25,7 @@ import torch
 from transformers import PreTrainedTokenizerBase
 
 from experiments.lama_ckl.data import build_candidates
-from experiments.lama_ckl.evaluation import Scorable, score_records
+from experiments.lama_ckl.evaluation import Scorable, encode_metric_batch, object_token_accuracy
 from experiments.lama_ckl.split import DEFAULT_WARMSTART, pinned_warmstart_sha
 from preparation.conversations import format_conversation, format_pack, pack_records, render_pack
 from progress import fmt_duration, heartbeat, ts
@@ -152,17 +152,22 @@ def partition_passages(
     abstention_rows: int,
 ) -> dict[str, list[Passage]]:
     """Disjoint passage sets in `passages` order: prod and gate from first-question
-    accuracy 0.0, held-out facts from 1.0, abstention passages until
-    `abstention_rows` unanswerable questions, the rest with >= 2 answerable
-    questions as the fact pool."""
+    accuracy 0.0, held-out facts the `held_out` highest accuracies (ties in
+    order, sec 4.51), abstention passages until `abstention_rows` unanswerable
+    questions, the rest with >= 2 answerable questions as the fact pool."""
     unknown = [p for p in passages if scores.get(p.pid) == 0.0]
-    known = [p for p in passages if scores.get(p.pid) == 1.0]
-    if len(unknown) < prod + gate or len(known) < held_out:
-        raise ValueError(f"scored {len(unknown)} unknown and {len(known)} known passages")
+    scored = [p for p in passages if p.pid in scores]
+    best = sorted(scored, key=lambda p: -scores[p.pid])[:held_out]
+    if (
+        len(unknown) < prod + gate
+        or len(best) < held_out
+        or any(p in best for p in unknown[: prod + gate])
+    ):
+        raise ValueError(f"scored {len(scored)} passages, {len(unknown)} unknown")
     sets = {
         "prod": unknown[:prod],
         "gate": unknown[prod : prod + gate],
-        "held_out_facts": known[:held_out],
+        "held_out_facts": best,
     }
     taken = {p.pid for rows in sets.values() for p in rows}
     sets["abstention"] = []
@@ -257,15 +262,29 @@ def _load_model(model_name: str, adapter: Path, device: torch.device) -> Scorabl
     return model
 
 
+def token_correctness(
+    logits: torch.Tensor, input_ids: torch.Tensor, positions: Sequence[Sequence[int]]
+) -> list[list[int]]:
+    """Per row, the positions in `positions` whose token the argmax predicts
+    (the rule of `object_token_accuracy`, kept per token)."""
+    predicted = logits[:, :-1].argmax(dim=-1)
+    return [
+        [i for i in tokens if int(predicted[row, i - 1]) == int(input_ids[row, i])]
+        for row, tokens in enumerate(positions)
+    ]
+
+
 def score_questions(
     model: Scorable,
     render: Renderer,
     questions: Sequence[Question],
     batch_size: int,
     device: torch.device,
-) -> list[float]:
+) -> list[dict[str, object]]:
     """Teacher-forced answer accuracy of `[USER] q [ASSISTANT] a`, no passage,
-    by the LAMA scorer (sec 3.5 item 2 (vii))."""
+    by the LAMA scorer (sec 3.5 item 2 (vii)), with the answer positions and
+    the correctly predicted ones. Positions index `format_conversation`'s ids
+    of the same messages."""
     user, asst = render.mod.USER_OPEN, render.mod.ASST_OPEN
     rows = [
         {"task": f"{user} {q['question']}\n{asst} {q['answer']}", "object": q["answer"]}
@@ -277,7 +296,33 @@ def score_questions(
         for row, q in zip(rows, questions, strict=True)
     )
     print(f"[{ts()}] scorer ids != format_conversation ids: {seams}  (must be 0)")
-    return score_records(model, render.tokenizer, rows, "task", batch_size, 512, device)
+    results: list[dict[str, object]] = []
+    disagreements = 0
+    start = time.monotonic()
+    model.eval()
+    with torch.no_grad():
+        for at in range(0, len(rows), batch_size):
+            batch = rows[at : at + batch_size]
+            ids, positions = encode_metric_batch(render.tokenizer, batch, "task", 512, device)
+            logits, _ = model(ids, state=None)
+            accuracies = object_token_accuracy(logits, ids, positions)
+            for tokens, correct, accuracy in zip(
+                positions, token_correctness(logits, ids, positions), accuracies, strict=True
+            ):
+                disagreements += len(correct) / len(tokens) != accuracy
+                results.append(
+                    {"accuracy": accuracy, "answer_positions": tokens, "correct_positions": correct}
+                )
+            done = [float(r["accuracy"]) for r in results]
+            _progress(
+                "scored",
+                len(results),
+                len(rows),
+                start,
+                f"zeros={done.count(0.0)} ones={done.count(1.0)}",
+            )
+    print(f"[{ts()}] per-token correctness != scorer accuracy: {disagreements}  (must be 0)")
+    return results
 
 
 def load_passages(match: Callable[[str], str | None]) -> tuple[list[Passage], Counter[str]]:
@@ -372,15 +417,15 @@ def _sample_lines(kind: str, rows: Sequence[dict[str, object]], render: Renderer
             for row in picked
         ]
         answers = [q["answer"] for _, q in drawn]
-        negatives = (
-            pair_negatives(answers, rng) if kind != "held_out_facts" else [None] * len(drawn)
-        )
+        negatives = pair_negatives(answers, rng) if kind == "fact" else [None] * len(drawn)
         for (row, q), j in zip(drawn, negatives, strict=True):
             print(f"--- passage {row['passage_id']} ({row['title']}) squad {q['squad_id']}")
             print(f"W : {row['passage'][:400]!r}")
             print(f"C : {q['text']!r}")
             if j is not None:
                 print(f"C-: {render.text(_qa(q['question'], answers[j]))!r}")
+            elif "negative" in row:
+                print(f"C-: {row['negative']['text']!r}")
         return
     for row in picked:
         source = {k: row[k] for k in ("squad_id", "ultrachat_index", "dolly_line") if k in row}
@@ -435,19 +480,20 @@ def generate(args: argparse.Namespace) -> None:
 
     device = torch.device("cuda")
     model = _load_model(args.model_name, args.init_adapter, device)
-    scores: dict[str, float] = {}
-    for start in range(0, len(eligible), 256):
-        chunk = eligible[start : start + 256]
-        accs = score_questions(
-            model, render, [p.answerable[0] for p in chunk], args.batch_size, device
+    scan = dict(
+        zip(
+            (p.pid for p in eligible),
+            score_questions(
+                model, render, [p.answerable[0] for p in eligible], args.batch_size, device
+            ),
+            strict=True,
         )
-        scores.update({p.pid: a for p, a in zip(chunk, accs, strict=True)})
-        values = list(scores.values())
-        print(
-            f"[{ts()}] v4 first-question scan: {len(values)} scored, unknown {values.count(0.0)}, known {values.count(1.0)}"
-        )
-        if values.count(0.0) >= PROD + GATE and values.count(1.0) >= HELD_OUT_FACTS:
-            break
+    )
+    scores = {pid: float(r["accuracy"]) for pid, r in scan.items()}
+    print(
+        f"[{ts()}] v4 first-question scan: {len(scores)} scored, accuracy histogram "
+        f"{dict(sorted(Counter(f'{a:.1f}' for a in scores.values()).items()))}"
+    )
     del model
     torch.cuda.empty_cache()
     sets = partition_passages(
@@ -458,6 +504,8 @@ def generate(args: argparse.Namespace) -> None:
         held_out=HELD_OUT_FACTS,
         abstention_rows=args.abstention_rows,
     )
+    held = [scores[p.pid] for p in sets["held_out_facts"]]
+    print(f"[{ts()}] held-out v4-best-known accuracy range {min(held):.3f}..{max(held):.3f}")
 
     corpus: list[dict[str, object]] = []
     fixed: dict[str, list[dict[str, object]]] = {}
@@ -472,6 +520,7 @@ def generate(args: argparse.Namespace) -> None:
             "passage": p.text,
             "question": _question_row(q, render),
             "v4_accuracy": scores[p.pid],
+            "v4_correct_positions": scan[p.pid]["correct_positions"],
         }
         if name != "held_out_facts":
             negative = _qa(q["question"], fixed_answers[j])
@@ -667,7 +716,7 @@ def retained_pool(args: argparse.Namespace) -> None:
     device = torch.device("cuda")
     model = _load_model(args.model_name, args.init_adapter, device)
     start = time.monotonic()
-    accs = score_questions(model, render, drawn, args.batch_size, device)
+    scored = score_questions(model, render, drawn, args.batch_size, device)
     elapsed = time.monotonic() - start
     rows = [
         {
@@ -675,18 +724,25 @@ def retained_pool(args: argparse.Namespace) -> None:
             "squad_id": q["id"],
             "question": q["question"],
             "answer": q["answer"],
-            "accuracy": a,
-            "side": "known" if a == 1.0 else "unknown" if a == 0.0 else "middle",
+            **result,
+            "side": "unknown" if result["accuracy"] == 0.0 else "known",
         }
-        for q, a in zip(drawn, accs, strict=True)
+        for q, result in zip(drawn, scored, strict=True)
     ]
     sides = Counter(r["side"] for r in rows)
-    histogram = Counter(f"{a:.1f}" for a in accs)
+    histogram = Counter(f"{r['accuracy']:.1f}" for r in rows)
+    correct = Counter(len(r["correct_positions"]) for r in rows if r["side"] == "known")
     print(f"[{ts()}] {len(rows)} scored in {fmt_duration(elapsed)} ({len(rows) / elapsed:.1f} q/s)")
     print(f"[{ts()}] sides {dict(sides)}; accuracy histogram {dict(sorted(histogram.items()))}")
-    for side in ("known", "unknown", "middle"):
+    print(f"[{ts()}] known rows by correct answer-token count: {dict(sorted(correct.items()))}")
+    for side in ("known", "unknown"):
         for r in [r for r in rows if r["side"] == side][:5]:
-            print(f"    {side} {r['accuracy']:.2f}  {r['question']!r} -> {r['answer']!r}")
+            ids = render.ids(_qa(r["question"], r["answer"]))
+            marked = [
+                (render.tokenizer.decode([ids[i]]), i in r["correct_positions"])
+                for i in r["answer_positions"]
+            ]
+            print(f"    {side} {r['accuracy']:.2f}  {r['question']!r} -> {r['answer']!r}  {marked}")
     Path(output).write_text(
         json.dumps(
             {
