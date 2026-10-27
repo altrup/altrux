@@ -1046,7 +1046,7 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
    θ, create_graph=True)` followed by a backward of the research note §6
    loss into the dreamer's logits runs through the manual Mamba2 mixer
    with gradient checkpointing (`use_reentrant=False`); the memory per
-   128-token dream is recorded and extrapolated to 512; the entry point carries a finite-difference check of d⟨G, g⟩/dπ, since the Triton norms drop the second-order path without an error (research note §6, checked 10-26: fails as the models stand; the prerequisite is `model.torch_norms = True`, `models/norms.py`, added 10-26, and the 2b entry point sets it). Fail → arm (b) is not built; nothing else changes.
+   128-token dream is recorded and extrapolated to 512; the entry point carries a finite-difference check of d⟨G, g⟩/dπ, since the Triton norms drop the second-order path without an error (research note §6, checked 10-26: fails as the models stand; the prerequisite is `model.torch_norms = True`, `models/norms.py`, added 10-26, and the 2b entry point sets it). Fail → arm (b) is not built; nothing else changes. **Run 10-27 (local, `make lama-ckl-gate ARGS="double-backward --tokens N --block 4 --fp32-forward"`, logs `sft/logs/alignment_gate-20261027-03*.log`):** the graph reaches π under `torch_norms` (fp32 relative error 1.2e-2; bf16 reads 1.0, so the check is read in fp32), but the memory above the 780M model is 1.85 GB at 4 tokens, 3.49 GB at 8, and 12 tokens does not fit the 8 GB box: about 0.41 GB per dream token, about 210 GB at 512 tokens by the linear extrapolation the entry point prints. Blockwise checkpointing gives nothing here, since `create_graph=True` keeps the recomputed graph of the first backward for the second. Read as a fail on memory for the manual mixer path at 512 tokens; the question for arm (b) is whether the fused CUDA path is twice differentiable (§4.52, §4.54).
 3. **Dreamer session (box, one session of 12 h or less):** arm (a), two
    rounds per §3.2 with the live reading before round 0's update; arm (b)
    in a second dreamer session if 2b passed and (a)'s round-0 specificity
@@ -1540,6 +1540,32 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
     held-out rows span accuracy 0.72–1.00; the retained pool is 1,271
     known / 729 unknown of 2,000; §4.44's reading is 58.9% of fact
     questions with no capitalised word after the first.
+
+4.54. **Night of 10-26/27, build state and local readings (recorded 10-27).**
+    Built and committed: the alignment gate (§6.5) with step (vii) under
+    `--fp32-forward` writing `retained_pool-<sha8>-fp32.json`, the warm-start
+    R rows at 7 Dolly : 26 UltraChat (filled from the other pool with a
+    WARNING when one is short), the §4.51 facts loss, `torch_norms` in 2b;
+    the dreamer trainer arm (a) (§6.6, `make lama-ckl-dreamer`); `report.py`
+    8b; the runner 7b edit (protected, uncommitted, for the teammate's
+    review). Readings: (1) the 2.7B gate does not fit this box, the 128-token
+    fit probe fails at 7.72 GiB in the checkpointed backward, so the gate's
+    first run is the box run (§3.5 item 2); no 780M adapter in the gate's
+    format exists, so there is no local end-to-end smoke; (2) gate 2b: see
+    §3.5 2b, memory fail at 512 tokens on the manual path; (3) the archive
+    move of §6.8 is done (`.cache/lama_ckl_archive/fifth-box/{runs,acceptance}`),
+    so §1's artifact paths now resolve under that prefix. Open for the
+    teammate beside §4.53 (a)–(c): (d) the dreamer SFT batch loss follows
+    row 6 literally, Σ w·L / Σ w over each batch of 8, which cancels the
+    weights inside a batch whose rows share one weight; the builder
+    recommends Σ w·L / batch size (the weights already have mean 1 within a
+    kind), and the choice is the teammate's; (e) with the corpus as it
+    stands (0 `warm_start` rows), R's warm-start source is 33 Dolly rows and
+    the replay pool is the Dolly plain rows minus R (about 27 to 53 rows
+    against about 500 kept pairs), logged as WARNINGs and run on; whether a
+    short replay pool stops the round is undecided (the adversarial read of
+    10-27 ranks this first). The adversarial read's merged report is in the
+    session handoff, not in this note.
 
 ## 5. Process
 
