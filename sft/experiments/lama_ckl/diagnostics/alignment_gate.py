@@ -287,8 +287,8 @@ def draw_reference(
     mod: ModuleType,
     seed: int,
 ) -> dict[str, list[dict[str, object]]]:
-    """Round 0's R (sec 3.2 row 4). Facts: retained-pool known rows, loss on their
-    currently-correct answer tokens and both stop tokens (sec 4.51). Abstention
+    """Round 0's R (sec 3.2 row 4). Facts: retained-pool known rows (generate-and-
+    match, sec 4.56), loss on every answer token and both stop tokens. Abstention
     rows: loss on the reply and both stop tokens. Warm start: R_WARM_DOLLY Dolly
     plain rows and the rest trained-on UltraChat rows, a short pool filled from the
     other, loss as the warm start trained. Each row carries its id, ids and mask."""
@@ -309,9 +309,9 @@ def draw_reference(
             {"role": "assistant", "content": str(r["answer"])},
         ]
         seq_ids, _ = _render(messages, tokenizer, mod)
-        if tuple(seq_ids[-2:]) != stops or not r["correct_positions"]:
-            raise ValueError(f"retained row {r['squad_id']}: no stop tokens or no correct token")
-        targets = {*r["correct_positions"], len(seq_ids) - 2, len(seq_ids) - 1}
+        if tuple(seq_ids[-2:]) != stops or not r.get("generated_known"):
+            raise ValueError(f"retained row {r['squad_id']}: no stop tokens or not generated_known")
+        targets = {*r["answer_positions"], len(seq_ids) - 2, len(seq_ids) - 1}
         mask = [i in targets for i in range(len(seq_ids))]
         facts.append({"squad_id": r["squad_id"], "ids": seq_ids, "mask": mask})
 

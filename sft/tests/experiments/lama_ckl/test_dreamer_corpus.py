@@ -5,9 +5,11 @@ import torch
 
 from experiments.lama_ckl.dreamer_corpus import (
     Passage,
+    abstention_labels,
+    answer_in_reply,
     is_acknowledgement,
     lama_matcher,
-    mine_abstentions,
+    normalize_answer,
     pair_negatives,
     partition_passages,
     token_correctness,
@@ -16,13 +18,19 @@ from experiments.lama_ckl.dreamer_corpus import (
 
 
 def test_matcher_is_word_bounded_and_case_insensitive():
-    match = lama_matcher(["Spain", "New York", "C++"])
-    assert match("He lived in spain.") == "spain"
-    assert match("A Spaniard sailed.") is None
-    assert match("Moved to NEW YORK, then back.") == "new york"
-    assert match("New Yorker magazine") is None
-    assert match("written in C++ mostly") == "c++"
+    match = lama_matcher([("Spain", "Madrid"), ("New York", "C++")])
+    assert match("He lived in spain, near MADRID.") == ("spain", "madrid")
+    assert match("A Spaniard sailed to Madrid.") is None
+    assert match("Moved to NEW YORK and wrote C++ mostly") == ("new york", "c++")
+    assert match("New Yorker magazine, C++") is None
     assert match("nothing here") is None
+
+
+def test_matcher_needs_both_halves_of_one_pair():
+    match = lama_matcher([("Spain", "Madrid"), ("France", "Paris")])
+    assert match("Spain alone") is None
+    assert match("Spain and Paris, not one pair") is None
+    assert match("Paris is the capital of France") == ("france", "paris")
 
 
 def test_acknowledgement_reads_the_first_line_only():
@@ -92,19 +100,35 @@ def test_negative_pairing_raises_when_no_distinct_target_exists():
         pair_negatives(["same", "same"], random.Random(0))
 
 
-def test_abstention_mining_stems_word_cap_and_dedup():
-    convs = [
-        _turns(("user", "x"), ("assistant", "I don't know the answer to that.")),
-        _turns(("user", "y"), ("assistant", "I don't know the answer to that.")),
-        _turns(("user", "z"), ("assistant", "I'm sorry, but I cannot browse the web.")),
-        _turns(("user", "I don't know"), ("assistant", "Here is a long answer.")),
-        _turns(("user", "w"), ("assistant", "I cannot " + "word " * 40)),
-        _turns(("user", "v"), ("assistant", "Well, I'm not sure.")),
-    ]
-    assert mine_abstentions(convs) == [
-        "I don't know the answer to that.",
-        "I'm sorry, but I cannot browse the web.",
-    ]
+def test_squad_normalisation_and_word_bounded_match():
+    assert normalize_answer("The  Eiffel-Tower!") == "eiffeltower"
+    assert normalize_answer("an Apple a day") == "apple day"
+    assert answer_in_reply("Gustave Eiffel", "It was built by gustave eiffel.")
+    assert answer_in_reply("the 1990s", "In 1990s, yes")
+    assert not answer_in_reply("art", "It was a party.")
+    assert not answer_in_reply("The", "The answer.")
+
+
+def test_abstention_labels_map_the_top_hypothesis(monkeypatch):
+    from experiments.lama_ckl import dreamer_corpus
+
+    calls = []
+
+    def classifier(replies, **kwargs):
+        calls.append((list(replies), kwargs))
+        top = {
+            "I don't know.": "The speaker does not know the answer",
+            "I can't do that.": "The speaker cannot perform the action",
+        }
+        return [
+            {"labels": [top.get(r, "The speaker answers the question"), "x"], "scores": [0.6, 0.4]}
+            for r in replies
+        ]
+
+    monkeypatch.setattr(dreamer_corpus, "_classifier", lambda device: classifier)
+    labels = abstention_labels(["I don't know.", "Paris.", "I can't do that."], "cpu")
+    assert labels == ["unknown", "answers", "cannot"]
+    assert calls[0][1]["hypothesis_template"] == "{}" and not calls[0][1]["multi_label"]
 
 
 def _passage(pid: str, answerable: int, unanswerable: int) -> Passage:
@@ -122,17 +146,35 @@ def _passage(pid: str, answerable: int, unanswerable: int) -> Passage:
 def test_partition_is_disjoint_at_the_passage_level():
     passages = [_passage(str(i), answerable=i % 4, unanswerable=i % 3) for i in range(60)]
     eligible = [p for p in passages if len(p.answerable) >= 2]
-    scores = {p.pid: (k % 4) / 4 for k, p in enumerate(eligible)}
-    sets = partition_passages(passages, scores, prod=4, gate=2, held_out=3, abstention_rows=5)
+    known = {p.pid: k % 3 == 0 for k, p in enumerate(eligible)}
+    sets = partition_passages(
+        passages, known, prod=4, gate=2, held_out=3, abstention_rows=5, rng=random.Random(0)
+    )
 
     assert [len(sets[k]) for k in ("prod", "gate", "held_out_facts")] == [4, 2, 3]
-    assert all(scores[p.pid] == 0.0 for p in sets["prod"] + sets["gate"])
-    best = [p.pid for p in eligible if scores[p.pid] == 0.75][:3]
-    assert [p.pid for p in sets["held_out_facts"]] == best
+    assert not any(known[p.pid] for p in sets["prod"] + sets["gate"])
+    assert all(known[p.pid] for p in sets["held_out_facts"])
     assert sum(len(p.unanswerable) for p in sets["abstention"]) >= 5
     assert all(len(p.answerable) >= 2 for p in sets["facts"])
     ids = [p.pid for rows in sets.values() for p in rows]
     assert len(ids) == len(set(ids))
+
+
+def test_partition_keeps_a_given_gate_set():
+    passages = [_passage(str(i), answerable=2, unanswerable=1) for i in range(40)]
+    known = {p.pid: False for p in passages} | {"0": True, "1": True, "2": True}
+    sets = partition_passages(
+        passages,
+        known,
+        prod=4,
+        gate=2,
+        held_out=2,
+        abstention_rows=1,
+        rng=random.Random(0),
+        gate_pids=["30", "31"],
+    )
+    assert [p.pid for p in sets["gate"]] == ["30", "31"]
+    assert "30" not in {p.pid for p in sets["prod"]}
 
 
 def test_token_correctness_lists_the_correctly_predicted_answer_positions():
@@ -148,5 +190,11 @@ def test_partition_raises_when_fixed_supply_is_short():
     passages = [_passage(str(i), answerable=2, unanswerable=1) for i in range(5)]
     with pytest.raises(ValueError):
         partition_passages(
-            passages, {p.pid: 0.5 for p in passages}, prod=4, gate=2, held_out=1, abstention_rows=1
+            passages,
+            {p.pid: False for p in passages},
+            prod=4,
+            gate=2,
+            held_out=1,
+            abstention_rows=1,
+            rng=random.Random(0),
         )

@@ -214,7 +214,9 @@ def test_reference_draw_masks_and_warm_start_proportion():
             "question": "Who built it?",
             "answer": "Gustave Eiffel",
             "side": "known",
-            "correct_positions": [6],
+            "generated_known": True,
+            "answer_positions": [6, 7],
+            "correct_positions": [7],
         }
         for i in range(40)
     ] + [
@@ -223,6 +225,8 @@ def test_reference_draw_masks_and_warm_start_proportion():
             "question": "q",
             "answer": "a",
             "side": "unknown",
+            "generated_known": False,
+            "answer_positions": [4],
             "correct_positions": [],
         }
     ]
@@ -246,6 +250,7 @@ def test_reference_draw_masks_and_warm_start_proportion():
     assert len(drawn["facts"]) == 34 and all(r["squad_id"] != "u" for r in drawn["facts"])
     assert [i for i, m in enumerate(fact["mask"]) if m] == [
         6,
+        7,
         len(fact["ids"]) - 2,
         len(fact["ids"]) - 1,
     ]

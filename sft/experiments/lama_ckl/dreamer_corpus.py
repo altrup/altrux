@@ -1,7 +1,7 @@
 """Dreamer corpus (DISCUSSION-20261024 sec 3.3, sec 6.3).
 
 `generate` writes the candidate pools, the abstention set and the fixed sets;
-`retained-pool` runs the known-or-unknown pass (sec 3.5 item 2 (vii)) on one
+`retained-pool` runs the generate-and-match known-or-unknown pass (sec 3.5 item 2 (vii)) on one
 checkpoint. Every row the dreamer reads is materialised here, so the box loads
 nothing from HF.
 """
@@ -9,15 +9,18 @@ nothing from HF.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib
 import json
 import random
 import re
+import string
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 
@@ -34,14 +37,14 @@ Message = dict[str, str]
 Question = dict[str, str]
 
 ACKNOWLEDGEMENT = re.compile(r"(Got it|Okay|Sure|Thanks|Understood|Noted)\b")
-ABSTENTION_STEMS = (
-    "I don't know",
-    "I'm not sure",
-    "I don't have",
-    "I'm sorry, but I",
-    "I cannot",
-    "I can't",
-)
+CLASSIFIER = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+HYPOTHESES = {
+    "The speaker does not know the answer": "unknown",
+    "The speaker cannot perform the action": "cannot",
+    "The speaker answers the question": "answers",
+}
+REPLY_CAP = 48
+ABSTENTION_WORDS = 30
 WORD = re.compile(r"\w")
 WARM_START_ROWS = 20_000
 PREFIX_CAP = 2_048
@@ -58,12 +61,18 @@ def is_acknowledgement(turn: str) -> bool:
     return 1 <= len(line.split()) <= 8 and ACKNOWLEDGEMENT.match(line) is not None
 
 
-def lama_matcher(strings: Iterable[str]) -> Callable[[str], str | None]:
-    """Case-insensitive, word-bounded match of any of `strings`; returns the
-    first lowered string found in a text, or None."""
+def lama_matcher(pairs: Iterable[tuple[str, str]]) -> Callable[[str], tuple[str, str] | None]:
+    """Case-insensitive, word-bounded match of a (subject, object) pair, both
+    present in a text; returns the first lowered pair found, or None."""
+    partners: dict[str, set[str]] = defaultdict(set)
+    for subject, obj in pairs:
+        subject, obj = subject.strip().lower(), obj.strip().lower()
+        if subject and obj:
+            partners[subject].add(obj)
+    strings = set(partners) | {o for objs in partners.values() for o in objs}
     by_first: dict[str, list[str]] = defaultdict(list)
     odd: list[str] = []
-    for s in {s.strip().lower() for s in strings} - {""}:
+    for s in strings:
         head = re.match(r"\w+", s)
         if head:
             by_first[head.group()].append(s)
@@ -71,17 +80,62 @@ def lama_matcher(strings: Iterable[str]) -> Callable[[str], str | None]:
             odd.append(s)
     odd_re = re.compile("|".join(rf"(?<!\w){re.escape(s)}(?!\w)" for s in odd)) if odd else None
 
-    def match(text: str) -> str | None:
+    def match(text: str) -> tuple[str, str] | None:
         lowered = text.lower()
+        found: set[str] = set()
         for word in re.finditer(r"\w+", lowered):
             for s in by_first.get(word.group(), ()):
                 end = word.start() + len(s)
                 if lowered.startswith(s, word.start()) and not WORD.match(lowered[end : end + 1]):
-                    return s
-        hit = odd_re.search(lowered) if odd_re else None
-        return hit.group() if hit else None
+                    found.add(s)
+        if odd_re:
+            found.update(hit.group() for hit in odd_re.finditer(lowered))
+        for subject in sorted(found & partners.keys()):
+            hits = partners[subject] & found
+            if hits:
+                return subject, min(hits)
+        return None
 
     return match
+
+
+def normalize_answer(text: str) -> str:
+    """SQuAD's exact-match normalisation: lowercase, strip punctuation and
+    articles, collapse whitespace."""
+    text = "".join(ch for ch in text.lower() if ch not in string.punctuation)
+    return " ".join(re.sub(r"\b(a|an|the)\b", " ", text).split())
+
+
+def answer_in_reply(answer: str, reply: str) -> bool:
+    """The generate-and-match rule (sec 4.56): the normalised answer occurs in
+    the normalised reply on word boundaries."""
+    normalised = normalize_answer(answer)
+    # Word-bounded so "art" does not match inside "party".
+    return bool(normalised) and f" {normalised} " in f" {normalize_answer(reply)} "
+
+
+@cache
+def _classifier(device: str) -> Callable[..., list[dict[str, list]]]:
+    from transformers import pipeline
+
+    return pipeline("zero-shot-classification", model=CLASSIFIER, device=device)
+
+
+def abstention_labels(
+    replies: Sequence[str], device: str | torch.device, batch_size: int = 32
+) -> list[str]:
+    """Per reply, "unknown", "cannot" or "answers": the top entailment of the
+    three hypotheses (sec 3.3, sec 4.56), no threshold."""
+    if not replies:
+        return []
+    results = _classifier(str(device))(
+        list(replies),
+        candidate_labels=list(HYPOTHESES),
+        hypothesis_template="{}",
+        multi_label=False,
+        batch_size=batch_size,
+    )
+    return [HYPOTHESES[r["labels"][0]] for r in results]
 
 
 def valid_boundaries(
@@ -118,21 +172,6 @@ def pair_negatives(targets: Sequence[str], rng: random.Random) -> list[int]:
     return pairs
 
 
-def mine_abstentions(conversations: Iterable[Sequence[Message]]) -> list[str]:
-    """Assistant turns of at most 30 words opening on an abstention stem, deduplicated."""
-    phrases: dict[str, None] = {}
-    for messages in conversations:
-        for m in messages:
-            text = m["content"].strip()
-            if (
-                m["role"] == "assistant"
-                and len(text.split()) <= 30
-                and text.startswith(ABSTENTION_STEMS)
-            ):
-                phrases.setdefault(text)
-    return list(phrases)
-
-
 @dataclass
 class Passage:
     pid: str
@@ -144,30 +183,34 @@ class Passage:
 
 def partition_passages(
     passages: Sequence[Passage],
-    scores: dict[str, float],
+    known: dict[str, bool],
     *,
     prod: int,
     gate: int,
     held_out: int,
     abstention_rows: int,
+    rng: random.Random,
+    gate_pids: Sequence[str] = (),
 ) -> dict[str, list[Passage]]:
-    """Disjoint passage sets in `passages` order: prod and gate from first-question
-    accuracy 0.0, held-out facts the `held_out` highest accuracies (ties in
-    order, sec 4.51), abstention passages until `abstention_rows` unanswerable
-    questions, the rest with >= 2 answerable questions as the fact pool."""
-    unknown = [p for p in passages if scores.get(p.pid) == 0.0]
-    scored = [p for p in passages if p.pid in scores]
-    best = sorted(scored, key=lambda p: -scores[p.pid])[:held_out]
-    if (
-        len(unknown) < prod + gate
-        or len(best) < held_out
-        or any(p in best for p in unknown[: prod + gate])
-    ):
-        raise ValueError(f"scored {len(scored)} passages, {len(unknown)} unknown")
+    """Disjoint passage sets: prod and gate from the first-question-unknown
+    passages in `passages` order (gate = `gate_pids` when given), held-out facts
+    a seeded draw of `held_out` known passages (sec 4.56), abstention passages
+    until `abstention_rows` unanswerable questions, the rest with >= 2
+    answerable questions as the fact pool."""
+    by_pid = {p.pid: p for p in passages}
+    gate_set = [by_pid[pid] for pid in gate_pids]
+    unknown = [p for p in passages if known.get(p.pid) is False and p not in gate_set]
+    if not gate_set:
+        gate_set, unknown = unknown[prod : prod + gate], unknown[:prod] + unknown[prod + gate :]
+    best = [p for p in passages if known.get(p.pid)]
+    if len(unknown) < prod or len(gate_set) != gate or len(best) < held_out:
+        raise ValueError(f"{len(known)} scored passages, {len(unknown)} unknown, {len(best)} known")
+    if any(known.get(p.pid) is not False for p in gate_set):
+        raise ValueError("a gate passage is not unknown")
     sets = {
         "prod": unknown[:prod],
-        "gate": unknown[prod : prod + gate],
-        "held_out_facts": best,
+        "gate": gate_set,
+        "held_out_facts": rng.sample(best, held_out),
     }
     taken = {p.pid for rows in sets.values() for p in rows}
     sets["abstention"] = []
@@ -330,7 +373,113 @@ def score_questions(
     return results
 
 
-def load_passages(match: Callable[[str], str | None]) -> tuple[list[Passage], Counter[str]]:
+def stack_states(states: Sequence[object]) -> object:
+    stacked = copy.copy(states[0])
+    for attr in ("conv_states", "ssm_states"):
+        layers = zip(*(getattr(state, attr) for state in states), strict=True)
+        setattr(stacked, attr, [torch.cat(tensors) for tensors in layers])
+    return stacked
+
+
+def greedy_replies(model, prompts: Sequence[Sequence[int]], stop_ids: set[int], max_tokens: int):
+    """Greedy replies for all prompts in one decode batch: each prompt from empty
+    state at batch 1, the states stacked, then one token per step for every row."""
+    device = next(model.parameters()).device
+    states, last = [], []
+    with torch.no_grad():
+        for prompt in prompts:
+            logits, state = model(torch.tensor([list(prompt)], device=device), state=None)
+            states.append(state)
+            last.append(logits[:, -1])
+        state, logits = stack_states(states), torch.cat(last)
+        replies: list[list[int]] = [[] for _ in prompts]
+        done = [False] * len(prompts)
+        for _ in range(max_tokens):
+            tokens = logits.float().argmax(-1)
+            for row, token in enumerate(tokens.tolist()):
+                if not done[row]:
+                    done[row] = token in stop_ids
+                    if not done[row]:
+                        replies[row].append(token)
+            if all(done):
+                break
+            out, state = model(tokens[:, None], state=state)
+            logits = out[:, -1]
+    return replies
+
+
+def greedy_answers(
+    model: Scorable, render: Renderer, questions: Sequence[Question], batch_size: int
+) -> list[list[int]]:
+    """Greedy reply tokens to `[USER] q [ASSISTANT]`, no passage, stopped at
+    `<eos>` (or a marker) or `REPLY_CAP` tokens; a reply of `REPLY_CAP` tokens
+    did not stop."""
+    tokenizer, mod = render.tokenizer, render.mod
+    asst = tokenizer.convert_tokens_to_ids(mod.ASST_OPEN)
+    stops = {
+        tokenizer.eos_token_id,
+        asst,
+        *tokenizer.convert_tokens_to_ids([mod.USER_OPEN, mod.EOC]),
+    }
+    prompts = []
+    for q in questions:
+        ids = render.ids(_qa(q["question"], q["answer"]))
+        prompts.append(ids[: ids.index(asst) + 1])
+    replies: list[list[int]] = []
+    known = 0
+    start = time.monotonic()
+    model.eval()
+    for at in range(0, len(prompts), batch_size):
+        batch = greedy_replies(model, prompts[at : at + batch_size], stops, REPLY_CAP)
+        known += sum(
+            answer_in_reply(q["answer"], tokenizer.decode(r))
+            for q, r in zip(questions[at : at + batch_size], batch, strict=True)
+        )
+        replies += batch
+        _progress("generated", len(replies), len(prompts), start, f"known={known}")
+    return replies
+
+
+def mark_generated(
+    rows: Sequence[dict[str, object]],
+    questions: Sequence[Question],
+    replies: Sequence[Sequence[int]],
+    render: Renderer,
+) -> None:
+    """Adds `reply` and `generated_known` to each scored row and logs the
+    agreement of the three known rules and decoded samples of each side."""
+    for row, q, reply in zip(rows, questions, replies, strict=True):
+        row["reply"] = render.tokenizer.decode(list(reply)).strip()
+        row["generated_known"] = answer_in_reply(q["answer"], str(row["reply"]))
+    table = Counter(
+        (
+            bool(r["correct_positions"]),
+            r["answer_positions"][0] in r["correct_positions"],
+            r["generated_known"],
+        )
+        for r in rows
+    )
+    print(f"[{ts()}] agreement (teacher-forced any token, first token, generated): count")
+    for key, count in sorted(table.items()):
+        print(f"    {key}: {count}")
+    for side in (True, False):
+        picked = [
+            (r, q) for r, q in zip(rows, questions, strict=True) if r["generated_known"] == side
+        ]
+        for r, q in picked[:5]:
+            print(
+                f"    {'known' if side else 'unknown'} {q['question']!r} -> {q['answer']!r}  "
+                f"reply {r['reply']!r}"
+            )
+
+
+def load_passages(
+    match: Callable[[str], tuple[str, str] | None], hits: Counter[tuple[str, str]]
+) -> tuple[list[Passage], Counter[str]]:
+    """SQuAD 2.0 train by passage, LAMA-filtered: a question is dropped when its
+    passage, question and answer together carry a pair; the passage is dropped
+    when its own text does or its kept questions together do. Each drop's first
+    pair is counted in `hits`."""
     from datasets import load_dataset
 
     print(f"[{ts()}] loading rajpurkar/squad_v2 train")
@@ -351,17 +500,26 @@ def load_passages(match: Callable[[str], str | None]) -> tuple[list[Passage], Co
         counts["passages"] += 1
         counts["answerable"] += len(p.answerable)
         counts["unanswerable"] += len(p.unanswerable)
-        if match(p.text):
-            counts["passages_excluded"] += 1
-            counts["answerable_excluded_with_passage"] += len(p.answerable)
-            counts["unanswerable_excluded_with_passage"] += len(p.unanswerable)
-            continue
-        kept = [q for q in p.answerable if not match(q["question"])]
-        dropped = [q for q in p.unanswerable if match(q["question"])]
+
+        def qa(q: Question) -> str:
+            return f"{q['question']}\n{q.get('answer', '')}"
+
+        def drop(text: str) -> bool:
+            pair = match(text)
+            if pair:
+                hits[pair] += 1
+            return pair is not None
+
+        kept = [q for q in p.answerable if not drop(f"{p.text}\n{qa(q)}")]
+        unanswerable = [q for q in p.unanswerable if not drop(f"{p.text}\n{qa(q)}")]
         counts["answerable_excluded_by_question"] += len(p.answerable) - len(kept)
-        counts["unanswerable_excluded_by_question"] += len(dropped)
-        p.answerable = kept
-        p.unanswerable = [q for q in p.unanswerable if q not in dropped]
+        counts["unanswerable_excluded_by_question"] += len(p.unanswerable) - len(unanswerable)
+        if drop("\n".join([p.text, *map(qa, kept + unanswerable)])):
+            counts["passages_excluded"] += 1
+            counts["answerable_excluded_with_passage"] += len(kept)
+            counts["unanswerable_excluded_with_passage"] += len(unanswerable)
+            continue
+        p.answerable, p.unanswerable = kept, unanswerable
         clean.append(p)
     return clean, counts
 
@@ -450,9 +608,22 @@ def generate(args: argparse.Namespace) -> None:
     out: Path = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
 
-    lama = [s for row in build_candidates(args.lama_root) for s in (row["subject"], row["object"])]
+    lama = {(row["subject"], row["object"]) for row in build_candidates(args.lama_root)}
     match = lama_matcher(lama)
-    print(f"[{ts()}] LAMA strings: {len(set(lama))} from {args.lama_root}")
+    print(f"[{ts()}] LAMA (subject, object) pairs: {len(lama)} from {args.lama_root}")
+    hits: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
+
+    def lama_hit(pool: str, texts: Iterable[str]) -> bool:
+        pair = match("\n".join(texts))
+        if pair:
+            hits[pool][pair] += 1
+        return pair is not None
+
+    def report_hits(pool: str) -> None:
+        print(
+            f"[{ts()}]   {pool}: {sum(hits[pool].values())} dropped by the pair rule; "
+            f"top first matches {hits[pool].most_common(5)}"
+        )
 
     model_mod = importlib.import_module(f"models.{args.model_name}")
     from models.common import build_tokenizer
@@ -463,18 +634,7 @@ def generate(args: argparse.Namespace) -> None:
     ultrachat = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
     trained = ultrachat.select(range(WARM_START_ROWS)).to_list()
 
-    mined = mine_abstentions(row["messages"] for row in trained)
-    phrases = [p for p in mined if not match(p)]
-    by_stem = Counter(next(s for s in ABSTENTION_STEMS if p.startswith(s)) for p in phrases)
-    print(
-        f"[{ts()}] abstention set: {len(mined)} mined, {len(mined) - len(phrases)} LAMA-excluded, "
-        f"{len(phrases)} kept{'  (under 20: a reading before round 0)' if len(phrases) < 20 else ''}"
-    )
-    print(f"[{ts()}]   by stem: {dict(by_stem)}")
-    for phrase in phrases:
-        print(f"    {phrase!r}")
-
-    passages, squad_counts = load_passages(match)
+    passages, squad_counts = load_passages(match, hits["squad"])
     rng.shuffle(passages)
     eligible = [p for p in passages if len(p.answerable) >= 2]
     print(f"[{ts()}] SQuAD: {dict(squad_counts)}")
@@ -482,34 +642,88 @@ def generate(args: argparse.Namespace) -> None:
         f"[{ts()}]   LAMA-clean passages {len(passages)}/{squad_counts['passages']} "
         f"({len(passages) / squad_counts['passages']:.1%}), with >= 2 answerable {len(eligible)}"
     )
+    report_hits("squad")
 
     device = torch.device("cuda")
     model = _load_model(args.model_name, args.init_adapter, device)
-    scan = dict(
-        zip(
-            (p.pid for p in eligible),
-            score_questions(
-                model, render, [p.answerable[0] for p in eligible], args.batch_size, device
-            ),
-            strict=True,
-        )
-    )
-    scores = {pid: float(r["accuracy"]) for pid, r in scan.items()}
+    first = [p.answerable[0] for p in eligible]
+    scored = score_questions(model, render, first, args.batch_size, device)
+    replies = greedy_answers(model, render, first, args.batch_size)
+    mark_generated(scored, first, replies, render)
+    scan = dict(zip((p.pid for p in eligible), scored, strict=True))
+    known = {pid: bool(r["generated_known"]) for pid, r in scan.items()}
+    histogram = Counter(f"{float(r['accuracy']):.1f}" for r in scan.values())
     print(
-        f"[{ts()}] v4 first-question scan: {len(scores)} scored, accuracy histogram "
-        f"{dict(sorted(Counter(f'{a:.1f}' for a in scores.values()).items()))}"
+        f"[{ts()}] v4 first-question scan: {len(scan)} scored, {sum(known.values())} known by "
+        f"generate-and-match, accuracy histogram {dict(sorted(histogram.items()))}"
+    )
+
+    previous = out / "dreamer_fixed_sets.json"
+    old_gate = json.loads(previous.read_text())["gate"] if previous.exists() else []
+    old_questions = [{"id": r["question"]["squad_id"], **r["question"]} for r in old_gate]
+    first_id = {p.pid: p.answerable[0]["id"] for p in eligible}
+    old_replies = greedy_answers(model, render, old_questions, args.batch_size)
+    gate_pids = []
+    for r, q, reply in zip(old_gate, old_questions, old_replies, strict=True):
+        text = render.tokenizer.decode(reply).strip()
+        unknown = not answer_in_reply(q["answer"], text)
+        same = first_id.get(r["passage_id"]) == q["id"]
+        print(
+            f"[{ts()}] previous gate row {r['passage_id']} {q['squad_id']}: "
+            f"{'unknown' if unknown else 'KNOWN'}, scanned as its passage's first question: "
+            f"{same}; {q['question']!r} -> {q['answer']!r} reply {text!r}"
+        )
+        gate_pids.append(r["passage_id"] if unknown and same else None)
+    keep_gate = bool(gate_pids) and None not in gate_pids
+    if keep_gate:
+        print(f"[{ts()}] previous gate rows kept")
+    else:
+        print(f"[{ts()}] WARNING: fresh gate draw; gate_dreams.json must be rewritten for it")
+
+    abstention_candidates = list(
+        dict.fromkeys(
+            r["reply"]
+            for r, reply in zip(scored, replies, strict=True)
+            if not r["generated_known"]
+            and len(reply) < REPLY_CAP
+            and 0 < len(str(r["reply"]).split()) <= ABSTENTION_WORDS
+        )
     )
     del model
     torch.cuda.empty_cache()
+    labels = abstention_labels(abstention_candidates, device)
+    by_label: dict[str, list[str]] = defaultdict(list)
+    for reply, label in zip(abstention_candidates, labels, strict=True):
+        by_label[label].append(reply)
+    print(
+        f"[{ts()}] abstention candidates: {len(abstention_candidates)} distinct finished replies "
+        f"of <= {ABSTENTION_WORDS} words to unknown questions; by label "
+        f"{ {k: len(v) for k, v in by_label.items()} }"
+    )
+    for label, rows in by_label.items():
+        for reply in rows[:5]:
+            print(f"    {label}: {reply!r}")
+    phrases = [p for p in by_label["unknown"] if not lama_hit("abstention_set", [p])]
+    print(
+        f"[{ts()}] abstention set: {len(phrases)} phrasings"
+        f"{'  (under 20: a reading before round 0)' if len(phrases) < 20 else ''}"
+    )
+    for phrase in phrases:
+        print(f"    {phrase!r}")
+    if not phrases:
+        raise SystemExit("empty abstention set")
+
     sets = partition_passages(
         passages,
-        scores,
+        known,
         prod=PROD,
         gate=GATE,
         held_out=HELD_OUT_FACTS,
         abstention_rows=args.abstention_rows,
+        rng=rng,
+        gate_pids=gate_pids if keep_gate else (),
     )
-    held = [scores[p.pid] for p in sets["held_out_facts"]]
+    held = [scan[p.pid]["accuracy"] for p in sets["held_out_facts"]]
     print(f"[{ts()}] held-out v4-best-known accuracy range {min(held):.3f}..{max(held):.3f}")
 
     corpus: list[dict[str, object]] = []
@@ -524,8 +738,10 @@ def generate(args: argparse.Namespace) -> None:
             "title": p.title,
             "passage": p.text,
             "question": _question_row(q, render),
-            "v4_accuracy": scores[p.pid],
+            "v4_accuracy": scan[p.pid]["accuracy"],
             "v4_correct_positions": scan[p.pid]["correct_positions"],
+            "v4_reply": scan[p.pid]["reply"],
+            "v4_generated_known": scan[p.pid]["generated_known"],
         }
         if name != "held_out_facts":
             negative = _qa(q["question"], fixed_answers[j])
@@ -552,7 +768,7 @@ def generate(args: argparse.Namespace) -> None:
     abstentions = []
     for p in sets["abstention"]:
         for q in p.unanswerable:
-            reply = rng.choice(phrases)
+            reply = rng.choice([r for r in phrases if not match(f"{q['question']}\n{r}")])
             messages = _qa(q["question"], reply)
             abstentions.append(
                 {
@@ -579,7 +795,7 @@ def generate(args: argparse.Namespace) -> None:
             break
         row = ultrachat[index]
         conv_counts["read"] += 1
-        if any(match(m["content"]) for m in row["messages"]):
+        if lama_hit("conversation", (m["content"] for m in row["messages"])):
             conv_counts["lama_excluded"] += 1
             continue
         valid, capped, acks = valid_boundaries(row["messages"], prefix_tokens, PREFIX_CAP)
@@ -611,6 +827,7 @@ def generate(args: argparse.Namespace) -> None:
         f"({len(conversations) / conv_counts['read']:.1%}); {dict(conv_counts)}; "
         f"valid boundaries {sum(len(c['boundaries']) for c in conversations)}"
     )
+    report_hits("conversation")
 
     dropped = packer_dropped(trained, args.dolly, render)
     warm = [
@@ -623,7 +840,7 @@ def generate(args: argparse.Namespace) -> None:
             "packer_dropped": i in dropped,
         }
         for i, row in enumerate(trained)
-        if not any(match(m["content"]) for m in row["messages"])
+        if not lama_hit("warm_start", (m["content"] for m in row["messages"]))
     ]
     rng.shuffle(warm)
     held_warm, warm = warm[:HELD_OUT_WARM_START], warm[HELD_OUT_WARM_START:]
@@ -637,6 +854,7 @@ def generate(args: argparse.Namespace) -> None:
         f"{len(warm)} pool rows, {sum(r['packer_dropped'] for r in held_warm)} of the "
         f"{len(held_warm)} held-out rows"
     )
+    report_hits("warm_start")
 
     dolly_lines = [json.loads(line) for line in args.dolly.read_text().splitlines() if line.strip()]
     plain = [(i, rec) for i, rec in enumerate(dolly_lines) if rec["dolly"]["shape"] == "plain"]
@@ -648,11 +866,13 @@ def generate(args: argparse.Namespace) -> None:
             "text": render.text(rec["messages"]),
         }
         for i, rec in plain
-        if not any(match(m["content"]) for m in rec["messages"])
+        if not lama_hit("dolly_plain", (m["content"] for m in rec["messages"]))
     ]
     print(
         f"[{ts()}] Dolly plain: {len(dolly)}/{len(plain)} LAMA-clean ({len(dolly) / len(plain):.1%})"
     )
+    report_hits("dolly_plain")
+    report_hits("abstention_set")
     print(
         f"[{ts()}] abstention rows: {len(abstentions)} from {len(sets['abstention'])} passages, "
         f"{len(Counter(r['reply'] for r in abstentions))} distinct replies"
@@ -666,7 +886,7 @@ def generate(args: argparse.Namespace) -> None:
         *warm,
         *(row for rows in fixed.values() for row in rows),
     ]
-    overlaps = sum(any(match(t) for t in _row_texts(row)) for row in corpus)
+    overlaps = sum(match("\n".join(_row_texts(row))) is not None for row in corpus)
     print(f"[{ts()}] LAMA overlap over the written rows: {overlaps}  (must be 0)")
     assert overlaps == 0, "a written row carries a LAMA subject or object"
     by_pid: dict[str, set[str]] = defaultdict(set)
@@ -687,7 +907,16 @@ def generate(args: argparse.Namespace) -> None:
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in corpus)
     )
     (out / "dreamer_abstentions.json").write_text(
-        json.dumps({"stems": ABSTENTION_STEMS, "mined": len(mined), "phrases": phrases}, indent=1)
+        json.dumps(
+            {
+                "classifier": CLASSIFIER,
+                "hypotheses": HYPOTHESES,
+                "candidates": len(abstention_candidates),
+                "by_label": {k: len(v) for k, v in by_label.items()},
+                "phrases": phrases,
+            },
+            indent=1,
+        )
     )
     (out / "dreamer_fixed_sets.json").write_text(json.dumps({**meta, **fixed}, indent=1))
     print(
@@ -728,6 +957,7 @@ def retained_pool(args: argparse.Namespace) -> None:
     model = _load_model(args.model_name, args.init_adapter, device, args.fp32_forward)
     start = time.monotonic()
     scored = score_questions(model, render, drawn, args.batch_size, device)
+    mark_generated(scored, drawn, greedy_answers(model, render, drawn, args.batch_size), render)
     elapsed = time.monotonic() - start
     rows = [
         {
@@ -736,7 +966,7 @@ def retained_pool(args: argparse.Namespace) -> None:
             "question": q["question"],
             "answer": q["answer"],
             **result,
-            "side": "unknown" if result["accuracy"] == 0.0 else "known",
+            "side": "known" if result["generated_known"] else "unknown",
         }
         for q, result in zip(drawn, scored, strict=True)
     ]
@@ -753,7 +983,10 @@ def retained_pool(args: argparse.Namespace) -> None:
                 (render.tokenizer.decode([ids[i]]), i in r["correct_positions"])
                 for i in r["answer_positions"]
             ]
-            print(f"    {side} {r['accuracy']:.2f}  {r['question']!r} -> {r['answer']!r}  {marked}")
+            print(
+                f"    {side} {r['accuracy']:.2f}  {r['question']!r} -> {r['answer']!r}  {marked}  "
+                f"reply {r['reply']!r}"
+            )
     Path(output).write_text(
         json.dumps(
             {

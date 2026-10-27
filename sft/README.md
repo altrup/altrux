@@ -521,10 +521,19 @@ make lama-ckl-corpus ARGS="retained-pool --init-adapter <checkpoint>/final"
 
 `generate` reads SQuAD 2.0, UltraChat and `data/dolly_context.jsonl`
 (`--dolly`; `python -m preparation.dolly` writes it with its fixed seed). It
-removes every row that matches a LAMA `build_candidates` subject or object
-(word-bounded, case-insensitive), then scores the first question of each
-passage on the pinned v4 adapter (`--init-adapter`) to select the fixed sets
-(prod and gate rows at accuracy 0, held-out rows the 50 highest accuracies).
+removes every row whose text carries both the subject and the object of one
+LAMA `build_candidates` row (word-bounded, case-insensitive), and logs the
+dropped count and the top first-matched pairs per pool. It then scores the
+first question of each passage on the pinned v4 adapter (`--init-adapter`) by
+generate-and-match: the greedy reply to `[USER] q [ASSISTANT]` (no passage, to
+`<eos>`, at most 48 tokens) is known when it contains the SQuAD-normalised
+answer on word boundaries. Prod and gate rows are unknown, the 50 held-out
+rows a seeded draw of the known ones. The gate rows of an existing
+`dreamer_fixed_sets.json` are kept when they stay unknown; otherwise the draw is
+fresh and `gate_dreams.json` must be rewritten. The abstention set is v4's own
+finished replies of at most 30 words to unknown questions that the zero-shot
+classifier `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli` labels "does not
+know" (`abstention_labels`, also the dreamer's over-abstention detector).
 It writes `dreamer_corpus.jsonl`, `dreamer_abstentions.json` and
 `dreamer_fixed_sets.json` to `--out-dir` (default `data/`).
 `--conversations` (1000) sets the number of UltraChat conversation candidates
@@ -534,9 +543,11 @@ with no passage on the checkpoint. It excludes the passage ids in
 `--exclude-passages` (a JSON list) and writes
 `data/retained_pool-<sha8>.json`, where sha8 comes from the checkpoint's
 `trainable.pt`. `--fp32-forward` scores in the fp32 forward and writes
-`data/retained_pool-<sha8>-fp32.json`. Each row records its accuracy, its answer-token positions and
-the positions the checkpoint predicts correctly. A row with no correct token is
-unknown; all other rows are known.
+`data/retained_pool-<sha8>-fp32.json`. Each row records its teacher-forced
+accuracy, its answer-token positions, the positions the checkpoint predicts
+correctly, its greedy `reply` and `generated_known`; `side` is known when
+`generated_known` holds. The log prints the agreement of the teacher-forced
+any-token rule, the first-token rule and the generated verdict.
 
 `make lama-ckl-gate` (`experiments/lama_ckl/diagnostics/alignment_gate.py`)
 is the alignment gate (`DISCUSSION-20261024` §3.5 item 2). It needs a GPU, the
@@ -577,7 +588,11 @@ make lama-ckl-dreamer ARGS="--gate <box gate dir>/gate.json --fp32-forward"
 Each round measures the instrument (rounds after 0 run the gate's instrument
 steps on the starting checkpoint), draws P (50 rows) and R, dreams a pool of
 K·n per row and keeps the best batch. Then it runs the SFT on the kept batches
-with 1:1 replay and records the readings. Output under `--output` (default
+with 1:1 replay (batch loss Σ w·L over `--sft-batch`) and records the readings.
+A replay pool too small for the 1:1 mix stops the round: the pool size, the
+kept-pair count and the shortfall go to the log and to `readings.json`, and a
+rerun after the corpus is fixed redoes that round's SFT. The over-abstention
+reading labels each reply with the corpus's entailment classifier. Output under `--output` (default
 `../.cache/lama_ckl/dreamer/a/`): `round-NN/{gate,plan,reference,prod,readings}.json`
 and `round-NN/rows/<row>.json`. A round checkpoint goes to
 `../models/<model>/checkpoints/dreamer-a-rNN/final/`. After the last round,
@@ -587,7 +602,7 @@ rerun the same command: complete rows and rounds are skipped. Flags: `--arm a`
 (50), `--tokens` (512), `--batch-size` (40 dreams per launch), `--sft-batch` (8;
 the micro-batch halves on OOM and accumulates to 8), `--eval-batch-size` (4),
 `--fp32-forward`, `--seed`, `--model-name`, `--init-adapter`, `--corpus`,
-`--fixed-sets` and `--abstentions`.
+and `--fixed-sets`.
 
 After the smoke fixes batch sizes for that rented machine, run the registered
 cells serially (`DISCUSSION-20261013` §3.3–3.4). Seeds `42`, `43`, and `44` are
