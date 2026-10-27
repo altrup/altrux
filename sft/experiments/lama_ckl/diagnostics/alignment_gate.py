@@ -1033,10 +1033,15 @@ def double_backward_main(argv: Sequence[str]) -> None:
     parser.add_argument("--model-name", default="mamba2_780m")
     parser.add_argument("--tokens", type=int, default=128)
     parser.add_argument("--block", type=int, default=64, help="checkpoint block, tokens")
+    parser.add_argument("--fp32-forward", action="store_true")
     args = parser.parse_args(argv)
     device = torch.device("cuda")
     hooks = importlib.import_module(f"models.{args.model_name}.train_hooks")
     model, params = hooks.setup_training(device, 16, 32.0, 0.0)
+    if args.fp32_forward:
+        from training.master_weights import fp32_forward
+
+        fp32_forward(model)
     model.torch_norms = True
     with torch.no_grad():
         for name, p in model.named_parameters():

@@ -561,7 +561,9 @@ verdict. `--output` writes `gate.json`. `--fp32-forward` casts the model to
 fp32 for all forwards (about 11 GB). `--init-adapter` (default v4), `--corpus`,
 `--fixed-sets`, `--gate-dreams`, `--seed`, `--dream-batch-size` (9) and
 `--batch-size` (4, rows per g_old forward) have defaults. `double-backward`
-takes `--model-name` (`mamba2_780m`), `--tokens` (128) and `--block` (64).
+takes `--model-name` (`mamba2_780m`), `--tokens` (128), `--block` (64) and
+`--fp32-forward` (off; the bf16 finite difference is noise, so read the check in fp32).
+On the 8 GB dev box it fits only at `--tokens 8 --block 4`.
 
 `make lama-ckl-dreamer` (`experiments/lama_ckl/dreamer.py`) trains dreamer arm
 (a) (`DISCUSSION-20261024` §3.2, §6.6). It needs a GPU, the corpus files above
