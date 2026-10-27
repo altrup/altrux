@@ -18,6 +18,53 @@ from progress import fmt_duration, heartbeat, ts
 # Can use {eoc}, {user_open}, and {asst_open}
 DREAM_PROMPT = "{eoc}"
 WAKE_FRAME = "Remember this for later: "
+# Disjoint from preparation/dolly.py PREFACES so the warm start never saw a frame verbatim.
+WAKE_FRAMES: tuple[str, ...] = (
+    WAKE_FRAME,
+    "Please keep the following in mind: ",
+    "I'll be asking about this text later: ",
+    "Hang on to this, I'll ask about it later: ",
+    "Store this away for me: ",
+    "Make a note of the following: ",
+    "Could you memorize this passage? ",
+    "Keep this in your memory, please: ",
+    "Read this carefully, it matters later: ",
+    "Don't forget what this says: ",
+    "Commit this to memory: ",
+    "I'll want you to recall this later, so read it closely: ",
+    "Here's something worth keeping: ",
+    "Save this for later, please: ",
+    "Please take note of this: ",
+    "Remember the following text: ",
+    "Try to retain this: ",
+    "Keep track of this for me: ",
+    "This is important, so hold on to it: ",
+    "Give this a careful read: ",
+    "Learn this for me: ",
+    "Please file this away: ",
+    "I want you to hold on to the details here: ",
+    "Memorize the text below: ",
+    "Keep the following text for later: ",
+    "Pay attention to this, it will matter later: ",
+    "Please remember what I'm about to paste: ",
+    "Note the following for future reference: ",
+    "Absorb this, please: ",
+    "Mind holding on to this for me? ",
+    "Keep these facts in your head: ",
+    "Read the following and keep it in mind: ",
+    "For later, remember this: ",
+    "I'm handing this over for safekeeping: ",
+    "Make sure this sticks: ",
+    "Take this in and don't lose it: ",
+    "Please hold this in memory: ",
+    "Note these details: ",
+    "Keep a mental note of this: ",
+    "You'll need this later, so please remember it: ",
+    "Here's a text I'd like you to keep: ",
+    "Can you keep this in mind for me? ",
+    "Study this, I'll quiz you on it later: ",
+    "Remember what this text says: ",
+)
 
 
 class Tokenizer(Protocol):
@@ -213,6 +260,7 @@ def run_conversational_wake(
     device: str | torch.device,
     temperature: float = 0.0,
     seed: int | None = None,
+    frame: str = WAKE_FRAME,
 ) -> tuple[dict[str, object], State]:
     """
     Feed one document per user turn, then generate each assistant reply
@@ -224,9 +272,11 @@ def run_conversational_wake(
     temperature: reply sampling temperature, <= 0 for argmax
     seed: wake seed; turn i samples from a CPU generator seeded with
           dream_generation_seed(seed, i, 0), unseeded when None
+    frame: the request before every document, WAKE_FRAME unless the caller
+           draws one from WAKE_FRAMES
     Raises ValueError if either limit is < 1
 
-    Per turn the prompt is user_open + " " + WAKE_FRAME + document (truncated)
+    Per turn the prompt is user_open + " " + frame + document (truncated)
     + "\n" + asst_open: the warm-start corpus rendering
     (preparation/conversations.py format_conversation) up to the reply, whose
     first token carries the separating space. The frame is tokenized apart
@@ -249,7 +299,7 @@ def run_conversational_wake(
              reply_seed (None when unseeded or greedy)
       transcript_token_ids: all prompts and replies in order
       transcript_sha256: sha256 of the ids joined with ","
-      frame: WAKE_FRAME
+      frame: the frame argument
       forced_closes: number of eos_forced turns
       role_marker_closes: number of role_marker_closed turns
       reply_temperature, wake_seed: the temperature and seed arguments
@@ -265,7 +315,7 @@ def run_conversational_wake(
         tokenizer.convert_tokens_to_ids(asst_open),
     }
 
-    frame_ids = _encode(tokenizer, " " + WAKE_FRAME.rstrip())
+    frame_ids = _encode(tokenizer, " " + frame.rstrip())
     turns: list[dict[str, object]] = []
 
     started = time.time()
@@ -360,7 +410,7 @@ def run_conversational_wake(
         "transcript_sha256": hashlib.sha256(
             ",".join(str(t) for t in transcript_token_ids).encode()
         ).hexdigest(),
-        "frame": WAKE_FRAME,
+        "frame": frame,
         "forced_closes": sum(bool(turn["eos_forced"]) for turn in turns),
         "role_marker_closes": sum(bool(turn["role_marker_closed"]) for turn in turns),
         "reply_temperature": temperature,

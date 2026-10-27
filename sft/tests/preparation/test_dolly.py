@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.lama_ckl.protocol import WAKE_FRAME
+from experiments.lama_ckl.protocol import WAKE_FRAMES
 from preparation.dolly import (
     OPENERS,
     PREFACES,
@@ -72,11 +72,11 @@ def test_partition_is_pinned():
 
 @pytest.mark.parametrize("phrases", [OPENERS, PREFACES, RECALL_REQUESTS, RECALL_GIST_REQUESTS])
 def test_phrase_sets_are_large_distinct_and_frame_free(phrases):
-    frame = WAKE_FRAME.strip().lower()
+    frames = [frame.strip().lower() for frame in WAKE_FRAMES]
 
     assert len(phrases) >= 40
     assert len(set(phrases)) == len(phrases)
-    assert not [p for p in phrases if frame in p.lower()]
+    assert not [p for p in phrases if any(frame in p.lower() for frame in frames)]
 
 
 def test_held_out_contexts_never_reach_the_output(tmp_path):

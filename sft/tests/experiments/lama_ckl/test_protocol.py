@@ -5,6 +5,7 @@ import torch
 
 from experiments.lama_ckl.protocol import (
     WAKE_FRAME,
+    WAKE_FRAMES,
     apply_dream_prompt,
     dream_prompt_ids,
     lama_dream_diagnostics,
@@ -12,6 +13,7 @@ from experiments.lama_ckl.protocol import (
 )
 from experiments.lama_ckl.runner import REPLY_TOKENS
 from preparation.conversations import format_conversation
+from preparation.dolly import PREFACES
 
 
 class Tokenizer:
@@ -339,3 +341,37 @@ def test_subjects_mentioned_counts_distinct_rows_named_in_generated_text():
     ]
 
     assert lama_dream_diagnostics(dreams, rows, [])["subjects_mentioned"] == 1
+
+
+def test_wake_frames_are_a_large_distinct_set_outside_the_corpus():
+    assert WAKE_FRAMES[0] == WAKE_FRAME
+    assert len(WAKE_FRAMES) >= 40
+    assert len(set(WAKE_FRAMES)) == len(WAKE_FRAMES)
+    assert all(f.endswith(" ") and not f.endswith("  ") for f in WAKE_FRAMES)
+    assert not {f.strip() for f in WAKE_FRAMES} & {p.strip() for p in PREFACES}
+
+
+def test_conversational_wake_uses_the_frame_it_is_given():
+    tokenizer = Tokenizer()
+
+    def wake(**frame):
+        artifact, _ = run_conversational_wake(
+            Model(),
+            tokenizer,
+            ["Ada in Rome"],
+            None,
+            "[USER]",
+            "[ASSISTANT]",
+            "<EOC>",
+            reply_tokens=4,
+            evidence_tokens=512,
+            device="cpu",
+            **frame,
+        )
+        return artifact
+
+    default, drawn = wake(), wake(frame=WAKE_FRAMES[1])
+    assert default["frame"] == WAKE_FRAME and drawn["frame"] == WAKE_FRAMES[1]
+    prompt = drawn["turns"][0]["prompt_token_ids"]
+    assert prompt != default["turns"][0]["prompt_token_ids"]
+    assert tokenizer.decode(prompt) == f"[USER] {WAKE_FRAMES[1]}Ada in Rome\n[ASSISTANT]"

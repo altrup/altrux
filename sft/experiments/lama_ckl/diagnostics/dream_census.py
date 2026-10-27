@@ -7,11 +7,12 @@ from pathlib import Path
 
 import torch
 
+from experiments.lama_ckl.protocol import WAKE_FRAMES
 from experiments.lama_ckl.split import DEFAULT_WARMSTART
 from progress import heartbeat, ts
 
 PROMPT = "<|endofconversation|>"
-FRAME = "Remember this for later:"
+FRAMES = tuple(frame.strip() for frame in WAKE_FRAMES)
 LAGS = (1, 5, 20)
 
 
@@ -29,9 +30,9 @@ def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
 def _counts(payload: dict) -> dict[str, int]:
     texts = [d["text"].removeprefix(PROMPT) for d in payload["dreams"]]
     return {
-        "frame_anywhere": sum(FRAME in t for t in texts),
-        "frame_early": sum(0 <= t.find(FRAME) < 60 for t in texts),
-        "frame_strict": sum(t.lstrip().startswith(FRAME) for t in texts),
+        "frame_anywhere": sum(any(f in t for f in FRAMES) for t in texts),
+        "frame_early": sum(any(0 <= t.find(f) < 60 for f in FRAMES) for t in texts),
+        "frame_strict": sum(t.lstrip().startswith(FRAMES) for t in texts),
         "no_user": sum("[USER]" not in t for t in texts),
         "assistant_present": sum("[ASSISTANT]" in t for t in texts),
         "eoc_stop": sum(d["stop_reason"] == "eoc" for d in payload["dreams"]),

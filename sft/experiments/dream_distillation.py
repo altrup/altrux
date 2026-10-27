@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 from experiments.dream_generation import copy_state
 from experiments.dream_types import CachedDream, Dream, DreamCache
@@ -115,8 +116,17 @@ def distill_dream_set(
     return tokens
 
 
+LossWeights = Literal["turn", "uniform"]
+
+
 def turn_weights(
-    cached: CachedDream, *, user_id: int, asst_id: int, eos_id: int, eoc_id: int
+    cached: CachedDream,
+    *,
+    user_id: int,
+    asst_id: int,
+    eos_id: int,
+    eoc_id: int,
+    loss_weights: LossWeights = "turn",
 ) -> dict[int, float]:
     """Map each scored position to its loss weight; the weights of a scored dream sum to 1.
 
@@ -126,8 +136,11 @@ def turn_weights(
     turn. Tokens before the first marker form turn 0. A turn with no token other
     than its marker and EOS gets no weight; each of the T other turns gets 1/T,
     split evenly over its scored positions. The position predicting the terminal
-    EOC is never scored.
+    EOC is never scored. ``loss_weights="uniform"`` keeps the same positions and
+    gives each of the dream's N scored positions 1/N.
     """
+    if loss_weights not in ("turn", "uniform"):
+        raise ValueError(f"loss_weights must be 'turn' or 'uniform', got {loss_weights!r}")
     ids, start = cached.dream_ids, cached.prefix_len
     end = len(ids)
     appended = end > start and ids[-1] == eoc_id
@@ -153,14 +166,16 @@ def turn_weights(
         owner = turn_of.get(position + 1, turn)
         if keep[position] and owner in content:
             groups.setdefault(owner, []).append(position)
+    if loss_weights == "uniform":
+        n = sum(map(len, groups.values()))
+        return {position: 1 / n for group in groups.values() for position in group}
     return {
         position: 1 / (len(groups) * len(group)) for group in groups.values() for position in group
     }
 
 
-def distill_dream_batch(
+def dream_batch_gradient(
     model,
-    opt,
     dreams: Sequence[CachedDream],
     kl_temp: float,
     *,
@@ -168,18 +183,27 @@ def distill_dream_batch(
     asst_id: int,
     eos_id: int,
     eoc_id: int,
+    loss_weights: LossWeights = "turn",
 ) -> dict[str, object]:
-    """Distill every dream in one batched forward and one optimizer step, weighted per turn.
+    """Backpropagate the batch loss of the dreams into ``.grad`` in one batched forward; no step.
 
     The student replays each dream from an empty state. A dream's loss is its
     weighted KL (its weights sum to 1), None when it has no scored position;
-    the batch loss is their mean over scored dreams.
+    the batch loss is their mean over scored dreams. Called on one dream, the
+    gradient is that dream's own. Gradients accumulate into ``.grad``.
     """
     import torch
     import torch.nn.functional as F
 
     weights = [
-        turn_weights(d, user_id=user_id, asst_id=asst_id, eos_id=eos_id, eoc_id=eoc_id)
+        turn_weights(
+            d,
+            user_id=user_id,
+            asst_id=asst_id,
+            eos_id=eos_id,
+            eoc_id=eoc_id,
+            loss_weights=loss_weights,
+        )
         for d in dreams
     ]
     scored = sum(bool(w) for w in weights)
@@ -218,8 +242,6 @@ def distill_dream_batch(
     )
     loss = per_dream.sum() / scored
     loss.backward()
-    opt.step()
-    opt.zero_grad(set_to_none=True)
     dream_losses = [
         value if w else None for value, w in zip(per_dream.tolist(), weights, strict=True)
     ]
@@ -229,11 +251,73 @@ def distill_dream_batch(
     return out
 
 
+def flat_grad(model):
+    """The trainable parameters' ``.grad`` as one vector, zeros where a gradient is None."""
+    import torch
+
+    return torch.cat(
+        [
+            (p.grad if p.grad is not None else torch.zeros_like(p)).flatten()
+            for p in model.parameters()
+            if p.requires_grad
+        ]
+    )
+
+
+def distill_dream_batch(
+    model,
+    opt,
+    dreams: Sequence[CachedDream],
+    kl_temp: float,
+    *,
+    user_id: int,
+    asst_id: int,
+    eos_id: int,
+    eoc_id: int,
+    loss_weights: LossWeights = "turn",
+    clip_norm: float | None = None,
+) -> dict[str, object]:
+    """Distill every dream in one batched forward and one optimizer step.
+
+    ``dream_batch_gradient`` gives the gradient; ``clip_norm`` (None for no clip)
+    caps its norm before ``opt.step()``. ``out`` adds the pre-clip ``grad_norm``
+    and whether the clip fired. A batch with no scored dream takes no step.
+    """
+    import torch
+
+    out = dream_batch_gradient(
+        model,
+        dreams,
+        kl_temp,
+        user_id=user_id,
+        asst_id=asst_id,
+        eos_id=eos_id,
+        eoc_id=eoc_id,
+        loss_weights=loss_weights,
+    )
+    out["grad_norm"], out["clipped"] = None, False
+    if not out["scored_dreams"]:
+        return out
+    grads = [p for p in model.parameters() if p.grad is not None]
+    if clip_norm is None:
+        norm = torch.nn.utils.get_total_norm([p.grad for p in grads])
+    else:
+        norm = torch.nn.utils.clip_grad_norm_(grads, clip_norm)
+    out["grad_norm"] = norm.item()
+    out["clipped"] = clip_norm is not None and out["grad_norm"] > clip_norm
+    opt.step()
+    opt.zero_grad(set_to_none=True)
+    return out
+
+
 __all__ = [
+    "LossWeights",
     "distill_dream_batch",
     "distill_dream_set",
     "distill_replay",
+    "dream_batch_gradient",
     "dream_from_cached",
+    "flat_grad",
     "scored_keep",
     "target_keep_mask",
     "turn_weights",

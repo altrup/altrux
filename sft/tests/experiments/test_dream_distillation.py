@@ -3,7 +3,12 @@ import inspect
 import pytest
 import torch
 
-from experiments.dream_distillation import distill_dream_batch, turn_weights
+from experiments.dream_distillation import (
+    distill_dream_batch,
+    dream_batch_gradient,
+    flat_grad,
+    turn_weights,
+)
 from experiments.dream_types import CachedDream
 
 USER, ASST, EOS, EOC = 1, 2, 3, 4
@@ -29,6 +34,7 @@ class CountingSGD(torch.optim.SGD):
 
     def step(self, closure=None):
         self.steps += 1
+        self.seen = torch.cat([p.grad.flatten() for g in self.param_groups for p in g["params"]])
         return super().step(closure)
 
 
@@ -144,3 +150,76 @@ def test_dream_losses_recorded_and_floor_warning_in_batch():
     none, *_ = run([dream([EOC])])
     assert none["dream_losses"] == [None] and none["max_dream_loss"] is None
     assert none["loss"] == 0.0
+
+
+def test_uniform_weights_cover_the_turn_positions_equally():
+    for ids, stop in (
+        (TWO_TURNS, "eoc"),
+        (TWO_TURNS, "max-tokens"),
+        ([EOC, USER, ASST, 5, EOS], "eoc"),
+    ):
+        turn = turn_weights(dream(ids, stop), **IDS)
+        uniform = turn_weights(dream(ids, stop), **IDS, loss_weights="uniform")
+        assert list(uniform) == list(turn)
+        assert list(uniform.values()) == pytest.approx([1 / len(turn)] * len(turn))
+    with pytest.raises(ValueError):
+        turn_weights(dream(TWO_TURNS), **IDS, loss_weights="tokens")
+
+
+def _batch_grad(dreams, loss_weights="turn"):
+    model = Model()
+    out = dream_batch_gradient(model, dreams, 1.0, **IDS, loss_weights=loss_weights)
+    return out, flat_grad(model)
+
+
+@pytest.mark.parametrize("loss_weights", ["turn", "uniform"])
+def test_per_dream_gradients_average_to_the_batched_gradient(loss_weights):
+    dreams = [
+        dream(TWO_TURNS, seed=2),
+        dream([EOC]),
+        dream([EOC, ASST, 7, 8], "max-tokens", seed=3),
+        dream([EOC, USER, 9, 5, 6, EOS, ASST, 7, EOS], seed=4),
+    ]
+    # An unscored all-marker dream lengthens the padded batch without entering the loss.
+    blank = dream([EOC] + [USER] * 30, "max-tokens")
+    out, batched = _batch_grad(dreams, loss_weights)
+    _, repadded = _batch_grad([*dreams, blank], loss_weights)
+    spread = (batched - repadded).abs().max().item()
+
+    per_dream = [_batch_grad([d], loss_weights) for d in dreams]
+    scored = [g for o, g in per_dream if o["scored_dreams"]]
+    assert len(scored) == out["scored_dreams"] == 3
+    mean = torch.stack(scored).mean(0)
+    assert (mean - batched).abs().max().item() <= max(4 * spread, 1e-6)
+
+
+def test_unscored_dream_leaves_no_gradient():
+    model = Model()
+    out = dream_batch_gradient(model, [dream([EOC])], 1.0, **IDS)
+    assert out["scored_dreams"] == 0
+    assert torch.equal(flat_grad(model), torch.zeros(VOCAB * VOCAB))
+
+
+def test_clip_scales_the_gradient_before_the_step():
+    dreams = [dream(TWO_TURNS, seed=2), dream([EOC, ASST, 7, 8], seed=3)]
+    _, raw = _batch_grad(dreams)
+    norm = raw.norm().item()
+
+    model = Model()
+    opt = CountingSGD(model.parameters(), lr=0.1)
+    out = distill_dream_batch(model, opt, dreams, 1.0, **IDS, clip_norm=norm / 4)
+    assert out["clipped"] and out["grad_norm"] == pytest.approx(norm)
+    assert opt.seen.norm().item() == pytest.approx(norm / 4, rel=1e-4)
+    assert torch.allclose(opt.seen, raw / 4, rtol=1e-4, atol=1e-8)
+
+    model = Model()
+    opt = CountingSGD(model.parameters(), lr=0.1)
+    out = distill_dream_batch(model, opt, dreams, 1.0, **IDS)
+    assert not out["clipped"] and out["grad_norm"] == pytest.approx(norm)
+    assert torch.equal(opt.seen, raw)
+
+    model = Model()
+    opt = CountingSGD(model.parameters(), lr=0.1)
+    out = distill_dream_batch(model, opt, dreams, 1.0, **IDS, clip_norm=norm * 4)
+    assert not out["clipped"]
+    assert torch.equal(opt.seen, raw)

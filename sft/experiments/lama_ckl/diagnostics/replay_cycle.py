@@ -112,7 +112,7 @@ def main() -> None:
     # The frame as the wake tokenizes it (" Remember" is one token); the dream prompt is EOC.
     prefix = _encode(tokenizer, model_mod.EOC) + [int(wake["turns"][0]["prompt_token_ids"][0])]
     frame = [int(t) for t in wake["turns"][0]["prompt_token_ids"][1:]]
-    frame = frame[: len(_encode(tokenizer, " " + WAKE_FRAME.rstrip()))]
+    frame = frame[: len(_encode(tokenizer, " " + wake.get("frame", WAKE_FRAME).rstrip()))]
     print(f"[{ts()}] probe tokens {[tokenizer.decode([t]) for t in prefix + frame]}", flush=True)
 
     def probe(label: str) -> None:
