@@ -4,7 +4,9 @@ import random
 import pytest
 import torch
 
+from experiments.lama_ckl import dreamer_corpus
 from experiments.lama_ckl.dreamer import (
+    abstention_reading,
     batch_gap,
     completed_rows,
     kept_dream_draw,
@@ -12,6 +14,7 @@ from experiments.lama_ckl.dreamer import (
     mann_whitney_greater,
     pair_seq,
     replay_draw,
+    replay_or_stop,
     round_complete,
     round_dir,
     sft_batch_loss,
@@ -108,18 +111,20 @@ def _token_mean(model, ids, mask):
     return float(nll[keep].mean())
 
 
-def test_pair_loss_is_per_pair_token_mean_then_weighted_mean():
+def test_pair_loss_is_per_pair_token_mean_weighted_over_the_batch_size():
     model = _Fake()
     long = ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], [False, False] + [True] * 9)
     short = ([3, 5, 7], [False, True, True])
     expected = (_token_mean(model, *long) + _token_mean(model, *short)) / 2
-    assert float(sft_batch_loss(model, [(long, 1.0), (short, 1.0)], 2.0)) == pytest.approx(
+    assert float(sft_batch_loss(model, [(long, 1.0), (short, 1.0)], 2)) == pytest.approx(
         expected, rel=1e-5
     )
-    weighted = (3 * _token_mean(model, *long) + _token_mean(model, *short)) / 4
-    assert float(sft_batch_loss(model, [(long, 3.0), (short, 1.0)], 4.0)) == pytest.approx(
+    weighted = (3 * _token_mean(model, *long) + _token_mean(model, *short)) / 2
+    assert float(sft_batch_loss(model, [(long, 3.0), (short, 1.0)], 2)) == pytest.approx(
         weighted, rel=1e-5
     )
+    micro = sft_batch_loss(model, [(long, 3.0)], 2) + sft_batch_loss(model, [(short, 1.0)], 2)
+    assert float(micro) == pytest.approx(weighted, rel=1e-5)
 
 
 def test_zero_weight_rows_drop_out_of_the_pairs():
@@ -140,6 +145,28 @@ def test_replay_mix_is_one_to_one_and_a_short_pool_draws_what_exists():
     rows, shortfall = replay_draw(pool, 12, random.Random(0))
     assert sorted(r["dolly_line"] for r in rows) == list(range(5)) and shortfall == 7
     assert replay_draw([], 4, random.Random(0)) == ([], 4)
+
+
+def test_short_replay_pool_stops_the_round_with_its_numbers(tmp_path):
+    pool = [{"dolly_line": i} for i in range(5)]
+    assert len(replay_or_stop(pool, 5, random.Random(0), round_dir(tmp_path, 0))) == 5
+    assert not (round_dir(tmp_path, 0) / "readings.json").exists()
+    with pytest.raises(SystemExit):
+        replay_or_stop(pool, 12, random.Random(0), round_dir(tmp_path, 0))
+    readings = json.loads((round_dir(tmp_path, 0) / "readings.json").read_text())
+    assert readings["replay"] == {"pool": 5, "kept_pairs": 12, "shortfall": 7, "stopped": True}
+    assert not round_complete(tmp_path, 0)
+
+
+def test_over_abstention_is_the_unknown_share_of_the_labels(monkeypatch):
+    labels = ["unknown", "answers", "cannot", "unknown"]
+    monkeypatch.setattr(
+        dreamer_corpus, "abstention_labels", lambda replies, device: labels, raising=False
+    )
+    reading = abstention_reading(["a", "b", "c", "d"], torch.device("cpu"))
+    assert reading["over_abstention"] == 0.5
+    assert reading["abstention_labels"] == {"unknown": 2, "cannot": 1, "answers": 1}
+    assert reading["abstentions"] == ["a", "d"]
 
 
 def test_kept_dream_source_draws_only_positive_weight_rows():

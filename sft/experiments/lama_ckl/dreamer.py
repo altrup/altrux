@@ -22,7 +22,6 @@ step 4's `sft` with a step through the teacher logits on the same scalars.
 from __future__ import annotations
 
 import argparse
-import copy
 import gc
 import json
 import math
@@ -49,7 +48,7 @@ from experiments.lama_ckl.diagnostics.dream_census import (
     document_trigrams,
     revisits,
 )
-from experiments.lama_ckl.dreamer_corpus import pair_negatives
+from experiments.lama_ckl.dreamer_corpus import greedy_replies, pair_negatives
 from experiments.lama_ckl.protocol import WAKE_FRAMES, dream_prompt_ids, run_conversational_wake
 from experiments.lama_ckl.runner import (
     DREAM_TOKENS,
@@ -197,6 +196,22 @@ def replay_draw(pool: Sequence[Record], count: int, rng: random.Random) -> tuple
     return taken, count - len(taken)
 
 
+def replay_or_stop(
+    pool: Sequence[Record], count: int, rng: random.Random, directory: Path
+) -> list[Record]:
+    """One replay row per kept pair, or stop the round (sec 4.56(e))."""
+    replay, shortfall = replay_draw(pool, count, rng)
+    if shortfall:
+        reading = {"pool": len(pool), "kept_pairs": count, "shortfall": shortfall}
+        print(f"[{ts()}] WARNING: replay pool short: {json.dumps(reading)}", flush=True)
+        write_json(directory / "readings.json", {"replay": {**reading, "stopped": True}})
+        raise SystemExit(
+            f"replay pool of {len(pool)} rows cannot fill the 1:1 mix of {count} kept pairs "
+            f"(short by {shortfall}); the round stops (DISCUSSION-20261024 sec 4.56(e))"
+        )
+    return replay
+
+
 def kept_dream_draw(
     records: Sequence[Mapping[str, object]],
     weights: Sequence[Record],
@@ -285,7 +300,8 @@ def round_dir(output: Path, r: int) -> Path:
 
 
 def round_complete(output: Path, r: int) -> bool:
-    return (round_dir(output, r) / "readings.json").exists()
+    path = round_dir(output, r) / "readings.json"
+    return path.exists() and not json.loads(path.read_text()).get("replay", {}).get("stopped")
 
 
 def completed_rows(directory: Path) -> dict[str, Record]:
@@ -574,47 +590,12 @@ def reference_rows(ctx: Round, reference: Mapping[str, Sequence[Mapping[str, obj
     return stacked, {name: stacked[a:b].mean(0) for name, (a, b) in spans.items()}
 
 
-def stack_states(states: Sequence[object]) -> object:
-    stacked = copy.copy(states[0])
-    for attr in ("conv_states", "ssm_states"):
-        layers = zip(*(getattr(state, attr) for state in states), strict=True)
-        setattr(stacked, attr, [torch.cat(tensors) for tensors in layers])
-    return stacked
-
-
-def greedy_replies(model, prompts: Sequence[Sequence[int]], stop_ids: set[int], max_tokens: int):
-    """Greedy replies for all prompts in one decode batch: each prompt from empty
-    state at batch 1, the states stacked, then one token per step for every row."""
-    device = next(model.parameters()).device
-    states, last = [], []
-    with torch.no_grad():
-        for prompt in prompts:
-            logits, state = model(torch.tensor([list(prompt)], device=device), state=None)
-            states.append(state)
-            last.append(logits[:, -1])
-        state, logits = stack_states(states), torch.cat(last)
-        replies: list[list[int]] = [[] for _ in prompts]
-        done = [False] * len(prompts)
-        for _ in range(max_tokens):
-            tokens = logits.float().argmax(-1)
-            for row, token in enumerate(tokens.tolist()):
-                if not done[row]:
-                    done[row] = token in stop_ids
-                    if not done[row]:
-                        replies[row].append(token)
-            if all(done):
-                break
-            out, state = model(tokens[:, None], state=state)
-            logits = out[:, -1]
-    return replies
-
-
-def sft_batch_loss(model, items: Sequence[tuple[Seq, float]], total_weight: float) -> torch.Tensor:
-    """Per-pair token-mean cross-entropy, summed with each pair's weight over the
-    batch's total weight (the SFT-weighted mean when the batch is one call)."""
+def sft_batch_loss(model, items: Sequence[tuple[Seq, float]], batch: int) -> torch.Tensor:
+    """Per-pair token-mean cross-entropy, sum of w*L over the configured batch size
+    (sec 4.56(d)), so micro-batch calls of one batch add up to the batch loss."""
     losses = gate.row_losses(model, [seq for seq, _ in items])
     weights = torch.tensor([w for _, w in items], device=losses.device)
-    return (losses * weights).sum() / total_weight
+    return (losses * weights).sum() / batch
 
 
 def sft(model, opt, items: Sequence[tuple[Seq, float]], *, batch: int, seed: str) -> Record:
@@ -629,12 +610,11 @@ def sft(model, opt, items: Sequence[tuple[Seq, float]], *, batch: int, seed: str
         rng.shuffle(order)
         for start in range(0, len(order), batch):
             chunk = [items[i] for i in order[start : start + batch]]
-            total = sum(w for _, w in chunk)
             while True:
                 try:
                     value = 0.0
                     for at in range(0, len(chunk), micro):
-                        loss = sft_batch_loss(model, chunk[at : at + micro], total)
+                        loss = sft_batch_loss(model, chunk[at : at + micro], batch)
                         loss.backward()
                         value += float(loss)
                     break
@@ -900,7 +880,19 @@ def decoded_samples(records: Sequence[Mapping[str, object]]) -> Record:
     return {"kept": kept, "rejected": rejected}
 
 
-def held_out_readings(ctx: Round, fixed: Mapping[str, object], stems: Sequence[str]) -> Record:
+def abstention_reading(replies: Sequence[str], device: torch.device) -> Record:
+    """The entailment classifier's label per reply; over-abstention is the "unknown" share."""
+    from experiments.lama_ckl.dreamer_corpus import abstention_labels
+
+    labels = abstention_labels(replies, device)
+    return {
+        "over_abstention": labels.count("unknown") / len(labels),
+        "abstention_labels": {k: labels.count(k) for k in ("unknown", "cannot", "answers")},
+        "abstentions": [r for r, k in zip(replies, labels, strict=True) if k == "unknown"],
+    }
+
+
+def held_out_readings(ctx: Round, fixed: Mapping[str, object]) -> Record:
     """Sec 3.2 row 4b: held-out warm-start loss and the over-abstention rate."""
     from preparation.conversations import format_conversation
 
@@ -928,17 +920,15 @@ def held_out_readings(ctx: Round, fixed: Mapping[str, object], stems: Sequence[s
         tokenizer.decode(reply).strip()
         for reply in greedy_replies(ctx.model, prompts, stops, REPLY_TOKENS)
     ]
-    abstained = [reply.startswith(tuple(stems)) for reply in replies]
     out = {
         "held_out_loss": statistics.fmean(values),
         "held_out_rows": len(values),
-        "over_abstention": sum(abstained) / len(abstained),
-        "abstentions": [r for r, a in zip(replies, abstained, strict=True) if a],
+        **abstention_reading(replies, ctx.device),
         "replies_sample": replies[:5],
     }
     print(
         f"[{ts()}] held-out loss {out['held_out_loss']:.4f} over {len(values)} rows; "
-        f"over-abstention {sum(abstained)}/{len(abstained)}; replies {replies[:3]!r}",
+        f"abstention labels {out['abstention_labels']}; replies {replies[:3]!r}",
         flush=True,
     )
     return out
@@ -1070,7 +1060,7 @@ def constants(result: Mapping[str, object], label: str) -> tuple[float, float, f
     return float(result["alpha"]), float(result["c"]), float(result["kappa"])
 
 
-def run_round(args, r: int, corpus, fixed, stems) -> None:
+def run_round(args, r: int, corpus, fixed) -> None:
     directory = round_dir(args.output, r)
     directory.mkdir(parents=True, exist_ok=True)
     start = args.init_adapter if r == 0 else checkpoint_dir(args.model_name, args.arm, r - 1)
@@ -1108,7 +1098,7 @@ def run_round(args, r: int, corpus, fixed, stems) -> None:
     retained = json.loads(Path(str(instrument["retained_pool"])).read_text())["rows"]
 
     if r == 0 and not (directory / "start.json").exists():
-        write_json(directory / "start.json", held_out_readings(ctx, fixed, stems))
+        write_json(directory / "start.json", held_out_readings(ctx, fixed))
 
     # The P draw, excluding every earlier round's P.
     earlier = [json.loads((round_dir(args.output, k) / "plan.json").read_text()) for k in range(r)]
@@ -1225,17 +1215,10 @@ def run_round(args, r: int, corpus, fixed, stems) -> None:
         )
     eoc_id = ctx.ids["eoc_id"]
     pairs = sft_pairs(records, weights, eoc_id)
-    replay, shortfall = replay_draw(
-        replay_pool(corpus, [x for rows in reference.values() for x in rows]),
-        len(pairs),
-        random.Random(f"dreamer-replay-{args.seed}-{r}"),
+    pool = replay_pool(corpus, [x for rows in reference.values() for x in rows])
+    replay = replay_or_stop(
+        pool, len(pairs), random.Random(f"dreamer-replay-{args.seed}-{r}"), directory
     )
-    if shortfall:
-        print(
-            f"[{ts()}] WARNING: replay pool short by {shortfall} of {len(pairs)} rows; "
-            f"drawing the {len(replay)} that exist (sec 4.53)",
-            flush=True,
-        )
     items = pairs + [(gate._render(x["messages"], tokenizer, mod), 1.0) for x in replay]
     print(
         f"[{ts()}] SFT: {len(pairs)} pairs from {sum(w['weight'] > 0 for w in weights)} rows, "
@@ -1266,14 +1249,14 @@ def run_round(args, r: int, corpus, fixed, stems) -> None:
     readings = {
         **round_readings(records, weights, sources),
         "row_weights": {str(r_["row_id"]): w for r_, w in zip(records, weights, strict=True)},
-        "replay": {"drawn": len(replay), "shortfall": shortfall},
+        "replay": {"pool": len(pool), "drawn": len(replay), "shortfall": 0},
         "sft": {k: v for k, v in trained.items() if k != "losses"},
         "sft_losses": trained.get("losses", []),
         "checkpoint": str(final),
         "trainable_sha256": sha,
         "prod": json.loads(prod_path.read_text()),
         "decoded": decoded_samples(records),
-        **held_out_readings(ctx, fixed, stems),
+        **held_out_readings(ctx, fixed),
     }
     write_json(directory / "readings.json", readings)
     print(
@@ -1361,7 +1344,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--arm", choices=("a", "b"), default="a")
     parser.add_argument("--corpus", type=Path, default=Path("data/dreamer_corpus.jsonl"))
     parser.add_argument("--fixed-sets", type=Path, default=Path("data/dreamer_fixed_sets.json"))
-    parser.add_argument("--abstentions", type=Path, default=Path("data/dreamer_abstentions.json"))
     parser.add_argument("--init-adapter", type=Path, default=DEFAULT_WARMSTART)
     parser.add_argument(
         "--gate", type=Path, required=True, help="the box gate's gate.json (round 0)"
@@ -1405,12 +1387,11 @@ def main() -> None:
     )
     corpus = [json.loads(line) for line in args.corpus.read_text().splitlines() if line.strip()]
     fixed = json.loads(args.fixed_sets.read_text())
-    stems = json.loads(args.abstentions.read_text())["stems"]
     for r in range(args.rounds):
         if round_complete(args.output, r):
             print(f"[{ts()}] round {r} complete, skipped", flush=True)
             continue
-        run_round(args, r, corpus, fixed, stems)
+        run_round(args, r, corpus, fixed)
         free()
     run_final(args, fixed)
 
