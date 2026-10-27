@@ -533,7 +533,8 @@ to keep, `--abstention-rows` (200) the number of abstention rows, and `--seed`
 with no passage on the checkpoint. It excludes the passage ids in
 `--exclude-passages` (a JSON list) and writes
 `data/retained_pool-<sha8>.json`, where sha8 comes from the checkpoint's
-`trainable.pt`. Each row records its accuracy, its answer-token positions and
+`trainable.pt`. `--fp32-forward` scores in the fp32 forward and writes
+`data/retained_pool-<sha8>-fp32.json`. Each row records its accuracy, its answer-token positions and
 the positions the checkpoint predicts correctly. A row with no correct token is
 unknown; all other rows are known.
 
@@ -550,8 +551,8 @@ make lama-ckl-gate ARGS="--tokens 512 --fp32-forward --instrument-only --init-ad
 make lama-ckl-gate ARGS="double-backward"                                # item 2b, 780M
 ```
 
-It runs the retained-pool pass first (reused when
-`data/retained_pool-<sha8>.json` exists) and reports the batch-1 memory fit at
+It runs the retained-pool pass first, in the gate's forward (reused when
+`data/retained_pool-<sha8>[-fp32].json` exists), and reports the batch-1 memory fit at
 `--tokens` next. Then it runs the lr sweep (alpha, c), the noise floor (it
 starts the second process itself), the per-dream scalars, the discrimination
 test and the h fit (kappa). The summary table and verdict come last.
@@ -562,13 +563,38 @@ fp32 for all forwards (about 11 GB). `--init-adapter` (default v4), `--corpus`,
 `--batch-size` (4, rows per g_old forward) have defaults. `double-backward`
 takes `--model-name` (`mamba2_780m`), `--tokens` (128) and `--block` (64).
 
+`make lama-ckl-dreamer` (`experiments/lama_ckl/dreamer.py`) trains dreamer arm
+(a) (`DISCUSSION-20261024` §3.2, §6.6). It needs a GPU, the corpus files above
+and the box gate's `gate.json`, which is round 0's instrument. Log:
+`logs/dreamer-<timestamp>.log`.
+
+```bash
+make lama-ckl-dreamer ARGS="--gate <box gate dir>/gate.json --fp32-forward"
+```
+
+Each round measures the instrument (rounds after 0 run the gate's instrument
+steps on the starting checkpoint), draws P (50 rows) and R, dreams a pool of
+K·n per row and keeps the best batch. Then it runs the SFT on the kept batches
+with 1:1 replay and records the readings. Output under `--output` (default
+`../.cache/lama_ckl/dreamer/a/`): `round-NN/{gate,plan,reference,prod,readings}.json`
+and `round-NN/rows/<row>.json`. A round checkpoint goes to
+`../models/<model>/checkpoints/dreamer-a-rNN/final/`. After the last round,
+`final/{gate,prod}.json` holds the readings of the last checkpoint. To resume,
+rerun the same command: complete rows and rounds are skipped. Flags: `--arm a`
+(`b` is refused), `--rounds` (2), `--pool-k` (4), `--dreams-n` (10), `--rows`
+(50), `--tokens` (512), `--batch-size` (40 dreams per launch), `--sft-batch` (8;
+the micro-batch halves on OOM and accumulates to 8), `--eval-batch-size` (4),
+`--fp32-forward`, `--seed`, `--model-name`, `--init-adapter`, `--corpus`,
+`--fixed-sets` and `--abstentions`.
+
 After the smoke fixes batch sizes for that rented machine, run the registered
 cells serially (`DISCUSSION-20261013` §3.3–3.4). Seeds `42`, `43`, and `44` are
 the frozen Mamba replication seeds; the split itself stays the one seed-42
 artifact. Seed 42 runs first. The frozen arm is scored three times by
 `make lama-ckl-frozen-x3 SEED=42` into `runs/frozen-seed-42-r1`, `-r2` and
 `-r3`; the report reads them as one arm and their spread is the evaluation
-resolution. Lora and mix-review run the default 30 epochs; the dream arm runs one
+resolution. `RUN_PREFIX` (default `frozen-seed-$(SEED)`) names the three outputs;
+a dreamer checkpoint's replicates use `RUN_PREFIX=frozen-<ckpt name>-seed-42`. Lora and mix-review run the default 30 epochs; the dream arm runs one
 epoch of 100 cycles:
 
 ```bash
@@ -739,6 +765,19 @@ matched epoch is the comparison point. It reports the cells that exist and
 lists the missing registered cells (`missing_cells` in `report.json`); the
 seed-42-first order (`DISCUSSION-20261011` §3.3) makes a four-cell report the
 normal case.
+
+Runs are told apart by output directory name, so one seed may appear under
+several names (`dream-<ckpt name>-seed-42`, `lora-<ckpt name>-seed-42`); one
+report covers one split, so `--runs` takes output-name globs to select a
+checkpoint's cells (`--runs '*-dreamer-a-r03-seed-42*'`). A dream run stopped
+by `--cycles-per-run` or `--max-hours` (`summary.json` with `cycles_run`) is a
+partial run: its curve (`partial_runs`) is epoch 0 followed by every evaluated
+`cycle-NNN/result.json`, keyed by cycle. `shown_rows` compares its to-learn
+accuracy on the documents shown up to its last evaluation (rows 0–99 for 100
+cycles of one document) against each baseline arm on the same rows at epoch 1
+(frozen at epoch 0), printed with the step-count and precision asymmetries.
+`--gate <run name>=<gate.json>` reports that checkpoint's own α and its ratio
+to the run's `dream_lr` (`alpha`).
 
 **Probes.** The primary reliability metric is the **distractor-code margin** (§4): the summed log-prob of the correct code minus that of a fixed random foil code, same question, fresh state — immune to the format prior the cues inject and to the digit-counting attractor that broke greedy exact match. A fact counts installed at margin ≥ 1.0 nat; the margin, both raw sums and the verdict are logged per probe point. Greedy exact match and the four-paraphrase generality battery are reported and never gate. The full battery — margin, paraphrases, knowledge battery and held-out ΔPPL from `experiments/locality.py` — streams every `--probe-every` steps (200), so every cell yields a learned-vs-forgotten *curve* and iso-learning comparisons are read off curves rather than engineered with hyperparameters. Dream rehearsal is **binding-aware**: a code counts only where it appears in the same sentence as its own entity, and codes sitting next to a different fact's entity are reported separately as misbindings. The carried-state column stays a **diagnostic, never scored as installation**. Box tool (trains a LoRA, holds a full-vocab dream logit cache); 780M-only, since the erase is addressed through `Model.c_capture` and applied through `Model.erase_hook`.
 
