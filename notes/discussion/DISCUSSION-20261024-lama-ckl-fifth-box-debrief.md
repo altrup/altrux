@@ -1610,9 +1610,14 @@ conversation). The multi-document regime is deferred, not rejected (§4.9).
     loss is Σ w·L / batch size. (e) A replay pool that cannot fill the 1:1
     mix stops the round, with the pool size, the kept-pair count and the
     shortfall logged at WARNING and written to `readings.json`. The fixed
-    sets are regenerated under (a)–(c) before the box pulls them; the gate
-    dreams keep if their five rows stay unknown under (c), which the
-    generator reports.
+    sets are regenerated under (a)–(c) **on the box** as the first step of
+    the gate session (decided 10-27: generate-and-match costs 0.3 q/s on the
+    dev box, hours for the scan and the pool; the box does it in minutes,
+    and the pull carries the files home); the gate dreams keep if their
+    five rows stay unknown under (c), which the generator reports. The
+    10-26 local data files were moved to
+    `.cache/lama_ckl_archive/dreamer-data-20261026/` so the launch does not
+    upload them.
 
 ## 5. Process
 
