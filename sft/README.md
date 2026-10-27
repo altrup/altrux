@@ -490,8 +490,25 @@ diagnostics, reads `max_dream_loss` from `cycle-NN/distil.json` when present,
 and reports the adapter step norm, its cosines to the steps 1, 5 and 20
 cycles earlier, and the distance from the warm start (`--warm-start`, default
 the pinned adapter) from the saved `trainable.pt` files; it writes
-`census.json` in the given directory. The runner prints three dreams per
-cycle; the census is how the other twenty-seven get read.
+`census.json` in the given directory. Per cycle it also counts, by the pinned
+text rules of `DISCUSSION-20261024`, the dreams revisiting each wake turn's
+document (two non-overlapping word trigrams found in that document and in no
+other wake document of the run), the dreams with a short (one to eight word)
+`[ASSISTANT]` turn and with an acknowledgement turn, the most frequent short
+`[ASSISTANT]` string with its dream count, and the clip fire and pre-clip
+gradient norm from `distil.json` (`n/a` when absent). The runner prints three
+dreams per cycle; the census is how the other twenty-seven get read.
+
+`--frozen <dir>...` adds the acquisition census (`DISCUSSION-20261024` §1.1):
+over the epoch-0 evaluation and every `cycle-NN/result.json`, a to-learn row is
+acquired when it scores 1.0 at the first evaluation at or after its wake cycle
+(row // `docs_per_wake`), kept when it also scores 1.0 at the last; rows above 0
+in any frozen run's evaluation or before their wake cycle are excluded from
+count and denominator. It prints the counts and row ids and writes
+`acquisition.json`. `docs_per_wake` and `eval_every` come from `run.json`;
+`--docs-per-wake` / `--eval-every` are required only where `run.json` lacks
+them (runs before the `--eval-every` runner flag evaluated every cycle: pass
+`--eval-every 1`).
 
 `make lama-ckl-corpus` (`experiments/lama_ckl/dreamer_corpus.py`) builds the
 dreamer corpus (`DISCUSSION-20261024` §3.3) and has two subcommands. Both need
