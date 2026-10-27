@@ -67,6 +67,8 @@ FILLERS = 9
 REPEATS = 3
 SAMPLE_TEMPERATURE = 1.0
 R_DRAW = {"facts": 34, "abstention": 33, "warm_start": 33}
+# Dolly plain : UltraChat about 1:4 by conversation count, the warm start's proportion.
+R_WARM_DOLLY = round(R_DRAW["warm_start"] / 5)
 GATE_DREAMS = Path(__file__).with_name("gate_dreams.json")
 
 Seq = tuple[list[int], list[bool]]
@@ -285,62 +287,71 @@ def draw_reference(
     mod: ModuleType,
     seed: int,
 ) -> dict[str, list[dict[str, object]]]:
-    """Round 0's R (sec 3.2 row 4): retained-pool known facts, abstention rows and
-    warm-start rows (Dolly plain plus trained-on UltraChat, drawn from their union
-    so the draw keeps the warm start's proportion). Each row carries its id, its
-    rendered ids and its loss mask."""
+    """Round 0's R (sec 3.2 row 4). Facts: retained-pool known rows, loss on their
+    currently-correct answer tokens and both stop tokens (sec 4.51). Abstention
+    rows: loss on the reply and both stop tokens. Warm start: R_WARM_DOLLY Dolly
+    plain rows and the rest trained-on UltraChat rows, a short pool filled from the
+    other, loss as the warm start trained. Each row carries its id, ids and mask."""
     rng = random.Random(seed)
     ids = markers(tokenizer, mod)
     stops = (ids["eos_id"], ids["eoc_id"])
     by_kind: dict[str, list[Mapping[str, object]]] = {}
     for row in corpus:
         by_kind.setdefault(str(row["kind"]), []).append(row)
-    sources = {
-        "facts": [
-            (
-                {"squad_id": r["squad_id"]},
-                [
-                    {"role": "user", "content": str(r["question"])},
-                    {"role": "assistant", "content": str(r["answer"])},
-                ],
-            )
-            for r in retained
-            if r["side"] == "known"
-        ],
-        "abstention": [({"squad_id": r["squad_id"]}, r["messages"]) for r in by_kind["abstention"]],
-        "warm_start": [
-            ({"dolly_line": r["dolly_line"]}, r["messages"]) for r in by_kind["dolly_plain"]
+
+    def take(pool: list, count: int) -> list:
+        return rng.sample(pool, count)
+
+    facts = []
+    for r in take([r for r in retained if r["side"] == "known"], R_DRAW["facts"]):
+        messages = [
+            {"role": "user", "content": str(r["question"])},
+            {"role": "assistant", "content": str(r["answer"])},
         ]
-        + [
-            ({"ultrachat_index": r["ultrachat_index"]}, r["messages"])
-            for r in by_kind["warm_start"]
-            if not r["packer_dropped"]
-        ],
-    }
-    drawn: dict[str, list[dict[str, object]]] = {}
-    for name, count in R_DRAW.items():
-        if len(sources[name]) < count:
-            raise ValueError(f"R source {name}: {len(sources[name])} rows for a draw of {count}")
-        drawn[name] = []
-        for key, messages in rng.sample(sources[name], count):
-            seq_ids, mask = _render(messages, tokenizer, mod)
-            if name != "warm_start":
-                # Reply and both stop tokens; the warm start's own mask covers user turns too.
-                mask = [
-                    m or t in stops
-                    for m, t in zip(target_mask(seq_ids, **ids), seq_ids, strict=True)
-                ]
-            drawn[name].append({**key, "ids": seq_ids, "mask": mask})
-    return drawn
+        seq_ids, _ = _render(messages, tokenizer, mod)
+        if tuple(seq_ids[-2:]) != stops or not r["correct_positions"]:
+            raise ValueError(f"retained row {r['squad_id']}: no stop tokens or no correct token")
+        targets = {*r["correct_positions"], len(seq_ids) - 2, len(seq_ids) - 1}
+        mask = [i in targets for i in range(len(seq_ids))]
+        facts.append({"squad_id": r["squad_id"], "ids": seq_ids, "mask": mask})
+
+    abstention = []
+    for r in take(by_kind.get("abstention", []), R_DRAW["abstention"]):
+        seq_ids, _ = _render(r["messages"], tokenizer, mod)
+        reply = target_mask(seq_ids, **ids)
+        mask = [m or t in stops for m, t in zip(reply, seq_ids, strict=True)]
+        abstention.append({"squad_id": r["squad_id"], "ids": seq_ids, "mask": mask})
+
+    dolly = [({"dolly_line": r["dolly_line"]}, r) for r in by_kind.get("dolly_plain", [])]
+    ultrachat = [
+        ({"ultrachat_index": r["ultrachat_index"]}, r)
+        for r in by_kind.get("warm_start", [])
+        if not r["packer_dropped"]
+    ]
+    n_dolly = min(len(dolly), max(R_WARM_DOLLY, R_DRAW["warm_start"] - len(ultrachat)))
+    n_ultrachat = R_DRAW["warm_start"] - n_dolly
+    if (n_dolly, n_ultrachat) != (R_WARM_DOLLY, R_DRAW["warm_start"] - R_WARM_DOLLY):
+        print(
+            f"[{ts()}] WARNING: warm-start R pools short (Dolly plain {len(dolly)}, trained-on "
+            f"UltraChat {len(ultrachat)}): drawing {n_dolly} Dolly and {n_ultrachat} UltraChat",
+            flush=True,
+        )
+    warm = []
+    for key, r in take(dolly, n_dolly) + take(ultrachat, n_ultrachat):
+        seq_ids, mask = _render(r["messages"], tokenizer, mod)
+        warm.append({**key, "ids": seq_ids, "mask": mask})
+    return {"facts": facts, "abstention": abstention, "warm_start": warm}
 
 
-def retained_pool_pass(init_adapter: Path, corpus: Path, model_name: str, batch_size: int) -> Path:
-    """Step (vii): `dreamer_corpus retained-pool` on the checkpoint, reused when its
-    file exists. Loads and frees its own model, so call it before loading the gate's."""
-    from experiments.lama_ckl.dreamer_corpus import retained_pool
+def retained_pool_pass(
+    init_adapter: Path, corpus: Path, model_name: str, batch_size: int, fp32: bool
+) -> Path:
+    """Step (vii): `dreamer_corpus retained-pool` on the checkpoint in the gate's
+    forward, reused when that mode's file exists. Loads and frees its own model, so
+    call it before loading the gate's."""
+    from experiments.lama_ckl.dreamer_corpus import retained_pool, retained_pool_path
 
-    sha = hashlib.sha256((init_adapter / "trainable.pt").read_bytes()).hexdigest()
-    path = corpus.parent / f"retained_pool-{sha[:8]}.json"
+    path = retained_pool_path(init_adapter, corpus, fp32)
     if path.exists():
         print(f"[{ts()}] (vii) retained pool exists, reused: {path}", flush=True)
         return path
@@ -353,6 +364,7 @@ def retained_pool_pass(init_adapter: Path, corpus: Path, model_name: str, batch_
             size=2000,
             model_name=model_name,
             batch_size=batch_size,
+            fp32_forward=fp32,
         )
     )
     torch.cuda.empty_cache()
@@ -1025,6 +1037,7 @@ def double_backward_main(argv: Sequence[str]) -> None:
     device = torch.device("cuda")
     hooks = importlib.import_module(f"models.{args.model_name}.train_hooks")
     model, params = hooks.setup_training(device, 16, 32.0, 0.0)
+    model.torch_norms = True
     with torch.no_grad():
         for name, p in model.named_parameters():
             if "lora_B" in name:
@@ -1095,7 +1108,9 @@ def main() -> None:
     fixed = json.loads(args.fixed_sets.read_text())
     gate_rows = fixed["gate"]
     gate_dreams = load_gate_dreams(args.gate_dreams, gate_rows)
-    pool_path = retained_pool_pass(args.init_adapter, args.corpus, args.model_name, args.batch_size)
+    pool_path = retained_pool_pass(
+        args.init_adapter, args.corpus, args.model_name, args.batch_size, args.fp32_forward
+    )
     stats = theta_stats(args.init_adapter / "trainable.pt")
     print(f"[{ts()}] theta {stats}", flush=True)
 

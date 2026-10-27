@@ -252,12 +252,17 @@ def _question_row(q: Question, render: Renderer) -> dict[str, object]:
     }
 
 
-def _load_model(model_name: str, adapter: Path, device: torch.device) -> Scorable:
+def _load_model(
+    model_name: str, adapter: Path, device: torch.device, fp32: bool = False
+) -> Scorable:
     hooks = importlib.import_module(f"models.{model_name}.train_hooks")
     config = json.loads((adapter / "lora_config.json").read_text())
     model, _ = hooks.setup_training(device, int(config["rank"]), float(config["alpha"]), 0.0)
     from training.checkpoints import load_checkpoint
+    from training.master_weights import fp32_forward
 
+    if fp32:
+        fp32_forward(model)
     load_checkpoint(model, adapter)
     return model
 
@@ -690,11 +695,17 @@ def generate(args: argparse.Namespace) -> None:
     )
 
 
+def retained_pool_path(init_adapter: Path, corpus: Path, fp32: bool) -> Path:
+    """data/retained_pool-<sha8>.json, -fp32 before the suffix for the fp32 forward."""
+    sha = _sha256(init_adapter / "trainable.pt")
+    return corpus.parent / f"retained_pool-{sha[:8]}{'-fp32' if fp32 else ''}.json"
+
+
 def retained_pool(args: argparse.Namespace) -> None:
     if not torch.cuda.is_available():
         raise SystemExit("the retained-pool pass requires a GPU")
     sha = _sha256(args.init_adapter / "trainable.pt")
-    output = args.output or args.corpus.parent / f"retained_pool-{sha[:8]}.json"
+    output = args.output or retained_pool_path(args.init_adapter, args.corpus, args.fp32_forward)
     exclude = set(json.loads(args.exclude_passages.read_text())) if args.exclude_passages else set()
     questions: list[Question] = []
     for line in args.corpus.read_text().splitlines():
@@ -714,7 +725,7 @@ def retained_pool(args: argparse.Namespace) -> None:
 
     render = Renderer(build_tokenizer(model_mod), model_mod)
     device = torch.device("cuda")
-    model = _load_model(args.model_name, args.init_adapter, device)
+    model = _load_model(args.model_name, args.init_adapter, device, args.fp32_forward)
     start = time.monotonic()
     scored = score_questions(model, render, drawn, args.batch_size, device)
     elapsed = time.monotonic() - start
@@ -748,6 +759,7 @@ def retained_pool(args: argparse.Namespace) -> None:
             {
                 "checkpoint": str(args.init_adapter),
                 "trainable_sha256": sha,
+                "fp32_forward": args.fp32_forward,
                 "corpus": str(args.corpus),
                 "sides": dict(sides),
                 "rows": rows,
@@ -777,7 +789,8 @@ def build_parser() -> argparse.ArgumentParser:
     pool = sub.add_parser("retained-pool", help="known-or-unknown pass on one checkpoint")
     pool.add_argument("--init-adapter", type=Path, required=True)
     pool.add_argument("--corpus", type=Path, default=Path("data/dreamer_corpus.jsonl"))
-    pool.add_argument("--output", type=Path, help="default data/retained_pool-<sha8>.json")
+    pool.add_argument("--output", type=Path, help="default data/retained_pool-<sha8>[-fp32].json")
+    pool.add_argument("--fp32-forward", action="store_true", help="score in the fp32 forward")
     pool.add_argument("--size", type=int, default=2000)
     pool.add_argument(
         "--exclude-passages", type=Path, help="JSON list of passage ids (earlier rounds' P)"

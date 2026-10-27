@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-import torch.nn.functional as F
 
 from experiments.lama_ckl.diagnostics.alignment_gate import (
     LRS,
@@ -13,6 +12,7 @@ from experiments.lama_ckl.diagnostics.alignment_gate import (
     bf16_change_fraction,
     bf16_spacing,
     cell_constants,
+    draw_reference,
     fit_h,
     kappa_rule,
     load_gate_dreams,
@@ -201,6 +201,64 @@ def test_target_mask_on_a_rendered_row():
     assert ids[-2:] == [tokenizer.eos_token_id, ids_of("<|endofconversation|>")]
 
 
+def test_reference_draw_masks_and_warm_start_proportion():
+    tokenizer = _neox()
+    mod = SimpleNamespace(USER_OPEN="[USER]", ASST_OPEN="[ASSISTANT]", EOC="<|endofconversation|>")
+
+    def qa(q: str, a: str) -> list[dict[str, str]]:
+        return [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
+
+    retained = [
+        {
+            "squad_id": f"k{i}",
+            "question": "Who built it?",
+            "answer": "Gustave Eiffel",
+            "side": "known",
+            "correct_positions": [6],
+        }
+        for i in range(40)
+    ] + [
+        {
+            "squad_id": "u",
+            "question": "q",
+            "answer": "a",
+            "side": "unknown",
+            "correct_positions": [],
+        }
+    ]
+    corpus = [
+        {"kind": "abstention", "squad_id": f"a{i}", "messages": qa("Why?", "I don't know.")}
+        for i in range(40)
+    ] + [{"kind": "dolly_plain", "dolly_line": i, "messages": qa("x", "y")} for i in range(40)]
+    ultrachat = [
+        {
+            "kind": "warm_start",
+            "ultrachat_index": i,
+            "packer_dropped": False,
+            "messages": qa("u", "v"),
+        }
+        for i in range(40)
+    ]
+    drawn = draw_reference(corpus + ultrachat, retained, tokenizer, mod, seed=0)
+    ids_of = tokenizer.convert_tokens_to_ids
+    stops = {tokenizer.eos_token_id, ids_of("<|endofconversation|>")}
+    fact = drawn["facts"][0]
+    assert len(drawn["facts"]) == 34 and all(r["squad_id"] != "u" for r in drawn["facts"])
+    assert [i for i, m in enumerate(fact["mask"]) if m] == [
+        6,
+        len(fact["ids"]) - 2,
+        len(fact["ids"]) - 1,
+    ]
+    abst = drawn["abstention"][0]
+    targets = [t for t, m in zip(abst["ids"], abst["mask"], strict=True) if m]
+    assert tokenizer.decode([t for t in targets if t not in stops]) == " I don't know."
+    assert set(targets) & stops == stops
+    warm = drawn["warm_start"]
+    assert sum("dolly_line" in r for r in warm) == 7 and len(warm) == 33
+    short = draw_reference(corpus, retained, tokenizer, mod, seed=0)["warm_start"]
+    assert sum("dolly_line" in r for r in short) == 33
+
+
 def test_gate_dreams_schema_is_checked(tmp_path):
     row = {"passage_id": "p1", "question": {"answer": "Paris"}}
     good = [
@@ -291,19 +349,6 @@ def test_a_gate_step_follows_first_order_and_restores_theta():
     assert g is not None and g.shape == grad.shape and float(g.norm()) > 0
 
 
-def _torch_norm(module):
-    """mamba_ssm's (gated) RMSNorm in plain torch ops, which autograd differentiates twice."""
-
-    def forward(x, z=None):
-        before = getattr(module, "norm_before_gate", True)
-        if z is not None and not before:
-            x = x * F.silu(z)
-        y = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + module.eps) * module.weight
-        return y * F.silu(z) if z is not None and before else y
-
-    return forward
-
-
 @gpu
 def test_double_backward_check_tells_a_cut_graph_from_a_whole_one():
     from experiments.lama_ckl.diagnostics.alignment_gate import double_backward
@@ -312,12 +357,7 @@ def test_double_backward_check_tells_a_cut_graph_from_a_whole_one():
     for torch_norms in (False, True):
         torch.manual_seed(1)
         model, params = _tiny_model()
-        if torch_norms:
-            for module in [
-                model.norm_f,
-                *(m for layer in model.layers for m in (layer.norm, layer.mixer.norm)),
-            ]:
-                module.forward = _torch_norm(module)
+        model.torch_norms = torch_norms
         ids = [torch.randint(1, 90, (1, n), device="cuda") for n in (6, 8, 6)]
         out = double_backward(model, params, *ids, block=4)
         assert out["peak_bytes"] > 0 and math.isfinite(out["loss_gm"])
