@@ -1799,9 +1799,11 @@ imports it):
 7c. **Data artifacts**: the defaults in `scripts/lambda_data_artifacts.sh` are not changed; the `.env` line of item 8 is the one mechanism by which the corpus files reach the box.
 8. **Archive the fifth box's dream cell** (a move, not a copy):
    `runs/dream-seed-42`, `runs/*-smoke` and `acceptance/` to
-   `.cache/lama_ckl_archive/fifth-box/`; keep
-   `runs/{lora,mix-review}-seed-42` and `runs/frozen-seed-42-r{1,2,3}` as
-   the v4 baselines; `scripts/.env` gains `LAMBDA_DATA_ARTIFACTS="dreamer_*.json* retained_pool-*.json dolly_context.jsonl"` (today's `"none-*"` disables the defaults, `lambda_data_artifacts.sh:18`, so without this no corpus file reaches the box; `dolly_context.jsonl` is regenerated locally first, §3.3).
+   `.cache/lama_ckl_archive/fifth-box/`, and (10-27) also
+   `runs/{lora,mix-review}-seed-42` and `runs/frozen-seed-42-r{1,2,3}`, the
+   v4 baselines: no box step reads them, the shown-row comparison is a
+   `report.py` column run at home after the pull, and the five are 20 GB,
+   about 21 min of upload at the measured 15.7 MB/s uplink; `scripts/.env` gains `LAMBDA_DATA_ARTIFACTS="dreamer_*.json* retained_pool-*.json dolly_context.jsonl"` (today's `"none-*"` disables the defaults, `lambda_data_artifacts.sh:18`, so without this no corpus file reaches the box; `dolly_context.jsonl` is regenerated locally first, §3.3).
 8b. **`report.py`, the partial epoch and the Makefile** (unprotected except the runner's epoch result): the runner writes `summary.json` with `cycles_run` at the `--cycles-per-run` stop without marking the epoch complete (§3.4; `runner.py:357-378`, protected, in 7b); the partial curve is epoch 0's `result.json` followed by every `cycle-NNN/result.json` the eval-every rule wrote, keyed by cycle (`runner.py:236-238` writes them), and `report.py` accepts it when `cycles_run` is present and distinguishes runs by output name, not seed alone (`report.py:94-95` refuses same-seed runs under one root today); `lama-ckl-frozen-x3` takes a `RUN_PREFIX`; the v4 cell's output is `runs/dream-ultra20k-v4-seed-42` (the `dream-<ckpt name>-seed-42` template); the shown-row comparison (§3.4) is a `report.py` column. `dream_census.py --warm-start` is passed the cell's own checkpoint's `trainable.pt` (its default is v4, `dream_census.py:99`). The dreamer checkpoint directory carries `lora_config.json` beside `trainable.pt`, as `runner.py:795` expects; `<arm>` is `a` or `b` and `<round>` is `r<NN>`.
 8c. **Adversarial-read brief** (proposed to the teammate, not done): `scripts/.env` holds a live API key; the skill brief names it as a file the reader never opens.
 9. **Experimenter skill:** the session-order table gains the dreamer
