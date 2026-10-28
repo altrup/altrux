@@ -250,3 +250,14 @@ abstention hinge and the over-abstention detector read a noise direction.
 **Resume point for a next session:** nothing to resume. The box-built corpus, retained pool and
 `gate.json` are home (receipt below) and can be re-uploaded; the v4 `final` symlink must be
 recreated again on any new box.
+
+**Pull receipt** (`scripts/.pull-receipt`, 2026-10-28T03:35:40 UTC, sizes as landed at home):
+`alignment_gate-20261028-025024.log` 92,740; `lama-ckl-corpus-20261028-02{0815,1504,1804}.log`
+103,035 / 13,890 / 110,061; `preflight-tests-20261028.log` 3,221; `hf-prefetch-20261028.log` 3,890;
+`lama-download-20261028.log` 110,817; `notes/experiments/EXPERIMENT_NOTES-20261028-020442.md` 21,139
+(this file before this paragraph); `sft/data/dreamer_corpus.jsonl` 200,483,061;
+`dreamer_fixed_sets.json` 2,516,924; `dreamer_abstentions.json` 49,964;
+`retained_pool-7ba7972b-fp32.json` 1,012,883; `.cache/lama_ckl/gate/ultra20k-v4/gate.json` 27,104.
+Every artifact of this session is home at its box size. Nothing UNRETRIEVED; no fallback commit.
+Notes committed and pushed on `box/20261028-015757` (0f600b6, then this receipt paragraph).
+Terminating via `scripts/.watchdog-terminate` at 03:40 UTC.
